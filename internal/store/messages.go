@@ -447,6 +447,7 @@ type MessageMetadataRecord struct {
 	ID                   int64
 	Metadata             sql.NullString
 	SourceConversationID sql.NullString
+	SenderDisplayName    string // sender name captured on the message's from recipient
 }
 
 // MessageWithRawMetadata identifies an archived message and the RFC822
@@ -4185,7 +4186,18 @@ func (s *Store) RecomputeConversationStatsForConversationContext(ctx context.Con
 	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
-func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, arg any) error {
+// RecomputeConversationStatsForSourceConversationContext refreshes one chat
+// without scanning every conversation owned by the source.
+func (s *Store) RecomputeConversationStatsForSourceConversationContext(ctx context.Context, sourceID int64, sourceConversationID string) error {
+	if sourceID <= 0 || sourceConversationID == "" {
+		return errors.New("invalid source conversation identity")
+	}
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		return s.recomputeConversationStatsWith(q, "source_id = ? AND source_conversation_id = ?", sourceID, sourceConversationID)
+	})
+}
+
+func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, args ...any) error {
 	_, err := q.Exec(fmt.Sprintf(`
 		UPDATE conversations SET
 			message_count = (
@@ -4205,7 +4217,7 @@ func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, ar
 			),
 			last_message_preview = %s
 		WHERE %s
-	`, latestConversationPreviewSubquery, whereClause), arg)
+	`, latestConversationPreviewSubquery, whereClause), args...)
 	if err != nil {
 		return fmt.Errorf("recompute conversation stats: %w", err)
 	}
@@ -4872,6 +4884,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		// Identifier values are globally unique, so a plain repoint suffices.
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		if err := s.refreshLineMembershipAfterParticipantMergeTx(ctx, tx, newID); err != nil {
 			return err
 		}
 		if err := s.rewriteObservationsForMergeTx(

@@ -7,7 +7,7 @@ import (
 )
 
 func TestIsKnownMessageType(t *testing.T) {
-	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix"}
+	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix", "line"}
 	for _, mt := range known {
 		assert.True(t, IsKnownMessageType(mt), "%q should be known", mt)
 	}

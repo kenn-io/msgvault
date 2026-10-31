@@ -13,7 +13,7 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
-  'google-groups': 'Google Groups'
+  'google-groups': 'Google Groups', line: 'LINE Official Account'
 };
 const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {
   source_not_schedulable: 'Imported file — nothing to sync',
@@ -31,11 +31,19 @@ export function syncUnavailableLabel(code: string | undefined): string {
 }
 
 export function syncStatusChip(
-  source: Pick<SourceStatus, 'active_sync' | 'latest_sync' | 'scheduler_queued'>
+  source: Pick<SourceStatus, 'active_sync' | 'latest_sync' | 'scheduler_queued' | 'line_webhook'>
 ): { label: string; tone: ChipTone } {
   const latest = source.latest_sync;
   if (source.active_sync || latest?.status === 'running') return { label: 'Syncing', tone: 'info' };
   if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return { label: 'Queued', tone: 'info' };
+  if (source.line_webhook && latest?.status !== 'failed') {
+    const webhook = source.line_webhook;
+    if (webhook.failed > 0) return { label: 'Inbox has failures', tone: 'warning' };
+    if (webhook.pending > 0) return { label: 'Inbox pending', tone: 'info' };
+    return webhook.active
+      ? { label: 'Listening', tone: 'success' }
+      : { label: 'Receiver inactive', tone: 'warning' };
+  }
   if (!latest) return { label: 'Never synced', tone: 'muted' };
   if (latest.status === 'completed') {
     return latest.errors_count > 0

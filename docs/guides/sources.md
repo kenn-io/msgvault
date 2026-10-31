@@ -1,13 +1,14 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-30"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
 
 Bring a live account or a local export into the same archive. **Sync** contacts
 a service to collect new and changed records. **Import** reads an export you
-already have. Available history and attachments depend on the service's access
-rules and what the export contains.
+already have. **Webhook** sources receive new events pushed by a service.
+Available history and attachments depend on the service's access rules and what
+the export contains.
 
 Install msgvault with the [setup guide](../setup.md), then choose a source below.
 You do not need Google OAuth credentials to import local files or use a
@@ -37,6 +38,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
 | Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |
+| LINE Official Account | [LINE webhook setup](../usage/line.md) | Incoming direct, group, and legacy room chats from go-live; no history or manual outbound replies; available on `main` |
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings; available on `main` |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
@@ -69,8 +71,9 @@ review its conflict and consent workflow before enabling that direction.
    sample, including attachments and dates.
 2. Confirm [which identifiers mean you](../usage/people.md) so sent/received
    classification and contact activity have the right starting point.
-3. Set a provider schedule if you want ongoing sync. Local export imports remain
-   separate commands; see each guide for repeat-import behavior.
+3. Set a provider schedule if you want ongoing sync. Webhook sources receive
+   events while the daemon is running. Local export imports remain separate
+   commands; see each guide for repeat-import behavior.
 4. Create a [backup](../usage/backup.md). Add more sources and
    [organize accounts into collections](../usage/multi-account.md) as needed.
 

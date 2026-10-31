@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/line"
 )
 
 func addServeConfigFlags(cmd *cobra.Command) {
@@ -44,8 +47,38 @@ func prepareServeConfig(cfg *config.Config) error {
 	return cfg.ValidateServerKey()
 }
 
+const lineActiveChannelsEnv = "MSGVAULT_INTERNAL_LINE_ACTIVE_CHANNELS"
+
+type lineActiveChannelsContextKey struct{}
+
+func withLineActiveChannels(ctx context.Context, active []line.ActiveChannel) context.Context {
+	return context.WithValue(ctx, lineActiveChannelsContextKey{}, append([]line.ActiveChannel(nil), active...))
+}
+
 // daemonRuntimeChildEnv keeps serve flags effective when children reload config.
+// The private receiver snapshot is authoritative even without invocation state;
+// remove every inherited/request spelling before appending the parent value.
 func daemonRuntimeChildEnv(ctx context.Context, env []string) []string {
+	clean := make([]string, 0, len(env)+3)
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if !strings.EqualFold(name, lineActiveChannelsEnv) {
+			clean = append(clean, entry)
+		}
+	}
+	active := []line.ActiveChannel{}
+	if ctx != nil {
+		if snapshot, ok := ctx.Value(lineActiveChannelsContextKey{}).([]line.ActiveChannel); ok && len(snapshot) > 0 {
+			active = append(active, snapshot...)
+		}
+	}
+	encoded, err := json.Marshal(active)
+	if err != nil {
+		// An unavailable snapshot must never authorize remote webhook changes.
+		encoded = []byte("[]")
+	}
+	clean = append(clean, lineActiveChannelsEnv+"="+string(encoded))
+	env = clean
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
 		return env

@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -101,6 +102,8 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 // they are governed by the account scheduler, not a generic job.
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
+	case line.SourceType:
+		return "line:" + identifier, identifier != ""
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {

@@ -7164,6 +7164,18 @@ func (k KataIssueResponse) Validate() error {
 	return errors
 }
 
+type LineWebhookStatus struct {
+	Active            bool    `json:"active"`
+	Failed            int64   `json:"failed"`
+	InvalidSignatures int64   `json:"invalid_signatures" validate:"gte=0"`
+	LastReceivedAt    *string `json:"last_received_at,omitzero"`
+	Pending           int64   `json:"pending"`
+}
+
+func (l LineWebhookStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListDeletionsResponse struct {
 	Manifests []DeletionManifestSummary `json:"manifests" validate:"required"`
 }
@@ -15165,24 +15177,26 @@ func (s SourceReference) Validate() error {
 }
 
 type SourceStatus struct {
-	ActiveSync            *SyncRunStatus `json:"active_sync,omitempty"`
-	CanSync               bool           `json:"can_sync"`
-	DisplayName           *string        `json:"display_name" validate:"required"`
-	ID                    int64          `json:"id"`
-	Identifier            string         `json:"identifier" validate:"required"`
-	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync,omitempty"`
-	LastSyncAt            *string        `json:"last_sync_at" validate:"required"`
-	LatestSync            *SyncRunStatus `json:"latest_sync,omitempty"`
-	NextSyncAt            *string        `json:"next_sync_at" validate:"required"`
-	Schedule              *string        `json:"schedule,omitzero"`
-	Scheduled             bool           `json:"scheduled"`
-	SchedulerLastError    *string        `json:"scheduler_last_error,omitzero"`
-	SchedulerPending      *bool          `json:"scheduler_pending,omitempty"`
-	SchedulerQueued       *bool          `json:"scheduler_queued,omitempty"`
-	SchedulerStartedAt    *string        `json:"scheduler_started_at,omitzero"`
-	SourceType            string         `json:"source_type" validate:"required"`
-	SyncUnavailableReason *string        `json:"sync_unavailable_reason,omitzero"`
-	UpdatedAt             string         `json:"updated_at" validate:"required"`
+	ActiveSync            *SyncRunStatus     `json:"active_sync,omitempty"`
+	CanSync               bool               `json:"can_sync"`
+	DisplayName           *string            `json:"display_name" validate:"required"`
+	ID                    int64              `json:"id"`
+	Identifier            string             `json:"identifier" validate:"required"`
+	LastSuccessfulSync    *SyncRunStatus     `json:"last_successful_sync,omitempty"`
+	LastSyncAt            *string            `json:"last_sync_at" validate:"required"`
+	LatestSync            *SyncRunStatus     `json:"latest_sync,omitempty"`
+	LineWebhook           *LineWebhookStatus `json:"line_webhook,omitempty"`
+	NextSyncAt            *string            `json:"next_sync_at" validate:"required"`
+	Schedule              *string            `json:"schedule,omitzero"`
+	Scheduled             bool               `json:"scheduled"`
+	SchedulerLastError    *string            `json:"scheduler_last_error,omitzero"`
+	SchedulerLastRunAt    *string            `json:"scheduler_last_run_at,omitzero"`
+	SchedulerPending      *bool              `json:"scheduler_pending,omitempty"`
+	SchedulerQueued       *bool              `json:"scheduler_queued,omitempty"`
+	SchedulerStartedAt    *string            `json:"scheduler_started_at,omitzero"`
+	SourceType            string             `json:"source_type" validate:"required"`
+	SyncUnavailableReason *string            `json:"sync_unavailable_reason,omitzero"`
+	UpdatedAt             string             `json:"updated_at" validate:"required"`
 }
 
 func (s SourceStatus) Validate() error {
@@ -15218,6 +15232,13 @@ func (s SourceStatus) Validate() error {
 		if v, ok := any(s.LatestSync).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("LatestSync", err)
+			}
+		}
+	}
+	if s.LineWebhook != nil {
+		if v, ok := any(s.LineWebhook).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("LineWebhook", err)
 			}
 		}
 	}

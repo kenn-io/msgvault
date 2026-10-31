@@ -35,6 +35,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
@@ -862,12 +863,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	lineRuntime, err := newLineRuntime(ctx, s, state, sched, attachmentMaint, logger)
+	if err != nil {
+		return fmt.Errorf("initialize LINE receivers: %w", err)
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start the schedulers
 	sched.Start()
 	mediaSched.Start()
+	lineRuntime.queueStartup()
 
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
@@ -884,6 +891,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		lineWebhook:            lineRuntime.receiver,
 		store:                  s,
 		operationGate:          operationGate,
 		config:                 cfg,
@@ -914,6 +922,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
+		LineWebhook:    lineRuntime.receiver,
 		Config:         cfg,
 		Store:          storeAdapter,
 		SavedViewStore: s,
@@ -1770,6 +1779,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	lineWebhook               *line.Receiver
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
 	store                     *store.Store
@@ -2545,6 +2555,11 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	var active []line.ActiveChannel
+	if a.lineWebhook != nil {
+		active = a.lineWebhook.ActiveChannels()
+	}
+	ctx = withLineActiveChannels(ctx, active)
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}

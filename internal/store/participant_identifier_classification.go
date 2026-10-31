@@ -18,6 +18,14 @@ func classifyParticipantIdentifier(
 	value := strings.TrimSpace(identifierValue)
 	classification := participantIdentifierClassification{}
 	switch {
+	case kind == "line_user_id":
+		channel, user, found := strings.Cut(value, ":user:")
+		if !found || !strings.HasPrefix(channel, "channel:") || len(channel) <= len("channel:") || user == "" {
+			return classification, false
+		}
+		classification.ServiceSlug = "line"
+		classification.ScopeKind = new("line_channel")
+		classification.ScopeValue = new(strings.TrimPrefix(channel, "channel:"))
 	case kind == "imessage":
 		classification.ServiceSlug = "imessage"
 	case kind == "whatsapp":

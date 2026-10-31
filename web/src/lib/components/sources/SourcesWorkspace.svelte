@@ -54,10 +54,11 @@
   let progress = new Map<number, number>();
   let awaitingSourceID = $state<number>();
   let awaitingBaselineRunID: number | undefined;
+  let awaitingBaselineSchedulerRunAt: string | undefined;
   let awaitingAttempts = 0;
   let lockHoldPolls = 0;
   let hasLoadedStatus = false;
-  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
+  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed' | 'line_noop'>('idle');
   let disposed = false;
   onMount(() => {
     const visibilityChanged = (): void => {
@@ -86,6 +87,7 @@
     if (clearAwaiting) {
       awaitingSourceID = undefined;
       awaitingBaselineRunID = undefined;
+      awaitingBaselineSchedulerRunAt = undefined;
       awaitingAttempts = 0;
       awaitingState = 'idle';
     }
@@ -154,16 +156,38 @@
       const acceptedRunObserved =
         Boolean(awaitedSource?.active_sync) ||
         (awaitedSource?.latest_sync != null && awaitedSource.latest_sync.id !== awaitingBaselineRunID);
+      const acceptedLineNoOpObserved = Boolean(
+        awaitedSource?.source_type === 'line' &&
+        awaitedSource.scheduler_last_run_at &&
+        awaitedSource.scheduler_last_run_at !== awaitingBaselineSchedulerRunAt &&
+        (awaitedSource.latest_sync?.id ?? undefined) === awaitingBaselineRunID &&
+        !awaitedSource.active_sync &&
+        !awaitedSource.scheduler_queued &&
+        !awaitedSource.scheduler_pending &&
+        !awaitedSource.scheduler_started_at &&
+        !schedulerHoldsSyncLock(awaitedSource) &&
+        !awaitedSource.scheduler_last_error
+      );
       if (acceptedRunObserved) {
         awaitingSourceID = undefined;
         awaitingBaselineRunID = undefined;
+        awaitingBaselineSchedulerRunAt = undefined;
         awaitingAttempts = 0;
         awaitingState = 'idle';
+        pollDelay = MIN_POLL_MS;
+      } else if (acceptedLineNoOpObserved) {
+        awaitingSourceID = undefined;
+        awaitingBaselineRunID = undefined;
+        awaitingBaselineSchedulerRunAt = undefined;
+        awaitingAttempts = 0;
+        awaitingState = 'line_noop';
         pollDelay = MIN_POLL_MS;
       } else if (awaitingSourceID !== undefined) {
         awaitingAttempts += 1;
         if (awaitingAttempts >= maxAwaitingPolls) {
           awaitingSourceID = undefined;
+          awaitingBaselineRunID = undefined;
+          awaitingBaselineSchedulerRunAt = undefined;
           awaitingState = 'not_observed';
         } else {
           awaitingState = 'awaiting';
@@ -253,6 +277,7 @@
       pollDelay = MIN_POLL_MS;
       awaitingSourceID = source.id;
       awaitingBaselineRunID = source.latest_sync?.id;
+      awaitingBaselineSchedulerRunAt = source.scheduler_last_run_at ?? undefined;
       awaitingAttempts = 0;
       awaitingState = 'awaiting';
       await load();
@@ -321,6 +346,10 @@
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
     </div>{/if}
   {#if awaitingState === 'awaiting'}<p class="notice" role="status">Awaiting accepted sync run…</p>
+  {:else if awaitingState === 'line_noop'}<div class="notice" role="status">
+      <span>No inbox work was due. Any retries will run automatically at their scheduled time.</span>
+      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
+    </div>
   {:else if awaitingState === 'not_observed'}<div class="notice" role="status">
       <span>The sync was requested, but it hasn't started yet. Refresh to check again.</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
@@ -370,7 +399,14 @@
           </td>
           <td>
             <div class="cell-stack">
-              {#if source.scheduled}
+              {#if source.line_webhook}
+                <strong>Push source · webhook</strong>
+                <span>Archives from webhook go-live.</span>
+                <span>{source.line_webhook.active ? 'Receiver active' : 'Receiver inactive · check configuration and restart'}</span>
+                {#if source.line_webhook.last_received_at}
+                  <span>Last event <time datetime={source.line_webhook.last_received_at}>{formatDateTime(source.line_webhook.last_received_at)}</time></span>
+                {:else}<span>No events received yet</span>{/if}
+              {:else if source.scheduled}
                 {#if source.schedule}
                   <strong title={source.schedule}>{scheduleSummary(source.schedule)}</strong>
                 {:else}
@@ -391,6 +427,10 @@
           <td>
             <div class="cell-stack">
               <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
+              {#if source.line_webhook}
+                <span>{source.line_webhook.pending.toLocaleString()} pending · {source.line_webhook.failed.toLocaleString()} failed</span>
+                {#if source.line_webhook.invalid_signatures > 0}<span>{source.line_webhook.invalid_signatures.toLocaleString()} invalid signatures since daemon start</span>{/if}
+              {/if}
               {#if source.active_sync}
                 <strong>{source.active_sync.messages_processed.toLocaleString()} processed</strong>
                 <span
@@ -421,7 +461,7 @@
                 size="sm"
                 tone="info"
                 surface="soft"
-                label={`Sync now ${label(source)}`}
+                label={`${source.line_webhook ? 'Process inbox' : 'Sync now'} ${label(source)}`}
                 disabled={Boolean(triggering) || awaitingSourceID === source.id}
                 onclick={() => void syncNow(source)}
               />

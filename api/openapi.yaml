@@ -7368,6 +7368,29 @@ components:
         - issue
         - replayed
       type: object
+    LineWebhookStatus:
+      additionalProperties: true
+      properties:
+        active:
+          type: boolean
+        failed:
+          format: int64
+          type: integer
+        invalid_signatures:
+          format: int64
+          minimum: 0
+          type: integer
+        last_received_at:
+          type: string
+        pending:
+          format: int64
+          type: integer
+      required:
+        - active
+        - pending
+        - failed
+        - invalid_signatures
+      type: object
     ListDeletionsResponse:
       additionalProperties: true
       properties:
@@ -15253,6 +15276,8 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SyncRunStatus"
             - type: "null"
+        line_webhook:
+          $ref: "#/components/schemas/LineWebhookStatus"
         next_sync_at:
           type:
             - string
@@ -15262,6 +15287,8 @@ components:
         scheduled:
           type: boolean
         scheduler_last_error:
+          type: string
+        scheduler_last_run_at:
           type: string
         scheduler_pending:
           type: boolean
@@ -16690,7 +16717,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.28.0
+  version: 3.30.0
 openapi: 3.1.0
 paths:
   /api/ping:

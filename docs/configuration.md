@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-30"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1625,6 +1625,35 @@ and MCP server or CLI. Deploy the backend first: an older backend can ignore
 the subthread request and silently omit child chats. Unsupported CLI commands
 and malformed MCP catalogs fail explicitly. Read the [connection and capture limits](usage/inline.md)
 before choosing media caps or configuring a remote daemon.
+
+### `[[line]]` {#line}
+
+Configure one LINE Official Account Messaging API channel per block. Available
+on `main`. Follow [LINE setup](usage/line.md) to register the channel, restart
+the daemon, and activate its public webhook.
+
+```toml
+[[line]]
+channel_id = "2000000001"
+secret_env = "MSGVAULT_LINE_SECRET_EXAMPLE"
+enabled = true
+```
+
+| Key | Default | Contract |
+|---|---|---|
+| `channel_id` | required | Unique positive decimal channel ID, stored as a string; after trimming whitespace it must be canonical, without a sign or leading zeros, and fit uint64 |
+| `secret_env` | required | Explicit environment-variable name containing the channel secret on the daemon host; surrounding whitespace is trimmed; the name must match `[A-Za-z_][A-Za-z0-9_]*` |
+| `enabled` | `false` | Mount this channel's receiver when the daemon starts |
+
+Disabled blocks are still validated. Duplicate channel IDs and unknown keys in
+`[[line]]` are rejected. The secret value is never stored in this file. Restart
+the daemon or service after changing its channel configuration or secret
+environment; an already running process does not inherit later terminal exports.
+
+The integration has no `schedule`, `media`, or size-cap setting. It receives
+webhooks while the daemon runs and retries due work internally. Attachments
+have a fixed 250 MiB per-file cap; see
+[media and delivery limits](usage/line.md#delivery-and-retries).
 
 ### `[[chatwoot]]` {#chatwoot}
 

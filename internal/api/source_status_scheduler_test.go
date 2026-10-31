@@ -48,6 +48,25 @@ func TestHandleSourceStatusReportsGenericJobQueueState(t *testing.T) {
 	assert.Equal(started.Format(time.RFC3339), *status.SchedulerStartedAt)
 }
 
+func TestHandleSourceStatusReportsLINEJobLastRun(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("line", "2000000001")
+	require.NoError(err)
+	jobName, ok := SchedulerJobNameForSource("line", "2000000001")
+	require.True(ok)
+	lastRun := time.Date(2026, 10, 30, 19, 0, 0, 123456789, time.UTC)
+	sched := newMockScheduler()
+	sched.jobStatuses = []JobStatus{{Name: jobName, Schedule: "@every 30s", LastRun: lastRun}}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	status := sourceStatusFor(t, srv)
+	require.NotNil(status.SchedulerLastRunAt)
+	assert.Equal(lastRun.Format(time.RFC3339Nano), *status.SchedulerLastRunAt)
+}
+
 func TestHandleSourceStatusReportsQueuedAccountSync(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

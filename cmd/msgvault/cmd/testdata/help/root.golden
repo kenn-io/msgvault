@@ -6,7 +6,6 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -14,7 +13,6 @@ Start here:
 Output:
   --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
   --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.
 
 Usage:
   msgvault [command]
@@ -63,6 +61,7 @@ Add and sync sources:
   add-granola            Register a Granola account and validate its API key
   add-imap               Add an IMAP account
   add-inline             Authorize an Inline account
+  add-line               Add a LINE Official Account
   add-matrix             Add a read-only Matrix account as an archive source
   add-muesli             Register a local Muesli meeting database
   add-notion-meetings    Register and validate a Notion AI Meeting Notes source
@@ -94,6 +93,7 @@ Add and sync sources:
   sync-full              Perform a full sync of Gmail accounts
   sync-granola           Sync Granola meeting notes and transcripts
   sync-inline            Archive Inline chats
+  sync-line              Process LINE inbox work
   sync-matrix            Sync joined rooms from Matrix
   sync-muesli            Sync meetings from a local Muesli database
   sync-notion-meetings   Sync Notion AI Meeting Notes
