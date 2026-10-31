@@ -281,13 +281,15 @@ test('Back restores the relationship message and its conversation window after f
   await expect(reading.getByText('Latest chat message')).toBeVisible();
 });
 
-for (const width of [1440, 420]) {
+for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
   test(`person calendar, messages, and files remain usable at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height });
     await prepare(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
     const messages = page.getByRole('grid', { name: 'Messages results' });
+    await page.getByRole('region', { name: 'Person page' }).hover();
+    await page.mouse.wheel(0, 700);
     await expect(messages.getByText('Subject line')).toBeInViewport();
     expect((await messages.boundingBox())!.height).toBeGreaterThan(100);
     await page.getByRole('radio', { name: 'Files', exact: true }).click();

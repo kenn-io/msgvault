@@ -100,5 +100,5 @@
 </div>
 
 <style>
-  .messages { display: flex; min-width: 0; min-height: 0; height: 100%; flex: 1; }
+  .messages { display: flex; min-width: 0; flex: 1 0 auto; }
 </style>

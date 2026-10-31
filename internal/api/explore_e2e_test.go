@@ -1126,5 +1126,4 @@ func TestParticipantTimelineKeepsLinkedAliasesAndExcludesOwnerAbsentEvents(t *te
 	var body ExploreHTTPResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
 	require.Len(body.Rows, 2)
-
 }
