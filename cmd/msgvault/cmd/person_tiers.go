@@ -84,7 +84,7 @@ a year by default), with the rule that put each there, whether they are
 tracked, and the latest day that counted toward the tier. Windows and
 thresholds come from [people.tiers]. Counts follow the timezone and direct
 limit the activity projection was built under. Nothing is written; pass the
-IDs from --json to "person track".`,
+IDs you choose to "person track", which accepts several.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runPersonTiers(command, deps, args, func(st personTiersCommandStore, options store.PersonTierOptions) error {
