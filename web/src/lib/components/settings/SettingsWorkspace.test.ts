@@ -485,6 +485,9 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
   ]);
+  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({
+    endpoint: 'https://changed.example.test'
+  });
 });
 
 it('starts the visual index from Overview and refreshes its row', async () => {
