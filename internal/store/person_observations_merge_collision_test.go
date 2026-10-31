@@ -12,6 +12,22 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func observationDecideAsActor(
+	t *testing.T,
+	st *store.Store,
+	id int64,
+	action personobs.DecisionAction,
+	actor string,
+) personobs.Observation {
+	t.Helper()
+	current := observationGet(t, st, id)
+	result, err := st.DecidePersonObservation(t.Context(), personobs.Decision{
+		ObservationID: id, Action: action, ExpectedUpdatedAt: current.UpdatedAt, Actor: actor,
+	})
+	require.NoError(t, err)
+	return result
+}
+
 func insertMachineObservationForMerge(
 	t *testing.T,
 	st *store.Store,
@@ -120,6 +136,143 @@ func TestObservationMergeCollisionPromotesSurvivorMachineRowToOwner(t *testing.T
 	assert.Equal(personobs.StatusActive, observationGet(t, f.store, incoming).Status)
 	assert.True(observationGet(t, f.store, incoming).Sensitive)
 	assert.Contains(observationGet(t, f.store, incoming).Categories, personobs.CategoryHealth)
+}
+
+func TestObservationSplitPreservesPostMergeOwnerAssertionOfCollision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _, _ := observationBatchFixture(t, "I run")
+	kept := insertMachineObservationForMerge(
+		t, f.store, f.bobPersonID, "owner-reassert-merge", "owner-reassert-evidence",
+	)
+	incoming := observationOwnerRow(t, f.store, f.alicePersonID, "[PERSON] remembers")
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE person_observations SET pinned=TRUE,owner_state='confirmed' WHERE id=?`), incoming)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`INSERT INTO person_observation_categories(observation_id,category,source) VALUES(?,'health','owner')`), incoming)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE person_observations SET sensitive=TRUE WHERE id=?`), incoming)
+	require.NoError(err)
+
+	merge := observationMerge(t, f.store, f.bobPersonID, f.alicePersonID)
+	confirmed, err := f.store.AddOwnerObservation(t.Context(), personobs.OwnerInput{
+		PersonID: f.bobPersonID, Content: "[PERSON] remembers", Actor: "api",
+	})
+	require.NoError(err)
+	require.Equal(kept, confirmed.ID)
+
+	newPersonID := observationSplit(t, f.store, merge, f.aliceID)
+	restored := observationGet(t, f.store, kept)
+	assert.Equal(f.bobPersonID, restored.PersonID)
+	assert.Equal(personobs.OriginOwner, restored.Origin)
+	assert.Nil(restored.GenerationID)
+	assert.Empty(restored.Evidence)
+	assert.Equal(personobs.OwnerStateConfirmed, restored.OwnerState)
+	assert.Contains(restored.Categories, personobs.CategoryHealth)
+	assert.True(restored.Sensitive)
+	assert.NotEqual(newPersonID, restored.PersonID)
+}
+
+func TestObservationSplitRestoresAPIDecisionRejectionToAbsorbedPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, _ := observationBatchFixture(t, "I run")
+	content := "[PERSON] prefers tea"
+	observation := observationOwnerRow(t, f.store, in.PersonID, content)
+	key := observationGet(t, f.store, observation).ContentKey
+	merge := observationMerge(t, f.store, f.bobPersonID, in.PersonID)
+	rejected := observationDecideAsActor(t, f.store, observation, personobs.DecisionActionReject, "api")
+	require.Equal(personobs.StatusRejected, rejected.Status)
+
+	newPersonID := observationSplit(t, f.store, merge, f.aliceID)
+	restored := observationGet(t, f.store, observation)
+	assert.Equal(newPersonID, restored.PersonID)
+	assert.Equal(personobs.StatusRejected, restored.Status)
+	absorbedSuppressions, err := f.store.ListObservationSuppressions(t.Context(), newPersonID)
+	require.NoError(err)
+	require.Len(absorbedSuppressions, 1)
+	assert.Equal(key, absorbedSuppressions[0].ContentKey)
+	assert.Equal("owner-rejected", absorbedSuppressions[0].Reason)
+	assert.Equal("api", absorbedSuppressions[0].Actor)
+	survivorSuppressions, err := f.store.ListObservationSuppressions(t.Context(), f.bobPersonID)
+	require.NoError(err)
+	assert.Empty(survivorSuppressions)
+}
+
+func TestObservationSplitRestoresAPIForgottenSuppressionWithoutEvents(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, _ := observationBatchFixture(t, "I run")
+	content := "[PERSON] likes tea"
+	observation := observationOwnerRow(t, f.store, in.PersonID, content)
+	key := observationGet(t, f.store, observation).ContentKey
+	merge := observationMerge(t, f.store, f.bobPersonID, in.PersonID)
+	observationDecideAsActor(t, f.store, observation, personobs.DecisionActionForget, "api")
+	_, err := f.store.GetPersonObservation(t.Context(), observation)
+	require.Error(err)
+	var events int
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT COUNT(*) FROM person_observation_events WHERE observation_id=?`), observation).Scan(&events))
+	assert.Zero(events)
+
+	newPersonID := observationSplit(t, f.store, merge, f.aliceID)
+	absorbedSuppressions, err := f.store.ListObservationSuppressions(t.Context(), newPersonID)
+	require.NoError(err)
+	require.Len(absorbedSuppressions, 1)
+	assert.Equal(key, absorbedSuppressions[0].ContentKey)
+	assert.Equal("owner-forgotten", absorbedSuppressions[0].Reason)
+	assert.Equal("api", absorbedSuppressions[0].Actor)
+	survivorSuppressions, err := f.store.ListObservationSuppressions(t.Context(), f.bobPersonID)
+	require.NoError(err)
+	assert.Empty(survivorSuppressions)
+}
+
+func TestObservationSplitDoesNotRestoreClearedAPISuppression(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, _ := observationBatchFixture(t, "I run")
+	content := "[PERSON] prefers green tea"
+	observation := observationOwnerRow(t, f.store, in.PersonID, content)
+	key := observationGet(t, f.store, observation).ContentKey
+	merge := observationMerge(t, f.store, f.bobPersonID, in.PersonID)
+	rejected := observationDecideAsActor(t, f.store, observation, personobs.DecisionActionReject, "api")
+	require.Equal(personobs.StatusRejected, rejected.Status)
+	require.NoError(f.store.ClearObservationSuppression(t.Context(), f.bobPersonID, key, "api"))
+
+	newPersonID := observationSplit(t, f.store, merge, f.aliceID)
+	absorbedSuppressions, err := f.store.ListObservationSuppressions(t.Context(), newPersonID)
+	require.NoError(err)
+	assert.Empty(absorbedSuppressions)
+	survivorSuppressions, err := f.store.ListObservationSuppressions(t.Context(), f.bobPersonID)
+	require.NoError(err)
+	assert.Empty(survivorSuppressions)
+	var active int
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
+		SELECT COUNT(*) FROM person_observation_suppressions
+		WHERE person_id IN (?,?) AND content_key=? AND cleared_at IS NULL`), newPersonID, f.bobPersonID, key).Scan(&active))
+	assert.Zero(active)
+}
+
+func TestObservationSplitEndDoesNotCreateSuppression(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, _ := observationBatchFixture(t, "I run")
+	content := "[PERSON] enjoys tea"
+	observation := observationOwnerRow(t, f.store, in.PersonID, content)
+	merge := observationMerge(t, f.store, f.bobPersonID, in.PersonID)
+	ended := observationDecideAsActor(t, f.store, observation, personobs.DecisionActionEnd, "api")
+	require.Equal(personobs.StatusSuperseded, ended.Status)
+
+	newPersonID := observationSplit(t, f.store, merge, f.aliceID)
+	assert.Equal(personobs.StatusSuperseded, observationGet(t, f.store, observation).Status)
+	absorbedSuppressions, err := f.store.ListObservationSuppressions(t.Context(), newPersonID)
+	require.NoError(err)
+	assert.Empty(absorbedSuppressions)
+	survivorSuppressions, err := f.store.ListObservationSuppressions(t.Context(), f.bobPersonID)
+	require.NoError(err)
+	assert.Empty(survivorSuppressions)
 }
 
 func TestObservationProtectedCopyCollisionPromotesSurvivorMachineRow(t *testing.T) {
