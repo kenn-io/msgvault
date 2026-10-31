@@ -910,6 +910,11 @@ func (s *Store) withTxLockedContext(
 	ctx context.Context, opts *sql.TxOptions,
 	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
 ) error {
+	if s.db.tx != nil {
+		// The Matrix recovery view already holds the identity lock and sync fence.
+		return fn(s.db.tx)
+	}
+
 	start := time.Now()
 	slog.Debug("sql tx begin")
 	tx, err := s.db.BeginTx(ctx, opts)

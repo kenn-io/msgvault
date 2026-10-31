@@ -320,7 +320,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 		WHERE %s
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
-	`, textMsgTypeFilterAlias("m2"), where, orderBy), args
+	`, textMsgTypeFilterAlias("m2")+" AND "+store.LiveMessagesWhere("m2", false), where, orderBy), args
 }
 
 // sqliteTimestampLayouts lists the datetime string formats emitted by SQLite
@@ -373,7 +373,7 @@ func sqliteDirection(d SortDirection) string {
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
 func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []any) {
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if filter.SearchQuery != "" {
@@ -556,7 +556,7 @@ func (e *SQLiteEngine) ListConversations(
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, textMsgTypeFilterAlias("m2"), where, orderBy)
+	`, textMsgTypeFilterAlias("m2")+" AND "+store.LiveMessagesWhere("m2", false), where, orderBy)
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -668,7 +668,7 @@ func (e *SQLiteEngine) TextAggregate(
 		return nil, err
 	}
 
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if opts.SourceID != nil {

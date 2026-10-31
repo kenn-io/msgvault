@@ -40,7 +40,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings; available on `main` |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
-| Matrix | [Matrix sync](../usage/matrix.md) | Plaintext history from joined rooms on any homeserver |
+| Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 
