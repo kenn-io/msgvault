@@ -510,6 +510,16 @@ func (c *Client) importCallEntry(
 		return fmt.Errorf("upsert message: %w", err)
 	}
 
+	// Received and placed calls connected; a voicemail's duration is the
+	// recording, and a missed call never connected.
+	connected := 0
+	if record.CallType == fileTypeReceived || record.CallType == fileTypePlaced {
+		connected = durationSeconds(record.Duration)
+	}
+	if err := s.SetMessageMetadataContext(ctx, msgID, store.CallConnectedMetadata(connected)); err != nil {
+		return fmt.Errorf("record call length: %w", err)
+	}
+
 	// Store body
 	if err := s.UpsertMessageBody(
 		msgID,
@@ -1050,6 +1060,20 @@ func nullStr(s string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+// durationSeconds converts an ISO 8601 time duration such as PT1M23S to
+// whole seconds, or 0 when it does not parse.
+func durationSeconds(iso string) int {
+	rest, ok := strings.CutPrefix(iso, "PT")
+	if !ok || rest == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(strings.ToLower(rest))
+	if err != nil || d < 0 {
+		return 0
+	}
+	return int(d / time.Second)
 }
 
 // formatDuration converts ISO 8601 duration to human-readable format.

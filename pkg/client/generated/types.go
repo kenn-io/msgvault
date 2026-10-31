@@ -13554,6 +13554,8 @@ func (p PersonTierRow) Validate() error {
 type PersonTierSignals struct {
 	ActiveDaysLong             int64 `json:"active_days_long"`
 	ActiveDaysShort            int64 `json:"active_days_short"`
+	CallsLong                  int64 `json:"calls_long"`
+	CallsShort                 int64 `json:"calls_short"`
 	ChannelsLong               int64 `json:"channels_long"`
 	ExcludedListEvents         int64 `json:"excluded_list_events"`
 	InboundLong                int64 `json:"inbound_long"`

@@ -13437,6 +13437,12 @@ components:
         active_days_short:
           format: int64
           type: integer
+        calls_long:
+          format: int64
+          type: integer
+        calls_short:
+          format: int64
+          type: integer
         channels_long:
           format: int64
           type: integer
@@ -13469,6 +13475,8 @@ components:
         - active_days_short
         - active_days_long
         - meeting_days_long
+        - calls_short
+        - calls_long
         - channels_long
         - excluded_list_events
         - large_audience_inbound_events
@@ -16635,7 +16643,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.29.0
+  version: 3.30.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

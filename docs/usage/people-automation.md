@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-10-30"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -37,9 +37,11 @@ msgvault person tiers explain 7
 
 By default, preview lists tier 1 (at least two messages each way and six days
 of contact in the last 90 days, or at least two messages each way and three
-days plus either both email and chat or repeated meetings) and tier 2
+days plus either two of email, chat, and calls or repeated meetings) and tier 2
 (messages both ways and three days of contact in the last year, or repeated
-meetings). Each row shows the rule that put the person there, whether they are
+meetings). An answered Synctech or Google Voice call of at least two minutes
+counts as one message each way, so someone you mostly phone is listed too;
+`explain` shows those calls on their own line. Each row shows the rule that put the person there, whether they are
 already tracked, and the latest day that counted toward the tier. A header line
 names the timezone and direct limit the counts were built under. `explain`
 shows every count against its threshold, so you can see why someone is missing.
