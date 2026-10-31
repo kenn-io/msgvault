@@ -930,6 +930,7 @@ type CLIQueryMessageSummary struct {
 	FromName             string     `json:"from_name" validate:"required"`
 	FromPhone            *string    `json:"from_phone,omitzero"`
 	HasAttachments       bool       `json:"has_attachments"`
+	HiddenTextPresent    bool       `json:"hidden_text_present"`
 	ID                   int64      `json:"id"`
 	Labels               []string   `json:"labels" validate:"required"`
 	MatchSnippet         *string    `json:"match_snippet,omitzero"`
@@ -1267,6 +1268,59 @@ func (c CalendarPlannedWrite) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Target", err)
 			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarProjection struct {
+	AllDay   *bool   `json:"all_day" validate:"omitempty"`
+	End      *string `json:"end" validate:"omitempty"`
+	IcalUID  *string `json:"ical_uid" validate:"omitempty"`
+	Sequence *int64  `json:"sequence" validate:"omitempty"`
+	Start    *string `json:"start" validate:"omitempty"`
+	Status   *string `json:"status" validate:"omitempty"`
+	TimeZone *string `json:"time_zone" validate:"omitempty"`
+}
+
+func (c CalendarProjection) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.AllDay).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AllDay", err)
+		}
+	}
+	if c.End != nil {
+		if err := typesValidator.Var(c.End, "required"); err != nil {
+			errors = errors.Append("End", err)
+		}
+	}
+	if c.IcalUID != nil {
+		if err := typesValidator.Var(c.IcalUID, "required"); err != nil {
+			errors = errors.Append("IcalUID", err)
+		}
+	}
+	if v, ok := any(c.Sequence).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Sequence", err)
+		}
+	}
+	if c.Start != nil {
+		if err := typesValidator.Var(c.Start, "required"); err != nil {
+			errors = errors.Append("Start", err)
+		}
+	}
+	if c.Status != nil {
+		if err := typesValidator.Var(c.Status, "required"); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if c.TimeZone != nil {
+		if err := typesValidator.Var(c.TimeZone, "required"); err != nil {
+			errors = errors.Append("TimeZone", err)
 		}
 	}
 	if len(errors) == 0 {
@@ -2639,11 +2693,13 @@ type CliMessageResponse struct {
 	Bcc                  []CliMessageAddress    `json:"bcc" validate:"required"`
 	BodyHTML             string                 `json:"body_html" validate:"required"`
 	BodyText             string                 `json:"body_text" validate:"required"`
+	Calendar             *CalendarProjection    `json:"calendar,omitempty"`
 	Cc                   []CliMessageAddress    `json:"cc" validate:"required"`
 	ConversationID       int64                  `json:"conversation_id"`
 	DeletedAt            *time.Time             `json:"deleted_at" validate:"required"`
 	From                 []CliMessageAddress    `json:"from" validate:"required"`
 	HasAttachments       bool                   `json:"has_attachments"`
+	HiddenTextPresent    bool                   `json:"hidden_text_present"`
 	ID                   int64                  `json:"id"`
 	Labels               []string               `json:"labels" validate:"required"`
 	MessageType          *string                `json:"message_type,omitzero"`
@@ -2686,6 +2742,13 @@ func (c CliMessageResponse) Validate() error {
 	}
 	if err := typesValidator.Var(c.BodyText, "required"); err != nil {
 		errors = errors.Append("BodyText", err)
+	}
+	if c.Calendar != nil {
+		if v, ok := any(c.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(c.Cc, "required"); err != nil {
 		errors = errors.Append("Cc", err)
@@ -6301,30 +6364,31 @@ func (h HybridGenerationSummary) Validate() error {
 }
 
 type HybridSearchItem struct {
-	AttachmentCount  *int64              `json:"attachment_count,omitempty"`
-	AttachmentNames  []string            `json:"attachment_names,omitempty"`
-	Bcc              []string            `json:"bcc,omitempty"`
-	Cc               []string            `json:"cc,omitempty"`
-	ConversationID   *int64              `json:"conversation_id,omitempty"`
-	DeletedAt        *string             `json:"deleted_at,omitzero"`
-	From             string              `json:"from" validate:"required"`
-	FromEmail        *string             `json:"from_email,omitzero"`
-	FromName         *string             `json:"from_name,omitzero"`
-	FromPhone        *string             `json:"from_phone,omitzero"`
-	HasAttachments   bool                `json:"has_attachments"`
-	ID               int64               `json:"id"`
-	Labels           []string            `json:"labels" validate:"required"`
-	Matches          []HybridSearchMatch `json:"matches,omitempty"`
-	MatchesTruncated *bool               `json:"matches_truncated,omitempty"`
-	MessageType      *string             `json:"message_type,omitzero"`
-	Score            *ScoreBreakdown     `json:"score,omitempty"`
-	SentAt           string              `json:"sent_at" validate:"required"`
-	SizeBytes        int64               `json:"size_bytes"`
-	Snippet          string              `json:"snippet" validate:"required"`
-	SourceID         *int64              `json:"source_id,omitempty"`
-	SourceMessageID  *string             `json:"source_message_id,omitzero"`
-	Subject          string              `json:"subject" validate:"required"`
-	To               []string            `json:"to" validate:"required"`
+	AttachmentCount   *int64              `json:"attachment_count,omitempty"`
+	AttachmentNames   []string            `json:"attachment_names,omitempty"`
+	Bcc               []string            `json:"bcc,omitempty"`
+	Cc                []string            `json:"cc,omitempty"`
+	ConversationID    *int64              `json:"conversation_id,omitempty"`
+	DeletedAt         *string             `json:"deleted_at,omitzero"`
+	From              string              `json:"from" validate:"required"`
+	FromEmail         *string             `json:"from_email,omitzero"`
+	FromName          *string             `json:"from_name,omitzero"`
+	FromPhone         *string             `json:"from_phone,omitzero"`
+	HasAttachments    bool                `json:"has_attachments"`
+	HiddenTextPresent bool                `json:"hidden_text_present"`
+	ID                int64               `json:"id"`
+	Labels            []string            `json:"labels" validate:"required"`
+	Matches           []HybridSearchMatch `json:"matches,omitempty"`
+	MatchesTruncated  *bool               `json:"matches_truncated,omitempty"`
+	MessageType       *string             `json:"message_type,omitzero"`
+	Score             *ScoreBreakdown     `json:"score,omitempty"`
+	SentAt            string              `json:"sent_at" validate:"required"`
+	SizeBytes         int64               `json:"size_bytes"`
+	Snippet           string              `json:"snippet" validate:"required"`
+	SourceID          *int64              `json:"source_id,omitempty"`
+	SourceMessageID   *string             `json:"source_message_id,omitzero"`
+	Subject           string              `json:"subject" validate:"required"`
+	To                []string            `json:"to" validate:"required"`
 }
 
 func (h HybridSearchItem) Validate() error {
@@ -7891,13 +7955,14 @@ type MergeRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments    []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc            []string         `json:"bcc,omitempty"`
-	Body           string           `json:"body" validate:"required"`
-	BodyHTML       *string          `json:"body_html,omitzero"`
-	BodyOmitted    *bool            `json:"body_omitted,omitempty"`
-	Cc             []string         `json:"cc,omitempty"`
-	ConversationID *int64           `json:"conversation_id,omitempty"`
+	Attachments    []AttachmentInfo    `json:"attachments" validate:"required"`
+	Bcc            []string            `json:"bcc,omitempty"`
+	Body           string              `json:"body" validate:"required"`
+	BodyHTML       *string             `json:"body_html,omitzero"`
+	BodyOmitted    *bool               `json:"body_omitted,omitempty"`
+	Calendar       *CalendarProjection `json:"calendar,omitempty"`
+	Cc             []string            `json:"cc,omitempty"`
+	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
 	ConversationTitle *string  `json:"conversation_title,omitzero"`
@@ -7907,6 +7972,7 @@ type MessageDetail struct {
 	FromName          *string  `json:"from_name,omitzero"`
 	FromPhone         *string  `json:"from_phone,omitzero"`
 	HasAttachments    bool     `json:"has_attachments"`
+	HiddenTextPresent bool     `json:"hidden_text_present"`
 	ID                int64    `json:"id"`
 	IsFromMe          *bool    `json:"is_from_me,omitempty"`
 	Labels            []string `json:"labels" validate:"required"`
@@ -7935,6 +8001,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Body, "required"); err != nil {
 		errors = errors.Append("Body", err)
+	}
+	if m.Calendar != nil {
+		if v, ok := any(m.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.From, "required"); err != nil {
 		errors = errors.Append("From", err)
@@ -8065,25 +8138,26 @@ func (m MessageReference) Validate() error {
 }
 
 type MessageSummary struct {
-	Bcc             []string `json:"bcc,omitempty"`
-	Cc              []string `json:"cc,omitempty"`
-	ConversationID  *int64   `json:"conversation_id,omitempty"`
-	DeletedAt       *string  `json:"deleted_at,omitzero"`
-	From            string   `json:"from" validate:"required"`
-	FromEmail       *string  `json:"from_email,omitzero"`
-	FromName        *string  `json:"from_name,omitzero"`
-	FromPhone       *string  `json:"from_phone,omitzero"`
-	HasAttachments  bool     `json:"has_attachments"`
-	ID              int64    `json:"id"`
-	Labels          []string `json:"labels" validate:"required"`
-	MessageType     *string  `json:"message_type,omitzero"`
-	SentAt          string   `json:"sent_at" validate:"required"`
-	SizeBytes       int64    `json:"size_bytes"`
-	Snippet         string   `json:"snippet" validate:"required"`
-	SourceID        *int64   `json:"source_id,omitempty"`
-	SourceMessageID *string  `json:"source_message_id,omitzero"`
-	Subject         string   `json:"subject" validate:"required"`
-	To              []string `json:"to" validate:"required"`
+	Bcc               []string `json:"bcc,omitempty"`
+	Cc                []string `json:"cc,omitempty"`
+	ConversationID    *int64   `json:"conversation_id,omitempty"`
+	DeletedAt         *string  `json:"deleted_at,omitzero"`
+	From              string   `json:"from" validate:"required"`
+	FromEmail         *string  `json:"from_email,omitzero"`
+	FromName          *string  `json:"from_name,omitzero"`
+	FromPhone         *string  `json:"from_phone,omitzero"`
+	HasAttachments    bool     `json:"has_attachments"`
+	HiddenTextPresent bool     `json:"hidden_text_present"`
+	ID                int64    `json:"id"`
+	Labels            []string `json:"labels" validate:"required"`
+	MessageType       *string  `json:"message_type,omitzero"`
+	SentAt            string   `json:"sent_at" validate:"required"`
+	SizeBytes         int64    `json:"size_bytes"`
+	Snippet           string   `json:"snippet" validate:"required"`
+	SourceID          *int64   `json:"source_id,omitempty"`
+	SourceMessageID   *string  `json:"source_message_id,omitzero"`
+	Subject           string   `json:"subject" validate:"required"`
+	To                []string `json:"to" validate:"required"`
 }
 
 func (m MessageSummary) Validate() error {

@@ -56,6 +56,7 @@ export * from "./calendarEventTarget";
 export * from "./calendarOccurrence";
 export * from "./calendarOccurrencePage";
 export * from "./calendarPlannedWrite";
+export * from "./calendarProjection";
 export * from "./calendarRequest";
 export * from "./calendarRequestAction";
 export * from "./calendarRequestResponse";

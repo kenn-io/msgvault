@@ -305,33 +305,35 @@ type BodySearchContext struct {
 
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
-	ID              int64    `json:"id"`
-	SourceID        int64    `json:"source_id,omitzero"`
-	SourceMessageID string   `json:"source_message_id,omitempty"`
-	ConversationID  int64    `json:"conversation_id,omitzero"`
-	Subject         string   `json:"subject"`
-	MessageType     string   `json:"message_type,omitempty"`
-	From            string   `json:"from"`
-	FromEmail       string   `json:"from_email,omitempty"`
-	FromName        string   `json:"from_name,omitempty"`
-	FromPhone       string   `json:"from_phone,omitempty"`
-	To              []string `json:"to"`
-	Cc              []string `json:"cc,omitempty"`
-	Bcc             []string `json:"bcc,omitempty"`
-	SentAt          string   `json:"sent_at"`
-	DeletedAt       string   `json:"deleted_at,omitempty"`
-	Snippet         string   `json:"snippet"`
-	Labels          []string `json:"labels"`
-	HasAttach       bool     `json:"has_attachments"`
-	SizeBytes       int64    `json:"size_bytes"`
+	ID                int64    `json:"id"`
+	SourceID          int64    `json:"source_id,omitzero"`
+	SourceMessageID   string   `json:"source_message_id,omitempty"`
+	ConversationID    int64    `json:"conversation_id,omitzero"`
+	Subject           string   `json:"subject"`
+	MessageType       string   `json:"message_type,omitempty"`
+	From              string   `json:"from"`
+	FromEmail         string   `json:"from_email,omitempty"`
+	FromName          string   `json:"from_name,omitempty"`
+	FromPhone         string   `json:"from_phone,omitempty"`
+	To                []string `json:"to"`
+	Cc                []string `json:"cc,omitempty"`
+	Bcc               []string `json:"bcc,omitempty"`
+	SentAt            string   `json:"sent_at"`
+	DeletedAt         string   `json:"deleted_at,omitempty"`
+	Snippet           string   `json:"snippet"`
+	Labels            []string `json:"labels"`
+	HasAttach         bool     `json:"has_attachments"`
+	HiddenTextPresent bool     `json:"hidden_text_present"`
+	SizeBytes         int64    `json:"size_bytes"`
 }
 
 // MessageDetail represents a full message response.
 type MessageDetail struct {
 	MessageSummary
 
-	RelatedMessageID  *int64 `json:"related_message_id,omitempty"`
-	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
+	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
@@ -564,28 +566,30 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		RelatedMessageID:  qMsg.RelatedMessageID,
 		ConversationTitle: qMsg.ConversationTitle,
 
-		ID:              qMsg.ID,
-		SourceID:        qMsg.SourceID,
-		SourceMessageID: qMsg.SourceMessageID,
-		ConversationID:  qMsg.ConversationID,
-		Subject:         qMsg.Subject,
-		MessageType:     qMsg.MessageType,
-		From:            from,
-		FromEmail:       fromEmail,
-		FromName:        fromName,
-		To:              toAddrs,
-		Cc:              ccAddrs,
-		Bcc:             bccAddrs,
-		SentAt:          qMsg.SentAt.UTC().Format(time.RFC3339),
-		DeletedAt:       formatDeletedAt(qMsg.DeletedAt),
-		Snippet:         qMsg.Snippet,
-		Labels:          labels,
-		HasAttach:       qMsg.HasAttachments,
-		SizeBytes:       qMsg.SizeEstimate,
-		IsFromMe:        qMsg.IsFromMe,
-		Body:            body,
-		BodyHTML:        qMsg.BodyHTML,
-		Attachments:     attachments,
+		ID:                qMsg.ID,
+		SourceID:          qMsg.SourceID,
+		SourceMessageID:   qMsg.SourceMessageID,
+		ConversationID:    qMsg.ConversationID,
+		Subject:           qMsg.Subject,
+		MessageType:       qMsg.MessageType,
+		From:              from,
+		FromEmail:         fromEmail,
+		FromName:          fromName,
+		To:                toAddrs,
+		Cc:                ccAddrs,
+		Bcc:               bccAddrs,
+		SentAt:            qMsg.SentAt.UTC().Format(time.RFC3339),
+		DeletedAt:         formatDeletedAt(qMsg.DeletedAt),
+		Snippet:           qMsg.Snippet,
+		Labels:            labels,
+		HasAttach:         qMsg.HasAttachments,
+		HiddenTextPresent: qMsg.HiddenTextPresent,
+		SizeBytes:         qMsg.SizeEstimate,
+		IsFromMe:          qMsg.IsFromMe,
+		Calendar:          qMsg.Calendar,
+		Body:              body,
+		BodyHTML:          qMsg.BodyHTML,
+		Attachments:       attachments,
 	}
 }
 
@@ -600,25 +604,26 @@ func toMessageSummary(m APIMessage) MessageSummary {
 		labels = []string{}
 	}
 	return MessageSummary{
-		ID:              m.ID,
-		SourceID:        m.SourceID,
-		SourceMessageID: m.SourceMessageID,
-		ConversationID:  m.ConversationID,
-		Subject:         m.Subject,
-		MessageType:     m.MessageType,
-		From:            m.From,
-		FromEmail:       m.FromEmail,
-		FromName:        m.FromName,
-		FromPhone:       m.FromPhone,
-		To:              to,
-		Cc:              m.Cc,
-		Bcc:             m.Bcc,
-		SentAt:          m.SentAt.UTC().Format(time.RFC3339),
-		DeletedAt:       formatDeletedAt(m.DeletedAt),
-		Snippet:         m.Snippet,
-		Labels:          labels,
-		HasAttach:       m.HasAttachments,
-		SizeBytes:       m.SizeEstimate,
+		ID:                m.ID,
+		SourceID:          m.SourceID,
+		SourceMessageID:   m.SourceMessageID,
+		ConversationID:    m.ConversationID,
+		Subject:           m.Subject,
+		MessageType:       m.MessageType,
+		From:              m.From,
+		FromEmail:         m.FromEmail,
+		FromName:          m.FromName,
+		FromPhone:         m.FromPhone,
+		To:                to,
+		Cc:                m.Cc,
+		Bcc:               m.Bcc,
+		SentAt:            m.SentAt.UTC().Format(time.RFC3339),
+		DeletedAt:         formatDeletedAt(m.DeletedAt),
+		Snippet:           m.Snippet,
+		Labels:            labels,
+		HasAttach:         m.HasAttachments,
+		HiddenTextPresent: m.HiddenTextPresent,
+		SizeBytes:         m.SizeEstimate,
 	}
 }
 
@@ -806,6 +811,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		Body:              msg.Body,
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,
+		Calendar:          msg.Calendar,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))
@@ -2834,25 +2840,26 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 		from = m.FromName
 	}
 	return MessageSummary{
-		ID:              m.ID,
-		SourceID:        m.SourceID,
-		SourceMessageID: m.SourceMessageID,
-		ConversationID:  m.ConversationID,
-		Subject:         m.Subject,
-		MessageType:     m.MessageType,
-		From:            from,
-		FromEmail:       m.FromEmail,
-		FromName:        m.FromName,
-		FromPhone:       m.FromPhone,
-		To:              formatQueryAddresses(m.To),
-		Cc:              formatQueryAddresses(m.Cc),
-		Bcc:             formatQueryAddresses(m.Bcc),
-		SentAt:          m.SentAt.UTC().Format(time.RFC3339),
-		DeletedAt:       formatDeletedAt(m.DeletedAt),
-		Snippet:         m.Snippet,
-		Labels:          labels,
-		HasAttach:       m.HasAttachments,
-		SizeBytes:       m.SizeEstimate,
+		ID:                m.ID,
+		SourceID:          m.SourceID,
+		SourceMessageID:   m.SourceMessageID,
+		ConversationID:    m.ConversationID,
+		Subject:           m.Subject,
+		MessageType:       m.MessageType,
+		From:              from,
+		FromEmail:         m.FromEmail,
+		FromName:          m.FromName,
+		FromPhone:         m.FromPhone,
+		To:                formatQueryAddresses(m.To),
+		Cc:                formatQueryAddresses(m.Cc),
+		Bcc:               formatQueryAddresses(m.Bcc),
+		SentAt:            m.SentAt.UTC().Format(time.RFC3339),
+		DeletedAt:         formatDeletedAt(m.DeletedAt),
+		Snippet:           m.Snippet,
+		Labels:            labels,
+		HasAttach:         m.HasAttachments,
+		HiddenTextPresent: m.HiddenTextPresent,
+		SizeBytes:         m.SizeEstimate,
 	}
 }
 

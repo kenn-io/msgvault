@@ -1091,6 +1091,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -1126,6 +1128,7 @@ components:
         web_url:
           type: string
       required:
+        - hidden_text_present
         - id
         - source_message_id
         - conversation_id
@@ -1432,6 +1435,47 @@ components:
       required:
         - action
         - calendar_id
+      type: object
+    CalendarProjection:
+      additionalProperties: true
+      properties:
+        all_day:
+          type:
+            - boolean
+            - "null"
+        end:
+          type:
+            - string
+            - "null"
+        ical_uid:
+          type:
+            - string
+            - "null"
+        sequence:
+          format: int64
+          type:
+            - integer
+            - "null"
+        start:
+          type:
+            - string
+            - "null"
+        status:
+          type:
+            - string
+            - "null"
+        time_zone:
+          type:
+            - string
+            - "null"
+      required:
+        - status
+        - sequence
+        - start
+        - end
+        - all_day
+        - time_zone
+        - ical_uid
       type: object
     CalendarRequest:
       additionalProperties: false
@@ -2766,6 +2810,8 @@ components:
           type: string
         body_text:
           type: string
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
@@ -2783,6 +2829,8 @@ components:
             $ref: "#/components/schemas/CliMessageAddress"
           type: array
         has_attachments:
+          type: boolean
+        hidden_text_present:
           type: boolean
         id:
           format: int64
@@ -2833,6 +2881,7 @@ components:
         - deleted_at
         - size_estimate
         - has_attachments
+        - hidden_text_present
         - from
         - to
         - cc
@@ -6629,6 +6678,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -6673,6 +6724,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     HybridSearchMatch:
@@ -8104,6 +8156,9 @@ components:
           type: string
         body_omitted:
           type: boolean
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
+          description: "Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."
         cc:
           items:
             type: string
@@ -8125,6 +8180,8 @@ components:
         from_phone:
           type: string
         has_attachments:
+          type: boolean
+        hidden_text_present:
           type: boolean
         id:
           format: int64
@@ -8169,6 +8226,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     MessageListResponse:
@@ -8310,6 +8368,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -8346,6 +8406,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     MessageTag:
@@ -16739,7 +16800,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.28.0
+  version: 3.29.0
 openapi: 3.1.0
 paths:
   /api/ping:

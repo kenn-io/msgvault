@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-28"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -821,6 +821,31 @@ where the listing is intentionally incomplete. Gmail source-deletion
 reconciliation happens only during the complete mailbox recovery described
 under [`sync`](#sync).
 
+### Gmail Spam and Trash coverage
+
+Gmail full sync includes messages in Spam and Trash. A full sync with a Gmail
+`--query`, `--after`, `--before`, or `--limit` is still scoped by those options.
+To discover historical Spam and Trash messages omitted by an earlier full sync,
+run a complete full sync for the account with none of those options:
+
+```bash
+msgvault sync-full account@example.com
+```
+
+An idle incremental sync cannot discover older omitted messages unless Gmail
+reports a new history event for them. The full listing resumes from its saved
+checkpoint when the request scope matches; after this coverage change, an older
+narrower checkpoint restarts from the first page. Previously archived messages
+are not duplicated. Gmail can return only messages that still exist in the
+mailbox; permanently deleted messages cannot be backfilled.
+
+At the current 500-ID page size, a listing of N matching messages needs roughly
+`ceil(N / 500)` Gmail list requests. Each newly discovered message also needs one
+RAW-message fetch; retries can add requests. Previously archived messages still
+appear in the listing but are not downloaded again. Actual quota use, transfer,
+storage, and first-full duration depend on mailbox size, newly discovered mail,
+and retries. Plan for additional API use and storage on large accounts.
+
 ---
 
 ## sync
@@ -862,6 +887,23 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+Recovery saves its phase and the history cursor captured before enumeration.
+After an interruption, `sync` or an unfiltered `sync-full` resumes that recovery.
+An interrupted presence inventory is collected again before reconciling absence.
+Once the catch-up phase is durably checkpointed, retries consume History from
+the saved cursor without repeating the full listings. An interruption between
+the reconciliation commit and that checkpoint repeats reconciliation safely.
+The source cursor advances only after catch-up succeeds. If the saved recovery
+cursor also expires, msgvault starts a new complete recovery; one invocation
+attempts at most one such restart.
+Like an ordinary sync, recovery records per-message fetch and ingest
+errors without stopping, so one failing message cannot hold the account in
+recovery. Fetches that fail during catch-up are retried by the next `sync`.
+
+While recovery is pending, a Gmail `sync-full` with query, date, or limit
+filters is rejected. Finish the complete recovery first. `--noresume` restarts
+the complete recovery from a fresh cursor.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use
@@ -2595,6 +2637,9 @@ attachments of the message. JSON includes `snippet` (the stored preview) and `co
 The `filename:` operator requires daemon API schema 3.14.0 or newer.
 FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
 its array output; vector/hybrid keep their object containing `results`.
+On newer `main` builds, every JSON result includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. False does not guarantee that text is visible.
+See `show-message` below for the detector and one-time backfill.
 
 Use hybrid for natural-language intent with lexical clues, and vector for
 meaning alone. Date operators filter before ranking; `--sort date` only sorts
@@ -4596,6 +4641,20 @@ preserved. With JSON, cleaning changes
 
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
+On newer `main` builds, JSON includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. The check uses a set of
+inline-style heuristics, plus `hidden` and legacy color attributes. Non-blank
+HTML that fails to parse also sets the flag. Text output writes
+`Warning: this message's HTML may hide text.` to stderr when flagged, including
+with `--body-only`. Message bodies stay unchanged. The check excludes
+stylesheets and browser layout. False does not guarantee that text is visible.
+Many newsletters hide a preview line, called a preheader, and those set the flag
+too. The flag marks hidden text rather than malicious intent.
+MCP `get_message` and `search_in_message`
+return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
+also include it on every result row. Archive schema 16 flags older mail during
+a one-time backfill at archive initialization; new HTML writes refresh the flag.
+
 ## show-thread
 
 On newer `main` builds, read a conversation in chronological order with quoted
@@ -4618,6 +4677,10 @@ JSON includes `conversation_id`, `total`, `offset`, `has_more`, and `messages`
 containing message details with cleaned `body_text`. Text and JSON use the same
 `--strip-quoted` policy. Pass `--strip-quoted=false` to
 keep the archived body text unchanged.
+
+Each message in `show-thread --json` includes `hidden_text_present`, using the
+same check as `show-message`. Text output prints the same stderr warning once
+when any message on the shown page is flagged.
 
 ---
 

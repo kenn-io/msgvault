@@ -22,6 +22,7 @@ const (
 	schemaTypeArray    = "array"
 	schema202012       = "https://json-schema.org/draft/2020-12/schema"
 	maxJSONSafeInteger = float64(9007199254740991)
+	hiddenTextFlagDoc  = "hidden_text_present is a best-effort flag. True means the stored HTML likely hides readable text, which includes newsletter preheaders, so it marks hidden text rather than malicious intent. False does not guarantee that text is visible. "
 )
 
 type toolSecurityClass uint8
@@ -575,6 +576,7 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 	searchIntro := "Keyword full-text search over message bodies. " +
 		"Returns messages whose body text contains the query terms, newest-first, " +
 		"each with matches — up to 5 excerpt snippets centered on matched terms. " +
+		hiddenTextFlagDoc +
 		"Backend excerpts may omit char_offset and line when efficient source locations are unavailable; use search_in_message when exact locations are needed. " +
 		"When matches_truncated is true on a hit, more than 5 excerpts matched — use search_in_message or get_message to read the full body. " +
 		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only and do not satisfy the free-text requirement. " +
@@ -658,6 +660,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
+			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
 			"To read sequentially: call again with offset += body_returned. "+
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
@@ -793,7 +796,7 @@ func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition
 	}
 	return readDefinition(
 		ToolSearchInMessage,
-		description,
+		description+" "+hiddenTextFlagDoc,
 		closedObject(properties, "id", toolArgQuery),
 		outputSchemaFor[searchInMessageResponse](),
 		(*handlers).searchInMessage,
@@ -990,7 +993,11 @@ type searchMetadataResponse struct {
 
 	IndexState string `json:"index_state,omitempty"`
 }
-type searchInMessageResponse paginatedResponse[messageMatch]
+type searchInMessageResponse struct {
+	paginatedResponse[messageMatch]
+
+	HiddenTextPresent bool `json:"hidden_text_present"`
+}
 type listMessagesResponse paginatedResponse[query.MessageSummary]
 type aggregateResponse struct {
 	Data []query.AggregateRow `json:"data"`
