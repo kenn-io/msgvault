@@ -525,21 +525,38 @@ func (s *Store) attachActivityCounterpartsQueryerContext(
 		return candidates, nil
 	}
 
-	byMessageID := make(map[int64]*ActivityCandidate, len(candidates))
-	messageIDs := make([]any, 0, len(candidates))
-	for index := range candidates {
-		byMessageID[candidates[index].MessageID] = &candidates[index]
-		messageIDs = append(messageIDs, candidates[index].MessageID)
+	ids := make([]int64, len(candidates))
+	for i := range candidates {
+		ids[i] = candidates[i].MessageID
+	}
+	counterparts, err := s.loadActivityCounterpartsContext(ctx, queryer, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range candidates {
+		candidates[i].Counterparts = counterparts[candidates[i].MessageID]
+	}
+	return candidates, nil
+}
+
+// loadActivityCounterpartsContext is shared by projection and read-time classification.
+func (s *Store) loadActivityCounterpartsContext(ctx context.Context, queryer contextRowsQuerier, ids []int64) (map[int64][]ActivityCounterpart, error) {
+	byMessageID := make(map[int64]*ActivityCandidate, len(ids))
+	messageIDs := make([]any, 0, len(ids))
+	for _, id := range ids {
+		byMessageID[id] = &ActivityCandidate{MessageID: id}
+		messageIDs = append(messageIDs, id)
 	}
 	for start := 0; start < len(messageIDs); start += activityCounterpartIDChunk {
-		end := min(start+activityCounterpartIDChunk, len(messageIDs))
-		if err := s.attachActivityCounterpartChunkContext(
-			ctx, queryer, byMessageID, messageIDs[start:end],
-		); err != nil {
+		if err := s.attachActivityCounterpartChunkContext(ctx, queryer, byMessageID, messageIDs[start:min(start+activityCounterpartIDChunk, len(messageIDs))]); err != nil {
 			return nil, err
 		}
 	}
-	return candidates, nil
+	result := make(map[int64][]ActivityCounterpart, len(ids))
+	for id, c := range byMessageID {
+		result[id] = c.Counterparts
+	}
+	return result, nil
 }
 
 func (s *Store) attachActivityCounterpartChunkContext(
@@ -550,8 +567,64 @@ func (s *Store) attachActivityCounterpartChunkContext(
 ) error {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messageIDs)), ",")
 
-	query := `
-		WITH direct AS (
+	query := activityCounterpartsSQL(placeholders)
+
+	args := make([]any, 0, len(messageIDs)*4)
+	args = append(args, messageIDs...)
+	args = append(args, messageIDs...)
+	args = append(args, messageIDs...)
+	args = append(args, messageIDs...)
+	rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(query), args...)
+	if err != nil {
+		return fmt.Errorf("load activity counterparts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			messageID     int64
+			participantID int64
+			recipientType string
+			personID      *int64
+			isOwner       int
+			ownerAddress  string
+		)
+		if err := rows.Scan(
+			&messageID,
+			&participantID,
+			&recipientType,
+			&personID,
+			&isOwner,
+			&ownerAddress,
+		); err != nil {
+			return fmt.Errorf("scan activity counterpart: %w", err)
+		}
+		candidate, found := byMessageID[messageID]
+		if !found {
+			continue
+		}
+		candidate.Counterparts = append(candidate.Counterparts, ActivityCounterpart{
+			ParticipantID: participantID,
+			PersonID:      personID,
+			RecipientType: recipientType,
+			IsOwner:       isOwner != 0,
+			OwnerAddress:  ownerAddress,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate activity counterparts: %w", err)
+	}
+	return nil
+}
+
+// activityCounterpartsSQL keeps every read and projection on the same population.
+// selection is an internal placeholder list or a scoped message-ID subquery.
+func activityCounterpartsSQL(placeholders string) string {
+	// Direct recipients are reused by the sender and room fallbacks. Keep the
+	// selected ID set out of their correlated lookups so SQLite does not rebuild
+	// that set for each message or counterpart.
+	return `
+		WITH direct AS MATERIALIZED (
 			SELECT mr.message_id, mr.participant_id, mr.recipient_type,
 			       mr.email_address AS envelope_address
 			FROM message_recipients mr
@@ -704,51 +777,4 @@ func (s *Store) attachActivityCounterpartChunkContext(
 		FROM counterparts cp
 		LEFT JOIN person_participants pp ON pp.participant_id = cp.participant_id
 		ORDER BY cp.message_id, cp.participant_id, cp.recipient_type`
-
-	args := make([]any, 0, len(messageIDs)*4)
-	args = append(args, messageIDs...)
-	args = append(args, messageIDs...)
-	args = append(args, messageIDs...)
-	args = append(args, messageIDs...)
-	rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(query), args...)
-	if err != nil {
-		return fmt.Errorf("load activity counterparts: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var (
-			messageID     int64
-			participantID int64
-			recipientType string
-			personID      *int64
-			isOwner       int
-			ownerAddress  string
-		)
-		if err := rows.Scan(
-			&messageID,
-			&participantID,
-			&recipientType,
-			&personID,
-			&isOwner,
-			&ownerAddress,
-		); err != nil {
-			return fmt.Errorf("scan activity counterpart: %w", err)
-		}
-		candidate, found := byMessageID[messageID]
-		if !found {
-			continue
-		}
-		candidate.Counterparts = append(candidate.Counterparts, ActivityCounterpart{
-			ParticipantID: participantID,
-			PersonID:      personID,
-			RecipientType: recipientType,
-			IsOwner:       isOwner != 0,
-			OwnerAddress:  ownerAddress,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate activity counterparts: %w", err)
-	}
-	return nil
 }

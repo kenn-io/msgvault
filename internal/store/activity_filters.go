@@ -1,0 +1,199 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"go.kenn.io/msgvault/internal/archivemarker"
+	"go.kenn.io/msgvault/internal/persontiers"
+)
+
+type activityReadWindow struct {
+	FromDate, ToDate string
+	After, Before    *time.Time
+	ConversationID   int64
+	Subject          ActivitySubject
+}
+
+func normalizedActivityFilters(f ActivityFilters) (ActivityFilters, error) {
+	if f.MaxDirect < 0 {
+		return f, fmt.Errorf("%w: negative direct counterpart limit", ErrInvalidActivityRequest)
+	}
+	if f.Exclusions.ShortWindowDays == 0 && f.Exclusions.LongWindowDays == 0 && f.Exclusions.ExcludeAddressPatterns == nil && f.Exclusions.ExcludeDomainPatterns == nil {
+		f.Exclusions = persontiers.DefaultConfig()
+	}
+	if err := f.Exclusions.Validate(); err != nil {
+		return f, fmt.Errorf("%w: %w", ErrInvalidActivityRequest, err)
+	}
+	return f, nil
+}
+
+func activitySubjectClause(subject ActivitySubject, message string) (string, []any, error) {
+	if subject.PersonID < 0 || (subject.PersonID != 0 && len(subject.ParticipantIDs) > 0) {
+		return "", nil, fmt.Errorf("%w: select one activity subject", ErrInvalidActivityRequest)
+	}
+	if subject.PersonID > 0 {
+		return ` AND EXISTS(SELECT 1 FROM person_participants subject_pp WHERE subject_pp.person_id=? AND ` + activityParticipantMatchSQL(message, "subject_pp.participant_id") + `)`, []any{subject.PersonID}, nil
+	}
+	if len(subject.ParticipantIDs) > 0 {
+		args := make([]any, len(subject.ParticipantIDs))
+		for i, id := range subject.ParticipantIDs {
+			if id <= 0 {
+				return "", nil, fmt.Errorf("%w: invalid participant id", ErrInvalidActivityRequest)
+			}
+			args[i] = id
+		}
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+		return ` AND EXISTS(SELECT 1 FROM participants subject_p WHERE subject_p.id IN (` + marks + `) AND ` + activityParticipantMatchSQL(message, "subject_p.id") + `)`, args, nil
+	}
+	return "", nil, nil
+}
+
+// exclusionPatternsSQL implements Config's exact and trailing-star patterns,
+// without turning SQL wildcard characters in a configured pattern into rules.
+func exclusionPatternsSQL(expr string, patterns []string) (string, []any) {
+	terms := []string{}
+	args := []any{}
+	for _, pattern := range patterns {
+		if prefix, wildcard := strings.CutSuffix(pattern, "*"); wildcard {
+			terms = append(terms, `SUBSTR(`+expr+`,1,?)=?`)
+			args = append(args, len([]rune(prefix)), prefix)
+		} else {
+			terms = append(terms, expr+`=?`)
+			args = append(args, pattern)
+		}
+	}
+	if len(terms) == 0 {
+		return "FALSE", args
+	}
+	return "(" + strings.Join(terms, " OR ") + ")", args
+}
+
+// activityReadCTE applies authorization and live eligibility before identity,
+// copy selection or aggregation. It exposes complete representatives and their
+// per-message counted flag; callers add logical grouping before page limits.
+func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f ActivityFilters) (string, []any, error) {
+	if w.ConversationID < 0 || (w.After != nil && w.Before != nil && !w.After.Before(*w.Before)) {
+		return "", nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
+	}
+	where := s.activityLiveEligibleSQL("m", "src") + ` AND ` + FullActivityEventWhere("ae")
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	where += scope
+	windowWhere := []string{}
+	windowArgs := []any{}
+	if w.ConversationID > 0 {
+		windowWhere = append(windowWhere, `ae.message_id IN (SELECT id FROM messages WHERE conversation_id=?)`)
+		windowArgs = append(windowArgs, w.ConversationID)
+	}
+	if w.After != nil {
+		windowWhere = append(windowWhere, `ae.occurred_at>=?`)
+		windowArgs = append(windowArgs, *w.After)
+	}
+	if w.Before != nil {
+		windowWhere = append(windowWhere, `ae.occurred_at<?`)
+		windowArgs = append(windowArgs, *w.Before)
+	}
+	if w.After == nil && w.Before == nil && (w.FromDate != "" || w.ToDate != "") {
+		if !validActivityDate(w.FromDate) || !validActivityDate(w.ToDate) || w.FromDate > w.ToDate {
+			return "", nil, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
+		}
+		windowWhere = append(windowWhere, `ae.local_date BETWEEN ? AND ?`)
+		windowArgs = append(windowArgs, w.FromDate, w.ToDate)
+	}
+	prefix, events := "WITH ", "activity_events"
+	if len(windowArgs) > 0 {
+		// Fence the indexed activity window or conversation IDs before live policy.
+		// Otherwise SQLite can start from sources and scan every live message
+		// before checking the much smaller date or timestamp range.
+		prefix += `activity_window AS MATERIALIZED (SELECT * FROM activity_events ae WHERE ` + strings.Join(windowWhere, " AND ") + `), `
+		events = "activity_window"
+		args = append(windowArgs, args...)
+	}
+	subject, subjectArgs, err := activitySubjectClause(w.Subject, "m")
+	if err != nil {
+		return "", nil, err
+	}
+	where += subject
+	args = append(args, subjectArgs...)
+	maxDirect := f.MaxDirect
+	if maxDirect == 0 {
+		maxDirect = DefaultMaxDirectActivityCounterparts
+	}
+	maxSQL := strconv.Itoa(maxDirect)
+	address := `LOWER(COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),''))`
+	at := `INSTR(` + address + `,'@')`
+	if s.IsPostgreSQL() {
+		at = `STRPOS(` + address + `,'@')`
+	}
+	domain, domainArgs := exclusionPatternsSQL(`SUBSTR(`+address+`,`+at+`+1)`, f.Exclusions.ExcludeDomainPatterns)
+	local, localArgs := exclusionPatternsSQL(`SUBSTR(`+address+`,1,`+at+`-1)`, f.Exclusions.ExcludeAddressPatterns)
+	args = append(args, domainArgs...)
+	args = append(args, localArgs...)
+	owner := `(cp.is_owner=1 OR EXISTS(SELECT 1 FROM population own WHERE own.message_id=cp.message_id AND own.is_owner=1 AND (own.participant_id=cp.participant_id OR (cp.person_id IS NOT NULL AND own.person_id=cp.person_id))))`
+	hasPhone := `(COALESCE(p.phone_number,'')<>'' OR EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type<>'email' AND TRIM(pi.identifier_value)<>''))`
+	exclusion := `CASE WHEN ` + owner + ` THEN 'owner' WHEN ` + at + `>0 AND ` + domain + ` THEN 'calendar_room' WHEN ` + at + `>0 AND NOT ` + hasPhone + ` AND ` + local + ` THEN 'automated_address' ELSE '' END`
+	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
+	// Persisted person links carry the projector's strongest saved-person role.
+	// An explicit limit reclassifies both saved and unsaved paths consistently.
+	if f.MaxDirect == 0 {
+		role = `COALESCE(aep.role,` + role + `)`
+	}
+	evidence := `CASE WHEN e.direction='outbound' AND audience.n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END`
+	if f.MaxDirect == 0 {
+		evidence = `COALESCE(aep.evidence,` + evidence + `)`
+	}
+	listExcluded := "0"
+	if f.Exclusions.ExcludeListMessages {
+		listExcluded = `CASE WHEN e.list_id IS NOT NULL THEN 1 ELSE 0 END`
+	}
+	large := `CASE WHEN e.direction='inbound' AND (
+ CASE WHEN e.channel='chat' THEN (SELECT COUNT(*) FROM conversation_participants chat_cp WHERE chat_cp.conversation_id=e.conversation_id AND NOT ` + personTierOwnerMatch("chat_cp.participant_id", "e.source_id") + `)
+ ELSE (SELECT COUNT(DISTINCT mail_mr.participant_id) FROM message_recipients mail_mr WHERE mail_mr.message_id=e.message_id AND mail_mr.recipient_type IN ('to','cc','bcc') AND NOT ` + personTierOwnerMatch("mail_mr.participant_id", "e.source_id") + `) END)>` + maxSQL + ` THEN 1 ELSE 0 END`
+	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "e.direction", RefKind: "e.ref_kind", ListExcluded: listExcluded, LargeInbound: "e.large_inbound"})
+	// These reused sets must be evaluated once. SQLite can otherwise inline
+	// them into each correlated fact lookup and rebuild the scoped population
+	// repeatedly while scoring a burst. The fences retain all eligible rows
+	// before copy selection, grouping and pagination.
+	query := prefix + `eligible AS MATERIALIZED (
+ SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
+ m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet
+ FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id WHERE ` + where + `
+ ), population AS MATERIALIZED (` + activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), exclusions AS (
+ SELECT cp.*,` + exclusion + ` AS excluded FROM population cp JOIN participants p ON p.id=cp.participant_id
+ ), audiences AS (
+ SELECT message_id,COUNT(DISTINCT CASE WHEN person_id IS NOT NULL THEN 'person:'||CAST(person_id AS TEXT) ELSE 'participant:'||CAST(participant_id AS TEXT) END) AS n
+ FROM exclusions WHERE excluded<>'owner' GROUP BY message_id
+ ), facts AS MATERIALIZED (
+ SELECT cp.*,` + role + ` AS role,` + evidence + ` AS evidence
+ FROM exclusions cp JOIN eligible e ON e.message_id=cp.message_id
+ LEFT JOIN audiences audience ON audience.message_id=e.message_id
+ LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id
+ ), message_flags AS (
+ SELECT e.*,` + large + ` AS large_inbound,
+ CASE WHEN e.source_type='matrix' AND e.snippet='` + archivemarker.EncryptedMessagePlaceholder + `' THEN 1 ELSE 0 END AS encrypted
+ FROM eligible e
+ ), scored AS (
+ SELECT e.*,
+ CASE WHEN e.encrypted=0 AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.excluded='' AND ` + counted + `) THEN 1 ELSE 0 END AS counted,
+ CASE WHEN e.list_id IS NOT NULL OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
+ FROM message_flags e
+ ), copies AS (
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY source_id,message_id) AS copy_rank,
+ COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
+ FROM scored e
+ ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
+	return query, args, nil
+}
+
+const activityBurstGroupsCTE = `, burst_groups AS (
+ SELECT source_id,COALESCE(conversation_id,0) AS conversation_id,local_date,MIN(channel) AS channel,
+ 'burst:'||CAST(source_id AS TEXT)||':'||CAST(COALESCE(conversation_id,0) AS TEXT)||':'||local_date AS key,
+ MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
+ SUM(CASE WHEN direction='inbound' THEN counted ELSE 0 END) AS inbound,
+ SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
+ COUNT(*) AS message_count,CASE WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
+ FROM representatives GROUP BY source_id,conversation_id,local_date
+)`
