@@ -330,8 +330,9 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
-	RelatedMessageID  *int64 `json:"related_message_id,omitempty"`
-	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
+	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
@@ -583,6 +584,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		HasAttach:       qMsg.HasAttachments,
 		SizeBytes:       qMsg.SizeEstimate,
 		IsFromMe:        qMsg.IsFromMe,
+		Calendar:        qMsg.Calendar,
 		Body:            body,
 		BodyHTML:        qMsg.BodyHTML,
 		Attachments:     attachments,
@@ -806,6 +808,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		Body:              msg.Body,
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,
+		Calendar:          msg.Calendar,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-29"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -178,7 +178,9 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.28.0**.
+it is separate from the binary release version. The current schema is **3.29.0**.
+
+Schema 3.29.0 adds owner-only call evidence import, inspection and person summaries. It also adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,

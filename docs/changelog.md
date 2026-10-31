@@ -8,9 +8,14 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
+- Gmail full sync now includes Spam and Trash. Existing archives need an
+  explicit unfiltered, unlimited `sync-full` to discover older messages omitted
+  by earlier full syncs; that backfill can increase Gmail API use, transfer, and
+  local storage. Incremental sync does not backfill old omissions by itself.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Drafts and unsent messages no longer count as contact in relationship temperature, the relationship calendar, the relationships list, person and domain timelines, or chat inbox summaries. Full cache checks at startup, after syncs, and during explicit cache builds detect sent-state changes; automatic refreshes respect the configured minimum rebuild interval. Analytics cache schema 33 triggers a one-time rebuild on upgrade without re-importing messages.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
