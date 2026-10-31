@@ -504,6 +504,30 @@ test('typing in the top bar narrows People without pressing Search', async ({ pa
   expect(queries).toEqual(['bob']);
 });
 
+test('closing the People reading pane by keyboard keeps Escape returning to the list', async ({ page }) => {
+  await prepare(page);
+  await page.setViewportSize({ width: 640, height: 900 });
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('grid', { name: 'People results' });
+  await expect(list.getByText('Alice Example')).toBeVisible();
+  await list.focus();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Enter');
+  const messages = page.getByRole('grid', { name: 'Messages results' });
+  await expect(messages.getByText('Subject line')).toBeVisible();
+  await messages.focus();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Enter');
+  const reading = page.getByRole('complementary', { name: /Reading pane:/ });
+  const close = reading.getByRole('button', { name: 'Close reading pane', exact: true });
+  await close.focus();
+  await page.keyboard.press('Enter');
+  await expect(reading).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(list).toBeVisible();
+  await expect(list).toBeFocused();
+});
+
 for (const close of ['Escape', 'Back to People']) {
   test(`narrow People moves focus into the person page and restores the grid with ${close}`, async ({ page }) => {
     await prepare(page);
