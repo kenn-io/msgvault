@@ -28,6 +28,18 @@ function setup(paged: boolean, row = saved) {
   const props = { client, identityScope: { kind: 'person' as const, id: 1 }, target: 'cluster:1', predicate: {}, onOpenFiles: vi.fn(), onFiltersChange: vi.fn(), onClearPeriod: vi.fn() };
   return { props, requests };
 }
+it('offers Clear selection without Review deletion for selected person messages', async () => {
+  const { props } = setup(false);
+  const view = render(PersonMessages, { props });
+  try {
+    const checkbox = await screen.findByRole('checkbox', { name: 'Select Saved message' });
+    await fireEvent.click(checkbox);
+    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Review deletion…' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    expect(screen.getByRole('checkbox', { name: 'Select Saved message', checked: false })).toBeDefined();
+  } finally { view.unmount(); }
+});
 it.each([
   { name: 'opened after the first result page', paged: true, period: undefined },
   { name: 'with its selected calendar day window', paged: false, period: { after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' } },
