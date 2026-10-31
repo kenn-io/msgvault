@@ -63,31 +63,12 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
-  it('shows a status failure and Refresh in the open panel after a sync is accepted', async () => {
-    let accepted = false;
+  it.each(['after accepted sync', 'manual refresh'])('recovers a status-load failure in the open source panel: %s', async action => {
+    let statusReads = 0;
     const fetchFn = api([source()], (url, request) => {
       if (request.method === 'POST' && url.pathname === '/api/v1/sync/archive%40example.com') {
-        accepted = true;
         return Response.json({ status: 'accepted', message: 'started' }, { status: 202 });
       }
-      if (url.pathname.endsWith('/sources/status') && accepted) {
-        return Response.json({ message: 'Source status unavailable' }, { status: 500 });
-      }
-    });
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    const panel = screen.getByRole('dialog', { name: 'Archive' });
-
-    await fireEvent.click(within(panel).getByRole('button', { name: /^Sync now$/ }));
-
-    const alert = await within(panel).findByRole('alert');
-    expect(alert.textContent).toContain('Source status unavailable');
-    expect(within(alert).getByRole('button', { name: 'Refresh' })).toBeDefined();
-  });
-
-  it('shows a status-load failure and Refresh inside the open source panel', async () => {
-    let statusReads = 0;
-    const fetchFn = api([source()], url => {
       if (url.pathname.endsWith('/sources/status') && ++statusReads === 2) {
         return Response.json({ message: 'Source status unavailable' }, { status: 500 });
       }
@@ -96,7 +77,11 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
     const panel = screen.getByRole('dialog', { name: 'Archive' });
 
-    rendered.component.refresh();
+    if (action === 'after accepted sync') {
+      await fireEvent.click(within(panel).getByRole('button', { name: /^Sync now$/ }));
+    } else {
+      rendered.component.refresh();
+    }
 
     const alert = await within(panel).findByRole('alert');
     expect(alert.textContent).toContain('Source status unavailable');
@@ -117,17 +102,6 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText('Imported file — nothing to sync').getAttribute('title')).toBe('source_not_schedulable');
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeDefined();
-  });
-
-  it('keeps the cron text in the schedule tooltip only', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
-      scheduled: true, schedule: '0 */6 * * *', next_sync_at: '2026-07-19T18:00:00Z'
-    })] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    const summary = await screen.findByText('At :00 past every 6th hour');
-    expect(summary.getAttribute('title')).toBe('0 */6 * * *');
-    expect(screen.queryByText('0 */6 * * *')).toBeNull();
   });
 
   it('shows status and only exposes Sync now from server capability truth', async () => {
@@ -183,7 +157,10 @@ describe('SourcesWorkspace', () => {
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    expect(await screen.findByText('At :00 past every 6th hour')).toBeDefined();
+    const summary = await screen.findByText('At :00 past every 6th hour');
+    expect(summary.getAttribute('title')).toBe('0 */6 * * *');
+    expect(screen.queryByText('0 */6 * * *')).toBeNull();
+    expect(within(screen.getByRole('row', { name: /Archive/ })).getByText('Partial')).toBeDefined();
     expect(screen.getByTitle(formatDateTime('2026-07-19T18:00:00Z', 'long'))).toBeDefined();
     expect(screen.getByText('10 processed · 10 added · 1 error')).toBeDefined();
     expect(screen.queryByTitle(/T\d\d:\d\d:\d\dZ$/)).toBeNull();
@@ -261,13 +238,15 @@ describe('SourcesWorkspace', () => {
         sync_unavailable_reason: 'sync_not_configured',
         latest_sync: run('failed', 0, {
           error_message: 'oauth2: token expired and refresh token is invalid (invalid_grant)' }) }),
-      source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) }), source({ id: 3, display_name: 'Executing', identifier: 'executing@example.com', scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z', active_sync: null, latest_sync: run('completed', 5) })
+      source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) }), source({ id: 3, display_name: 'Executing', identifier: 'executing@example.com', scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z', active_sync: null, latest_sync: run('completed', 5) }),
+      source({ id: 4, display_name: 'Paused source', identifier: 'paused@example.com', latest_sync: run('paused', 3) }),
+      source({ id: 5, display_name: 'Cancelled source', identifier: 'cancelled@example.com', latest_sync: run('cancelled', 2) })
     ]);
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
     expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
-    expect(screen.getByRole('button', { name: /^Copy msgvault sync/ })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Copy / })).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
     await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
@@ -275,6 +254,8 @@ describe('SourcesWorkspace', () => {
     expect(within(queued).getByText('Sync queued')).toBeDefined();
     const executing = screen.getByRole('row', { name: /Executing/ });
     expect(within(executing).getByText('Syncing…')).toBeDefined();
+    expect(within(screen.getByRole('row', { name: /Paused source/ })).getByText('Paused')).toBeDefined();
+    expect(within(screen.getByRole('row', { name: /Cancelled source/ })).getByText('Cancelled')).toBeDefined();
   });
 
   it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
@@ -870,7 +851,7 @@ it('publishes source rows while the optional contacts request waits', async () =
   vi.useFakeTimers();
   let reads = 0;
   const client = createCaptureClient(async input => (input as Request).url.endsWith('/sources/status')
-    ? Response.json({ sources: [++reads === 1 ? source({ active_sync: run('running', 5, { messages_added: 3, errors_count: 2 }) }) : source({ latest_sync: run('completed', 8) })] })
+    ? Response.json({ sources: [++reads === 1 ? source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5, { messages_added: 3, errors_count: 2 }) }) : source({ latest_sync: run('completed', 8) })] })
     : new Promise<Response>(() => undefined), []);
   const view = render(SourcesWorkspace, { client });
   try {

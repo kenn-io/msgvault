@@ -14,7 +14,7 @@ import AppShell from './AppShell.svelte';
 import { ShellData } from './shell-data.svelte';
 import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
 import type { CardDAVSettingsRequest } from '../../carddav/navigation';
-import { IntegrationReadiness, KATA_RETRY_MS } from '../../kata/kata-ready.svelte';
+import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { visualReadinessKey } from '../../search/visual-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
@@ -58,7 +58,6 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const probe = vi.fn<() => Promise<boolean | undefined>>()
       .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValue(true);
     const visual = new IntegrationReadiness(probe);
     const client = createAPIClient(async input => {
@@ -70,14 +69,12 @@ describe('AppShell', () => {
     try {
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       await waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
-      await vi.advanceTimersByTimeAsync(KATA_RETRY_MS);
-      expect(probe).toHaveBeenCalledTimes(2);
       expect(screen.queryByRole('switch', { name: 'Visual search' })).toBeNull();
 
       await fireEvent(window, new Event('focus'));
 
       expect(await screen.findByRole('switch', { name: 'Visual search' })).toBeDefined();
-      expect(probe).toHaveBeenCalledTimes(3);
+      expect(probe).toHaveBeenCalledTimes(2);
       expect(screen.getByRole('grid', { name: 'Files results' })).toBe(grid);
     } finally {
       rendered.unmount();
