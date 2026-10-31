@@ -1999,3 +1999,15 @@ func TestSearchFilterRetryReportsAcceptedResults(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchLiteralORWarning(t *testing.T) {
+	model := NewBuilder().WithLevel(levelMessageList).WithPageSize(20).WithSize(120, 30).Build()
+	model = resizeModel(t, model, 120, 30)
+	model.searchQuery = "from:@a.example OR from:@b.example"
+	assert.Contains(t, model.View().Content, "OR was matched as a literal word")
+	model.searchQuery = `"OR"`
+	assert.NotContains(t, model.View().Content, "OR was matched as a literal word")
+	model.searchQuery = "OR"
+	model.searchMode = searchModeSemantic
+	assert.NotContains(t, model.View().Content, "OR was matched as a literal word")
+}

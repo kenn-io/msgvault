@@ -49,6 +49,7 @@ function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
 function normalize(data: ExploreResponse): ExploreResult {
   return {
     rows: data.rows,
+    warnings: data.warnings,
     totalCount: data.total_count,
     cacheRevision: data.cache_revision,
     searchProvenance: data.search_provenance,
@@ -67,8 +68,10 @@ function normalizeGroups(data: ExploreGroupsResponse | FileGroupsResponse): Extr
   // File-group responses never declare a deletion scope; on the union that
   // access widens to unknown, so keep only the declared string form.
   const scope = data.search_deletion_scope;
+  const warnings = 'warnings' in data ? data.warnings : undefined;
   return {
     rows: data.rows,
+    warnings: Array.isArray(warnings) ? warnings : undefined,
     totalCount: data.total_count,
     cacheRevision: data.cache_revision,
     searchProvenance: data.search_provenance,
