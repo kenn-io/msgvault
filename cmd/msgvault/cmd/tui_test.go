@@ -393,19 +393,25 @@ func TestAnalyticsCacheNoticeClearsAfterBackgroundSwap(t *testing.T) {
 }
 
 func TestTUITimelineBackendRequiresTimelineSchema(t *testing.T) {
-    assert.Nil(t, tuiTimelineBackend(context.Background(), nil))
-    for _, version := range []string{"3.28.0", "3.29.0", "3.30.0"} {
-        t.Run(version, func(t *testing.T) {
-            srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                require.Equal(t, "/api/v1/health", r.URL.Path)
-                _ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
-            }))
-            t.Cleanup(srv.Close)
-            client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
-            require.NoError(t, err)
-            t.Cleanup(func() { require.NoError(t, client.Close()) })
-            backend := tuiTimelineBackend(context.Background(), client)
-            if version == "3.28.0" { assert.Nil(t, backend) } else { assert.Same(t, client, backend) }
-        })
-    }
+	assert.Nil(t, tuiTimelineBackend(context.Background(), nil))
+	for _, version := range []string{"3.32.0", "3.33.0", "3.34.0"} {
+		t.Run(version, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal("/api/v1/health", r.URL.Path)
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
+			}))
+			t.Cleanup(srv.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(client.Close()) })
+			backend := tuiTimelineBackend(context.Background(), client)
+			if version == "3.32.0" {
+				assert.Nil(backend)
+			} else {
+				require.NotNil(backend)
+				assert.Same(client, backend)
+			}
+		})
+	}
 }

@@ -417,8 +417,12 @@ func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg 
 
 // tuiTimelineBackend gates the mode on the selected daemon's actual schema.
 func tuiTimelineBackend(ctx context.Context, client *daemonclient.Client) tui.TimelineBackend {
-    if client == nil { return nil }
-    compatible, err := client.SupportsAPISchemaVersion(ctx, timelineMinAPISchemaVersion)
-    if err != nil || !compatible { return nil }
-    return client
+	if client == nil {
+		return nil
+	}
+	compatible, err := client.SupportsAPISchemaVersion(ctx, timelineMinAPISchemaVersion)
+	if err != nil || !compatible {
+		return nil
+	}
+	return client
 }

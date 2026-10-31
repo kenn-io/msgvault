@@ -1313,7 +1313,9 @@ var peopleHelpLines = []string{
 }
 
 func (m Model) activeHelpLines() []string {
-	if m.mode == modeTimeline { return timelineHelpLines }
+	if m.mode == modeTimeline {
+		return timelineHelpLines
+	}
 	if m.mode == modePeople {
 		if m.peopleState.level == peopleLevelContact && m.peopleState.tab == peopleTabOverview {
 			lines := append([]string(nil), peopleHelpLines...)

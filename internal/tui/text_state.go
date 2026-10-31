@@ -31,10 +31,14 @@ func nextMode(current tuiMode, textsAvailable, peopleAvailable bool, timelineAva
 		if peopleAvailable {
 			return modePeople
 		}
-		if hasTimeline { return modeTimeline }
+		if hasTimeline {
+			return modeTimeline
+		}
 		return modeEmail
 	case modePeople:
-		if hasTimeline { return modeTimeline }
+		if hasTimeline {
+			return modeTimeline
+		}
 		return modeEmail
 	case modeTimeline:
 		return modeEmail

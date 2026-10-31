@@ -244,7 +244,9 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.swapPeopleTextState()
 		}
 		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil, m.timelineBackend != nil)
-		if m.mode == modeTimeline { m.cancelTimelineRequest() }
+		if m.mode == modeTimeline {
+			m.cancelTimelineRequest()
+		}
 		m.switchMessageReaderState(next)
 		m.presentationGeneration++
 		m.mode = next

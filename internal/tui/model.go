@@ -406,7 +406,7 @@ type Model struct {
 	localTimezone string
 
 	timelineBackend TimelineBackend
-	timelineState timelineState
+	timelineState   timelineState
 
 	// Settings is a global shell surface, deliberately separate from the
 	// content-mode cycle so opening it cannot disturb content navigation.
@@ -2207,8 +2207,8 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "," && m.settingsShortcutAvailable() &&
-        !(m.mode == modeTimeline && (m.timelineState.reader == timelineReaderMessage && m.detailSearchActive ||
-            m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive)) {
+		!(m.mode == modeTimeline && (m.timelineState.reader == timelineReaderMessage && m.detailSearchActive ||
+			m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive)) {
 		return m.openSettings()
 	}
 	if m.mode == modeTimeline {
