@@ -183,8 +183,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	for _, c := range candidates {
 		byID[c.MessageID] = c
 	}
-	representatives := []coldActivityMessage{}
-	copies := map[string]int{}
+	classifiedMessages := []coldActivityMessage{}
 	for _, m := range messages {
 		if err = ctx.Err(); err != nil {
 			return nil, filters, err
@@ -197,35 +196,43 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		if q.After == nil && q.Before == nil && (dating.LocalDate < q.FromDate || dating.LocalDate > q.ToDate) {
 			continue
 		}
-		// SQL ordering chooses the same lowest source/message representative as the spine.
-		copies[m.copyKey]++
-		if copies[m.copyKey] > 1 {
-			continue
-		}
-		classified := ClassifyActivityCandidate(c, filters.MaxDirect)
+		classified := ClassifyActivityCandidate(c, filters.directLimit())
 		m.candidate = c
 		m.dating = dating
 		m.channel = classified.Channel
 		m.persons = classified.Persons
 		m.Direction = classified.Direction
 		m.Meeting = IsMeetingMessageType(c.MessageType)
-		maxDirect := filters.MaxDirect
-		if maxDirect == 0 {
-			maxDirect = DefaultMaxDirectActivityCounterparts
-		}
-		m.LargeInbound = m.Direction == DirectionInbound && m.audience > maxDirect
-		representatives = append(representatives, m)
+		m.ContactEligible = m.Meeting || countedMessageType(c.MessageType, c.ConversationType)
+		m.LargeInbound = m.Direction == DirectionInbound && classified.Broadcast
+		classifiedMessages = append(classifiedMessages, m)
 	}
-	facts := make([]activityReadMessage, len(representatives))
-	for i, m := range representatives {
+	facts := make([]activityReadMessage, len(classifiedMessages))
+	for i, m := range classifiedMessages {
 		facts[i] = m.activityReadMessage
 	}
 	if err = s.hydrateActivityCounterpartsContext(ctx, facts, filters); err != nil {
 		return nil, filters, err
 	}
-	groups := map[string]*coldActivityGroup{}
-	for i, m := range representatives {
+	// Match the spine: prefer counted contact after scoped copies have their
+	// complete counterpart facts. SQL source/message ordering breaks ties.
+	representatives := []coldActivityMessage{}
+	representativeIndex := map[string]int{}
+	copies := map[string]int{}
+	for i, m := range classifiedMessages {
 		m.activityReadMessage = facts[i]
+		copies[m.copyKey]++
+		if index, found := representativeIndex[m.copyKey]; found {
+			if coldActivityCounted(m, filters) && !coldActivityCounted(representatives[index], filters) {
+				representatives[index] = m
+			}
+			continue
+		}
+		representativeIndex[m.copyKey] = len(representatives)
+		representatives = append(representatives, m)
+	}
+	groups := map[string]*coldActivityGroup{}
+	for _, m := range representatives {
 		m.copies = copies[m.copyKey]
 		conv := int64(0)
 		if m.candidate.ConversationID != nil {
