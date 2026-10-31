@@ -13,8 +13,7 @@ import (
 func readMeetingLinkDecisions(ctx context.Context, r SQLReader, memberID int64) (out []meetingLinkDecision, err error) {
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{memberID}, args...)
-	rows, err := r.QueryContext(ctx, `SELECT d.target_ical_uid,COALESCE(d.target_message_id,0),d.occurrence_key,d.decision,d.created_at FROM meeting_link_decisions d JOIN messages m ON m.id=d.member_message_id WHERE d.member_message_id = ? AND m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)`+scope+` ORDER BY d.target_ical_uid,d.target_message_id,d.occurrence_key`, args...)
+	rows, err := r.QueryContext(ctx, `SELECT d.target_ical_uid,COALESCE(d.target_message_id,0),d.occurrence_key,d.decision,d.created_at FROM meeting_link_decisions d JOIN messages m ON m.id=d.member_message_id WHERE d.member_message_id = ? AND m.deleted_at IS NULL`+scope+` ORDER BY d.target_ical_uid,d.target_message_id,d.occurrence_key`, args...)
 	if err != nil {
 		return nil, err
 	}

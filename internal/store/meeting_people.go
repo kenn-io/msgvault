@@ -114,8 +114,7 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 		scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 		args = append(args, scopeArgs...)
 		rows, err := r.QueryContext(ctx, `SELECT m.id,COUNT(a.message_id) FROM messages m LEFT JOIN meeting_action_items a ON a.message_id=m.id
- WHERE m.id IN (`+placeholders(len(batch))+`) AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)`+scope+` GROUP BY m.id`, args...)
+ WHERE m.id IN (`+placeholders(len(batch))+`) AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope+` GROUP BY m.id`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("count meeting action items: %w", err)
 		}
