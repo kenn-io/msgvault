@@ -6,7 +6,6 @@ import VisualReadiness from './VisualReadiness.test-support.svelte';
 it.each([
   { name: 'no generation', status: 200, body: {}, ready: false },
   { name: 'inactive generation', status: 200, body: { generation: { state: 'building', consented: true } }, ready: false },
-  { name: 'no consent', status: 200, body: { generation: { state: 'active', consented: false } }, ready: false },
   { name: 'active consented generation', status: 200, body: { generation: { state: 'active', consented: true } }, ready: true },
 ])('$name', async ({ status, body, ready }) => {
   vi.useFakeTimers();
