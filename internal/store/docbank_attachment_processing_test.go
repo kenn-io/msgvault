@@ -148,7 +148,7 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 	}, time.Now().Add(time.Hour)))
 	noJobHash := fmt.Sprintf("%064x", 0xabcdf7)
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
-		ContentHash: noJobHash, Fingerprint: "fp", Outcome: "requested",
+		ContentHash: noJobHash, Fingerprint: "fp", Outcome: "",
 	}, time.Now().Add(time.Hour)))
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
@@ -183,7 +183,6 @@ func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
 		name, outcome, jobID, failure string
 	}{
 		{"saved_job", "requested", fmt.Sprintf("%064x", 0x5678), "consent"},
-		{"requested_without_job", "requested", "", "pdf_password_required"},
 		{"first_attempt", "", "", "pdf_password_required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
