@@ -1,5 +1,4 @@
 import type { SourceStatus } from '../api/generated/models';
-import { shellQuote } from '../settings/shell-quote';
 import { sentenceCase } from '../explore/labels';
 
 // Curated friendly labels for daemon source types. Other codes use
@@ -46,10 +45,10 @@ export function sourceFailure(
   return message || undefined;
 }
 
-/** The sync command for an account that has no schedule. Only mail-style identifiers have one. */
-export function syncCommand(source: Pick<SourceStatus, 'identifier' | 'sync_unavailable_reason'>, shell: 'posix' | 'cmd' = 'posix'): string | undefined {
+/** The sync command for a source that has no schedule. */
+export function syncCommand(source: Pick<SourceStatus, 'id' | 'sync_unavailable_reason'>): string | undefined {
   if (source.sync_unavailable_reason !== 'sync_not_configured') return undefined;
-  return /^[^\s/@]+@[^\s/@]+$/.test(source.identifier) ? `msgvault sync ${shellQuote(source.identifier, shell)}` : undefined;
+  return `msgvault sync --source-id ${source.id}`;
 }
 
 /** Source types whose schedule, filters, and attachment rules live in the settings catalog. */

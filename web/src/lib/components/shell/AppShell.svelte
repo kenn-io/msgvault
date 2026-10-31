@@ -36,7 +36,6 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { FILE_FAMILY_LABELS } from '../../explore/labels';
   import { ExploreLoader } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
@@ -1308,6 +1307,7 @@
         <DeletionsWorkspace controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions(true)} />
       {:else if exploreState.current.workspace === 'relationships'}
         <RelationshipsWorkspace
+          onConfigureVisualSearch={openVisualAttachmentSettings}
           {client}
           controller={relationshipsController}
           facet={exploreState.current.relationshipFacet}
@@ -1347,6 +1347,7 @@
         />
       {:else if exploreState.current.workspace === 'directory'}
         <DirectoryWorkspace
+          onConfigureVisualSearch={openVisualAttachmentSettings}
           {client}
           controller={directoryController}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
