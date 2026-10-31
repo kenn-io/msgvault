@@ -6,21 +6,21 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000001")
-	require.NoError(err)
+	requirements.NoError(err)
 	conversationID, err := f.Store.EnsureConversationWithType(source.ID, "legacy-unsent", "direct_chat", "Alice")
-	require.NoError(err)
+	requirements.NoError(err)
 
 	tests := []struct {
 		messageType string
@@ -53,49 +53,49 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 			SentAt:          sql.NullTime{Time: time.Date(2024, 6, 1, 12, i, 0, 0, time.UTC), Valid: true},
 			IsFromMe:        true,
 		})
-		require.NoError(err)
+		requirements.NoError(err)
 		ids[i] = messageID
 		if tt.raw != "" {
-			require.NoError(f.Store.UpsertMessageRawWithFormat(messageID, []byte(tt.raw), synctechstate.RawFormat))
+			requirements.NoError(f.Store.UpsertMessageRawWithFormat(messageID, []byte(tt.raw), synctechstate.RawFormat))
 		}
 		if tt.corrupt {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = ? WHERE message_id = ?`), []byte("broken compressed block"), "zlib", messageID)
-			require.NoError(err)
+			requirements.NoError(err)
 		}
 		var isSent bool
-		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT is_sent FROM messages WHERE id = ?`), messageID).Scan(&isSent))
-		assert.True(isSent, "legacy message starts with the old default: %s %s", tt.messageType, tt.raw)
+		assertions.True(isSent, "legacy message starts with the old default: %s %s", tt.messageType, tt.raw)
 	}
 
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "synctech_unsent_messages_v1")
-	require.NoError(err)
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.InitSchemaContext(t.Context()))
 
 	for i, id := range ids {
 		tt := tests[i%len(tests)]
 		var got bool
-		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT is_sent FROM messages WHERE id = ?`), id).Scan(&got))
-		assert.Equal(tt.wantSent, got, "message %d: %s %s", i, tt.messageType, tt.raw)
+		assertions.Equal(tt.wantSent, got, "message %d: %s %s", i, tt.messageType, tt.raw)
 	}
 }
 
 func TestMigrationRepairsFailedMMSAfterOriginalSendStateMigration(t *testing.T) {
-	require := requirepkg.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000002")
-	require.NoError(err)
+	requirements.NoError(err)
 	conversationID, err := f.Store.EnsureConversationWithType(source.ID, "failed-mms", "direct_chat", "Synthetic peer")
-	require.NoError(err)
+	requirements.NoError(err)
 	id, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "failed-mms", MessageType: "mms", IsFromMe: true})
-	require.NoError(err)
-	require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"MessageBox":5}`), synctechstate.RawFormat))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"MessageBox":5}`), synctechstate.RawFormat))
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE applied_migrations SET version=1 WHERE name=?`), "synctech_unsent_messages_v1")
-	require.NoError(err)
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.InitSchemaContext(t.Context()))
 	var sent bool
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT is_sent FROM messages WHERE id=?`), id).Scan(&sent))
-	assertpkg.False(t, sent)
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT is_sent FROM messages WHERE id=?`), id).Scan(&sent))
+	assert.False(t, sent)
 }

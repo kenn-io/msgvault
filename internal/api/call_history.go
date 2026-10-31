@@ -63,10 +63,10 @@ func (s *Server) registerCallHistoryRoutes(api huma.API) {
 			pagination = "offset"
 		}
 		for _, name := range []string{"person_id", "limit", pagination} {
-			op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: "query", Schema: &huma.Schema{Type: "integer", Format: "int64"}})
+			op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: queryParamLocation, Schema: &huma.Schema{Type: "integer", Format: "int64"}})
 		}
 		for _, name := range []string{"after", "before"} {
-			op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}})
+			op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: queryParamLocation, Schema: &huma.Schema{Type: "string", Format: "date-time"}})
 		}
 		op.Errors = []int{400, 401, 500, 503}
 		registerRawHumaRoute(api, op, func(w http.ResponseWriter, r *http.Request) { s.handleCallRead(w, r, summary) })

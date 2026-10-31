@@ -68,9 +68,12 @@ func TestCalendarSeenCancellationRebuild(t *testing.T) {
 				assertions.Equal("edited@example.com", got.Attendees[0].Email)
 			}
 			check(st)
-			_, err = st.DB().Exec(`UPDATE calendar_events SET projection_version = 0`)
+			_, err = st.DB().Exec(`DELETE FROM calendar_events`)
 			requirements.NoError(err)
-			_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`)
+			var projected int
+			requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&projected))
+			requirements.Zero(projected, "startup must reconstruct calendar events from retained evidence")
+			_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v2'`)
 			requirements.NoError(err)
 			requirements.NoError(st.InitSchemaContext(t.Context()))
 			check(st)

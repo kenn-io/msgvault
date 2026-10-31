@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -70,4 +71,41 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	requirements.Error(err)
 	_, err = run("{", "import", "-")
 	requirements.Error(err)
+}
+
+func TestCallsCommandRequiresSchemaForPublishedEndpoints(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-call-key"}}
+	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}
+	router := api.NewServer(cfg, adapter, nil, slog.New(slog.DiscardHandler)).Router()
+	for _, version := range []string{"3.24.0", "3.25.0", "3.26.0", "3.27.0", "3.28.0", "3.29.0"} {
+		t.Run(version, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
+					return
+				}
+				router.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: server.Client()})
+			requirements.NoError(err)
+			defer func() { _ = client.Close() }()
+			command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) { return client, func() {}, nil }})
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(&output)
+			command.SetArgs([]string{"list"})
+			err = command.ExecuteContext(t.Context())
+			if version == "3.29.0" {
+				requirements.NoError(err)
+				assertions.Contains(output.String(), `"items"`)
+			} else {
+				requirements.ErrorContains(err, "calls require daemon API 3.29.0 or newer")
+				assertions.Contains(err.Error(), "daemon reports "+version)
+			}
+		})
+	}
 }

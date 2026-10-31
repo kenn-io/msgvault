@@ -64,7 +64,6 @@ func calendarOccurrenceFromAPI(o generated.CalendarOccurrence) store.CalendarOcc
 		for _, a := range o.Attendees {
 			attendees = append(attendees, calevent.Attendee{Email: a.Email, DisplayName: a.DisplayName, Role: a.Role, RSVP: a.Rsvp, IsCopySelf: a.IsSelf})
 		}
-
 	}
 	return store.CalendarOccurrence{Ref: o.Ref, MessageID: o.MessageID, SeriesMessageID: o.SeriesMessageID, SourceID: o.SourceID, Subject: o.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: attendees}
 }

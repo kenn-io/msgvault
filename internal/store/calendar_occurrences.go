@@ -468,6 +468,15 @@ func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEven
 	return overrides
 }
 
+// Provider instance keys have whole-second precision. Alias freshness must
+// preserve the retained instant so a fractional edit cannot replace its sibling.
+func calendarExceptionAliasKey(original calrecur.Identity) string {
+	if original.AllDay {
+		return original.Date
+	}
+	return original.Instant.UTC().Format(time.RFC3339Nano)
+}
+
 // Identified snapshots collapse to their freshest alias. Exceptions without
 // an original identity remain independent bounded occurrences.
 func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
@@ -483,7 +492,7 @@ func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
 			byID[row.MessageID] = row
 			continue
 		}
-		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: row.Event.Original.Key()}
+		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: calendarExceptionAliasKey(*row.Event.Original)}
 		current, exists := identified[key]
 		if !exists || calendarEventSnapshotNewer(row, current) {
 			identified[key] = row
@@ -707,7 +716,7 @@ func calendarAllDayDurationDays(startDate, endDate string) (int, error) {
 	return int(end.Sub(start) / (24 * time.Hour)), nil
 }
 
-func readCalendarContent(ctx context.Context, r calendarRowQueryer, messageID int64) (calevent.Content, error) {
+func readCalendarContent(ctx context.Context, r contextRowQuerier, messageID int64) (calevent.Content, error) {
 	raw, format, err := readCalendarRaw(ctx, r, messageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return calevent.Content{}, nil
@@ -718,7 +727,7 @@ func readCalendarContent(ctx context.Context, r calendarRowQueryer, messageID in
 	return decodeCalendarContent(format, raw)
 }
 
-func readCalendarRaw(ctx context.Context, r calendarRowQueryer, messageID int64) ([]byte, string, error) {
+func readCalendarRaw(ctx context.Context, r contextRowQuerier, messageID int64) ([]byte, string, error) {
 	var stored []byte
 	var format, compression sql.NullString
 	if err := r.QueryRowContext(ctx, `SELECT raw_data, raw_format, compression FROM message_raw WHERE message_id = ?`, messageID).Scan(&stored, &format, &compression); err != nil {

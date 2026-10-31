@@ -97,7 +97,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		return "", nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
 	// Native calls are synchronous logical evidence, never ordinary activity.
-	where := s.activityLiveEligibleSQL("m", "src") + ` AND m.message_type<>'call_record' AND ` + FullActivityEventWhere("ae")
+	where := s.activityLiveEligibleSQL() + ` AND m.message_type<>'call_record' AND ` + FullActivityEventWhere("ae")
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	windowWhere := []string{}
@@ -108,11 +108,11 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	}
 	if w.After != nil {
 		windowWhere = append(windowWhere, `ae.occurred_at>=?`)
-		windowArgs = append(windowArgs, *w.After)
+		windowArgs = append(windowArgs, w.After.UTC())
 	}
 	if w.Before != nil {
 		windowWhere = append(windowWhere, `ae.occurred_at<?`)
-		windowArgs = append(windowArgs, *w.Before)
+		windowArgs = append(windowArgs, w.Before.UTC())
 	}
 	if w.After == nil && w.Before == nil && (w.FromDate != "" || w.ToDate != "") {
 		if !validActivityDate(w.FromDate) || !validActivityDate(w.ToDate) || w.FromDate > w.ToDate {
@@ -169,11 +169,13 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// These reused sets must be evaluated once. SQLite can otherwise inline
 	// them into each correlated fact lookup and rebuild the scoped population
 	// repeatedly while scoring a burst. The fences retain all eligible rows
-	// before copy selection, grouping and pagination.
+	// before copy selection, grouping and pagination. Prefer counted contact
+	// when email copies have different owner attribution, then keep stable IDs.
 	query := prefix + `eligible AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
- m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet
- FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id WHERE ` + where + `
+ m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet,
+ CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible
+ FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
  ), population AS MATERIALIZED (` + activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), exclusions AS (
  SELECT cp.*,` + exclusion + ` AS excluded FROM population cp JOIN participants p ON p.id=cp.participant_id
  ), audiences AS (
@@ -190,11 +192,11 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  FROM eligible e LEFT JOIN audiences audience ON audience.message_id=e.message_id
  ), scored AS (
  SELECT e.*,
- CASE WHEN e.encrypted=0 AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.excluded='' AND ` + counted + `) THEN 1 ELSE 0 END AS counted,
- CASE WHEN e.list_id IS NOT NULL OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
+ CASE WHEN e.contact_eligible=1 AND e.encrypted=0 AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.excluded='' AND ` + counted + `) THEN 1 ELSE 0 END AS counted,
+ CASE WHEN ` + listExcluded + `=1 OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
  FROM message_flags e
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` ORDER BY source_id,message_id) AS copy_rank,
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` ORDER BY counted DESC,source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + `) AS copy_count
  FROM scored e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`

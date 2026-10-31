@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var update = flag.Bool("update", false, "update timeline goldens")
@@ -48,39 +48,39 @@ func golden(t *testing.T, name string, got []byte) {
 		got = append(got, '\n')
 	}
 	if *update {
-		requirepkg.NoError(t, os.WriteFile(path, got, 0600))
+		require.NoError(t, os.WriteFile(path, got, 0600))
 	}
 	want, err := os.ReadFile(path)
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, string(want), string(got))
+	require.NoError(t, err)
+	assert.Equal(t, string(want), string(got))
 }
 func TestTimelineJSONGolden(t *testing.T) {
 	b, err := json.Marshal(sampleTimeline(), json.Deterministic(true), jsontext.Multiline(true))
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	golden(t, "timeline_full.json", b)
 }
 func TestEntryValidateExactlyOnePayload(t *testing.T) {
-	require := requirepkg.New(t)
+	requirements := require.New(t)
 	for _, e := range sampleTimeline().History {
-		require.NoError(e.Validate())
+		requirements.NoError(e.Validate())
 		e.Note = &NoteEntry{}
 		if e.Kind == "note" {
 			e.Call = &CallEntry{}
 		}
-		require.ErrorIs(e.Validate(), ErrInvalidRequest)
+		requirements.ErrorIs(e.Validate(), ErrInvalidRequest)
 	}
-	require.ErrorIs((Entry{Kind: "message"}).Validate(), ErrInvalidRequest)
-	require.ErrorIs((Entry{Kind: "unknown", Message: &MessageEntry{}}).Validate(), ErrInvalidRequest)
+	requirements.ErrorIs((Entry{Kind: "message"}).Validate(), ErrInvalidRequest)
+	requirements.ErrorIs((Entry{Kind: "unknown", Message: &MessageEntry{}}).Validate(), ErrInvalidRequest)
 }
 func TestEntryAnchorRefPerKind(t *testing.T) {
 	for _, e := range sampleTimeline().History {
-		requirepkg.NoError(t, e.Validate())
+		require.NoError(t, e.Validate())
 		e.AnchorRef = "conv:2"
-		requirepkg.ErrorIs(t, e.Validate(), ErrInvalidRequest)
+		require.ErrorIs(t, e.Validate(), ErrInvalidRequest)
 	}
 }
 func TestEntryValidateRejectsMalformedAnchor(t *testing.T) {
 	for _, e := range []Entry{{Kind: "meeting", Ref: "evt:garbage", AnchorRef: "evt:garbage", Meeting: &MeetingEntry{}}, {Kind: "message", Ref: "msg:0", AnchorRef: "msg:0", Message: &MessageEntry{}}, {Kind: "burst", Key: "burst:1:2:bad", AnchorRef: "burst:1:2:bad", Burst: &BurstEntry{}}} {
-		requirepkg.ErrorIs(t, e.Validate(), ErrInvalidRequest)
+		require.ErrorIs(t, e.Validate(), ErrInvalidRequest)
 	}
 }

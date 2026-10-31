@@ -122,11 +122,11 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	}
 	if q.After != nil {
 		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?`
-		args = append(args, *q.After)
+		args = append(args, q.After.UTC())
 	}
 	if q.Before != nil {
 		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, *q.Before)
+		args = append(args, q.Before.UTC())
 	}
 	if q.After == nil && q.Before == nil {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
@@ -154,7 +154,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
  ) SELECT m.id,`+activityCopyKeySQL(channel, "m.rfc822_message_id", "m.id")+`,m.list_id IS NOT NULL,
  (src.source_type='matrix' AND COALESCE(m.snippet,'')=?)
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id
- WHERE `+s.activityLiveEligibleSQL("m", "src")+subject+` ORDER BY m.source_id,m.id`), args...)
+ WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
 		return nil, filters, fmt.Errorf("read cold activity: %w", err)
 	}
@@ -208,6 +208,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		m.persons = classified.Persons
 		m.Direction = classified.Direction
 		m.Meeting = IsMeetingMessageType(c.MessageType)
+		m.ContactEligible = m.Meeting || countedMessageType(c.MessageType, c.ConversationType)
 		m.LargeInbound = m.Direction == DirectionInbound && classified.Broadcast
 		representatives = append(representatives, m)
 	}
@@ -241,7 +242,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		if m.channel < g.burst.Channel {
 			g.burst.Channel = m.channel
 		}
-		counted, nonNoise := coldActivityCounted(m, filters), !m.List
+		counted, nonNoise := coldActivityCounted(m, filters), !m.List || !filters.Exclusions.ExcludeListMessages
 		for _, cp := range m.Counterparts {
 			if (cp.Role == RoleSender || cp.Role == RoleOrganizer) && cp.Excluded != "" && cp.Excluded != "owner" {
 				nonNoise = false
@@ -268,7 +269,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 // explicit limits reclassify raw counterpart roles and evidence. Display
 // annotations use the shared raw-population loader in both cases.
 func coldActivityCounted(m coldActivityMessage, filters ActivityFilters) bool {
-	if m.Encrypted {
+	if !m.ContactEligible || m.Encrypted {
 		return false
 	}
 	persons := map[int64]ActivityEventPerson{}
