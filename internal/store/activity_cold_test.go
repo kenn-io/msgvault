@@ -402,3 +402,85 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 		})
 	}
 }
+
+// Cold reconstruction must keep the same sender/alias/envelope audience and
+// configured default limit as warm activity, even after spine rows are gone.
+func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
+	for _, tc := range []struct {
+		name                                               string
+		outgoing, saved, aliases, chat, envelope, explicit bool
+		want                                               int
+	}{
+		{name: "sender-plus-recipient", explicit: true},
+		{name: "saved-aliases", aliases: true, explicit: true, want: 1},
+		{name: "default-unsaved", outgoing: true},
+		{name: "default-saved", outgoing: true, saved: true},
+		{name: "chat-envelope", chat: true, envelope: true, explicit: true, want: 1},
+		{name: "chat-roster", chat: true, explicit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTimelineActivityFixture(t)
+			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+			if tc.aliases {
+				_, err := f.Store.LinkParticipants(f.peer, other)
+				require.NoError(t, err)
+				_, _, err = f.Store.CreatePersonFromParticipant(f.peer)
+				require.NoError(t, err)
+			} else if tc.saved {
+				_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+				require.NoError(t, err)
+			}
+			if tc.chat {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), f.ConvID)
+				require.NoError(t, err)
+				for _, participant := range []int64{f.owner, f.peer, other} {
+					require.NoError(t, f.Store.EnsureConversationParticipant(f.ConvID, participant, "member"))
+				}
+			}
+			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			id := f.add(t, f.ConvID, f.Source.ID, at, tc.outgoing, "")
+			switch {
+			case tc.outgoing:
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, other}, []string{"Alice", "Bob"}))
+			case tc.aliases:
+				third := f.EnsureParticipant("alice-alt@example.com", "Alice", "example.com")
+				_, err := f.Store.LinkParticipants(f.peer, third)
+				require.NoError(t, err)
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other, third}, []string{"Owner", "Bob", "Alice"}))
+			case tc.chat && !tc.envelope:
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
+			case !tc.chat:
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Bob"}))
+			}
+			p, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
+			require.NoError(t, err)
+			_, err = p.RunOnce(t.Context())
+			require.NoError(t, err)
+			q := timelineBurstQuery()
+			q.Filters.IncludeNoise = true
+			if tc.explicit {
+				q.Filters.MaxDirect = 1
+			}
+			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			require.NoError(t, err)
+			require.Len(t, warm.Bursts, 1)
+			assert.Equal(t, tc.want, warm.Bursts[0].Inbound+warm.Bursts[0].Outbound, "warm counted contact")
+			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
+			retractTimelineActivity(t, f, id)
+			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			require.NoError(t, err)
+			require.Len(t, cold.Bursts, 1)
+			assert.Equal(t, tc.want, cold.Bursts[0].Inbound+cold.Bursts[0].Outbound, "cold counted contact")
+			for _, cp := range cold.Bursts[0].Counterparts {
+				if cp.ParticipantID == f.peer {
+					assert.Equal(t, tc.want == 1, cp.Counted)
+				}
+			}
+			q.Filters.IncludeNoise = false
+			filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			require.NoError(t, err)
+			assert.Len(t, filtered.Bursts, tc.want)
+			assert.Equal(t, 1-tc.want, filtered.NoiseOmitted)
+		})
+	}
+}

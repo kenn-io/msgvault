@@ -33,7 +33,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	if err != nil {
 		return result, err
 	}
-	filters, err := normalizedActivityFilters(q.Filters)
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
 		return result, err
 	}
@@ -137,7 +137,7 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
 	if err != nil {
 		return nil, false, err
 	}
-	filters, err := normalizedActivityFilters(q.Filters)
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
 		return nil, false, err
 	}

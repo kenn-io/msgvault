@@ -19,7 +19,6 @@ type coldActivityMessage struct {
 	channel   ActivityChannel
 	copyKey   string
 	copies    int
-	audience  int
 	persons   []ActivityEventPerson
 }
 
@@ -99,7 +98,7 @@ func coldActivityNoise(g *coldActivityGroup) bool {
 }
 
 func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, ActivityFilters, error) {
-	filters, err := normalizedActivityFilters(q.Filters)
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
 		return nil, filters, err
 	}
@@ -153,7 +152,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
  ) SELECT m.id,`+activityCopyKeySQL(channel, "m.rfc822_message_id", "m.id")+`,m.list_id IS NOT NULL,
- (src.source_type='matrix' AND COALESCE(m.snippet,'')=?),`+activityAudienceSizeSQL(channel, "m.conversation_id", "m.id", "m.source_id")+`
+ (src.source_type='matrix' AND COALESCE(m.snippet,'')=?)
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id
  WHERE `+s.activityLiveEligibleSQL("m", "src")+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
@@ -163,7 +162,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	ids := []int64{}
 	for rows.Next() {
 		var m coldActivityMessage
-		if err = rows.Scan(&m.ID, &m.copyKey, &m.List, &m.Encrypted, &m.audience); err != nil {
+		if err = rows.Scan(&m.ID, &m.copyKey, &m.List, &m.Encrypted); err != nil {
 			_ = rows.Close()
 			return nil, filters, fmt.Errorf("scan cold activity: %w", err)
 		}
@@ -202,18 +201,14 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		if copies[m.copyKey] > 1 {
 			continue
 		}
-		classified := ClassifyActivityCandidate(c, filters.MaxDirect)
+		classified := ClassifyActivityCandidate(c, filters.directLimit())
 		m.candidate = c
 		m.dating = dating
 		m.channel = classified.Channel
 		m.persons = classified.Persons
 		m.Direction = classified.Direction
 		m.Meeting = IsMeetingMessageType(c.MessageType)
-		maxDirect := filters.MaxDirect
-		if maxDirect == 0 {
-			maxDirect = DefaultMaxDirectActivityCounterparts
-		}
-		m.LargeInbound = m.Direction == DirectionInbound && m.audience > maxDirect
+		m.LargeInbound = m.Direction == DirectionInbound && classified.Broadcast
 		representatives = append(representatives, m)
 	}
 	facts := make([]activityReadMessage, len(representatives))

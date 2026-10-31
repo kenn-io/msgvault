@@ -62,7 +62,7 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	if q.Limit < 1 || q.Limit > 5000 {
 		return page, fmt.Errorf("%w: burst limit must be 1..5000", ErrInvalidActivityRequest)
 	}
-	filters, err := normalizedActivityFilters(q.Filters)
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
 		return page, err
 	}
@@ -231,10 +231,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 			return fmt.Errorf("iterate activity participants: %w", err)
 		}
 	}
-	maxDirect := f.MaxDirect
-	if maxDirect == 0 {
-		maxDirect = DefaultMaxDirectActivityCounterparts
-	}
+	maxDirect := f.directLimit()
 	for i := range messages {
 		m := &messages[i]
 		raw := collapseActivityCounterparts(population[m.ID])
