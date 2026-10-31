@@ -1404,64 +1404,39 @@ func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
 }
 
 func TestAttachmentMirrorProcessingSlowRetrySavePreservesFailure(t *testing.T) {
-	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		t.Skip("uses a SQLite write lock to delay the result save")
-	}
-	require := require.New(t)
-	assert := assert.New(t)
 	r := newMirrorRig(t)
 	r.delivered("a")
-	deadline := time.Now().Add(500 * time.Millisecond)
-	lockReleased := make(chan struct{})
-	lockError := make(chan error, 1)
-	var firstPlan atomic.Bool
-	firstPlan.Store(true)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path == "/api/v1/processing/plans" && firstPlan.CompareAndSwap(true, false) {
-			tx, txErr := r.f.Store.DB().BeginTx(t.Context(), nil)
-			if txErr == nil {
-				var contentHash string
-				txErr = tx.QueryRowContext(t.Context(), r.f.Store.Rebind(`SELECT content_hash FROM docbank_attachment_processing WHERE destination_key=?`), "dest").Scan(&contentHash)
-				if txErr == nil {
-					_, txErr = tx.ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE docbank_attachment_processing SET outcome=outcome WHERE destination_key=? AND content_hash=?`), "dest", contentHash)
-				}
-			}
-			if txErr != nil {
-				if tx != nil {
-					_ = tx.Rollback()
-				}
-				lockError <- txErr
-				w.WriteHeader(http.StatusInternalServerError)
+	transport := http.DefaultTransport
+	defer func() { http.DefaultTransport = transport }()
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		deadline := time.Now().Add(500 * time.Millisecond)
+		planFailed := false
+		http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == "/api/v1/processing/plans" {
+				planFailed = true
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
-			time.AfterFunc(time.Until(deadline)+50*time.Millisecond, func() {
-				_ = tx.Rollback()
-				close(lockReleased)
-			})
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		r.serve(w, req)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := docbankmedia.NewClient(srv.URL, nil)
-	require.NoError(err)
-	r.worker.client = client
-	_, err = r.worker.processDocuments(t.Context(), deadline)
-	select {
-	case lockErr := <-lockError:
-		require.NoError(lockErr)
-	default:
-	}
-	select {
-	case <-lockReleased:
-	case <-time.After(2 * time.Second):
-		require.Fail("database lock was not released")
-	}
-	httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
-	require.True(ok, "the destination failure remains visible after the delayed save")
-	assert.Equal(http.StatusServiceUnavailable, httpErr.Status)
-	assert.Equal(int64(1), r.processingCounts().Waiting)
+			r.serve(w, req)
+		})
+		r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+			if planFailed {
+				require.True(time.Now().Before(deadline), "the destination fails before the deadline")
+				// Delay the retry save until after the pass deadline.
+				synctest.Sleep(time.Until(deadline) + 50*time.Millisecond)
+			}
+			return func() {}, true
+		})
+		more, err := r.worker.processDocuments(t.Context(), deadline)
+		httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
+		require.True(ok, "the destination failure remains visible after the delayed save")
+		assert.Equal(http.StatusServiceUnavailable, httpErr.Status)
+		assert.True(more)
+		assert.False(time.Now().Before(deadline), "the retry save crosses the deadline")
+		assert.Equal(int64(1), r.processingCounts().Waiting)
+	})
 }
 
 func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
