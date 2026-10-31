@@ -460,6 +460,9 @@ func (s *Store) RecordDocbankAttachment(
 	return nil
 }
 
+// Backfill clears these outcomes so processing can be requested again.
+const docbankRequeueOutcomes = "'consent','stale_authority','pdf_password_required','rendition_operator_required','invalid_receipt'"
+
 // RetryDocbankAttachments requeues failures and restarts discovery in one transaction.
 func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {

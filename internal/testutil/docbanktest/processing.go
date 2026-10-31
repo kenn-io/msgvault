@@ -37,8 +37,8 @@ func ProcessingFingerprint(name string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func ProcessingJobID(version string) string {
-	return ProcessingFingerprint("job:" + version)
+func ProcessingJobID(version, fingerprint string) string {
+	return ProcessingFingerprint("job:" + version + ":" + fingerprint)
 }
 
 func NewProcessingHandler(t *testing.T) *ProcessingHandler {
@@ -92,16 +92,16 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
 			}
-			state, ok := h.States[ProcessingJobID(version)]
+			state, ok := h.States[ProcessingJobID(version, h.Fingerprint)]
 			if ok && state[0] == "failed" && state[2] != "consent" && state[2] != "stale_authority" && state[2] != "pdf_password_required" {
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": "rendition_failed"}))
 				return
 			}
 			if !ok || state[0] == "failed" {
-				h.States[ProcessingJobID(version)] = [3]string{"queued", "rendition", ""}
+				h.States[ProcessingJobID(version, h.Fingerprint)] = [3]string{"queued", "rendition", ""}
 			}
-			assert.NoError(h.T, json.MarshalWrite(w, map[string]any{"type": "job", "job": map[string]string{"id": ProcessingJobID(version)}}))
+			assert.NoError(h.T, json.MarshalWrite(w, map[string]any{"type": "job", "job": map[string]string{"id": ProcessingJobID(version, h.Fingerprint)}}))
 		}
 	default:
 		if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/processing/jobs/"); ok {
