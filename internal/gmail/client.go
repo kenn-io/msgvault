@@ -728,23 +728,22 @@ func (c *Client) ListLabels(ctx context.Context) ([]*Label, error) {
 	return labels, nil
 }
 
-// ListMessages returns message IDs matching the query.
+// ListMessages returns message IDs matching the query, including Spam and Trash.
+// Callers can explicitly exclude those labels with the Gmail query.
 func (c *Client) ListMessages(ctx context.Context, query string, pageToken string) (*MessageListResponse, error) {
-	return c.listMessages(ctx, query, pageToken, false)
+	return c.listMessages(ctx, query, pageToken)
 }
 
 // ListCompleteMessageSnapshot returns every message still present in Gmail,
 // including Spam and Trash, for source-presence reconciliation.
 func (c *Client) ListCompleteMessageSnapshot(ctx context.Context, pageToken string) (*MessageListResponse, error) {
-	return c.listMessages(ctx, "", pageToken, true)
+	return c.listMessages(ctx, "", pageToken)
 }
 
-func (c *Client) listMessages(ctx context.Context, query, pageToken string, includeSpamTrash bool) (*MessageListResponse, error) {
+func (c *Client) listMessages(ctx context.Context, query, pageToken string) (*MessageListResponse, error) {
 	params := url.Values{}
 	params.Set("maxResults", "500")
-	if includeSpamTrash {
-		params.Set("includeSpamTrash", "true")
-	}
+	params.Set("includeSpamTrash", "true")
 	if query != "" {
 		params.Set("q", query)
 	}

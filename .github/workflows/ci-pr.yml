@@ -4,9 +4,26 @@ name: CI
 # runs PR jobs on GitHub-hosted runners, including fork PRs.
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions: read-all
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   run:
+    cache-mode: read
     uses: kenn-io/msgvault/.github/workflows/ci.yml@main
+
+  gate:
+    name: CI gate
+    needs: run
+    if: always()
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check CI result
+        if: needs.run.result != 'success'
+        run: exit 1

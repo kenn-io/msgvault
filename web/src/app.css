@@ -41,13 +41,13 @@ h3 {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-5);
+  gap: var(--section-gap);
 }
 
 .boot-screen {
   max-width: 28rem;
   margin: 0 auto;
-  padding: var(--space-8) var(--space-6);
+  padding: var(--space-8) var(--page-gutter);
   font-size: var(--font-size-md);
 }
 

@@ -805,7 +805,6 @@ func TestConditional412CapturesConflictAndKeepLocalRefetchesCurrentETag(t *testi
 	server := httptest.NewServer(fixture.handler(t))
 	t.Cleanup(server.Close)
 	service, st, personID, book := seededMutationServiceForServer(t, server)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "alice-local@example.test",
@@ -850,6 +849,7 @@ func TestConditional412CapturesConflictAndKeepLocalRefetchesCurrentETag(t *testi
 		is_write_target = FALSE, is_subscribed = TRUE, can_update = TRUE WHERE id = ?`), book.ID)
 	require.NoError(err)
 
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.ResolveConflict(t.Context(), conflictErr.ID, ResolutionKeepLocal))
 	fixture.mu.Lock()
 	putsAfterTimeout := fixture.puts
@@ -923,7 +923,6 @@ func TestSyncAbortsPullAfterPendingPublicationRecoveryFailure(t *testing.T) {
 	server := httptest.NewServer(fixture.handler(t))
 	t.Cleanup(server.Close)
 	service, st, personID, book := seededMutationServiceForServer(t, server)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "alice-local@example.test",
@@ -933,6 +932,7 @@ func TestSyncAbortsPullAfterPendingPublicationRecoveryFailure(t *testing.T) {
 	fixture.mu.Lock()
 	fixture.timeoutPut = true
 	fixture.mu.Unlock()
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	pending, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(err)
@@ -1046,7 +1046,7 @@ func TestKeepLocalTombstoneTimeoutPersistsIntentAndRecoversWithoutReplay(t *test
 
 	fixture := &conflictMutationServer{timeoutDelete: true}
 	service, st, book, mapping, conflict := seedLocalTombstoneConflict(t, fixture)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 
 	require.Error(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 	pending, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
@@ -1077,7 +1077,7 @@ func TestPullTombstoneCompletesTimedOutKeepLocalWithoutDeleteReplay(t *testing.T
 
 	fixture := &conflictMutationServer{timeoutDelete: true, syncToken: "token-after-tombstone"}
 	service, st, book, mapping, conflict := seedLocalTombstoneConflict(t, fixture)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
 		SET supports_sync_collection = TRUE WHERE id = ?`), book.ID)
 	require.NoError(err)
@@ -1185,7 +1185,7 @@ func TestPullTombstoneCompletesTimedOutUnpublishAndRetainsPerson(t *testing.T) {
 
 	fixture := &conflictMutationServer{timeoutDelete: true, syncToken: "token-after-unpublish"}
 	service, st, personID, book, mapping, conflict := seedUnpublishConflict(t, fixture)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
 		SET supports_sync_collection = TRUE WHERE id = ?`), book.ID)
 	require.NoError(err)
@@ -1226,7 +1226,7 @@ func TestPullRefreshSupersedesTimedOutTombstoneIntentBeforeFreshDelete(t *testin
 
 	fixture := &conflictMutationServer{timeoutDelete: true}
 	service, st, book, mapping, conflict := seedLocalTombstoneConflict(t, fixture)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 	pending, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
 	require.NoError(err)
@@ -1273,7 +1273,7 @@ func TestDirectConflictRefreshDoesNotSupersedePendingTombstoneIntent(t *testing.
 
 	fixture := &conflictMutationServer{timeoutDelete: true}
 	service, st, book, mapping, conflict := seedLocalTombstoneConflict(t, fixture)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 	pending, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
 	require.NoError(err)
@@ -1440,7 +1440,6 @@ func TestOversizedAmbiguousRecoveryRebasesAndRetainsReadOnlyIntent(t *testing.T)
 	server := httptest.NewServer(fixture.handler(t))
 	t.Cleanup(server.Close)
 	service, st, personID, book := seededMutationServiceForServer(t, server)
-	service.dav().client.requestTimeout = 250 * time.Millisecond
 	require.NoError(service.PublishPerson(t.Context(), personID))
 	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "recovery-local@example.test",
@@ -1450,6 +1449,7 @@ func TestOversizedAmbiguousRecoveryRebasesAndRetainsReadOnlyIntent(t *testing.T)
 	fixture.mu.Lock()
 	fixture.timeoutPut = true
 	fixture.mu.Unlock()
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	// The short deadline above exercises an ambiguous write. Recovery reads a
 	// deliberately oversized response and needs the normal request deadline.
@@ -1659,6 +1659,7 @@ func TestAmbiguousUpdateRecoveryCapturesConflictWithoutReplay(t *testing.T) {
 	})
 	require.NoError(err)
 	fixture.timeout = true
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	putsBeforeRecovery := fixture.puts
 	fixture.mu.Lock()

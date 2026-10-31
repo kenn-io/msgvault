@@ -27,7 +27,7 @@ func TestQuerySQLHonorsContextCancellation(t *testing.T) {
 	// Cancel shortly after the query starts. Uncancelled, the cross join
 	// below (1e6 x 1e6 rows) would run for many minutes.
 	go func() {
-		time.Sleep(100 * time.Millisecond) //nolint:kennlint // lets DuckDB start the query in cgo
+		time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: lets DuckDB start the query in cgo
 		cancel()
 	}()
 
@@ -65,7 +65,7 @@ func TestDuckDBQueryConcurrencyCap(t *testing.T) {
 
 	// The slot is held: a second acquirer must wait, and its context deadline
 	// must free it rather than block forever.
-	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held query slot keeps the second acquirer waiting
+	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held query slot keeps the second acquirer waiting
 	defer cancel()
 	start := time.Now()
 	_, err = engine.acquireQuerySlot(waitCtx)

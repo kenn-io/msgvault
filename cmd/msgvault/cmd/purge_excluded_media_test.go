@@ -174,12 +174,12 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 		},
 	}}
 
-	policy, ok := mediaPolicyForSource(current, "slackdump", "T_TEST:UALICE")
+	policy, ok := mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: "slackdump", SourceIdentifier: "T_TEST:UALICE"})
 	require.True(ok)
 	assert.Equal(int64(11)<<20, policy.MaxBytes)
 
 	current.Twilio = []config.TwilioSource{{Identifier: "work", MaxMediaMB: 1}}
-	policy, ok = mediaPolicyForSource(current, "twilio", "work")
+	policy, ok = mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: "twilio", SourceIdentifier: "work"})
 	require.True(ok)
 	assert.Equal(int64(1)<<20, policy.MaxBytes)
 }
@@ -425,7 +425,7 @@ func TestChatwootPurgeResolvesAccountPolicyAndSharedMeetings(t *testing.T) {
 				{Identifier: "other", URL: "https://chatwoot.example.com", AccountID: 10},
 			}
 			for _, invalid := range []string{"https://chatwoot.example.com/accounts/9/inboxes/08", "https://chatwoot.example.com/accounts/99/inboxes/8"} {
-				_, ok := mediaPolicyForSource(f.config, chatwoot.SourceType, invalid)
+				_, ok := mediaPolicyForAttachment(f.config, store.AttachmentPolicyCandidate{SourceType: chatwoot.SourceType, SourceIdentifier: invalid})
 				assert.False(ok)
 			}
 			run := func() {

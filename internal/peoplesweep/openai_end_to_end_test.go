@@ -698,7 +698,7 @@ func TestOpenAIChatSweepFailureNeverAdvancesCursor(t *testing.T) {
 		{name: "schema mismatch", response: openAISweepResponse{Body: staticOpenAIEnvelope(t, sweepResponseModel, `{"claims":[{"unexpected":true}]}`, 19, 4)}, class: peoplesweep.FailureInvalidOutput},
 		{name: "429", response: openAISweepResponse{Status: http.StatusTooManyRequests, Body: sweepProviderSecret}, class: peoplesweep.FailureRateLimited},
 		{name: "500", response: openAISweepResponse{Status: http.StatusInternalServerError, Body: sweepProviderSecret}, class: peoplesweep.FailureProviderHTTP},
-		{name: "timeout", response: openAISweepResponse{Wait: true}, configure: providerMutation(func(provider *peoplesweep.ProviderConfig) { provider.RequestTimeout = 30 * time.Millisecond }), class: peoplesweep.FailureTimeout},
+		{name: "timeout", response: openAISweepResponse{Wait: true}, configure: providerMutation(func(provider *peoplesweep.ProviderConfig) { provider.RequestTimeout = 30 * time.Millisecond }), class: peoplesweep.FailureTimeout}, //nolint:kennlint // deadlinetest: the blocked provider request must time out without advancing the cursor
 		{name: "redirect", response: openAISweepResponse{Status: http.StatusTemporaryRedirect, Headers: map[string]string{"Location": "/forbidden"}, Body: sweepProviderSecret}, class: peoplesweep.FailureProviderHTTP},
 		{name: "oversized response", response: openAISweepResponse{Body: strings.Repeat(sweepProviderSecret, (1<<20)/len(sweepProviderSecret)+2)}, class: peoplesweep.FailureInvalidOutput},
 	}

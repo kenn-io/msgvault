@@ -586,7 +586,7 @@
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
     background: var(--bg-subtle);
-    padding: var(--space-2) 2.5rem var(--space-2) var(--space-3);
+    padding: var(--space-2) 2.5rem var(--space-2) var(--chip-pad-x);
   }
 
   .chip.two-actions {

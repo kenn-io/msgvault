@@ -1305,51 +1305,54 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{queryEndpointPath, archiveQueryEndpointPath} {
 		t.Run(path, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			started := make(chan struct{})
-			waitForCancellation := func(ctx context.Context) error {
-				close(started)
-				<-ctx.Done() // simulate a runaway query that only stops on cancellation
-				return ctx.Err()
-			}
-			srv := NewServerWithOptions(ServerOptions{
-				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-				Logger: testLogger(),
-				SQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
-					return nil, nil, waitForCancellation(ctx)
-				},
-				ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
-					return nil, nil, waitForCancellation(ctx)
-				},
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				started := make(chan struct{})
+				waitForCancellation := func(ctx context.Context) error {
+					close(started)
+					<-ctx.Done() // simulate a runaway query that only stops on cancellation
+					return ctx.Err()
+				}
+				srv := NewServerWithOptions(ServerOptions{
+					Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+					Logger: testLogger(),
+					SQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+						return nil, nil, waitForCancellation(ctx)
+					},
+					ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+						return nil, nil, waitForCancellation(ctx)
+					},
+				})
+				defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+				// Test seam: shrink the query ceiling so the timeout fires immediately.
+				srv.queryTimeout = ordinaryQueryCeiling
+
+				body := strings.NewReader(`{"sql":"SELECT 1"}`)
+				req := httptest.NewRequest(http.MethodPost, path, body)
+				req.Header.Set("Content-Type", "application/json")
+				resp := httptest.NewRecorder()
+
+				done := make(chan struct{})
+				go func() {
+					srv.Router().ServeHTTP(resp, req)
+					close(done)
+				}()
+
+				select {
+				case <-started:
+				case <-time.After(2 * time.Second):
+					require.FailNow("query runner never started")
+				}
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					require.FailNow("request did not return after query timeout")
+				}
+
+				require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+				assert.Contains(resp.Body.String(), "query_timeout")
 			})
-			// Test seam: shrink the query ceiling so the timeout fires immediately.
-			srv.queryTimeout = ordinaryQueryCeiling
-
-			body := strings.NewReader(`{"sql":"SELECT 1"}`)
-			req := httptest.NewRequest(http.MethodPost, path, body)
-			req.Header.Set("Content-Type", "application/json")
-			resp := httptest.NewRecorder()
-
-			done := make(chan struct{})
-			go func() {
-				srv.Router().ServeHTTP(resp, req)
-				close(done)
-			}()
-
-			select {
-			case <-started:
-			case <-time.After(2 * time.Second):
-				require.FailNow("query runner never started")
-			}
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				require.FailNow("request did not return after query timeout")
-			}
-
-			require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
-			assert.Contains(resp.Body.String(), "query_timeout")
 		})
 	}
 }
@@ -1382,7 +1385,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			return result, nil, err
 		},
 	})
-	srv.queryTimeout = ordinaryQueryCeiling
+	srv.queryTimeout = ordinaryQueryCeiling //nolint:kennlint // deadlinetest: the blocked DuckDB query must outlive the ordinary ceiling before caller cancellation
 	httpServer := httptest.NewServer(srv.Router())
 	t.Cleanup(httpServer.Close)
 
@@ -7074,33 +7077,36 @@ func (blockingEmbedder) Embed(ctx context.Context, _ []string) ([][]float32, err
 // fail because the response would be a bare 504 instead of the structured 503.
 func TestHandleSearch_HybridEmbeddingTimeoutReturnsStructuredError(t *testing.T) {
 	t.Parallel()
-	backend := &fakeVectorBackend{
-		active: &vector.Generation{
-			ID: 1, Model: "fake", Dimension: 4,
-			Fingerprint: "fake:4", State: vector.GenerationActive,
-		},
-	}
-	engine := hybrid.NewEngine(backend, nil, blockingEmbedder{}, hybrid.Config{
-		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
-	})
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:          &mockStore{},
-		HybridEngine:   engine,
-		Backend:        backend,
-		Logger:         testLogger(),
-		RequestTimeout: 100 * time.Millisecond,
-	})
+	synctest.Test(t, func(t *testing.T) {
+		backend := &fakeVectorBackend{
+			active: &vector.Generation{
+				ID: 1, Model: "fake", Dimension: 4,
+				Fingerprint: "fake:4", State: vector.GenerationActive,
+			},
+		}
+		engine := hybrid.NewEngine(backend, nil, blockingEmbedder{}, hybrid.Config{
+			ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+		})
+		srv := NewServerWithOptions(ServerOptions{
+			Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+			Store:          &mockStore{},
+			HybridEngine:   engine,
+			Backend:        backend,
+			Logger:         testLogger(),
+			RequestTimeout: 100 * time.Millisecond,
+		})
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=meeting&mode=hybrid", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=meeting&mode=hybrid", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
-	var errResp ErrorResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
-	assert.Equal(t, "embedding_timeout", errResp.Error,
-		"error (timeout handling may have preempted with a bare 504)")
+		require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+		var errResp ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+		assert.Equal(t, "embedding_timeout", errResp.Error,
+			"error (timeout handling may have preempted with a bare 504)")
+	})
 }
 
 // TestHandleSearch_HybridFilterOnlyReturnsBadRequest regression-guards

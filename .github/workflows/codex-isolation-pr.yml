@@ -1,0 +1,12 @@
+name: Codex isolation
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    cache-mode: read
+    uses: ./.github/workflows/codex-isolation.yml

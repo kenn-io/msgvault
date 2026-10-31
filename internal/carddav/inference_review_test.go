@@ -319,6 +319,7 @@ func TestReviewedPublicationRestartRecoversPersistedOwnershipWithoutAnotherPut(t
 	assert := assert.New(t)
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, book := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	if st.IsPostgreSQL() {
 		t.Skip("SQLite backup is used to reopen an independent on-disk archive; PostgreSQL intent reopen is covered by store tests")
 	}

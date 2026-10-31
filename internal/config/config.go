@@ -592,6 +592,7 @@ type Config struct {
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
+	Pocket             []PocketSource                  `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
@@ -844,6 +845,9 @@ type SyncConfig struct {
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
+	// IMAPSkipFolders maps exact source identifiers from list-accounts to
+	// folders excluded from sync unless command folder flags override them.
+	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's
@@ -854,6 +858,18 @@ type SyncConfig struct {
 	// a missing entry leaves snapshot refresh authorized only by
 	// unambiguous advertised \Sent or \Drafts placement.
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
+}
+
+// Validate rejects blank saved IMAP folder names.
+func (s *SyncConfig) Validate() error {
+	for identifier, folders := range s.IMAPSkipFolders {
+		for _, folder := range folders {
+			if strings.TrimSpace(folder) == "" {
+				return fmt.Errorf("sync.imap_skip_folders[%q] contains a blank folder name", identifier)
+			}
+		}
+	}
+	return nil
 }
 
 // DefaultHome returns the default msgvault home directory.
@@ -1197,6 +1213,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
+	cfg.deferDaemonError(cfg.Sync.Validate())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
@@ -2176,33 +2193,47 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 	return email, true
 }
 
+// defaultMeetingSourceIdentifier names the single unlabeled meeting source.
+const defaultMeetingSourceIdentifier = "default"
+
 // applyMeetingSourceDefaults normalizes native meeting-source entries: a
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
-		c.Omi[0].Identifier = "default"
+		c.Omi[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
-		c.Plaud[0].Identifier = "default"
+		c.Plaud[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
-		c.Twenty[0].Identifier = "default"
+		c.Twenty[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
+	}
+	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
+		c.Pocket[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		if c.Pocket[i].APIKeyEnv == "" {
+			c.Pocket[i].APIKeyEnv = "POCKET_API_KEY"
+		}
 	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
-		c.Granola[0].Identifier = "default"
+		c.Granola[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
-		c.Circleback[0].Identifier = "default"
+		c.Circleback[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
-		c.NotionMeetings[0].Identifier = "default"
+		c.NotionMeetings[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
-		c.Muesli[0].Identifier = "default"
+		c.Muesli[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
-		c.Twilio[0].Identifier = "default"
+		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
 }
 
@@ -2223,6 +2254,27 @@ func (c *Config) validateMeetingSources() error {
 			seen[key] = true
 		}
 		return nil
+	}
+	pocketIDs := make([]string, len(c.Pocket))
+	for i, src := range c.Pocket {
+		pocketIDs[i] = src.Identifier
+	}
+	if err := check("pocket", pocketIDs); err != nil {
+		return err
+	}
+	for i := range c.Pocket {
+		src := &c.Pocket[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		for j, char := range src.APIKeyEnv {
+			valid := char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || j > 0 && char >= '0' && char <= '9'
+			if !valid {
+				return fmt.Errorf("[[pocket]] identifier %q has invalid api_key_env", src.Identifier)
+			}
+		}
 	}
 	twentyIDs := make([]string, len(c.Twenty))
 	for i, s := range c.Twenty {

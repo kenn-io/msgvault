@@ -460,6 +460,9 @@ func (s *Store) RecordDocbankAttachment(
 	return nil
 }
 
+// Docbank requeues these on a new start under the same job ID.
+const docbankRequeueOutcomes = "'consent','stale_authority','pdf_password_required','invalid_receipt'"
+
 // RetryDocbankAttachments requeues failures and restarts discovery in one transaction.
 func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -469,6 +472,12 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 			SET state = 'sending', reason = '', attempts = 0, next_action_at = NULL
 			WHERE destination_key = ? AND state = 'failed'`, destination); err != nil {
 			return fmt.Errorf("requeue failed attachment mirror deliveries: %w", err)
+		}
+		if _, err := q.Exec(`
+			DELETE FROM docbank_attachment_processing
+			WHERE destination_key = ? AND next_action_at IS NULL
+			  AND outcome IN (`+docbankRequeueOutcomes+`)`, destination); err != nil {
+			return fmt.Errorf("requeue recoverable attachment processing outcomes: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
 			return fmt.Errorf("reset attachment mirror discovery: %w", err)

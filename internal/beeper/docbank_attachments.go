@@ -691,13 +691,13 @@ func processingJobAnswer(job docbankmedia.JobStatus) documentProcessingAnswer {
 	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":
 		return documentProcessingAnswer{outcome: "requested", delay: store.BeeperMediaPollDelay}
 	case job.State == "operator_required":
-		return documentProcessingAnswer{outcome: job.State, delay: store.BeeperMediaRetryDelay}
+		return documentProcessingAnswer{outcome: job.State}
 	case job.State == "failed" || job.State == "abandoned":
 		return documentProcessingAnswer{outcome: processingCode(job.FailureCode, job.State)}
 	default:
 		// A newer Docbank may add states; keep the job and look again later instead of guessing.
 		report := fmt.Errorf("document processing job %s has unrecognized state %q", job.JobID, job.State)
-		return documentProcessingAnswer{outcome: processingCode(job.State, "unrecognized_state"), delay: store.BeeperMediaRetryDelay, report: report}
+		return documentProcessingAnswer{outcome: "requested", delay: store.BeeperMediaRetryDelay, report: report}
 	}
 }
 

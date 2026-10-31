@@ -14,6 +14,10 @@ import (
 type AttachmentPolicyCandidate struct {
 	AttachmentID     int64
 	MessageID        int64
+	MessageType      string
+	MessageMetadata  string
+	MediaType        string
+	MIMEType         string
 	SourceType       string
 	SourceIdentifier string
 	ConversationType string
@@ -48,7 +52,9 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		       COALESCE(CAST(c.metadata AS TEXT), ''), COALESCE(a.size, 0),
 		       COALESCE(a.content_hash, ''), a.storage_path,
 		       COALESCE(a.thumbnail_hash, ''), COALESCE(a.thumbnail_path, ''),
-		       COALESCE(a.source_attachment_id, ''), COALESCE(a.attachment_state, '')
+		       COALESCE(a.source_attachment_id, ''), COALESCE(a.attachment_state, ''),
+		       COALESCE(m.message_type, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
+		       COALESCE(a.media_type, ''), COALESCE(a.mime_type, '')
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
@@ -82,6 +88,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 			&candidate.ParticipantCount, &conversationMetadata, &candidate.Size, &candidate.ContentHash,
 			&candidate.StoragePath, &candidate.ThumbnailHash, &candidate.ThumbnailPath,
 			&candidate.SourceAttachmentID, &state,
+			&candidate.MessageType, &candidate.MessageMetadata, &candidate.MediaType, &candidate.MIMEType,
 		); err != nil {
 			return nil, fmt.Errorf("scan attachment policy candidate: %w", err)
 		}

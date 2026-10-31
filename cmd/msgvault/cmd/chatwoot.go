@@ -151,7 +151,8 @@ func chatwootImportOptions(src config.ChatwootSource, inboxID int64, cfg *config
 	return chatwoot.ImportOptions{
 		InboxID: inboxID, SelfAgentIDs: src.SelfAgentIDs, IncludePrivate: src.PrivateIncluded(),
 		ReconcileInterval: src.ReconcileInterval(), Policy: src.MediaPolicy(),
-		AttachmentsDir: cfg.AttachmentsDir(),
+		RecordingMaxBytes: src.EffectiveRecordingMaxBytes(),
+		AttachmentsDir:    cfg.AttachmentsDir(),
 	}
 }
 

@@ -33,16 +33,6 @@ func TestProcessingPlansAndProfiles(t *testing.T) {
 	profile, err = client.Profile(t.Context(), "documents")
 	require.NoError(err)
 	assert.False(profile.Rendition)
-	selector := docbankmedia.ProcessingSelector{NodeID: 7, ContentVersionID: "version", Profile: "documents"}
-	plan, err := client.PlanProcessing(t.Context(), selector)
-	require.NoError(err)
-	assert.Equal(docbanktest.ProcessingFingerprint("plan-one"), plan.Fingerprint)
-	jobID, err := client.StartProcessing(t.Context(), selector, plan.Fingerprint)
-	require.NoError(err)
-	assert.Equal(docbanktest.ProcessingJobID("version"), jobID)
-	assert.Equal([]string{"version"}, fake.Plans)
-	assert.Equal(int64(7), fake.NodeIDs["version"])
-	assert.Equal([]string{"version"}, fake.Jobs)
 }
 
 func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {

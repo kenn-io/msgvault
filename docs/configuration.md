@@ -912,7 +912,25 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 |---|---|---|
 | `rate_limit_qps` | `5` | Scales Gmail's local quota-unit refill rate: `5` allows 250 units/second; `3` allows 150. Gmail values above `5` are capped at `5`. Also sets Microsoft Teams Graph requests/second, without that cap, so lowering it slows Teams imports too. Reduce it if Gmail reports quota errors; Google's [project quotas](https://developers.google.com/workspace/gmail/api/reference/quota) can be lower than this local budget. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
+| `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
+
+To skip folders on every sync, key `imap_skip_folders` by the exact `ACCOUNT`
+identifier printed by `msgvault list-accounts`:
+
+```toml
+[sync]
+imap_skip_folders = { "imaps://user@example.com@imap.example.com:993" = ["Trash", "Junk"] }
+```
+
+Folder names match exactly and case-insensitively. Use the full name for nested
+folders, with no wildcards. Restart the daemon after editing the file.
+Either `--folder` or `--skip-folder` replaces the saved filter for one run.
+Sync warns when an account key matches no stored IMAP source or a folder name
+matches no selectable mailbox. Unmatched folders stay configured and will be
+excluded if created later. Blank saved folder names prevent daemon startup.
+See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
+on archive membership, deletion tracking, cursor advancement, and `gc`.
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the
@@ -1443,7 +1461,7 @@ document_profile = "documents"
 
 Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers the same files as attachment search: mirrored files except declared images, audio, and video, while a live message holds them. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
 
-The mirror requests processing for files uploaded before this setting was enabled or before an upgrade. Changing the profile in Docbank requests processing again. `msgvault docbank attachments status` reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors. `msgvault docbank attachments backfill` retries failed uploads and restarts discovery, but leaves saved Docbank processing outcomes unchanged. Change the profile in Docbank to request processing again for files with saved outcomes. Resolve `operator_required` in Docbank.
+The mirror requests processing for files uploaded before this setting was enabled or before an upgrade. Changing the profile in Docbank requests processing again. `msgvault docbank attachments status` reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors. `msgvault docbank attachments backfill` retries failed uploads and restarts discovery. After adding a PDF password or renewing consent in Docbank, run `msgvault docbank attachments backfill` to request processing again. Other outcomes wait for a profile change.
 
 The mirror includes files retained after source deletion or hidden by deduplication. It excludes files whose attachment rows were removed.
 Saved Docbank jobs are scheduled for checks once a minute. Polls run serially within half of each 50-second pass and share that time with discovery. If the worker reaches all 10,000 jobs each minute, they can generate about 10,000 status requests; a large backlog can take several passes.
@@ -1635,6 +1653,7 @@ self_agent_ids = []
 include_private = false
 media = true
 max_media_mb = 250
+recording_max_bytes = 4294967296   # 4 GiB per call recording
 reconcile_interval_hours = 24
 ```
 
@@ -1651,7 +1670,8 @@ reconcile_interval_hours = 24
 | `self_agent_ids` | — | Positive user IDs representing the archive owner; outgoing replies alone do not establish ownership |
 | `include_private` | `false` | Include private notes; turning it on later and running `sync-chatwoot --full` backfills the notes already skipped. Sync refuses to run with it off once private notes are archived |
 | `media` | `true` | Download attachment and call-recording bytes; retain metadata and source transcripts when disabled |
-| `max_media_mb` | `250` | Per-attachment cap in MiB; zero selects the default; negative/overflowing values are rejected |
+| `max_media_mb` | `250` | Cap in MiB for media other than call recordings; zero selects the default; negative/overflowing values are rejected |
+| `recording_max_bytes` | `4294967296` (4 GiB) | Per-file cap in bytes for audio on voice-call messages and linked call meetings; zero selects the default; negative values and `MaxInt64` are rejected. Does not enable media downloads or Docbank uploads |
 | `reconcile_interval_hours` | `24` | Interval for listing every conversation and rereading histories with commit-time updates since the previous reconcile began; zero selects the default; negative/overflowing values are rejected |
 
 Duplicate profile labels (case-insensitive) and duplicate canonical instance/account
@@ -1855,6 +1875,39 @@ queries, fragments, or path prefixes. Redirects are rejected. Identifiers must
 be unique ignoring case; each entry requires `account_email`. Enabled sources
 without a schedule are not scheduled. Removing a registered source prevents
 scheduled sync from silently recreating it.
+
+### Pocket Sources
+
+Pocket sync uses top-level `[[pocket]]` entries. This integration is available
+on `main`; check the release changelog before using it with an installed release.
+
+```toml
+[[pocket]]
+identifier = "personal"
+account_email = "you@example.com"
+api_key_env = "POCKET_API_KEY"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `identifier` | `default` for one unnamed entry | Stable source label; multiple entries require unique labels |
+| `account_email` | Required | Explicit primary email; must match the live Pocket account |
+| `api_key_env` | `POCKET_API_KEY` | Environment variable holding a personal API key on the daemon host |
+| `enabled` | `false` | Enable scheduled sync |
+| `schedule` | Unset | Cron expression; an enabled source without a schedule is not synced automatically |
+
+Set the key in the daemon's environment and restart the daemon after changing
+it. A variable set only in a remote CLI shell does not reach the daemon.
+msgvault sends the key only to Pocket's fixed REST and MCP endpoints. It does
+not store the key in source configuration or raw meeting evidence.
+
+Run `msgvault add-pocket personal` to verify access and bind the source to the
+authenticated email and stable Pocket user ID. A replacement key for that same
+account works. Another account requires a new source label, even if the email
+matches. Removing an account does not revoke its Pocket key. See the
+[Pocket workflow](usage/meetings.md#pocket) for coverage and compatibility limits.
 
 ### Circleback Sources
 

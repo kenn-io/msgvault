@@ -571,7 +571,7 @@ func TestAttachmentMirrorOutageRecovery(t *testing.T) {
 			assert := assert.New(t)
 			r := newMirrorRig(t)
 			if fault == docbanktest.FaultTimeout {
-				r.worker.uploadTimeout = 100 * time.Millisecond
+				r.worker.uploadTimeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the stalled upload must expire to exercise outage recovery
 			}
 			for i := range 3 {
 				hash := r.add("report.pdf", "application/pdf", fmt.Appendf(nil, "document %d", i))
@@ -1046,7 +1046,7 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
-func TestAttachmentMirrorBackfillPreservesRecoverableJobFailure(t *testing.T) {
+func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -1063,10 +1063,16 @@ func TestAttachmentMirrorBackfillPreservesRecoverableJobFailure(t *testing.T) {
 
 	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
 	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a"}, r.processing.Plans)
-	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	var savedJobID string
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&savedJobID))
+	assert.Equal(jobID, savedJobID)
 	assert.Equal([]string{jobID}, r.processing.Polls)
-	assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
+	r.processing.States[jobID] = [3]string{"completed", "rendition", ""}
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
 }
 
 func TestAttachmentMirrorBackfillKeepsTerminalJobFailure(t *testing.T) {
@@ -1220,6 +1226,7 @@ func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	// The scheduler publishes the batch error as last_error.
 	err := r.runBatch(t.Context())
 	require.ErrorContains(err, "awaiting_review")
+	assert.Equal(int64(1), r.processingCounts().Requested)
 	var jobID string
 	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&jobID))
 	assert.Equal(docbanktest.ProcessingJobID("a"), jobID)
@@ -1568,7 +1575,7 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 		{"queued", "rendition", "", "requested", false},
 		{"running", "rendition", "", "requested", false},
 		{"retry_wait", "rendition", "provider_timeout", "requested", false},
-		{"new_state", "rendition", "provider_code", "new_state", true},
+		{"new_state", "rendition", "provider_code", "requested", true},
 		{"operator_required", "failed", "operator_required", "operator_required", false},
 		{"failed", "rendition", "provider_timeout", "provider_timeout", false},
 		{"failed", "rendition", "", "failed", false},
@@ -1579,6 +1586,9 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 			job := docbankmedia.JobStatus{State: tc.state, Phase: tc.phase, FailureCode: tc.code}
 			answer := processingJobAnswer(job)
 			assert.Equal(tc.outcome, answer.outcome)
+			if tc.state == "operator_required" {
+				assert.Zero(answer.delay)
+			}
 			if tc.report {
 				require.ErrorContains(answer.report, tc.state)
 				assert.Equal(store.BeeperMediaRetryDelay, answer.delay)

@@ -1,7 +1,7 @@
 name: Codex isolation
 
 on:
-  pull_request:
+  workflow_call:
   push:
     branches: [main]
   workflow_dispatch:
@@ -14,10 +14,15 @@ env:
   GOTRACEBACK: all
   GOFLAGS: -trimpath
 
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   pinned-artifact:
     # Ubuntu 22.04 permits the unprivileged user namespaces used by Bubblewrap.
     runs-on: ubuntu-26.04
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

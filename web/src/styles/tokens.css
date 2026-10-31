@@ -23,6 +23,20 @@
   --status-destructive-bg: var(--status-error-bg);
   --status-destructive-ink: var(--status-error-ink);
   --page-gutter: var(--space-6);
+
+  /* Layout tokens. Spacing comes from kit-ui's --space-1..8 (2, 4, 6, 8, 12,
+   * 16, 24, 32px) and type from --font-size-2xs..2xl; components pick one of
+   * these roles instead of writing a pixel value. */
+  --pane-pad-x: var(--space-5);
+  --pane-pad-y: var(--space-4);
+  --section-gap: var(--space-6);
+  --field-gap: var(--space-4);
+  --control-gap: var(--space-3);
+  --control-pad-x: var(--space-5);
+  --chip-pad-x: var(--space-4);
+  --chip-min-height: 26px;
+
+  --scrollbar-ink: var(--text-muted);
 }
 
 @media (max-width: 760px) {
@@ -58,14 +72,33 @@
   font-weight: 600;
 }
 
-/* Inner-pane scrollbars: thin, muted, darkens on hover. */
-:where([data-scroll]) {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--border-default) 55%, transparent) transparent;
+/* Share one horizontal inset across dialog and drawer sections. */
+:root:root .kit-modal-header {
+  padding: var(--control-gap) var(--pane-pad-x);
 }
 
-:where([data-scroll]:hover) {
-  scrollbar-color: var(--border-default) transparent;
+:root:root .kit-modal-header .kit-modal-close {
+  margin-right: calc(var(--control-gap) - var(--pane-pad-x));
+}
+
+:root:root .kit-modal-body {
+  padding: var(--pane-pad-x);
+}
+
+:root:root .kit-modal-footer {
+  gap: var(--control-gap);
+  padding: var(--pane-pad-x);
+}
+
+/* Kit trims button labels to the x-height, which centers lowercase letters
+ * and leaves a capitalized label sitting high. Trim to the cap height. Every
+ * size shares one side padding. */
+:root:root .kit-button .kit-button__label-text {
+  text-box-edge: cap alphabetic;
+}
+
+:root:root .kit-button {
+  padding-inline: var(--control-pad-x);
 }
 
 :where(a, [data-link]) {
@@ -83,6 +116,37 @@
  * labels below AA contrast. The dot and check mark already show the state. */
 :root .kit-filter-dropdown__panel .kit-filter-dropdown__item:not(.active) {
   opacity: 1;
+}
+
+/* Kit centers a short segment inside a taller track, so the active pill floats
+ * with a wide gap above and below and a narrow one beside. Stretch the
+ * segments to the track and pad them from tokens, so every side of the pill
+ * and the text in it is even. */
+:root:root .kit-segmented:not(.kit-segmented--borderless):not(.kit-segmented--block) {
+  align-items: stretch;
+}
+
+:root:root .kit-segmented:not(.kit-segmented--borderless):not(.kit-segmented--block) .kit-segmented__btn {
+  padding: 0 var(--control-pad-x);
+}
+
+/* Kit gives each chip size its own side padding (6px, 6px, and 8px), and
+ * xs also pads the top and bottom. One chip padding keeps the text centered
+ * in every chip; the height comes from min-height and flex centering. */
+:root:root .kit-chip {
+  max-width: 100%;
+  padding: 0 var(--chip-pad-x);
+}
+
+:root:root .kit-chip:has(> .kit-chip__trailing) {
+  min-height: var(--chip-min-height);
+  padding-right: var(--space-1);
+}
+
+/* kit-ui-check-ignore: removable filters and saved summaries must show their full text, including on touch screens. */
+:root:root :is(.kit-chip:has(> .kit-chip__trailing), .summary-chip) .kit-chip__label {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* Kit mixes the muted chip text 25% toward its own background, which drops

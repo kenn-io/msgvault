@@ -167,7 +167,7 @@ func buildExcludedMediaPlan(candidates []store.AttachmentPolicyCandidate, cfg *c
 	}
 	seenBlobs := make(map[string]struct{})
 	for _, candidate := range candidates {
-		policy, ok := mediaPolicyForSource(cfg, candidate.SourceType, candidate.SourceIdentifier)
+		policy, ok := mediaPolicyForAttachment(cfg, candidate)
 		if !ok {
 			continue
 		}
@@ -208,11 +208,12 @@ func addExcludedMediaBlob(plan *excludedMediaPlan, seen map[string]struct{}, sto
 	seen[hash] = struct{}{}
 }
 
-func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (attachmentpolicy.Policy, bool) {
+func mediaPolicyForAttachment(cfg *config.Config, candidate store.AttachmentPolicyCandidate) (attachmentpolicy.Policy, bool) {
 	if cfg == nil {
 		return attachmentpolicy.Policy{}, false
 	}
-	switch sourceType {
+	identifier := candidate.SourceIdentifier
+	switch candidate.SourceType {
 	case sourceTypeBeeper:
 		return cfg.Beeper.MediaPolicy(identifier), true
 	case sourceTypeInline:
@@ -233,7 +234,15 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 			for _, source := range cfg.Chatwoot {
 				canonical, err := chatwoot.CanonicalURL(source.URL)
 				if err == nil && canonical == baseURL && source.AccountID == accountID {
-					return source.MediaPolicy(), true
+					policy := source.MediaPolicy()
+					// Call audio is archived on both the meeting and its linked chat message.
+					isCall := candidate.MessageType == "meeting_transcript" ||
+						store.RelatedMessageCandidate(candidate.MessageID, candidate.MessageType, candidate.MessageMetadata) != nil
+					isAudio := candidate.MediaType == "audio" || strings.HasPrefix(candidate.MIMEType, "audio/")
+					if isAudio && isCall {
+						policy.MaxBytes = source.EffectiveRecordingMaxBytes()
+					}
+					return policy, true
 				}
 			}
 		}
