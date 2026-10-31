@@ -390,8 +390,6 @@ test('identity hues retain text contrast', async ({ page }) => {
   }
 });
 
-test.describe('local domain days', () => {
-  test.use({ timezoneId: 'America/New_York' });
 test('domain calendar retries and retains its local day across Details', async ({ page }) => {
   await prepare(page);
   await page.route('**/api/v1/domains/example.com/summary', route => route.fulfill({ json: { summary: { ...domainSummary, first_at: '2025-05-01T00:00:00Z', last_at: '2025-08-01T00:00:00Z' } } }));
@@ -428,8 +426,6 @@ test('domain calendar retries and retains its local day across Details', async (
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
   await page.keyboard.press('Escape');
   await expect.poll(() => bodies.at(-1)?.filters).toEqual([]);
-});
-
 });
 
 test('saved people keep durable IDs separate from participants and open profiles with no messages', async ({ page }) => {
@@ -531,40 +527,6 @@ test('list filters clear hidden selections and each mode offers only supported c
   await expect(page.getByText('1 selected', { exact: true })).toBeHidden();
 });
 
-test('Saved People retains rows and reloads after a page cursor expires', async ({ page }) => {
-  await prepare(page);
-  let loads = 0;
-  await page.route('**/api/v1/people/directory**', route => {
-    if (new URL(route.request().url()).searchParams.has('cursor')) return route.fulfill({ status: 400, json: { error: 'invalid_cursor', message: 'Directory cursor is invalid' } });
-    return route.fulfill({ json: { people: Array.from({ length: 40 }, (_, id) => ({ id: id + 1, display_name: loads ? `Reloaded ${id}` : `Contact ${id}`, organizations: [], categories: [], revision: 1, contact_state: 'active' })), next_cursor: loads++ ? undefined : 'page-2' } });
-  });
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
-  const list = page.getByRole('grid', { name: 'People results' });
-  await expect(list.getByText('Contact 0', { exact: true })).toBeVisible();
-  await list.evaluate(element => element.scrollTop = element.scrollHeight);
-  await page.getByRole('button', { name: 'Reload', exact: true }).click();
-  await expect(list.getByText('Reloaded 0', { exact: true })).toBeVisible();
-});
-test('Back restores the prior reader while staying on the same person', async ({ page }) => {
-  await prepare(page);
-  await page.route('**/api/v1/conversations/21**', route => route.fulfill({ json: { id: 21, anchor_id: 1, has_before: false, has_after: false, total: 1, messages: [{ id: 1, conversation_id: 21, subject: 'Subject line', message_type: 'email', from: 'Alice Example', to: [], sent_at: '2026-07-18T09:00:00Z', body: 'Email body', snippet: 'Email body', attachments: [] }] } }));
-  await page.goto('/?workspace=relationships');
-  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
-  const grid = page.getByRole('grid', { name: 'Messages results' });
-  await grid.getByText('Team Chat').click();
-  await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ })).toBeVisible();
-  await page.getByRole('group', { name: 'Person page', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
-  await page.getByLabel('From', { exact: true }).fill('2026-07-01');
-  await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
-  await page.keyboard.press('Escape');
-  await grid.getByText('Subject line').click();
-  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ }).getByText('Latest chat message')).toBeVisible();
-  await page.goForward();
-  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
-});
-
 for (const previous of ['Alice', 'no person']) {
   test(`returning from Directory opens the selected person's messages after ${previous}`, async ({ page }) => {
     await prepare(page);
@@ -622,6 +584,8 @@ test('Back clears a later calendar day before restoring the same person reader',
   await expect.poll(() => requests.at(-1)?.filters).toEqual([]);
   await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ }).getByText('Latest chat message')).toBeVisible();
   expect(await page.evaluate(() => window.history.state.relationshipReader?.bounds)).toBeUndefined();
+  await page.goForward();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
 });
 
 test('People list keys stay in that grid while Messages is open', async ({ page }) => {

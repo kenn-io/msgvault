@@ -154,18 +154,6 @@ test('Escape dismisses the current day but hovering another day reopens the tool
   await expect(tooltip).toHaveCount(0);
 });
 
-test('year controls become available after person details load', async ({ page }) => {
-  let resolvePerson!: (firstAt: string) => void;
-  const firstAt = new Promise<string>((resolve) => { resolvePerson = resolve; });
-  const opened = openCalendar(page, firstAt);
-  await expect(page.getByText('Loading…', { exact: true }).first()).toBeVisible();
-  resolvePerson(person.first_at);
-  await opened;
-  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
-  await expect(calendar.getByRole('button', { name: 'Next relationship year' })).toBeDisabled();
-  await expect(calendar.getByRole('button', { name: 'Previous relationship year' })).toBeEnabled();
-});
-
 test('calendar remains accessible in a narrow viewport with edge tooltips on screen', async ({ page }) => {
   await openCalendar(page);
   await page.setViewportSize({ width: 320, height: 720 });

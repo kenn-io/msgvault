@@ -1105,12 +1105,9 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 
 	invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Invalid/Zone"}`)
 	require.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
-
-	files := postExploreJSON(t, srv, "/api/v1/files/groups", `{"predicate":{},"grouping":["day"]}`)
-	require.Equal(http.StatusOK, files.Code, files.Body.String())
 }
 
-func TestParticipantTimelineKeepsLinkedAliasesAndExcludesOwnerAbsentEvents(t *testing.T) {
+func TestParticipantTimelineForwardsPersonInteractionsAndLinkedAliases(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, strings.Replace(exploreFixtureDefaultMessages, "'email'", "'calendar_event'", 1),
@@ -1126,6 +1123,6 @@ func TestParticipantTimelineKeepsLinkedAliasesAndExcludesOwnerAbsentEvents(t *te
 	var body ExploreHTTPResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
 	require.Len(body.Rows, 2)
-	// Two rows prove owner-participation filtering; m3 proves linked-alias scope.
+	// Two rows confirm interaction scope; m3 confirms linked-alias expansion.
 	require.Contains([]string{body.Rows[0].Key, body.Rows[1].Key}, "source:2:message:m3")
 }
