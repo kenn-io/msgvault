@@ -659,7 +659,7 @@
         activeRow: null,
         scrollAnchor: null,
       })}
-    onClearFilters={() => commitNavigation({ filters: scope ? [scope] : [], activeRow: null, scrollAnchor: null })}
+    onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
     onFiltersChange={(filters) =>
       commitNavigation({
         filters,

@@ -134,7 +134,6 @@ test.describe('day selection when midnight is skipped', () => {
     await calendar.getByRole('button', { name: '1 message on Nov 4, 2018' }).filter({ visible: true }).click();
     expect((await timelineRequest).postDataJSON()).toMatchObject({
       filters: [
-        { dimension: 'participant', values: ['1'] },
         { dimension: 'after', values: ['2018-11-04T03:00:00.000Z'] },
         { dimension: 'before', values: ['2018-11-05T02:00:00.000Z'] }
       ]
@@ -261,7 +260,6 @@ test.describe('day selection', () => {
     const historyLength = await page.evaluate(() => history.length);
     expect(requests.at(-1)).toMatchObject({
       filters: [
-        { dimension: 'participant', values: ['1'] },
         { dimension: 'after', values: ['2026-03-08T05:00:00.000Z'] },
         { dimension: 'before', values: ['2026-03-09T04:00:00.000Z'] }
       ]
@@ -281,7 +279,7 @@ test.describe('day selection', () => {
     await expect(timeline.getByText('Spring planning')).toHaveCount(0);
     await calendar.getByRole('button', { name: 'Clear date' }).click();
     await expect(timeline.getByText('All relationship activity')).toBeVisible();
-    expect(requests.at(-1)?.filters ?? []).toEqual([{ dimension: 'participant', values: ['1'] }]);
+    expect(requests.at(-1)?.filters ?? []).toEqual([]);
     await expect(emptyDay).toHaveAttribute('aria-pressed', 'false');
     expect(await page.evaluate(() => history.length)).toBe(historyLength);
 

@@ -40,7 +40,7 @@
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
-  import { RelationshipsController } from '../../relationships/controller.svelte';
+  import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
@@ -1111,14 +1111,14 @@
       if (relationshipsController.target !== null) relationshipsController.clearTarget();
       return;
     }
-    const predicate = exploreState.predicate();
+    const predicate = contextPredicate(exploreState.predicate());
     if (
       relationshipsController.target === target &&
       relationshipsController.lastPredicateFingerprint === predicateFingerprint(predicate)
     ) {
       return;
     }
-    void relationshipsController.openTarget(target, predicate);
+    void relationshipsController.openTarget(target, predicate, false);
   });
   function openRelationship(participantID: number): void {
     commitNavigation(relationshipDestination(participantID));
@@ -1288,6 +1288,7 @@
           target={exploreState.current.relationshipTarget}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
+          onFiltersChange={(filters) => commitNavigation({ filters })}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}

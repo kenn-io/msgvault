@@ -450,7 +450,6 @@ test('domain calendar retries and filters scoped Messages by UTC day', async ({ 
   const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2026' }).filter({ visible: true });
   await day.click();
   await expect.poll(() => bodies.at(-1)).toMatchObject({ filters: [
-    { dimension: 'domain', values: ['example.com'] },
     { dimension: 'after', values: ['2026-07-19T00:00:00.000Z'] },
     { dimension: 'before', values: ['2026-07-20T00:00:00.000Z'] },
   ] });
@@ -459,7 +458,7 @@ test('domain calendar retries and filters scoped Messages by UTC day', async ({ 
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
   await page.keyboard.press('Escape');
-  await expect.poll(() => bodies.at(-1)?.filters).toEqual([{ dimension: 'domain', values: ['example.com'] }]);
+  await expect.poll(() => bodies.at(-1)?.filters).toEqual([]);
 });
 
 test('saved people keep durable IDs separate from participants and open profiles with no messages', async ({ page }) => {
@@ -481,4 +480,91 @@ test('saved people keep durable IDs separate from participants and open profiles
   await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
   await expect.poll(async () => (await exploreHistoryState(page)).workspace).toBe('directory');
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92 });
+});
+
+test('People search and intersecting filters stay separate from identity scope across tabs and history', async ({ page }) => {
+  const fileBodies: Record<string, unknown>[] = [];
+  await prepare(page, fileBodies);
+  const requests: Record<string, unknown>[] = [];
+  let obsoleteTimeline = 0;
+  await page.route('**/api/v1/relationships/1/timeline', route => { obsoleteTimeline += 1; return route.fulfill({ status: 500, json: { message: 'Obsolete timeline failed' } }); });
+  await page.route('**/api/v1/participants/search', route => route.fulfill({ json: { rows: [alice], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } }));
+  await page.route('**/api/v1/participants/1/summary', route => route.fulfill({ json: { summary: alice } }));
+  await page.route('**/api/v1/participants/1/timeline', async route => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    await route.fulfill({ json: { rows: [{ ...messageRow, title: 'Alias activity', kind: 'message', message_type: 'email', conversation_type: 'email', source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Alias'], participant_ids: [2], attachment_count: 0, attachment_size: 0, deleted_from_source: false, match: {} }], total_count: 1, cache_revision: 'cache-relationships', search_provenance: {} } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', query: 'alice', relationshipTarget: 'cluster:1', filters: [{ dimension: 'participant', values: ['2'] }] }))}`);
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  expect(requests.at(-1)).toMatchObject({ filters: [{ dimension: 'participant', values: ['2'] }] });
+  expect(requests.at(-1)).not.toHaveProperty('query');
+  expect(obsoleteTimeline).toBe(0);
+  await expect(page.getByText('Current 62/100', { exact: true })).toBeVisible();
+  await page.getByRole('main', { name: 'Messages', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('From', { exact: true }).fill('2026-07-01');
+  await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
+  await expect.poll(() => fileBodies.length).toBeGreaterThan(0);
+  expect(fileBodies.at(-1)).toMatchObject({ predicate: { filters: [{ dimension: 'participant', values: ['2'] }, { dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] }] } });
+  expect((fileBodies.at(-1)?.predicate as Record<string, unknown>)).not.toHaveProperty('query');
+  await page.goBack();
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  await page.goBack();
+  await expect.poll(async () => (await exploreHistoryState(page)).filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
+  await page.reload();
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Alias activity')).toBeVisible();
+  expect(requests.at(-1)?.filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
+});
+
+test('observed people supersede pending saved profiles and restored missing profiles show an error', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: [{ id: 92, display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-92' }] } }));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => release = resolve);
+  await page.route('**/api/v1/people/92', async route => { await held; await route.fulfill({ json: { id: 92, display_name: 'Saved Contact', revision: 1, participant_ids: [] } }); });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
+  await page.getByRole('grid', { name: 'People results' }).getByText('Saved Contact').click();
+  await page.getByRole('button', { name: 'Remove Saved', exact: true }).click();
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
+  release();
+  await expect(page.getByRole('heading', { name: 'Saved Contact' })).toBeHidden();
+  await page.route('**/api/v1/people/999', route => route.fulfill({ status: 404, json: { message: 'Person not found' } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 999 }))}`);
+  await expect(page.getByRole('alert')).toHaveText('Saved person not found.');
+  await expect(page.getByRole('heading', { name: 'Saved person', exact: true })).toBeHidden();
+});
+
+test('list filters clear hidden selections and each mode offers only supported controls', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: [91, 92].map(id => ({ id, display_name: `Saved ${id}`, organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: `example-${id}` })) } }));
+  await page.route('**/api/v1/relationships', route => route.fulfill({ json: { rows: [1, 2].map(id => ({ canonical_id: id, display_label: id === 1 ? 'Alice Example' : 'Bob Example', last_at: when, member_ids: [id], score: 2, signals: { last_interaction_at: when, sent_count: 3 } })), total_count: 2, cache_revision: 'cache-relationships' } }));
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('grid', { name: 'People results' });
+  await list.getByRole('row', { name: /Alice Example/ }).hover();
+  await list.getByRole('checkbox', { name: 'Select Alice Example' }).click();
+  await list.press('ArrowDown');
+  await list.press('Space');
+  await expect(page.getByText('2 selected', { exact: true })).toBeVisible();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
+  await expect(page.getByText('2 selected', { exact: true })).toBeHidden();
+  await page.keyboard.press('Escape');
+  await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).click();
+  await page.getByRole('option', { name: 'Name', exact: true }).click();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Include one-way senders', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Saved', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('combobox', { name: 'Sort: Name', exact: true }).click();
+  await expect(page.getByRole('option', { name: 'Closest', exact: true })).toBeHidden();
+  await page.keyboard.press('Escape');
+  await list.getByRole('row', { name: /Saved 91/ }).hover();
+  await list.getByRole('checkbox', { name: 'Select Saved 91' }).click();
+  await expect(page.getByText('1 selected', { exact: true })).toBeVisible();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('button', { name: 'Profile filters', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Category filter', exact: true }).fill('work');
+  await expect(page.getByText('1 selected', { exact: true })).toBeHidden();
 });

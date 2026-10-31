@@ -12,6 +12,7 @@ export interface ExploreGroupsHTTPRequest {
   filters?: ExploreFilter[];
   group_key?: string;
   /**
+   * Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
    * @minItems 1
    * @maxItems 1
    */

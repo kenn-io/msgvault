@@ -1102,4 +1102,34 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 		require.NoError(err)
 		assert.Positive(row.Count)
 	}
+	files := postExploreJSON(t, srv, "/api/v1/files/groups", `{"predicate":{},"grouping":["day"]}`)
+	require.Equal(http.StatusOK, files.Code, files.Body.String())
+	var fileGroups ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(files.Body.Bytes(), &fileGroups))
+	require.Len(fileGroups.Rows, 1)
+	assert.Equal("2026-07-18", fileGroups.Rows[0].Key)
+	assert.Equal(int64(2), fileGroups.Rows[0].Count)
+}
+
+func TestParticipantTimelineKeepsLinkedAliasesAndIncomingIntersections(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, exploreFixtureDefaultMessages,
+		`(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'from', 'Alice Alias')`,
+		3)
+	catalog := &fileCatalogStore{mockStore: &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}, total: 3, stats: &StoreStats{}}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &exploreClusterStore{fileCatalogStore: catalog, members: []int64{1, 2}}, Engine: engine, Logger: testLogger(),
+	})
+	all := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{}`)
+	require.Equal(http.StatusOK, all.Code, all.Body.String())
+	var body ExploreHTTPResponse
+	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
+	require.Len(body.Rows, 3)
+	intersected := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{"filters":[{"dimension":"participant","values":["2"]}]}`)
+	require.Equal(http.StatusOK, intersected.Code, intersected.Body.String())
+	require.NoError(json.Unmarshal(intersected.Body.Bytes(), &body))
+	require.Len(body.Rows, 1)
+	require.Equal("Other source", body.Rows[0].Title)
 }

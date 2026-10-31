@@ -5391,6 +5391,7 @@ components:
         group_key:
           type: string
         grouping:
+          description: Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
           maxItems: 1

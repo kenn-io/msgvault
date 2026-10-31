@@ -169,6 +169,7 @@ export class RelationshipsController {
   private listSeenCursors = new Set<string>();
   private seenCursors = new Set<string>();
   private lastPredicate: ExplorePredicate | undefined;
+  private withTimeline = true;
   private lastListPredicate: ExplorePredicate | undefined;
   constructor(client: APIClient, timezone: () => string) {
     this.client = client;
@@ -196,7 +197,7 @@ export class RelationshipsController {
       this.target === context.target &&
       this.lastPredicateFingerprint === context.targetPredicateFingerprint
     ) {
-      reloads.push(this.openTarget(context.target, context.targetPredicate));
+      reloads.push(this.openTarget(context.target, context.targetPredicate, this.withTimeline));
     }
     if (
       context.listPredicate &&
@@ -367,7 +368,8 @@ export class RelationshipsController {
     }
     this.listError = errorMessage(error, res.status);
   }
-  async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
+  async openTarget(target: string, predicate: ExplorePredicate, withTimeline = true): Promise<void> {
+    this.withTimeline = withTimeline;
     await this.openTargetWithCalendarState(target, predicate);
   }
   private async openTargetWithCalendarState(
@@ -449,8 +451,8 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
-          AbortSignal.any([signal, this.timelineAbort.signal])),
+        this.withTimeline ? this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
+          AbortSignal.any([signal, this.timelineAbort.signal])) : undefined,
         hasActiveFilters(context)
           ? generatedGetParticipantContextSummary({ id: id }, context, {
               ...this.client,
@@ -462,6 +464,7 @@ export class RelationshipsController {
       const base = personResponse.data;
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
+      if (base && !this.withTimeline) this.canonicalID = base.cluster?.canonical_id ?? base.id;
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
       else if (summary) this.detail = summary;
       this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
@@ -487,7 +490,7 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.fetchDomainPage(domain, context, generation, undefined, signal),
+        this.withTimeline ? this.fetchDomainPage(domain, context, generation, undefined, signal) : undefined,
         hasActiveFilters(context)
           ? generatedGetDomainContextSummary({ domain: domain }, context, {
               ...this.client,
@@ -827,7 +830,7 @@ export class RelationshipsController {
       // own revision moved.
       const changed = this.identityRevision === null || this.identityRevision !== data.identity_revision;
       const reloads: Promise<void>[] = [];
-      if (changed && this.target && this.lastPredicate) reloads.push(this.openTarget(this.target, this.lastPredicate));
+      if (changed && this.target && this.lastPredicate) reloads.push(this.openTarget(this.target, this.lastPredicate, this.withTimeline));
       if (this.lastListPredicate) reloads.push(this.loadList(this.lastListPredicate));
       await Promise.all(reloads);
       return { ok: true, identityRevision: data.identity_revision, cacheState: data.cache_state };
@@ -965,7 +968,7 @@ function clampNumber(value: number, minimum: number, maximum: number): number {
 // ANY surface — a predicate that still carries one (a deep link minted before
 // the workspace transition started clearing it) must not half-apply to the
 // domain/people search surfaces only.
-function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
+export function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
   const {
     cursor: _cursor,
     grouping: _grouping,

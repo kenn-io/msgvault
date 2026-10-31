@@ -271,11 +271,11 @@ does not merge records merely because their display names match. Select a
 person to inspect contextual activity across email, chat, calendar events, and
 meeting notes, plus the files associated with that person. Message filters continue to scope both Messages and Files.
 
-People lists **People** or **Domains**. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show curated Directory profiles, including people with no archived messages. Select **Same person** after checking multiple observed people to link their identities.
+People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show curated Directory profiles, including people with no archived messages. Select **Same person** after checking multiple observed people to link their identities.
 
 A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. Details keeps identity linking, attributes, and **Open in Directory** for the full profile. Directory and Reviews are also available in the People header.
 
-The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to filter Messages, then select it again or choose **Clear date** to clear the day. People use your browser's local time zone; domains use UTC. Domain days count individual sent messages, including chats that span several days. Switching people, years, or to Files clears the day selection.
+The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to filter Messages, then select it again or choose **Clear date** to clear the day. People use your browser's local time zone; domains use UTC. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection.
 
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and

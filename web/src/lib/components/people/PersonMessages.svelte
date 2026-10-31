@@ -11,15 +11,15 @@
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
   import type { MeetingRef } from '../../api/generated/models';
 
-  let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod }:
+  let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange }:
     { client: APIClient; identityScope: TimelineScope; target: string; predicate: ExplorePredicate; period?: { after: string; before: string } | null;
       onOpenPerson?: (id: number) => void; onOpenMeeting?: (meeting: MeetingRef) => void;
-      onOpenFiles: () => void; onClearPeriod: () => void; onOpenSettings?: () => void } = $props();
+      onOpenFiles: () => void; onFiltersChange: (filters: ExploreFilter[]) => void; onClearPeriod: () => void; onOpenSettings?: () => void } = $props();
   const scope: ExploreFilter = untrack(() => identityScope.kind === 'person'
     ? { dimension: 'participant', values: [String(identityScope.id)] }
     : { dimension: 'domain', values: [identityScope.domain] });
   const exploreState = new ExploreState(null);
-  exploreState.replaceCommittedNavigation({ filters: [scope, ...untrack(() => predicate.filters ?? []).filter((filter) => filter.dimension !== scope.dimension)] });
+  exploreState.replaceCommittedNavigation({ filters: untrack(() => predicate.filters ?? []) });
   const restored = untrack(() => relationshipReaderHistory(window.history.state, 'relationships', target));
   if (restored?.selection.kind === 'entry') exploreState.replaceTransient({ selectedRow: restored.selection.row.key, conversationAnchor: restored.anchor ? String(restored.anchor) : null });
   const selection = new ExploreSelectionState();
@@ -50,22 +50,23 @@
     event.stopPropagation();
   }
   function focusGrid(): void { root?.querySelector<HTMLElement>('[role="grid"]')?.focus(); }
-  let previousDates: ExploreFilter[] = untrack(() => predicate.filters ?? []).filter((filter) => filter.dimension === 'after' || filter.dimension === 'before');
   function navigate(patch: Partial<ExploreURLState>): void {
     if (patch.workspace === 'files' || patch.presentation === 'files') { onOpenFiles(); return; }
-    const filters = patch.filters?.filter((filter) => filter.dimension !== scope.dimension);
-    if (filters?.length === 0) { previousDates = []; onClearPeriod(); }
-    exploreState.commitNavigation({ ...patch, ...(filters ? { filters: [scope, ...filters] } : {}) });
+    if (patch.filters) { onClearPeriod(); onFiltersChange(patch.filters); }
+    exploreState.commitNavigation(patch);
   }
-  let appliedPeriod: string | undefined;
+  let appliedFilterKey = untrack(() => JSON.stringify({ filters: predicate.filters ?? [], period }));
+  const filterKey = $derived(JSON.stringify(predicate.filters ?? []));
   $effect(() => {
+    const filters: ExploreFilter[] = JSON.parse(filterKey);
     const window = period;
-    const key = JSON.stringify(window);
-    if (appliedPeriod === undefined && !window) { appliedPeriod = key; return; }
-    if (appliedPeriod === key) return;
-    appliedPeriod = key;
-    untrack(() => navigate({ filters: [scope, ...exploreState.current.filters.filter((filter) => !['after', 'before', scope.dimension].includes(filter.dimension)),
-      ...(window ? [{ dimension: 'after' as const, values: [window.after] }, { dimension: 'before' as const, values: [window.before] }] : previousDates)], selectedRow: null, activeRow: null, scrollAnchor: null }));
+    const key = JSON.stringify({ filters, period: window });
+    if (key === appliedFilterKey) return;
+    appliedFilterKey = key;
+    untrack(() => exploreState.replaceCommittedNavigation({ filters: window
+      ? [...filters.filter((filter) => !['after', 'before'].includes(filter.dimension)),
+        { dimension: 'after', values: [window.after] }, { dimension: 'before', values: [window.before] }]
+      : filters, selectedRow: null, activeRow: null, scrollAnchor: null }));
   });
   onDestroy(() => { loader.destroy(); exploreState.destroy(); });
 </script>

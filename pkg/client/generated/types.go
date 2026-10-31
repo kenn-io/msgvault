@@ -4948,9 +4948,11 @@ func (e ExploreGroupSort) Validate() error {
 }
 
 type ExploreGroupsHTTPRequest struct {
-	Cursor       *string                               `json:"cursor,omitzero"`
-	Filters      []ExploreFilter                       `json:"filters,omitempty"`
-	GroupKey     *string                               `json:"group_key,omitzero"`
+	Cursor   *string         `json:"cursor,omitzero"`
+	Filters  []ExploreFilter `json:"filters,omitempty"`
+	GroupKey *string         `json:"group_key,omitzero"`
+
+	// Grouping Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
 	Grouping     []ExploreGroupDimension               `json:"grouping" validate:"required,min=1,max=1"`
 	Limit        *int64                                `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
 	Presentation *ExploreGroupsHTTPRequestPresentation `json:"presentation,omitempty"`

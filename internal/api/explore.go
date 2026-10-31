@@ -133,7 +133,7 @@ type ExploreGroupsHTTPRequest struct {
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
 	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
 	SearchMode   string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid" doc:"Search mode; pipe OR is full_text only"`
-	Grouping     []ExploreGroupDimension `json:"grouping" minItems:"1" maxItems:"1"`
+	Grouping     []ExploreGroupDimension `json:"grouping" minItems:"1" maxItems:"1" doc:"Day counts individual messages; other dimensions count entries, with chats collapsed into conversations"`
 	Presentation string                  `json:"presentation,omitempty" enum:"table"`
 	Sort         []ExploreGroupSort      `json:"sort,omitempty" maxItems:"1"`
 	Cursor       string                  `json:"cursor,omitempty"`

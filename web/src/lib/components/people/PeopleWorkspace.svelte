@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
-  import { onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
@@ -38,8 +38,10 @@
   let bulkAnchorID = $state<number>();
   let bulkContext = $state<ReturnType<RelationshipsController['personMergeContextSnapshot']>>();
   let staleLink = $state<{ a: number; b: number } | null>(null);
+  let soloProfile = $state<{ id: number; display_name: string } | null>(null);
   const profileFilters = $derived(Boolean(urlState.directoryContactState || urlState.directoryCategory || urlState.directoryOrganization || urlState.directoryPrimaryChannel || urlState.directoryLastContactAfter || urlState.directoryLastContactBefore));
   const directoryMode = $derived(facet === 'people' && (saved || profileFilters));
+  const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
   const soloPerson = $derived(urlState.directoryPersonID);
   const predicateKey = $derived(JSON.stringify(page.predicate));
   $effect(() => {
@@ -52,7 +54,7 @@
     if (!directoryMode) return;
     directory.applyURLState({ ...urlState, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' });
   });
-  $effect(() => { void [facet, query, sort, directoryMode, predicateKey]; untrack(() => selection.clear()); });
+  $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
   onMount(() => {
     const observer = new ResizeObserver(([entry]) => narrow = (entry?.contentRect.width ?? 1200) < 720);
     if (root) observer.observe(root);
@@ -77,16 +79,36 @@
   const activeKey = $derived(soloPerson !== null ? `person:${soloPerson}` : page.target);
   const hasPerson = $derived(page.target !== null || soloPerson !== null);
   let openGeneration = 0;
+  const navigationKey = $derived(JSON.stringify(urlState));
+  $effect(() => { void navigationKey; untrack(() => { openGeneration += 1; opening = false; }); });
+  onDestroy(() => { openGeneration += 1; });
+  $effect(() => {
+    void navigationKey;
+    const id = soloPerson;
+    if (id === null || page.target !== null || soloProfile?.id === id) return;
+    const abort = new AbortController();
+    const generation = ++openGeneration;
+    opening = true;
+    openingError = '';
+    void getPersonProfile({ id }, { ...page.client, signal: abort.signal }).then((response) => {
+      if (abort.signal.aborted || generation !== openGeneration) return;
+      if (!response.data) throw new Error('Saved person not found.');
+      soloProfile = { id, display_name: response.data.display_name || 'Saved person' };
+    }).catch((cause: unknown) => { if (!abort.signal.aborted && generation === openGeneration) openingError = cause instanceof Error ? cause.message : 'Could not open this person.'; })
+      .finally(() => { if (generation === openGeneration) opening = false; });
+    return () => abort.abort();
+  });
   async function open(key: string): Promise<void> {
     const generation = ++openGeneration;
     openingError = '';
-    if (!key.startsWith('person:')) { onNavigate({ directoryPersonID: null, relationshipTarget: key, relationshipFiles: false }); return; }
+    if (!key.startsWith('person:')) { opening = false; onNavigate({ directoryPersonID: null, relationshipTarget: key, relationshipFiles: false }); return; }
     const id = Number(key.slice(7));
     opening = true;
     try {
       const response = await getPersonProfile({ id }, page.client);
       if (generation !== openGeneration) return;
       if (!response.data) throw new Error('Could not open this person.');
+      soloProfile = { id, display_name: response.data.display_name || 'Saved person' };
       const participant = response.data.participant_ids?.[0];
       onNavigate({ directoryPersonID: id, relationshipTarget: participant ? `cluster:${participant}` : null, relationshipFiles: false });
     } catch (cause: unknown) { if (generation === openGeneration) openingError = cause instanceof Error ? cause.message : 'Could not open this person.'; }
@@ -104,12 +126,12 @@
   function reset(): void { onNavigate({ relationshipSaved: false }); onShowAllChange(false); onNavigate({ directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
   const filterSections = $derived<FilterDropdownSection[]>([{ items: [
     { id: 'saved', label: 'Saved', active: saved, closeOnSelect: false, onSelect: () => onNavigate({ relationshipSaved: !saved }) },
-    { id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) },
+    ...(rankedList ? [{ id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) }] : []),
     { id: 'profile', label: 'Profile filters', active: profileFilters, onSelect: () => filterOpen = !filterOpen },
   ] }]);
   const chips = $derived([
     ...(saved ? [{ id: 'saved', label: 'Saved', onremove: () => onNavigate({ relationshipSaved: false }) }] : []),
-    ...(showAll ? [{ id: 'one-way', label: 'Including one-way senders', onremove: () => onShowAllChange(false) }] : []),
+    ...(showAll && rankedList ? [{ id: 'one-way', label: 'Including one-way senders', onremove: () => onShowAllChange(false) }] : []),
     ...(['directoryContactState', 'directoryCategory', 'directoryOrganization', 'directoryPrimaryChannel', 'directoryLastContactAfter', 'directoryLastContactBefore'] as const)
       .filter((key) => urlState[key]).map((key) => ({ id: key, label: key === 'directoryContactState' ? contactStateLabel(urlState[key]) : key === 'directoryPrimaryChannel' ? channelLabel(urlState[key]) : key === 'directoryLastContactAfter' ? `Last contacted after ${formatDay(urlState[key])}` : key === 'directoryLastContactBefore' ? `Last contacted before ${formatDay(urlState[key])}` : urlState[key], onremove: () => onNavigate({ [key]: '' }) })),
   ]);
@@ -170,8 +192,8 @@
       <PeopleList {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
         countLabel={`${(directoryMode ? rows.length : controller.listTotalCount ?? rows.length).toLocaleString()}${hasMore && directoryMode ? '+' : ''} ${facet === 'domains' ? (rows.length === 1 && !hasMore ? 'domain' : 'domains') : (rows.length === 1 && !hasMore ? 'person' : 'people')}`}
         error={directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={directoryMode ? null : controller.degraded}
-        {facet} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} {sort}
-        sortOptions={[{ value: 'closest', label: 'Closest' }, { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }]}
+        {facet} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}
+        sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }]}
         canMerge={selection.count >= 2 && [...selection.explicitKeys].every((key) => key.startsWith('cluster:'))}
         onFacetChange={(value) => onNavigate({ relationshipFacet: value, directoryPersonID: null, relationshipTarget: null, relationshipFiles: false })} onSortChange={(value) => onNavigate({ relationshipSort: value as ExploreURLState['relationshipSort'] })} onOpen={(key) => void open(key)}
         onLoadMore={loadMore} onRetry={() => directoryMode ? void directory.reloadFirstPage() : void controller.loadList(page.predicate)} onMerge={() => void startBulk()} />
@@ -183,7 +205,7 @@
 {#snippet person()}
   {#if opening}<p role="status">Loading person…</p>
   {:else if soloPerson !== null && page.target === null}
-    <section class="solo"><Button label="Back to People" onclick={close} /><h2>{directory.rows.find((row) => row.id === soloPerson)?.display_name ?? 'Saved person'}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>
+    {#if soloProfile?.id === soloPerson}<section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{:else if openingError}<Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} />{/if}
   {:else}<PersonPage {...page} onBack={narrow ? close : undefined} />{/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->

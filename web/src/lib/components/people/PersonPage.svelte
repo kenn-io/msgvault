@@ -4,8 +4,8 @@
   import type { APIClient } from '../../api/client';
   import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
-  import type { RelationshipsController } from '../../relationships/controller.svelte';
-  import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection } from '../../explore/models';
+  import { contextPredicate, type RelationshipsController } from '../../relationships/controller.svelte';
+  import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
   import RelationshipHeader from '../relationships/RelationshipHeader.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
   import { localDayBoundsUTC } from '../relationships/timeline-support';
@@ -17,14 +17,16 @@
   let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack,
     onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
     onOpenFileItem, onOpenFileConversation, personFilePresentation = 'files', personFileDirections = ['from_person'],
-    onPersonFilePresentationChange, onPersonFileDirectionsChange }:
+    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange }:
     { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
       onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
       onOpenFileConversation?: (key: string, messageID: number, conversationID: number) => void;
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
+      onFiltersChange: (filters: ExploreFilter[]) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
+  const context = $derived(contextPredicate(predicate));
   let details = $state(false);
   let selectedDate = $state<string | null>(null);
   let sort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
@@ -55,7 +57,7 @@
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   {:else if !detail}
     <EmptyState title={controller.timelineError ?? 'Select a person or domain'} />
-    {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} />{/if}
+    {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
   {:else}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true} />
     {#if !filesOpen && !details}
@@ -65,7 +67,7 @@
         {:else}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}
-            {selectedDate} {since} title="Activity" showTemperature={false} onDateChange={(date) => selectedDate = date}
+            {selectedDate} {since} title="Activity" onDateChange={(date) => selectedDate = date}
             onYearChange={(year) => { selectedDate = null; void controller.loadRelationshipYear(year); }} />
         {/if}
       </div>
@@ -86,13 +88,13 @@
     {:else if scope}
       {#key target}
         {#if filesOpen}
-          <div class="files"><FilesWorkspace {client} embedded showHeader={false} {predicate} identityScope={scope} {sort} {filenameQuery} {mimeFamilies}
+          <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={scope} {sort} {filenameQuery} {mimeFamilies}
             personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
             onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
             onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}
             onOpenItem={onOpenFileItem} onOpenConversation={onOpenFileConversation} /></div>
         {:else}
-          <PersonMessages {client} target={target!} {predicate} identityScope={scope} {period} {onOpenPerson} {onOpenMeeting} {onOpenSettings} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
+          <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
         {/if}
       {/key}
     {/if}
