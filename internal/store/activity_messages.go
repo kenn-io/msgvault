@@ -50,7 +50,7 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 	}
 	if q.AfterKey != nil {
 		where += ` AND (r.occurred_at ` + compare + ` ? OR (r.occurred_at=? AND r.message_id ` + compare + ` ?))`
-		args = append(args, q.AfterKey.OccurredAt, q.AfterKey.OccurredAt, q.AfterKey.MessageID)
+		args = append(args, q.AfterKey.OccurredAt.UTC(), q.AfterKey.OccurredAt.UTC(), q.AfterKey.MessageID)
 	}
 	args = append(args, q.Limit)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+activityBurstGroupsCTE+`
