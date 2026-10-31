@@ -246,7 +246,9 @@ test('person attachment gallery preserves directions and Media state across sour
 
 test('Back restores the relationship message and its conversation window after following a participant', async ({ page }) => {
   await prepare(page);
+  const windows: URLSearchParams[] = [];
   await page.route('**/api/v1/conversations/70**', route => {
+    windows.push(new URL(route.request().url()).searchParams);
     return route.fulfill({ json: {
       id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
       messages: [{
@@ -270,6 +272,9 @@ test('Back restores the relationship message and its conversation window after f
   await page.goBack();
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
+  expect(windows.at(-1)?.get('anchor')).toBe('500');
+  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
+  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
   await page.goForward();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
   await expect(reading).toBeHidden();
