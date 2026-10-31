@@ -107,11 +107,11 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	}
 	if w.After != nil {
 		windowWhere = append(windowWhere, `ae.occurred_at>=?`)
-		windowArgs = append(windowArgs, *w.After)
+		windowArgs = append(windowArgs, w.After.UTC())
 	}
 	if w.Before != nil {
 		windowWhere = append(windowWhere, `ae.occurred_at<?`)
-		windowArgs = append(windowArgs, *w.Before)
+		windowArgs = append(windowArgs, w.Before.UTC())
 	}
 	if w.After == nil && w.Before == nil && (w.FromDate != "" || w.ToDate != "") {
 		if !validActivityDate(w.FromDate) || !validActivityDate(w.ToDate) || w.FromDate > w.ToDate {

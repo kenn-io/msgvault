@@ -47,7 +47,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 		listExcluded = `CASE WHEN r.list_id IS NOT NULL THEN 1 ELSE 0 END`
 	}
 	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "r.direction", RefKind: "r.ref_kind", ListExcluded: listExcluded, LargeInbound: "r.large_inbound"})
-	args = append(args, q.Now)
+	args = append(args, q.Now.UTC())
 	args = append(args, subjectArgs...)
 	loc := q.Location
 	if loc == nil {
@@ -146,7 +146,7 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
 	if err != nil {
 		return nil, false, err
 	}
-	args = append(args, q.Now)
+	args = append(args, q.Now.UTC())
 	args = append(args, subjectArgs...)
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r WHERE r.message_type='meeting_transcript' AND r.occurred_at<=? AND r.list_id IS NULL
