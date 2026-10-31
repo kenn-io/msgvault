@@ -32,6 +32,7 @@
     Chip,
     Notice,
     NumberInput,
+    PageHeader,
     SelectDropdown,
     SettingsLayout,
     SettingsSection,
@@ -52,7 +53,6 @@
   } from '../../api/generated/models';
   import type { CardDAVSettingsRequest, SettingsNavigationTarget } from '../../carddav/navigation';
   import type { SavedAppearance } from '../../theme/preferences.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
   import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
   import CronField from './CronField.svelte';
