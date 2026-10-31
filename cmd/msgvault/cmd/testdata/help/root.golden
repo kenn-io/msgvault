@@ -69,6 +69,7 @@ Add and sync sources:
   add-o365               Add a Microsoft 365 account via OAuth
   add-omi                Register an Omi account and validate its API key
   add-plaud              Authorize and register a Plaud cloud account
+  add-pocket             Verify and register a personal Pocket account
   add-slack              Add a Slack workspace as an archive source
   add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
   add-teams              Authorize Microsoft Teams (delegated Graph) for an account
@@ -99,6 +100,7 @@ Add and sync sources:
   sync-notion-meetings   Sync Notion AI Meeting Notes
   sync-omi               Sync Omi meeting conversations and transcripts
   sync-plaud             Sync Plaud recordings, transcripts, and notes
+  sync-pocket            Sync Pocket transcripts, summaries, and actions
   sync-slack             Sync Slack conversations (channels, group DMs, DMs)
   sync-synctech-sms      Run one configured synctech-sms source now
   sync-teams             Sync Microsoft Teams chats and channels
