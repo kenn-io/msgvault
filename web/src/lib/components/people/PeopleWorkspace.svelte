@@ -34,7 +34,9 @@
   let filenameQuery = $state('');
   let mimeFamilies = $state<FileMIMEFamily[]>([]);
   const target = $derived(page.target);
-  $effect(() => { void target; untrack(() => { selectedDate = null; domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
+  // Back can replace navigation while keeping the same target value.
+  $effect(() => { void page.target; untrack(() => selectedDate = null); });
+  $effect(() => { void target; untrack(() => { domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
