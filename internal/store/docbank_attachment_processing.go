@@ -14,6 +14,7 @@ type DocbankAttachmentProcessing struct {
 	VersionID   string
 	Fingerprint string
 	Outcome     string
+	ReadOutcome string // Outcome observed before the worker changed its result.
 	JobID       string
 }
 
@@ -45,7 +46,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		if len(result) >= n || unasked && cursor.unaskedDone {
 			break
 		}
-		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', ''
+		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', '', ''
  FROM docbank_attachment_deliveries d
  LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash
@@ -54,7 +55,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
  ORDER BY d.content_hash LIMIT ?`
 		args := []any{dest}
 		if !unasked {
-			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.job_id
+			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.outcome, p.job_id
  FROM docbank_attachment_processing p JOIN docbank_attachment_deliveries d
  ON d.destination_key = p.destination_key AND d.content_hash = p.content_hash
  WHERE p.destination_key = ? AND p.fingerprint = ? AND p.next_action_at <= ?
@@ -73,7 +74,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		}
 		for rows.Next() {
 			var d DocbankAttachmentProcessing
-			if err := rows.Scan(&d.ContentHash, &d.NodeID, &d.VersionID, &d.Fingerprint, &d.Outcome, &d.JobID); err != nil {
+			if err := rows.Scan(&d.ContentHash, &d.NodeID, &d.VersionID, &d.Fingerprint, &d.Outcome, &d.ReadOutcome, &d.JobID); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
@@ -102,8 +103,8 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
  (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) VALUES (?, ?, ?, ?, ?, ?)
  ON CONFLICT (destination_key, content_hash) DO UPDATE SET
  fingerprint = excluded.fingerprint, outcome = excluded.outcome, job_id = excluded.job_id,
- next_action_at = excluded.next_action_at`),
-		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next)
+ next_action_at = excluded.next_action_at WHERE docbank_attachment_processing.outcome <> 'retry_requested' OR ? = 'retry_requested'`),
+		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next, d.ReadOutcome)
 	if err != nil {
 		return fmt.Errorf("record attachment processing result: %w", err)
 	}

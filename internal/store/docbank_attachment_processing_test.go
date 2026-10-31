@@ -116,35 +116,35 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 	f := storetest.New(t)
 	ctx := t.Context()
 	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "fp"))
-	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}, {MIMEType: "application/pdf", VersionID: "not_found"}, {MIMEType: "application/pdf", VersionID: "rendition_operator_required"}, {MIMEType: "application/pdf", VersionID: "pending"}}
+	documents := []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "provider_timeout"}, {MIMEType: "application/pdf", VersionID: "consent"}, {MIMEType: "application/pdf", VersionID: "stale_authority"}, {MIMEType: "application/pdf", VersionID: "pdf_password_required"}, {MIMEType: "application/pdf", VersionID: "not_found"}, {MIMEType: "application/pdf", VersionID: "rendition_operator_required"}, {MIMEType: "application/pdf", VersionID: "operator_required"}, {MIMEType: "application/pdf", VersionID: "pending"}}
 	documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: "pending-no-job"})
 	f.SeedDocumentAttachments(f.CreateMessage("backfill"), documents)
-	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority", "pdf_password_required", "not_found", "rendition_operator_required"} {
+	for i, outcome := range []string{"provider_timeout", "consent", "stale_authority", "pdf_password_required", "not_found", "rendition_operator_required", "operator_required"} {
 		d := store.DocbankAttachmentProcessing{ContentHash: fmt.Sprintf("%064x", 0xabcdef+i), VersionID: outcome, Fingerprint: "fp", Outcome: outcome, JobID: fmt.Sprintf("%064x", i+1)}
 		if outcome == "not_found" || outcome == "rendition_operator_required" {
 			d.JobID = ""
 		}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Time{}))
 	}
-	pendingHash := fmt.Sprintf("%064x", 0xabcdf5)
+	pendingHash := fmt.Sprintf("%064x", 0xabcdf6)
 	pendingJobID := fmt.Sprintf("%064x", 0x5678)
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
 		ContentHash: pendingHash, VersionID: "pending", Fingerprint: "fp", Outcome: "requested", JobID: pendingJobID,
 	}, time.Now().Add(time.Hour)))
-	noJobHash := fmt.Sprintf("%064x", 0xabcdf6)
+	noJobHash := fmt.Sprintf("%064x", 0xabcdf7)
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
 		ContentHash: noJobHash, Fingerprint: "fp", Outcome: "requested",
 	}, time.Now().Add(time.Hour)))
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
-	require.Len(due, 5)
+	require.Len(due, 6)
 	assert.Equal("pending", due[0].VersionID)
 	assert.Equal(store.DocbankProcessingRetryRequested, due[0].Outcome)
-	assert.ElementsMatch([]string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required"}, []string{due[1].VersionID, due[2].VersionID, due[3].VersionID, due[4].VersionID})
+	assert.ElementsMatch([]string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required"}, []string{due[1].VersionID, due[2].VersionID, due[3].VersionID, due[4].VersionID, due[5].VersionID})
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
-	assert.Equal(int64(4), counts.Waiting)
+	assert.Equal(int64(5), counts.Waiting)
 	assert.Equal(int64(2), counts.Requested)
 	assert.Equal(map[string]int64{
 		"provider_timeout": 1,
@@ -159,4 +159,31 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 	assert.Equal("requested", savedOutcome)
 	assert.Empty(jobID)
 	assert.True(next.After(time.Now()))
+}
+
+func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	f.SeedDocumentAttachments(f.CreateMessage("backfill"), []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "pending"}})
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
+		ContentHash: fmt.Sprintf("%064x", 0xabcdef), Fingerprint: "fp", Outcome: "requested", JobID: "pending-job",
+	}, time.Now().Add(-time.Minute)))
+	poll, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	require.NoError(err)
+	require.Len(poll, 1)
+	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
+	poll[0].Outcome = "consent"
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", poll[0], time.Time{}))
+	retry, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	require.NoError(err)
+	require.Len(retry, 1, "backfill must survive the in-flight poll's terminal result")
+	assert.Equal(store.DocbankProcessingRetryRequested, retry[0].Outcome)
+	assert.Equal("pending-job", retry[0].JobID)
+	retry[0].Outcome = "requested"
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(time.Hour)))
+	var outcome string
+	require.NoError(f.Store.DB().QueryRow(`SELECT outcome FROM docbank_attachment_processing`).Scan(&outcome))
+	assert.Equal("requested", outcome, "a worker that read the retry request can consume it")
 }
