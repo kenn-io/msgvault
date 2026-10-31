@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -1059,7 +1060,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if present, err := sourceTableExists(tx, "meeting_link_decisions"); err != nil {
 		return nil, err
 	} else if present {
-		if _, err := tx.Exec(`INSERT INTO meeting_link_decisions SELECT d.* FROM src.meeting_link_decisions d WHERE d.member_message_id IN (SELECT id FROM messages) AND (d.target_message_id IN (SELECT id FROM messages) OR (d.target_ical_uid <> '' AND EXISTS (SELECT 1 FROM messages m WHERE m.message_type = 'calendar_event' AND CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END = d.target_ical_uid)))`); err != nil {
+		if err := copySubsetMeetingDecisions(tx); err != nil {
 			return nil, fmt.Errorf("copy meeting decisions: %w", err)
 		}
 	}
@@ -1082,6 +1083,54 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	return result, nil
+}
+
+// ICS UIDs live in retained evidence. Map saved UIDs to deterministic provider
+// identities so only decisions whose calendar targets survived the copy remain.
+func copySubsetMeetingDecisions(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TEMP TABLE selected_meeting_uids (uid TEXT PRIMARY KEY, provider_id TEXT NOT NULL)`); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT target_ical_uid FROM src.meeting_link_decisions WHERE target_ical_uid <> '' AND member_message_id IN (SELECT id FROM messages) GROUP BY target_ical_uid`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	var uids []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		uids = append(uids, uid)
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	for _, uid := range uids {
+		if _, err := tx.Exec(`INSERT INTO selected_meeting_uids (uid, provider_id) VALUES (?,?)`, uid, calevent.ICSMessageID(uid, "")); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO meeting_link_decisions SELECT d.* FROM src.meeting_link_decisions d
+ WHERE d.member_message_id IN (SELECT id FROM messages)
+ AND (d.target_message_id IN (SELECT id FROM messages)
+ OR (d.target_ical_uid <> '' AND EXISTS (SELECT 1 FROM messages m
+ WHERE m.message_type = 'calendar_event'
+ AND (CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END = d.target_ical_uid
+ OR EXISTS (SELECT 1 FROM message_raw raw JOIN conversations c ON c.id=m.conversation_id
+ JOIN selected_meeting_uids u ON u.uid=d.target_ical_uid
+ WHERE raw.message_id=m.id AND raw.raw_format='ics' AND c.source_conversation_id=u.provider_id)))))`); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`DROP TABLE selected_meeting_uids`)
+	return err
 }
 
 // copyPersonMergePackets copies an audit packet only when the scoped archive

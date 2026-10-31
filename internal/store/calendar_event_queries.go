@@ -556,13 +556,9 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
 	}
 }
 
-type calendarRowQueryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 // Only sparse cancellations inherit omitted details from the master. Evidence
 // decode failures are diagnostics; archive reads and context errors abort.
-func inheritCalendarCancellation(ctx context.Context, r calendarRowQueryer, row, master CalendarEventRow) (CalendarEventRow, string, error) {
+func inheritCalendarCancellation(ctx context.Context, r contextRowQuerier, row, master CalendarEventRow) (CalendarEventRow, string, error) {
 	if err := ctx.Err(); err != nil {
 		return row, "", err
 	}

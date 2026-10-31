@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

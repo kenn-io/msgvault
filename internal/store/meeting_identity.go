@@ -248,8 +248,8 @@ func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o l
 		if provider := copy.Event.ProviderEventID; provider != "" {
 			keyClauses = append(keyClauses, `(k.kind='google_event_id' AND k.value IN (?,?))`)
 			instance := provider
-			if o.Ref.Key != "" {
-				instance += "_" + o.Ref.Key
+			if o.Identity.OccurrenceKey != "" {
+				instance += "_" + o.Identity.OccurrenceKey
 			}
 			keyArgs = append(keyArgs, provider, instance)
 		}
