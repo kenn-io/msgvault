@@ -465,14 +465,22 @@ test('saved people keep durable IDs separate from participants and open profiles
   await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: [
     { id: 91, display_name: 'Saved Alice', organizations: ['Example Org'], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-91' },
     { id: 92, display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-92' },
+    { id: 93, display_name: 'Draft Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-93' },
   ] } }));
   await page.route('**/api/v1/people/91', route => route.fulfill({ json: { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] } }));
   await page.route('**/api/v1/people/92', route => route.fulfill({ json: { id: 92, display_name: 'Saved Contact', revision: 1, participant_ids: [] } }));
+  await page.route('**/api/v1/people/93', route => route.fulfill({ json: { id: 93, display_name: 'Draft Contact', revision: 1, participant_ids: [3] } }));
+  await page.route('**/api/v1/participants/3', route => route.fulfill({ status: 404, json: { error: 'not_found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
   const list = page.getByRole('grid', { name: 'People results' });
   await list.getByText('Saved Alice', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 91, relationshipTarget: 'cluster:1' });
+  await list.getByText('Draft Contact', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Open in Directory', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+  await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'People', exact: true }).click();
   await list.getByText('Saved Contact', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Saved Contact' })).toBeVisible();
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92, relationshipTarget: null });

@@ -404,6 +404,7 @@ export class RelationshipsController {
       this.identityRevision = null;
       this.resetRelationshipCalendar(restore.year, restore.restarted);
     }
+    this.relationshipCalendarRestarted = restore.restarted ?? false;
     this.timelineDay = restore.day ?? null;
     this.seenCursors = new Set<string>();
     const clusterID = parseClusterID(target);

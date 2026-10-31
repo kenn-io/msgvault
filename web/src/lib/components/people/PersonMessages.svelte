@@ -27,10 +27,15 @@
   const session = new EverythingSessionState();
   let notice = $state('');
   let root = $state<HTMLElement>();
+  let hasPredicate = false;
   const loader = new ExploreLoader(untrack(() => client), exploreState, {
     isEnabled: () => true,
     predicate: requestPredicate,
-    onPredicateChange: () => selection.clear(),
+    onPredicateChange: () => {
+      selection.clear();
+      if (hasPredicate) exploreState.replaceTransient({ selectedRow: null, conversationAnchor: null });
+      hasPredicate = true;
+    },
     onPagingNotice: (value) => notice = value ?? '',
     onRestorationFocus: focusGrid,
   }, untrack(() => identityScope));

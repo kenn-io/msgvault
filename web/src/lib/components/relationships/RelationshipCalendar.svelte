@@ -341,13 +341,13 @@
   h2 {
     margin: 0;
     font-size: var(--font-size-sm);
-    font-weight: 650;
+    font-weight: var(--font-weight-semibold);
   }
 
   .since {
     margin-left: var(--space-3);
     color: var(--text-muted);
-    font-weight: 400;
+    font-weight: var(--font-weight-normal);
   }
 
   .year-navigation {

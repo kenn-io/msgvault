@@ -827,6 +827,27 @@ describe('RelationshipsController.openTarget', () => {
     expect(controller.relationshipCalendarError).toBeNull();
   });
 
+  it('stops after one calendar revision restart with the embedded timeline', async () => {
+    let calls = 0;
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path.endsWith('/calendar')) {
+        calls += 1;
+        if (calls > 2) return Response.json({}, { status: 409 });
+        return Response.json(calendar(12, 2026, `changed-${calls}`));
+      }
+      if (path.endsWith('/participants/12')) return Response.json({ ...person(12), cache_revision: 'cache-rel' });
+      return Response.json({ canonical_id: 12, identity_revision: 3, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+    });
+    const controller = new RelationshipsController(client, () => 'UTC');
+    try {
+      await controller.openTarget('cluster:12', { filters: [] }, false);
+      await vi.waitFor(() => expect(controller.relationshipCalendarError).toBe('Relationship activity changed again. Retry when the archive settles.'));
+      expect(calls).toBe(2);
+    } finally { controller.destroy(); }
+  });
+
   it('clamps a preserved calendar year when revision drift moves first activity later', async () => {
     const currentYear = new Date().getUTCFullYear();
     let detailCalls = 0;

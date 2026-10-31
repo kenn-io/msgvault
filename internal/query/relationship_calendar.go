@@ -129,14 +129,9 @@ func validateRelationshipCalendarRequestAt(
 	if request.CanonicalID < 1 {
 		return nil, "", fmt.Errorf("%w: canonical participant ID must be positive", ErrInvalidExploreRequest)
 	}
-	timezone := request.Timezone
-	if timezone == "" {
-		timezone = relationshipScoringTimezone
-	}
-	location, err := time.LoadLocation(timezone)
+	location, timezone, err := validateRelationshipTimezone(request.Timezone)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w: invalid timezone %q: %w",
-			ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, timezone, err)
+		return nil, "", err
 	}
 	if request.Year < 1970 || request.Year > now.In(location).Year() {
 		return nil, "", fmt.Errorf("%w: %w: relationship calendar year %d is outside the supported range",
@@ -304,4 +299,16 @@ func (r RelationshipCalendarRequest) TimezoneOrUTC() string {
 		return relationshipScoringTimezone
 	}
 	return r.Timezone
+}
+
+func validateRelationshipTimezone(timezone string) (*time.Location, string, error) {
+	if timezone == "" {
+		timezone = relationshipScoringTimezone
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %w: invalid timezone %q: %w",
+			ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, timezone, err)
+	}
+	return location, timezone, nil
 }

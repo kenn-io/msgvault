@@ -86,7 +86,7 @@
   $effect(() => {
     void navigationKey;
     const id = soloPerson;
-    if (id === null || page.target !== null || soloProfile?.id === id) return;
+    if (id === null || (page.target !== null && !controller.detailMissing) || soloProfile?.id === id) return;
     const abort = new AbortController();
     const generation = ++openGeneration;
     opening = true;
@@ -130,12 +130,12 @@
     ...(rankedList ? [{ id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) }] : []),
     { id: 'profile', label: 'Profile filters', active: profileFilters, onSelect: () => filterOpen = !filterOpen },
   ] }]);
-  const chips = $derived([
+  const chips = $derived(facet === 'people' ? [
     ...(saved ? [{ id: 'saved', label: 'Saved', onremove: () => onNavigate({ relationshipSaved: false }) }] : []),
     ...(showAll && rankedList ? [{ id: 'one-way', label: 'Including one-way senders', onremove: () => onShowAllChange(false) }] : []),
     ...(['directoryContactState', 'directoryCategory', 'directoryOrganization', 'directoryPrimaryChannel', 'directoryLastContactAfter', 'directoryLastContactBefore'] as const)
       .filter((key) => urlState[key]).map((key) => ({ id: key, label: key === 'directoryContactState' ? contactStateLabel(urlState[key]) : key === 'directoryPrimaryChannel' ? channelLabel(urlState[key]) : key === 'directoryLastContactAfter' ? `Last contacted after ${formatDay(urlState[key])}` : key === 'directoryLastContactBefore' ? `Last contacted before ${formatDay(urlState[key])}` : urlState[key], onremove: () => onNavigate({ [key]: '' }) })),
-  ]);
+  ] : []);
   function loadMore(): void { if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
   async function startBulk(): Promise<void> {
     const ids = [...selection.explicitKeys].map((key) => /^cluster:([1-9][0-9]*)$/.exec(key)?.[1]).filter((id): id is string => id !== undefined).map(Number);
@@ -206,7 +206,7 @@
 {/snippet}
 {#snippet person()}
   {#if opening}<p role="status">Loading person…</p>
-  {:else if soloPerson !== null && page.target === null}
+  {:else if soloPerson !== null && (page.target === null || controller.detailMissing)}
     {#if soloProfile?.id === soloPerson}<section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{:else if openingError}<Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} />{/if}
   {:else}<PersonPage {...page} onBack={narrow ? close : undefined} />{/if}
 {/snippet}

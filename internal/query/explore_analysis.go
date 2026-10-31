@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
 )
@@ -44,12 +43,9 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	}
 	var groupArgs []any
 	if request.Dimension == "day" {
-		zone := request.Timezone
-		if zone == "" {
-			zone = "UTC"
-		}
-		if _, err := time.LoadLocation(zone); err != nil {
-			return nil, fmt.Errorf("%w: %w: invalid timezone %q: %w", ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, zone, err)
+		_, zone, err := validateRelationshipTimezone(request.Timezone)
+		if err != nil {
+			return nil, err
 		}
 		groupArgs = append(groupArgs, zone)
 	}
