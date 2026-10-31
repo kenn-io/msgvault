@@ -6,7 +6,7 @@
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
   import { getPersonProfile } from '../../api/generated/api/api';
   import type { RelationshipRow } from '../../relationships/models';
-  import type { DomainSummary, PersonSummary, ExploreURLState } from '../../explore/models';
+  import type { DomainSummary, PersonSummary, ExploreURLState, FileSearchSort, FileMIMEFamily } from '../../explore/models';
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import type { ValidatedPersonMergeRequired, PersonMergeSuccess } from '../../directory/person-merge';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
@@ -16,7 +16,7 @@
   import PersonPage from './PersonPage.svelte';
   import type { ComponentProps } from 'svelte';
 
-  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack' | 'onReconcilePersonMerge'>;
+  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
   let { directory, urlState, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
     PageProps & { directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
@@ -27,6 +27,14 @@
   const selection = new ExploreSelectionState();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
+  let details = $state(false);
+  let selectedDate = $state<string | null>(null);
+  let domainYear = $state<number | null>(null);
+  let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
+  let filenameQuery = $state('');
+  let mimeFamilies = $state<FileMIMEFamily[]>([]);
+  const target = $derived(page.target);
+  $effect(() => { void target; untrack(() => { selectedDate = null; domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
@@ -221,8 +229,8 @@
 {#snippet person()}
   {#if opening}<section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else if soloPerson !== null && (page.target === null || controller.detailMissing)}
-    {#if soloProfile?.id === soloPerson}<div class="solo-page"><section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{#if page.target !== null}<PersonPage {...page} onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} />{/if}</div>{:else if openingError}<section class="solo"><Button label="Back to People" onclick={close} /><Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} /></section>{/if}
-  {:else}<PersonPage {...page} onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
+    {#if soloProfile?.id === soloPerson}<div class="solo-page"><section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{#if page.target !== null}<PersonPage {...page} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} />{/if}</div>{:else if openingError}<section class="solo"><Button label="Back to People" onclick={close} /><Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} /></section>{/if}
+  {:else}<PersonPage {...page} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>

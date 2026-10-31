@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
-  import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
@@ -18,7 +17,9 @@
   let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, personFilePresentation = 'files', personFileDirections = ['from_person'],
-    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange }:
+    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange,
+    details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
+    sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
       onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
@@ -26,15 +27,10 @@
       onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
       onOpenFileConversation?: (key: string, messageID: number, conversationID: number) => void;
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
+      details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
       onFiltersChange: (filters: ExploreFilter[]) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
   const context = $derived(contextPredicate(predicate));
-  let details = $state(false);
-  let selectedDate = $state<string | null>(null);
-  let domainYear = $state<number | null>(null);
-  let sort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
-  let filenameQuery = $state('');
-  let mimeFamilies = $state<FileMIMEFamily[]>([]);
   const domain = $derived(target?.startsWith('domain:') ? target.slice(7) : undefined);
   const detail = $derived(controller.target === target ? controller.detail : null);
   const person = $derived(detail && !domain ? detail as PersonSummary : null);
@@ -47,7 +43,6 @@
     const bounds = localDayBoundsUTC(`${selectedDate}T00:00:00`);
     return { after: bounds.start, before: bounds.end };
   });
-  $effect(() => { void target; untrack(() => { selectedDate = null; domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
   // Files pushes its own entry first, so this drops the cleared day only from that entry's reader.
   function clearDate(): void {
     selectedDate = null;
