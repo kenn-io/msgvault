@@ -157,3 +157,17 @@ it('names an empty Domains list for the selected facet', async () => {
   try { expect(await screen.findByText('No domains yet')).toBeDefined(); }
   finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
+
+it('opens the checkbox-clicked person when Enter follows the selection', async () => {
+  const client = clientFor({ '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }) });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const onNavigate = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const checkbox = await screen.findByRole('checkbox', { name: 'Select Bob Example' });
+    await fireEvent.pointerDown(checkbox);
+    await fireEvent.click(checkbox);
+    await fireEvent.keyDown(screen.getByRole('grid', { name: 'People results' }), { key: 'Enter' });
+    expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: null, relationshipTarget: 'cluster:2', relationshipFiles: false });
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});

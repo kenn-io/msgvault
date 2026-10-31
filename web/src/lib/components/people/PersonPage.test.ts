@@ -5,6 +5,7 @@ import { RelationshipsController } from '../../relationships/controller.svelte';
 import type { RelationshipCalendar } from '../../relationships/models';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PersonPage from './PersonPage.svelte';
+import { openTypeahead } from '../../../test/kit-ui';
 
 const when = '2026-07-19T10:00:00Z';
 afterEach(() => { window.history.replaceState(null, '', '/'); vi.unstubAllEnvs(); });
@@ -75,5 +76,54 @@ it('clearing a calendar day through Files clears the conversation reader bounds'
     expect(timelines.at(-1)).toMatchObject({ filters: [] });
     expect(conversations.at(-1)?.searchParams.get('start')).toBeNull();
     expect(conversations.at(-1)?.searchParams.get('end')).toBeNull();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('reports a filtered summary failure while retaining the loaded person', async () => {
+  const predicate = { filters: [{ dimension: 'source' as const, values: ['2'] }] };
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 9, file_count: 0, source_counts: [] });
+    if (path === '/api/v1/participants/1/summary') return Response.json({ error: 'analytical_cache_unavailable', readiness: 'stale', recovery_action: '', message: 'Filtered activity is unavailable.' }, { status: 503 });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  await controller.openTarget('cluster:1', predicate, false);
+  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await screen.findByRole('heading', { name: 'Alice Example' });
+    expect(controller.timelineError).toBe('Filtered activity is unavailable.');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect(await screen.findByText('Filtered activity is unavailable.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('keeps a stale identity mutation retry across Details and Messages', async () => {
+  let links = 0;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
+    if (path === '/api/v1/participants/search') return Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/identity/links') { links += 1; return Response.json({ identity_revision: 2, cache_state: 'stale' }); }
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  await controller.openTarget('cluster:1', {}, false);
+  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(links).toBe(2));
   } finally { view.unmount(); controller.destroy(); }
 });

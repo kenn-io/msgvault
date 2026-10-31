@@ -257,7 +257,7 @@
                     checked={selection.isSelected(row.key)}
                     label={`${selection.isSelected(row.key) ? 'Unselect' : 'Select'} ${row.label}`}
                     inGrid
-                    onToggle={(range) => selection.toggle(row.key, index, orderedKeys, range)}
+                    onToggle={(range) => { focusKey = row.key; selection.toggle(row.key, index, orderedKeys, range); }}
                   />
                 {/if}
               </span>

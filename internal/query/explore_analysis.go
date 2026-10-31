@@ -79,7 +79,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		keyFilter = " WHERE group_key = ?"
 	}
 	buildPopulation := buildExploreFilteredClassifiedCTE
-	if spec.noLists && !exploreConditionsTouchParticipantLists(explore) {
+	if spec.noLists {
 		// The multiply-referenced filtered CTE otherwise materializes the
 		// wide view's participant lists before projection can discard them.
 		buildPopulation = buildExploreNarrowFilteredClassifiedCTE

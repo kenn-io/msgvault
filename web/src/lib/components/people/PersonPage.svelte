@@ -67,6 +67,9 @@
     {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
   {:else}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true} />
+    {#if controller.timelineError}
+      <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>
+    {/if}
     {#if !filesOpen && !details}
       <div class="calendar">
         {#if domain}
@@ -84,15 +87,14 @@
         options={[{ value: 'messages', label: 'Messages' }, { value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]}
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
-    {#if details}
-      <div class="details">
-        <RelationshipHeader showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
-          loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
-          capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
-          onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}
-          onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
-      </div>
-    {:else if scope}
+    <div class="details" hidden={!details}>
+      <RelationshipHeader showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
+        loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
+        capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
+        onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}
+        onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
+    </div>
+    {#if !details && scope}
       {#key `${target}:${controller.activityRevision}`}
         {#if filesOpen}
           <div class="files"><FilesWorkspace {client} embedded showHeader={false} predicate={context} identityScope={scope} {sort} {filenameQuery} {mimeFamilies}
@@ -114,4 +116,5 @@
   .tabs { padding: var(--space-3) var(--page-gutter); border-bottom: 1px solid var(--border-muted); }
   .files { display: flex; min-height: 0; flex: 1; padding: var(--pane-pad-y) var(--page-gutter) var(--page-gutter); }
   .details { padding: var(--pane-pad-y) var(--page-gutter); }
+  .summary-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--pane-pad-y) var(--page-gutter); }
 </style>
