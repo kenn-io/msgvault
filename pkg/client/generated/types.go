@@ -17242,3 +17242,947 @@ type VisualTextSearchRequest struct {
 func (v VisualTextSearchRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
+
+type AccessPoint struct {
+	Kind  string `json:"kind" validate:"required"`
+	Value string `json:"value" validate:"required"`
+}
+
+func (a AccessPoint) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type CallEvidenceResponse struct {
+	Items []CallObservationView `json:"items" validate:"required"`
+}
+
+func (c CallEvidenceResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CallImportRequest struct {
+	Account  string           `json:"account" validate:"required"`
+	Bindings map[string]int64 `json:"bindings,omitempty"`
+	Format   string           `json:"format" validate:"required"`
+	Record   map[string]any   `json:"record"`
+}
+
+func (c CallImportRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CallImportResponse struct {
+	MessageID int64 `json:"message_id"`
+	SourceID  int64 `json:"source_id"`
+}
+
+type CallObservationView struct {
+	AccessPoints       []AccessPoint     `json:"access_points,omitempty"`
+	Account            string            `json:"account" validate:"required"`
+	Direction          string            `json:"direction" validate:"required"`
+	DurationSeconds    *float64          `json:"duration_seconds" validate:"omitempty"`
+	EndedAt            *time.Time        `json:"ended_at,omitempty"`
+	Kind               string            `json:"kind" validate:"required"`
+	MessageID          int64             `json:"message_id"`
+	NativeCallID       *string           `json:"native_call_id,omitzero"`
+	OccurredAt         time.Time         `json:"occurred_at" validate:"required"`
+	Outcome            string            `json:"outcome" validate:"required"`
+	OwnerParticipation string            `json:"owner_participation" validate:"required"`
+	Participants       []CallParticipant `json:"participants" validate:"required"`
+	Precision          string            `json:"precision" validate:"required"`
+	Provider           string            `json:"provider" validate:"required"`
+	RecordID           string            `json:"record_id" validate:"required"`
+	SourceID           int64             `json:"source_id"`
+	Timezone           *string           `json:"timezone,omitzero"`
+	Version            int64             `json:"version"`
+	Withdrawn          *bool             `json:"withdrawn,omitempty"`
+}
+
+func (c CallObservationView) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.AccessPoints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AccessPoints[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(c.Direction, "required"); err != nil {
+		errors = errors.Append("Direction", err)
+	}
+	if v, ok := any(c.DurationSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DurationSeconds", err)
+		}
+	}
+	if err := typesValidator.Var(c.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if err := typesValidator.Var(c.OccurredAt, "required"); err != nil {
+		errors = errors.Append("OccurredAt", err)
+	}
+	if err := typesValidator.Var(c.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(c.OwnerParticipation, "required"); err != nil {
+		errors = errors.Append("OwnerParticipation", err)
+	}
+	if err := typesValidator.Var(c.Participants, "required"); err != nil {
+		errors = errors.Append("Participants", err)
+	}
+	for i, item := range c.Participants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Precision, "required"); err != nil {
+		errors = errors.Append("Precision", err)
+	}
+	if err := typesValidator.Var(c.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if err := typesValidator.Var(c.RecordID, "required"); err != nil {
+		errors = errors.Append("RecordID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CallParticipant struct {
+	ParticipantID int64  `json:"participant_id"`
+	Participation string `json:"participation" validate:"required"`
+}
+
+func (c CallParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CallSummaryResponse struct {
+	Items []PersonCallSummary `json:"items" validate:"required"`
+}
+
+func (c CallSummaryResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCallSummary struct {
+	Answered           int64 `json:"answered"`
+	Cancelled          int64 `json:"cancelled"`
+	Conflicting        int64 `json:"conflicting"`
+	Declined           int64 `json:"declined"`
+	ExampleMessageID   int64 `json:"example_message_id"`
+	Missed             int64 `json:"missed"`
+	PersonID           int64 `json:"person_id"`
+	Scheduled          int64 `json:"scheduled"`
+	ScheduledCancelled int64 `json:"scheduled_cancelled"`
+	Unknown            int64 `json:"unknown"`
+}
+
+type TimelineAmbiguityResponse struct {
+	Candidates []TimelineCandidate `json:"candidates" validate:"required"`
+	ErrorData  string              `json:"error" validate:"required"`
+	Message    *string             `json:"message,omitzero"`
+}
+
+func (t TimelineAmbiguityResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Candidates, "required"); err != nil {
+		errors = errors.Append("Candidates", err)
+	}
+	for i, item := range t.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineAnchor struct {
+	Filtered bool      `json:"filtered"`
+	Kind     string    `json:"kind" validate:"required"`
+	Ref      string    `json:"ref" validate:"required"`
+	Time     time.Time `json:"time" validate:"required"`
+}
+
+func (t TimelineAnchor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineBurstEntry struct {
+	Channel          string                `json:"channel" validate:"required"`
+	Copies           map[string]int64      `json:"copies,omitempty"`
+	FirstAt          time.Time             `json:"first_at" validate:"required"`
+	Inbound          int64                 `json:"inbound"`
+	LastAt           time.Time             `json:"last_at" validate:"required"`
+	LatestMessageIds []int64               `json:"latest_message_ids" validate:"required"`
+	Outbound         int64                 `json:"outbound"`
+	People           []TimelinePerson      `json:"people" validate:"required"`
+	PeopleCount      int64                 `json:"people_count"`
+	PeopleTruncated  *bool                 `json:"people_truncated,omitempty"`
+	UntrustedText    TimelineUntrustedText `json:"untrusted_text"`
+}
+
+func (t TimelineBurstEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Channel, "required"); err != nil {
+		errors = errors.Append("Channel", err)
+	}
+	if err := typesValidator.Var(t.FirstAt, "required"); err != nil {
+		errors = errors.Append("FirstAt", err)
+	}
+	if err := typesValidator.Var(t.LastAt, "required"); err != nil {
+		errors = errors.Append("LastAt", err)
+	}
+	if err := typesValidator.Var(t.LatestMessageIds, "required"); err != nil {
+		errors = errors.Append("LatestMessageIds", err)
+	}
+	if err := typesValidator.Var(t.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
+	for i, item := range t.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(t.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineCallEntry struct {
+	DurationSeconds float64          `json:"duration_seconds"`
+	Outcome         string           `json:"outcome" validate:"required"`
+	People          []TimelinePerson `json:"people" validate:"required"`
+	PeopleCount     int64            `json:"people_count"`
+	PeopleTruncated *bool            `json:"people_truncated,omitempty"`
+}
+
+func (t TimelineCallEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(t.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
+	for i, item := range t.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineCandidate struct {
+	Address        string  `json:"address" validate:"required"`
+	DisplayName    string  `json:"display_name" validate:"required"`
+	ParticipantIds []int64 `json:"participant_ids" validate:"required"`
+	PersonID       int64   `json:"person_id"`
+	PersonUID      string  `json:"person_uid" validate:"required"`
+	Truncated      *bool   `json:"truncated,omitempty"`
+}
+
+func (t TimelineCandidate) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineDay struct {
+	Bursts   []TimelineEntry     `json:"bursts,omitempty"`
+	Calls    []TimelineEntry     `json:"calls,omitempty"`
+	Date     string              `json:"date" validate:"required"`
+	Meetings []TimelineEntry     `json:"meetings,omitempty"`
+	Notes    []TimelineEntry     `json:"notes,omitempty"`
+	Summary  *TimelineDaySummary `json:"summary,omitempty"`
+}
+
+func (t TimelineDay) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range t.Bursts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Bursts[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range t.Calls {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Calls[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Date, "required"); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	for i, item := range t.Meetings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Meetings[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range t.Notes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Notes[%d]", i), err)
+			}
+		}
+	}
+	if t.Summary != nil {
+		if v, ok := any(t.Summary).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Summary", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineDaySummary struct {
+	Meetings        int64            `json:"meetings"`
+	People          []TimelinePerson `json:"people" validate:"required"`
+	PeopleCount     int64            `json:"people_count"`
+	PeopleTruncated *bool            `json:"people_truncated,omitempty"`
+	Truncated       bool             `json:"truncated"`
+}
+
+func (t TimelineDaySummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
+	for i, item := range t.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineEntry struct {
+	Anchor     *bool                 `json:"anchor,omitempty"`
+	AnchorRef  string                `json:"anchor_ref" validate:"required"`
+	Burst      *TimelineBurstEntry   `json:"burst,omitempty"`
+	Call       *TimelineCallEntry    `json:"call,omitempty"`
+	Filtered   *bool                 `json:"filtered,omitempty"`
+	HiddenText *bool                 `json:"hidden_text,omitempty"`
+	Key        string                `json:"key" validate:"required"`
+	Kind       string                `json:"kind" validate:"required"`
+	Loop       *TimelineLoopEntry    `json:"loop,omitempty"`
+	Meeting    *TimelineMeetingEntry `json:"meeting,omitempty"`
+	Message    *TimelineMessageEntry `json:"message,omitempty"`
+	Note       *TimelineNoteEntry    `json:"note,omitempty"`
+	Open       []TimelineOpen        `json:"open" validate:"required"`
+	Ref        string                `json:"ref" validate:"required"`
+	Time       time.Time             `json:"time" validate:"required"`
+}
+
+func (t TimelineEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.AnchorRef, "required"); err != nil {
+		errors = errors.Append("AnchorRef", err)
+	}
+	if t.Burst != nil {
+		if v, ok := any(t.Burst).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Burst", err)
+			}
+		}
+	}
+	if t.Call != nil {
+		if v, ok := any(t.Call).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Call", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Key, "required"); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if err := typesValidator.Var(t.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if t.Loop != nil {
+		if v, ok := any(t.Loop).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Loop", err)
+			}
+		}
+	}
+	if t.Meeting != nil {
+		if v, ok := any(t.Meeting).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Meeting", err)
+			}
+		}
+	}
+	if t.Message != nil {
+		if v, ok := any(t.Message).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Message", err)
+			}
+		}
+	}
+	if t.Note != nil {
+		if v, ok := any(t.Note).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Note", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Open, "required"); err != nil {
+		errors = errors.Append("Open", err)
+	}
+	for i, item := range t.Open {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Open[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if err := typesValidator.Var(t.Time, "required"); err != nil {
+		errors = errors.Append("Time", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineFreshness struct {
+	AsOf           time.Time                     `json:"as_of" validate:"required"`
+	Projections    []TimelineProjectionFreshness `json:"projections" validate:"required"`
+	Sources        []TimelineSourceFreshness     `json:"sources" validate:"required"`
+	StaleThreshold int64                         `json:"stale_threshold"`
+	Warnings       []string                      `json:"warnings" validate:"required"`
+}
+
+func (t TimelineFreshness) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if err := typesValidator.Var(t.Projections, "required"); err != nil {
+		errors = errors.Append("Projections", err)
+	}
+	for i, item := range t.Projections {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Projections[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Sources, "required"); err != nil {
+		errors = errors.Append("Sources", err)
+	}
+	for i, item := range t.Sources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Warnings, "required"); err != nil {
+		errors = errors.Append("Warnings", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineGap struct {
+	Code      string   `json:"code" validate:"required"`
+	Items     []string `json:"items,omitempty"`
+	Retryable bool     `json:"retryable"`
+	Section   string   `json:"section" validate:"required"`
+}
+
+func (t TimelineGap) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineLoopEntry struct {
+	Age    string         `json:"age" validate:"required"`
+	Kind   string         `json:"kind" validate:"required"`
+	Person TimelinePerson `json:"person"`
+}
+
+func (t TimelineLoopEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Age, "required"); err != nil {
+		errors = errors.Append("Age", err)
+	}
+	if err := typesValidator.Var(t.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if v, ok := any(t.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineMeetingEntry struct {
+	ActionItemCount     int64                 `json:"action_item_count"`
+	AllDay              bool                  `json:"all_day"`
+	Attended            bool                  `json:"attended"`
+	AttendeeCount       int64                 `json:"attendee_count"`
+	Attendees           []TimelinePerson      `json:"attendees,omitempty"`
+	AttendeesTruncated  *bool                 `json:"attendees_truncated,omitempty"`
+	End                 *time.Time            `json:"end,omitempty"`
+	LinkedTranscriptIds []int64               `json:"linked_transcript_ids,omitempty"`
+	People              []TimelinePerson      `json:"people,omitempty"`
+	PeopleCount         int64                 `json:"people_count"`
+	PeopleTruncated     *bool                 `json:"people_truncated,omitempty"`
+	PossiblyRelated     []string              `json:"possibly_related,omitempty"`
+	Start               *time.Time            `json:"start,omitempty"`
+	Time                *time.Time            `json:"time,omitempty"`
+	UntrustedText       TimelineUntrustedText `json:"untrusted_text"`
+}
+
+func (t TimelineMeetingEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range t.Attendees {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Attendees[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range t.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(t.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineMessageEntry struct {
+	Direction       string                `json:"direction" validate:"required"`
+	People          []TimelinePerson      `json:"people" validate:"required"`
+	PeopleCount     int64                 `json:"people_count"`
+	PeopleTruncated *bool                 `json:"people_truncated,omitempty"`
+	UntrustedText   TimelineUntrustedText `json:"untrusted_text"`
+}
+
+func (t TimelineMessageEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Direction, "required"); err != nil {
+		errors = errors.Append("Direction", err)
+	}
+	if err := typesValidator.Var(t.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
+	for i, item := range t.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(t.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineNoteEntry struct {
+	People          []TimelinePerson      `json:"people" validate:"required"`
+	PeopleCount     int64                 `json:"people_count"`
+	PeopleTruncated *bool                 `json:"people_truncated,omitempty"`
+	UntrustedText   TimelineUntrustedText `json:"untrusted_text"`
+}
+
+func (t TimelineNoteEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
+	for i, item := range t.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(t.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineOmitted struct {
+	Budget map[string]struct{} `json:"budget"`
+	Cold   int64               `json:"cold"`
+	Noise  int64               `json:"noise"`
+}
+
+type TimelineOpen struct {
+	Args map[string]any `json:"args"`
+	Tool string         `json:"tool" validate:"required"`
+}
+
+func (t TimelineOpen) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineOpenLoops struct {
+	CoverageIncomplete bool            `json:"coverage_incomplete"`
+	Items              []TimelineEntry `json:"items" validate:"required"`
+	SkippedUnparseable int64           `json:"skipped_unparseable"`
+	Truncated          bool            `json:"truncated"`
+}
+
+func (t TimelineOpenLoops) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range t.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelinePerson struct {
+	Credited      *bool   `json:"credited,omitempty"`
+	Name          string  `json:"name" validate:"required"`
+	ParticipantID *int64  `json:"participant_id,omitempty"`
+	Participation *string `json:"participation,omitzero"`
+	PersonID      *int64  `json:"person_id,omitempty"`
+	Tier          *int64  `json:"tier,omitempty"`
+	TierSource    string  `json:"tier_source" validate:"required"`
+	Truncated     *bool   `json:"truncated,omitempty"`
+}
+
+func (t TimelinePerson) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelinePersonHeader struct {
+	Agenda             []TimelineUntrustedText `json:"agenda,omitempty"`
+	Brief              *TimelineUntrustedText  `json:"brief,omitempty"`
+	CadenceStatus      *string                 `json:"cadence_status,omitzero"`
+	Channels           []string                `json:"channels" validate:"required"`
+	DueAt              *time.Time              `json:"due_at,omitempty"`
+	FirstAt            *time.Time              `json:"first_at" validate:"required"`
+	InitiatedByContact int64                   `json:"initiated_by_contact"`
+	InitiatedByOwner   int64                   `json:"initiated_by_owner"`
+	InteractionCount   int64                   `json:"interaction_count"`
+	LastAt             *time.Time              `json:"last_at" validate:"required"`
+	LastInboundAt      *time.Time              `json:"last_inbound_at" validate:"required"`
+	LastOutboundAt     *time.Time              `json:"last_outbound_at" validate:"required"`
+	Monthly            []int64                 `json:"monthly" validate:"required"`
+	Person             TimelinePerson          `json:"person"`
+	Ref                string                  `json:"ref" validate:"required"`
+}
+
+func (t TimelinePersonHeader) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range t.Agenda {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Agenda[%d]", i), err)
+			}
+		}
+	}
+	if t.Brief != nil {
+		if v, ok := any(t.Brief).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Brief", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Channels, "required"); err != nil {
+		errors = errors.Append("Channels", err)
+	}
+	if t.FirstAt != nil {
+		if err := typesValidator.Var(t.FirstAt, "required"); err != nil {
+			errors = errors.Append("FirstAt", err)
+		}
+	}
+	if t.LastAt != nil {
+		if err := typesValidator.Var(t.LastAt, "required"); err != nil {
+			errors = errors.Append("LastAt", err)
+		}
+	}
+	if t.LastInboundAt != nil {
+		if err := typesValidator.Var(t.LastInboundAt, "required"); err != nil {
+			errors = errors.Append("LastInboundAt", err)
+		}
+	}
+	if t.LastOutboundAt != nil {
+		if err := typesValidator.Var(t.LastOutboundAt, "required"); err != nil {
+			errors = errors.Append("LastOutboundAt", err)
+		}
+	}
+	if err := typesValidator.Var(t.Monthly, "required"); err != nil {
+		errors = errors.Append("Monthly", err)
+	}
+	if t.Monthly != nil && len(t.Monthly) < 12 {
+		errors = errors.Add("Monthly", fmt.Sprintf("must have at least 12 items, got %d", len(t.Monthly)))
+	}
+	if len(t.Monthly) > 12 {
+		errors = errors.Add("Monthly", fmt.Sprintf("must have at most 12 items, got %d", len(t.Monthly)))
+	}
+	if v, ok := any(t.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if err := typesValidator.Var(t.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineProjectionFreshness struct {
+	Frontier *time.Time `json:"frontier" validate:"required"`
+	Name     string     `json:"name" validate:"required"`
+	State    string     `json:"state" validate:"required"`
+}
+
+func (t TimelineProjectionFreshness) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineResult struct {
+	Anchor            *TimelineAnchor       `json:"anchor,omitempty"`
+	Candidates        []TimelineCandidate   `json:"candidates,omitempty"`
+	Cursor            *string               `json:"cursor,omitzero"`
+	Days              []TimelineDay         `json:"days,omitempty"`
+	Freshness         TimelineFreshness     `json:"freshness"`
+	Gaps              []TimelineGap         `json:"gaps,omitempty"`
+	History           []TimelineEntry       `json:"history,omitempty"`
+	Mode              string                `json:"mode" validate:"required"`
+	Now               time.Time             `json:"now" validate:"required"`
+	Omitted           TimelineOmitted       `json:"omitted"`
+	OpenLoops         *TimelineOpenLoops    `json:"open_loops,omitempty"`
+	Person            *TimelinePersonHeader `json:"person,omitempty"`
+	Timezone          string                `json:"timezone" validate:"required"`
+	TimezoneIsDefault bool                  `json:"timezone_is_default"`
+	Upcoming          []TimelineEntry       `json:"upcoming,omitempty"`
+	Window            TimelineWindow        `json:"window"`
+}
+
+func (t TimelineResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if t.Anchor != nil {
+		if v, ok := any(t.Anchor).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Anchor", err)
+			}
+		}
+	}
+	for i, item := range t.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range t.Days {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Days[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(t.Freshness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Freshness", err)
+		}
+	}
+	for i, item := range t.Gaps {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Gaps[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range t.History {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("History[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Mode, "required"); err != nil {
+		errors = errors.Append("Mode", err)
+	}
+	if err := typesValidator.Var(t.Now, "required"); err != nil {
+		errors = errors.Append("Now", err)
+	}
+	if v, ok := any(t.Omitted).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Omitted", err)
+		}
+	}
+	if t.OpenLoops != nil {
+		if v, ok := any(t.OpenLoops).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OpenLoops", err)
+			}
+		}
+	}
+	if t.Person != nil {
+		if v, ok := any(t.Person).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Person", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.Timezone, "required"); err != nil {
+		errors = errors.Append("Timezone", err)
+	}
+	for i, item := range t.Upcoming {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Upcoming[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(t.Window).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Window", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TimelineSourceFreshness struct {
+	LastRun     string   `json:"last_run" validate:"required"`
+	Scheduling  string   `json:"scheduling" validate:"required"`
+	Source      string   `json:"source" validate:"required"`
+	SourceID    int64    `json:"source_id"`
+	Status      string   `json:"status" validate:"required"`
+	SyncCommand string   `json:"sync_command" validate:"required"`
+	Warnings    []string `json:"warnings" validate:"required"`
+}
+
+func (t TimelineSourceFreshness) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineUntrustedText struct {
+	Text      string `json:"text" validate:"required"`
+	Truncated bool   `json:"truncated"`
+}
+
+func (t TimelineUntrustedText) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TimelineWindow struct {
+	From string `json:"from" validate:"required"`
+	To   string `json:"to" validate:"required"`
+}
+
+func (t TimelineWindow) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}

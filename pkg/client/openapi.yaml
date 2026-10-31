@@ -957,7 +957,7 @@ components:
         source_id:
           format: int64
           type: integer
-        "yes":
+        yes:
           type: boolean
       type: object
     CLIDeleteStagedPlanResponse:
@@ -9148,7 +9148,7 @@ components:
             - complete
             - partial
             - unavailable
-            - "off"
+            - off
           type: string
         participants:
           items:
@@ -15665,7 +15665,7 @@ components:
         minimum:
           format: double
           type: number
-        "off":
+        off:
           $ref: "#/components/schemas/SettingOff"
         required:
           type: boolean
@@ -17308,6 +17308,816 @@ components:
           type: string
       required:
         - text
+      type: object
+    AccessPoint:
+      properties:
+        kind:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
+      type: object
+    CallEvidenceResponse:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/CallObservationView"
+          type: array
+      required:
+        - items
+      type: object
+    CallImportRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        bindings:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        format:
+          type: string
+        record:
+          additionalProperties: true
+          type: object
+      required:
+        - format
+        - account
+        - record
+      type: object
+    CallImportResponse:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - message_id
+        - source_id
+      type: object
+    CallObservationView:
+      properties:
+        access_points:
+          items:
+            $ref: "#/components/schemas/AccessPoint"
+          type: array
+        account:
+          type: string
+        direction:
+          type: string
+        duration_seconds:
+          format: double
+          nullable: true
+          type: number
+          x-go-type: "*float64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ended_at:
+          format: date-time
+          type: string
+        kind:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        native_call_id:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        outcome:
+          type: string
+        owner_participation:
+          type: string
+        participants:
+          items:
+            $ref: "#/components/schemas/CallParticipant"
+          type: array
+        precision:
+          type: string
+        provider:
+          type: string
+        record_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        timezone:
+          type: string
+        version:
+          format: int64
+          type: integer
+        withdrawn:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - record_id
+        - participants
+        - version
+        - provider
+        - account
+        - kind
+        - direction
+        - outcome
+        - owner_participation
+        - occurred_at
+        - duration_seconds
+        - precision
+      type: object
+    CallParticipant:
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        participation:
+          type: string
+      required:
+        - participant_id
+        - participation
+      type: object
+    CallSummaryResponse:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/PersonCallSummary"
+          type: array
+      required:
+        - items
+      type: object
+    PersonCallSummary:
+      properties:
+        answered:
+          format: int64
+          type: integer
+        cancelled:
+          format: int64
+          type: integer
+        conflicting:
+          format: int64
+          type: integer
+        declined:
+          format: int64
+          type: integer
+        example_message_id:
+          format: int64
+          type: integer
+        missed:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        scheduled:
+          format: int64
+          type: integer
+        scheduled_cancelled:
+          format: int64
+          type: integer
+        unknown:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - answered
+        - missed
+        - declined
+        - cancelled
+        - unknown
+        - conflicting
+        - scheduled
+        - scheduled_cancelled
+        - example_message_id
+      type: object
+    TimelineAmbiguityResponse:
+      properties:
+        candidates:
+          items:
+            $ref: "#/components/schemas/TimelineCandidate"
+          type: array
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - candidates
+        - error
+      type: object
+    TimelineAnchor:
+      properties:
+        filtered:
+          type: boolean
+        kind:
+          type: string
+        ref:
+          type: string
+        time:
+          format: date-time
+          type: string
+      required:
+        - ref
+        - kind
+        - time
+        - filtered
+      type: object
+    TimelineBurstEntry:
+      properties:
+        channel:
+          type: string
+        copies:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        first_at:
+          format: date-time
+          type: string
+        inbound:
+          format: int64
+          type: integer
+        last_at:
+          format: date-time
+          type: string
+        latest_message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        outbound:
+          format: int64
+          type: integer
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        people_count:
+          format: int64
+          type: integer
+        people_truncated:
+          type: boolean
+        untrusted_text:
+          $ref: "#/components/schemas/TimelineUntrustedText"
+      required:
+        - people_count
+        - channel
+        - people
+        - inbound
+        - outbound
+        - first_at
+        - last_at
+        - untrusted_text
+        - latest_message_ids
+      type: object
+    TimelineCallEntry:
+      properties:
+        duration_seconds:
+          format: double
+          nullable: true
+          type: number
+        outcome:
+          type: string
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        people_count:
+          format: int64
+          type: integer
+        people_truncated:
+          type: boolean
+      required:
+        - people_count
+        - outcome
+        - duration_seconds
+        - people
+      type: object
+    TimelineCandidate:
+      properties:
+        address:
+          type: string
+        display_name:
+          type: string
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        person_id:
+          format: int64
+          type: integer
+        person_uid:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - person_id
+        - person_uid
+        - participant_ids
+        - display_name
+        - address
+      type: object
+    TimelineDay:
+      properties:
+        bursts:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        calls:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        date:
+          type: string
+        meetings:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        notes:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        summary:
+          $ref: "#/components/schemas/TimelineDaySummary"
+      required:
+        - date
+      type: object
+    TimelineDaySummary:
+      properties:
+        meetings:
+          format: int64
+          type: integer
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        people_count:
+          format: int64
+          type: integer
+        people_truncated:
+          type: boolean
+        truncated:
+          type: boolean
+      required:
+        - people_count
+        - meetings
+        - people
+        - truncated
+      type: object
+    TimelineEntry:
+      properties:
+        anchor:
+          type: boolean
+        anchor_ref:
+          type: string
+        burst:
+          $ref: "#/components/schemas/TimelineBurstEntry"
+        call:
+          $ref: "#/components/schemas/TimelineCallEntry"
+        filtered:
+          type: boolean
+        hidden_text:
+          type: boolean
+        key:
+          type: string
+        kind:
+          type: string
+        loop:
+          $ref: "#/components/schemas/TimelineLoopEntry"
+        meeting:
+          $ref: "#/components/schemas/TimelineMeetingEntry"
+        message:
+          $ref: "#/components/schemas/TimelineMessageEntry"
+        note:
+          $ref: "#/components/schemas/TimelineNoteEntry"
+        open:
+          items:
+            $ref: "#/components/schemas/TimelineOpen"
+          type: array
+        ref:
+          type: string
+        time:
+          format: date-time
+          type: string
+      required:
+        - kind
+        - key
+        - ref
+        - anchor_ref
+        - time
+        - open
+      type: object
+    TimelineFreshness:
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        projections:
+          items:
+            $ref: "#/components/schemas/TimelineProjectionFreshness"
+          type: array
+        sources:
+          items:
+            $ref: "#/components/schemas/TimelineSourceFreshness"
+          type: array
+        stale_threshold:
+          format: int64
+          type: integer
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - as_of
+        - stale_threshold
+        - sources
+        - projections
+        - warnings
+      type: object
+    TimelineGap:
+      properties:
+        code:
+          type: string
+        items:
+          items:
+            type: string
+          type: array
+        retryable:
+          type: boolean
+        section:
+          type: string
+      required:
+        - section
+        - code
+        - retryable
+      type: object
+    TimelineLoopEntry:
+      properties:
+        age:
+          type: string
+        kind:
+          type: string
+        person:
+          $ref: "#/components/schemas/TimelinePerson"
+      required:
+        - kind
+        - age
+        - person
+      type: object
+    TimelineMeetingEntry:
+      properties:
+        action_item_count:
+          format: int64
+          type: integer
+        all_day:
+          type: boolean
+        attended:
+          type: boolean
+        attendee_count:
+          format: int64
+          type: integer
+        attendees:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        attendees_truncated:
+          type: boolean
+        end:
+          format: date-time
+          type: string
+        linked_transcript_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        people_count:
+          format: int64
+          type: integer
+        people_truncated:
+          type: boolean
+        possibly_related:
+          items:
+            type: string
+          type: array
+        start:
+          format: date-time
+          type: string
+        time:
+          format: date-time
+          type: string
+        untrusted_text:
+          $ref: "#/components/schemas/TimelineUntrustedText"
+      required:
+        - attendee_count
+        - people_count
+        - untrusted_text
+        - all_day
+        - attended
+        - action_item_count
+      type: object
+    TimelineMessageEntry:
+      properties:
+        direction:
+          type: string
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        people_count:
+          format: int64
+          type: integer
+        people_truncated:
+          type: boolean
+        untrusted_text:
+          $ref: "#/components/schemas/TimelineUntrustedText"
+      required:
+        - people_count
+        - direction
+        - people
+        - untrusted_text
+      type: object
+    TimelineNoteEntry:
+      properties:
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        people_count:
+          format: int64
+          type: integer
+        people_truncated:
+          type: boolean
+        untrusted_text:
+          $ref: "#/components/schemas/TimelineUntrustedText"
+      required:
+        - people_count
+        - untrusted_text
+        - people
+      type: object
+    TimelineOmitted:
+      properties:
+        budget:
+          additionalProperties: {}
+          type: object
+        cold:
+          format: int64
+          type: integer
+        noise:
+          format: int64
+          type: integer
+      required:
+        - budget
+        - noise
+        - cold
+      type: object
+    TimelineOpen:
+      properties:
+        args:
+          additionalProperties:
+            x-go-type: any
+          type: object
+        tool:
+          type: string
+      required:
+        - tool
+        - args
+      type: object
+    TimelineOpenLoops:
+      properties:
+        coverage_incomplete:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        skipped_unparseable:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - items
+        - truncated
+        - coverage_incomplete
+        - skipped_unparseable
+      type: object
+    TimelinePerson:
+      properties:
+        credited:
+          type: boolean
+        name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        participation:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        tier:
+          format: int64
+          type: integer
+        tier_source:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - tier_source
+        - name
+      type: object
+    TimelinePersonHeader:
+      properties:
+        agenda:
+          items:
+            $ref: "#/components/schemas/TimelineUntrustedText"
+          type: array
+        brief:
+          $ref: "#/components/schemas/TimelineUntrustedText"
+        cadence_status:
+          type: string
+        channels:
+          items:
+            type: string
+          type: array
+        due_at:
+          format: date-time
+          type: string
+        first_at:
+          format: date-time
+          nullable: true
+          type: string
+        initiated_by_contact:
+          format: int64
+          type: integer
+        initiated_by_owner:
+          format: int64
+          type: integer
+        interaction_count:
+          format: int64
+          type: integer
+        last_at:
+          format: date-time
+          nullable: true
+          type: string
+        last_inbound_at:
+          format: date-time
+          nullable: true
+          type: string
+        last_outbound_at:
+          format: date-time
+          nullable: true
+          type: string
+        monthly:
+          items:
+            format: int64
+            type: integer
+          maxItems: 12
+          minItems: 12
+          type: array
+        person:
+          $ref: "#/components/schemas/TimelinePerson"
+        ref:
+          type: string
+      required:
+        - person
+        - ref
+        - channels
+        - first_at
+        - last_at
+        - last_inbound_at
+        - last_outbound_at
+        - interaction_count
+        - initiated_by_contact
+        - initiated_by_owner
+        - monthly
+      type: object
+    TimelineProjectionFreshness:
+      properties:
+        frontier:
+          format: date-time
+          nullable: true
+          type: string
+        name:
+          type: string
+        state:
+          type: string
+      required:
+        - name
+        - frontier
+        - state
+      type: object
+    TimelineResult:
+      properties:
+        anchor:
+          $ref: "#/components/schemas/TimelineAnchor"
+        candidates:
+          items:
+            $ref: "#/components/schemas/TimelineCandidate"
+          type: array
+        cursor:
+          type: string
+        days:
+          items:
+            $ref: "#/components/schemas/TimelineDay"
+          type: array
+        freshness:
+          $ref: "#/components/schemas/TimelineFreshness"
+        gaps:
+          items:
+            $ref: "#/components/schemas/TimelineGap"
+          type: array
+        history:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        mode:
+          type: string
+        now:
+          format: date-time
+          type: string
+        omitted:
+          $ref: "#/components/schemas/TimelineOmitted"
+        open_loops:
+          $ref: "#/components/schemas/TimelineOpenLoops"
+        person:
+          $ref: "#/components/schemas/TimelinePersonHeader"
+        timezone:
+          type: string
+        timezone_is_default:
+          type: boolean
+        upcoming:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type: array
+        window:
+          $ref: "#/components/schemas/TimelineWindow"
+      required:
+        - mode
+        - timezone
+        - timezone_is_default
+        - window
+        - now
+        - freshness
+        - omitted
+      type: object
+    TimelineSourceFreshness:
+      properties:
+        last_run:
+          type: string
+        scheduling:
+          type: string
+        source:
+          type: string
+        source_id:
+          format: int64
+          nullable: true
+          type: integer
+        status:
+          type: string
+        sync_command:
+          type: string
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - source_id
+        - source
+        - status
+        - last_run
+        - scheduling
+        - warnings
+        - sync_command
+      type: object
+    TimelineUntrustedText:
+      properties:
+        text:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - text
+        - truncated
+      type: object
+    TimelineWindow:
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+      required:
+        - from
+        - to
       type: object
   securitySchemes:
     apiKey:
@@ -35381,3 +36191,274 @@ paths:
       summary: Health check
       tags:
         - System
+  /api/v1/calls:
+    get:
+      operationId: listCallObservations
+      parameters:
+        - in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: after_id
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: after
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: before
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallEvidenceResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect call and scheduled meeting observations
+      tags:
+        - API
+  /api/v1/calls/summary:
+    get:
+      operationId: summarizeCalls
+      parameters:
+        - in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: after
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: before
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallSummaryResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Count call evidence per person
+      tags:
+        - API
+  /api/v1/import/calls:
+    post:
+      operationId: importCallObservation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallImportResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one supplied call or scheduled meeting observation
+      tags:
+        - API
+  /api/v1/timeline:
+    get:
+      operationId: getTimeline
+      parameters:
+        - description: "View: day, relationship, or anchor; inferred from with or around when omitted"
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: One local date (YYYY-MM-DD)
+          in: query
+          name: date
+          schema:
+            type: string
+        - description: First local date, inclusive; requires to
+          in: query
+          name: from
+          schema:
+            type: string
+        - description: Last local date, inclusive; requires from
+          in: query
+          name: to
+          schema:
+            type: string
+        - description: Days ending today (1–31); defaults to two without other date bounds
+          in: query
+          name: days
+          schema:
+            format: int64
+            type: integer
+        - description: Person, participant, email, phone, or name reference
+          in: query
+          name: with
+          schema:
+            type: string
+        - description: Message, conversation, event, burst, date, or datetime reference
+          in: query
+          name: around
+          schema:
+            type: string
+        - description: Anchor neighbors before the target (0–50); default five
+          in: query
+          name: before
+          schema:
+            format: int64
+            type: integer
+        - description: Anchor neighbors after the target (0–50); default five
+          in: query
+          name: after
+          schema:
+            format: int64
+            type: integer
+        - description: Show individual messages in the anchor conversation
+          in: query
+          name: conversation
+          schema:
+            type: boolean
+        - description: Comma-separated person tiers (1, 2, or 3)
+          in: query
+          name: tiers
+          schema:
+            type: string
+        - description: Include archived cold activity
+          in: query
+          name: include_cold
+          schema:
+            type: boolean
+        - description: Include activity excluded as noise
+          in: query
+          name: include_noise
+          schema:
+            type: boolean
+        - description: Use shorter sections and a default budget of 6144 bytes
+          in: query
+          name: brief
+          schema:
+            type: boolean
+        - description: Final encoded bytes (2048–65536); default 16384
+          in: query
+          name: budget
+          schema:
+            format: int64
+            type: integer
+        - description: "Response encoding: json (default) or markdown"
+          in: query
+          name: format
+          schema:
+            type: string
+        - description: Continue the same request and authorization scope
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineResult"
+            text/markdown:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineAmbiguityResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read bounded activity by day, person, or anchor
+      tags:
+        - Timeline

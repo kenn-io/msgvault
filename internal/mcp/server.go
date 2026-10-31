@@ -38,6 +38,7 @@ const (
 	ToolDraftDelete               = "draft_delete"
 	ToolDraftRecover              = "draft_recover"
 	ToolDraftSendAs               = "draft_send_as"
+	ToolTimeline                  = "timeline"
 	ToolSearchMessages            = "search_messages"
 	ToolQuerySQL                  = "query_sql"
 	ToolSearchMetadata            = "search_metadata"
@@ -180,6 +181,7 @@ type ServeOptions struct {
 	// are then omitted from the catalog.
 	SavedViews savedview.Service
 	CalEvents  CalendarEventsBackend
+	Timeline   TimelineBackend
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
 	Meetings     MeetingBackend
@@ -303,6 +305,10 @@ func officialToolHandler(
 				}},
 			}
 		}
+		if result.textOnly {
+			wireResult.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: result.text}}
+			return wireResult, nil, nil
+		}
 		if len(result.structuredContent) == 0 {
 			slog.Error("MCP successful tool result has no structured content")
 			return nil, nil, &jsonrpc.Error{
@@ -414,6 +420,7 @@ func newMCPServerWithPolicy(
 		meetings:             opts.Meetings,
 		calendar:             opts.Calendar,
 		calEvents:            opts.CalEvents,
+		timelineBackend:      opts.Timeline,
 		personAgendaBackend:  opts.PersonAgendaBackend,
 		personTierBackend:    opts.PersonTierBackend,
 		kata:                 opts.Kata,
@@ -628,17 +635,5 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 
 // agentReadToolPermission lists the permissions that admit a read tool.
 func agentReadToolPermission(name string) []agentgrant.Permission {
-	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
-		return []agentgrant.Permission{agentgrant.PermissionSearchRead}
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
-		return []agentgrant.Permission{agentgrant.PermissionMessageRead}
-	case ToolGetAttachment:
-		return []agentgrant.Permission{agentgrant.PermissionAttachmentRead}
-	case ToolGetStats:
-		return []agentgrant.Permission{agentgrant.PermissionStatsRead}
-	case ToolListCalendarEvents, ToolGetCalendarEvent:
-		return []agentgrant.Permission{agentgrant.PermissionCalendarEventRead, agentgrant.PermissionMessageRead}
-	}
-	return nil
+	return agentgrant.ReadToolPermissions(name)
 }

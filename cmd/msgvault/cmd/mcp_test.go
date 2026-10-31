@@ -744,3 +744,26 @@ func TestCalendarArchiveMCPVersionGates(t *testing.T) {
 		})
 	}
 }
+
+func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
+	for _, version := range []string{"3.32.0", "3.33.0"} {
+		t.Run(version, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{}
+				switch r.URL.Path {
+				case "/api/v1/health":
+					body = map[string]any{"status": "ok", "api_schema_version": version}
+				case "/api/v1/agent-tokens/self":
+					body = map[string]any{"permissions": []string{"message.read"}}
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(body))
+			})
+			owner := daemonMCPServeOptions(t.Context(), client, nil)
+			assert.Equal(t, version == "3.33.0", owner.Timeline != nil)
+			delegated, err := delegatedMCPServeOptions(t.Context(), client)
+			require.NoError(t, err)
+			assert.Equal(t, version == "3.33.0", delegated.Timeline != nil)
+		})
+	}
+}

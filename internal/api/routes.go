@@ -38,13 +38,15 @@ var configureHumaOnce sync.Once
 // marshalAPIJSONBytes encodes an API response with the wire options every
 // JSON route shares: nil slices encode as empty arrays to match the OpenAPI
 // schema, and invalid UTF-8 bytes are replaced with U+FFFD.
-func marshalAPIJSONBytes(value any) ([]byte, error) {
-	data, err := jsonv2.Marshal(value,
+func marshalAPIJSONBytes(value any, options ...jsonv2.Options) ([]byte, error) {
+	opts := []jsonv2.Options{
 		jsonv2.FormatNilSliceAsNull(false),
 		// Replace each invalid UTF-8 byte with U+FFFD, as encoding/json v1
 		// did, so one damaged stored value cannot fail a whole response.
 		jsontext.AllowInvalidUTF8(true),
-	)
+	}
+	opts = append(opts, options...)
+	data, err := jsonv2.Marshal(value, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("marshal API JSON: %w", err)
 	}
@@ -331,6 +333,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerEmploymentRoutes(apiV1)
 	s.registerActivityRoutes(apiV1)
 	s.registerLoopRoutes(apiV1)
+	s.registerTimelineRoute(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)

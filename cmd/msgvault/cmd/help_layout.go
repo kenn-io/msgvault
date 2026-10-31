@@ -180,6 +180,7 @@ var topLevelCommandGroups = map[string]string{
 	"sync-teams":             helpGroupSources,
 	"sync-twenty":            helpGroupSources,
 	"sync-twilio":            helpGroupSources,
+	"timeline":               helpGroupRead,
 	"tui":                    helpGroupRead,
 	"unpack-attachments":     helpGroupMaintenance,
 	"update":                 helpGroupOperations,

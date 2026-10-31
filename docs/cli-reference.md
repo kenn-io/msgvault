@@ -17,8 +17,8 @@ appear in full under Inherited Flags.
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Search and browse | [search](#search), [timeline](#timeline), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -62,6 +62,41 @@ the command returns completed conversations and warns that more loops may be
 missing; JSON sets `coverage_incomplete`. An empty complete list prints
 `No open loops.` A message that is not an open loop, such as one you already
 answered, fails with `<id> isn't an open loop.`
+## timeline
+
+Read day activity, relationship history, or the context around an archived
+message or meeting through the selected daemon. This is unreleased and requires
+API schema 3.33.0 or newer. See [Timeline](usage/timeline.md) for the workflow
+and output conventions.
+
+```bash
+msgvault timeline
+msgvault timeline --with person:7
+msgvault timeline --around msg:42 --before 5 --after 5
+msgvault timeline --json --budget 4096
+```
+
+| Flag | Behavior |
+|---|---|
+| `--date YYYY-MM-DD` | One local day |
+| `--days N` | Up to 31 days ending today; default two |
+| `--from`, `--to` | Inclusive local dates, at most 31 days; supply both |
+| `--with REF` | A saved person, observed participant, email, phone, or name |
+| `--around REF` | A message, conversation, event, burst, local date, or RFC3339 time |
+| `--before`, `--after` | Anchor neighbors on each side; default 5, maximum 50 |
+| `--conversation` | Individual messages in the anchor's conversation |
+| `--tier 1,2` | Filter by applied or observed person tiers 1 through 3 |
+| `--include-cold`, `--include-noise` | Include activity omitted by the default cold and noise filters |
+| `--brief` | Smaller output, five loops and 24 hours of upcoming activity |
+| `--budget N` | Final output bytes, 2048–65536; default 16384, or 6144 with `--brief` |
+| `--json` | Compact JSON instead of Markdown; no added trailing newline |
+| `--cursor C` | Continue with the same filters, format, and authorization scope |
+
+`--date`, `--days`, and the `--from`/`--to` pair are alternatives. Day boundaries
+use the daemon's `[activity].timezone`, default UTC. Unknown or undated anchors,
+invalid windows, and expired cursors fail with an error. An ambiguous name
+prints candidates without a timeline. Older daemons report the required API
+schema version and ask you to upgrade and restart.
 
 ## calls
 

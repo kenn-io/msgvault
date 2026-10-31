@@ -15,6 +15,8 @@ All notable changes to msgvault, grouped by release.
   `reopen` manage them, and the HTTP API has matching routes. Each request
   computes evidence for up to 1,000 uncached messages; repeated requests
   continue using retained evidence. They need HTTP API schema 3.44.0.
+- Read [day activity, relationship history, and anchor context](usage/timeline.md) through `msgvault timeline`, the HTTP API, and MCP. Results include bounded Markdown or JSON, freshness, missing-section gaps, and detail targets. Delegated day and anchor reads preserve source grants; relationship views are owner-only. API schema 3.44.0.
+
 - Read archived calendar occurrences through the CLI, HTTP API, and MCP, with paging, detail reads, and source-scoped grants.
 - Archive CalDAV calendars with manual, read-only sync. Unsupported resources are skipped and reported while other events continue.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,

@@ -33,6 +33,7 @@ Search and read:
   show-message  Show full message details
   show-thread   Show a message's thread in chronological order
   stats         Show archive message, thread, attachment and account totals
+  timeline      Read activity by day, person, or anchor
   tui           Open the interactive terminal UI
 
 Export:

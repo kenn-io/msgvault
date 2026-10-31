@@ -198,6 +198,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.AttachmentReader = st
 		opts.GrantPermissions = grant.Permissions
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, timelineMinAPISchemaVersion) {
+		opts.Timeline = st
+	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMinAPISchemaVersion) {
 		opts.CalEvents = st
 	}
@@ -318,6 +321,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
 		opts.MeetingLinks = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion)
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, timelineMinAPISchemaVersion) {
+		opts.Timeline = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMinAPISchemaVersion) {
 		opts.CalEvents = st

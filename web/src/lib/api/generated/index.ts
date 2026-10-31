@@ -7,4 +7,5 @@ export * as MeetingsService from './meetings/meetings';
 export * as SearchService from './search/search';
 export * as SessionService from './session/session';
 export * as SystemService from './system/system';
+export * as TimelineService from './timeline/timeline';
 export * from './models';
