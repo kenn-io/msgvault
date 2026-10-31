@@ -827,7 +827,7 @@ describe('RelationshipsController.openTarget', () => {
     expect(controller.relationshipCalendarError).toBeNull();
   });
 
-  it('stops after one calendar revision restart with the embedded timeline', async () => {
+  it('stops after one calendar revision restart without the legacy timeline', async () => {
     let calls = 0;
     const client = createAPIClient(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

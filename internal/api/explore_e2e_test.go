@@ -1022,7 +1022,7 @@ func newExploreDuckDBFixtureWithMessagesAndRecipients(
 // newExploreDuckDBFixtureWithClusters also commits participant_clusters rows
 // (participant_id, canonical_id); empty clusterValues commits no clusters.
 func newExploreDuckDBFixtureWithClusters(
-	tb testing.TB, messageValues, recipientValues, clusterValues string, lastMessageID int64,
+	tb testing.TB, messageValues, recipientValues, clusterValues string, lastMessageID int64, unsentMessages ...string,
 ) (*query.DuckDBEngine, string) {
 	tb.Helper()
 	clusters, noClusters := clusterValues, clusterValues == ""
@@ -1070,7 +1070,7 @@ func newExploreDuckDBFixtureWithClusters(
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(tb, err, "write %s", table.dir)
 	}
-	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir)
+	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir, unsentMessages...)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(tb, err)
 	state, err := json.Marshal(query.CacheSyncState{
@@ -1091,13 +1091,19 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	t.Parallel()
-	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
-	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"sent_only":true,"limit":366}`)
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, "", 3,
+		"(SELECT 3::BIGINT AS message_id)")
+	srv := newTestServerWithEngine(t, engine)
+	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Pacific/Pago_Pago","sent_only":true,"limit":366}`)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body ExploreGroupsHTTPResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
-	require.Len(body.Rows, 1)
-	assert.Equal("2026-07-18", body.Rows[0].Key)
+	require.Len(body.Rows, 2)
+	counts := make(map[string]int64)
+	for _, row := range body.Rows {
+		counts[row.Key] = row.Count
+	}
+	assert.Equal(map[string]int64{"2026-07-17": 1, "2026-07-18": 1}, counts)
 
 	invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Invalid/Zone"}`)
 	require.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
@@ -1127,4 +1133,5 @@ func TestParticipantTimelineKeepsLinkedAliasesAndExcludesOwnerAbsentEvents(t *te
 	var body ExploreHTTPResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
 	require.Len(body.Rows, 2)
+	require.ElementsMatch([]string{"source:1:message:m2", "source:2:message:m3"}, []string{body.Rows[0].Key, body.Rows[1].Key})
 }

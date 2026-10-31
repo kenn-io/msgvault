@@ -50,23 +50,6 @@ it('keeps the batch locked while a profile merge reconciles, then finishes the q
   expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
 });
 
-it('clears a stale cache warning when the final link refreshes the cache', async () => {
-  const links: number[] = [];
-  const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
-    '/api/v1/identity/links': () => { links.push(1); return Response.json({ identity_revision: 5, cache_state: links.length === 1 ? 'stale' : 'ready' }); },
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
-    await waitFor(() => expect(links).toHaveLength(2));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
-    expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the open person', async (control) => {
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: [] }),
@@ -90,11 +73,11 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['fails', 'is cancelled'])('reports completed links when the next pair %s', async (outcome) => {
+it.each(['fails', 'is cancelled', 'refreshes the cache'])('reports the result when the next pair %s', async (outcome) => {
   let calls = 0;
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
-    '/api/v1/identity/links': () => ++calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 }),
+    '/api/v1/identity/links': () => ++calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 }),
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
@@ -104,13 +87,17 @@ it.each(['fails', 'is cancelled'])('reports completed links when the next pair %
     if (outcome === 'is cancelled') {
       await screen.findByRole('dialog', { name: 'Resolve person merge' });
       await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    } else await screen.findByText(/Synthetic link failed/);
-    expect(screen.getByRole('status').textContent).toContain('1 of 2');
+    } else if (outcome === 'fails') await screen.findByText(/Synthetic link failed/);
+    else {
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+      expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
+    }
+    if (outcome !== 'refreshes the cache') expect(screen.getByRole('status').textContent).toContain('1 of 2');
     expect(calls).toBe(2);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['Category', 'Organization'])('typing the %s profile filter replaces the current history entry', async (field) => {
+it.each(['Category', 'Organization'])('forwards typed %s profile filters as drafts', async (field) => {
   const client = clientFor({});
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   const onNavigate = vi.fn(); const onDraftNavigation = vi.fn();

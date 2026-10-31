@@ -227,10 +227,7 @@ test.describe('day selection', () => {
 
   test('filters the timeline by the local day and clears by keyboard or button', async ({ page }) => {
     await openCalendar(page);
-    await page.route('**/api/v1/participants/1/files/search', (route) => route.fulfill({ json: {
-      files: [], total_count: 0, cache_revision: 'cache-calendar', search_provenance: {}
-    } }));
-    await page.getByRole('main', { name: 'Messages', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByRole('group', { name: 'Person page' }).getByRole('button', { name: 'Filter', exact: true }).click();
     await page.getByLabel('From', { exact: true }).fill('2026-01-01');
     const requests: Array<{ filters?: unknown[] }> = [];
     await page.route('**/api/v1/participants/1/timeline', async (route) => {
@@ -278,14 +275,6 @@ test.describe('day selection', () => {
     expect(requests.at(-1)?.filters ?? []).toEqual([{ dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] }]);
     await expect(emptyDay).toHaveAttribute('aria-pressed', 'false');
     expect(await page.evaluate(() => history.length)).toBe(historyLength);
-
-    await day.click();
-    await expect(timeline.getByText('Spring planning')).toBeVisible();
-    await page.getByRole('radio', { name: 'Files', exact: true }).click();
-    await expect(calendar).toHaveCount(0);
-    await page.getByRole('radio', { name: 'Messages', exact: true }).click();
-    await expect(day).toHaveAttribute('aria-pressed', 'false');
-    await expect(timeline.getByText('All relationship activity')).toBeVisible();
 
     await day.click();
     await expect(day).toHaveAttribute('aria-pressed', 'true');

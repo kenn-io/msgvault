@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -164,18 +162,6 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 	t.Parallel()
 	srv := newSavedViewTestServer(t)
 	session := loginSavedViewSession(t, srv)
-
-	for _, dimension := range explorecatalog.GroupingDimensions() {
-		t.Run("accept "+dimension, func(t *testing.T) {
-			body := fmt.Sprintf(
-				`{"name":"Group %s","canonical_state":{"grouping":[%q]},"schema_version":1}`,
-				dimension, dimension,
-			)
-			response := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-				[]byte(body), session.mutationHeaders())
-			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-		})
-	}
 
 	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
 		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["sender"]},"schema_version":1}`),

@@ -19,6 +19,7 @@ function setup(paged: boolean, row = saved) {
       const body = await request.clone().json();
       return Response.json({ rows: paged && !body.cursor ? [first] : [row], total_count: paged ? 2 : 1, next_cursor: paged && !body.cursor ? 'page-two' : undefined, cache_revision: 'cache-1', search_provenance: {} });
     }
+    if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
     if (path === '/api/v1/cli/accounts') return Response.json({ accounts: [] });
     if (path === '/api/v1/conversations/2') return Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: at, message_type: row.message_type, from: 'Alice Example', to: [], body: 'Restored body', snippet: 'Restored body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
@@ -82,5 +83,16 @@ it('Escape dismisses the message filter before closing the reader', async () => 
     await fireEvent.keyDown(filter, { key: 'Escape' });
     expect(screen.queryByText('Restored body')).not.toBeNull();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
+  } finally { view.unmount(); }
+});
+
+it('opens Tasks setup from a person message reader', async () => {
+  const { props } = setup(false);
+  const onOpenSettings = vi.fn();
+  const view = render(PersonMessages, { props: { ...props, onOpenSettings } });
+  try {
+    await fireEvent.click(await within(await screen.findByRole('grid', { name: 'Messages results' })).findByText('Saved message'));
+    await fireEvent.click(await screen.findByRole('button', { name: /^Set up$/ }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
   } finally { view.unmount(); }
 });
