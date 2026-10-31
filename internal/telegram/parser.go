@@ -194,7 +194,7 @@ func validateMessage(m *Message) error {
 	if len(m.TextEntities) > 0 {
 		var text strings.Builder
 		for _, entity := range m.TextEntities {
-			text.WriteString(entity.Text)
+			text.WriteString(entity.String())
 		}
 		m.Text = text.String()
 	} else if len(m.RawText) == 0 {

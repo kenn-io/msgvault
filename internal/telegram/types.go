@@ -57,18 +57,30 @@ type Message struct {
 	LocationInformation jsontext.Value `json:"location_information,omitempty"`
 	ContactInformation  jsontext.Value `json:"contact_information,omitempty"`
 	ForwardedFrom       string         `json:"forwarded_from"`
-	TextEntities        []struct {
-		Text string `json:"text"`
-	} `json:"text_entities"`
-	ContactVCard string    `json:"contact_vcard"`
-	Photo        string    `json:"photo"`
-	File         string    `json:"file"`
-	Thumbnail    string    `json:"thumbnail"`
-	MediaType    string    `json:"media_type"`
-	MimeType     string    `json:"mime_type"`
-	FileName     string    `json:"file_name"`
-	Text         string    `json:"-"`
-	SentAt       time.Time `json:"-"`
+	TextEntities        []textEntity   `json:"text_entities"`
+	ContactVCard        string         `json:"contact_vcard"`
+	Photo               string         `json:"photo"`
+	File                string         `json:"file"`
+	Thumbnail           string         `json:"thumbnail"`
+	MediaType           string         `json:"media_type"`
+	MimeType            string         `json:"mime_type"`
+	FileName            string         `json:"file_name"`
+	Text                string         `json:"-"`
+	SentAt              time.Time      `json:"-"`
+}
+
+type textEntity struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+	Href string `json:"href"`
+}
+
+// String keeps a text_link's target next to its label so the URL stays searchable.
+func (e textEntity) String() string {
+	if e.Type == "text_link" && e.Href != "" && e.Href != e.Text {
+		return e.Text + " (" + e.Href + ")"
+	}
+	return e.Text
 }
 
 func (m *Message) isMessage() bool { return m.Type == "message" && len(m.RichMessage) == 0 }
