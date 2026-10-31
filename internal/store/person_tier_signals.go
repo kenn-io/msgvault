@@ -59,7 +59,7 @@ func (s *Store) personTierReadiness(ctx context.Context, tx *loggedTx) (PersonTi
 // projection holds each person's direct events; the inbound audience cut comes
 // from the projector's own classifier. Events arrive in keyset pages and fold
 // into the counters, so memory follows the page size and the number of people
-// and days, not the number of events.
+// and days, plus the logical email IDs for the current person.
 func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, maxDirect int) (map[int64]persontiers.Signals, error) {
 	tally := newTierTally(cfg, asOf)
 	var after tierSignalRow
@@ -92,14 +92,15 @@ func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs [
 
 // tierSignalRow is one direct activity link the tier rules can count.
 type tierSignalRow struct {
-	PersonID  int64
-	MessageID int64
-	LocalDate string
-	Channel   string
-	Inbound   bool
-	Meeting   bool
-	List      bool
-	Call      bool
+	PersonID        int64
+	MessageID       int64
+	LocalDate       string
+	Channel         string
+	RFC822MessageID string
+	Inbound         bool
+	Meeting         bool
+	List            bool
+	Call bool
 }
 
 // personTierRows reads up to personTierRowPage direct links in the long window,
@@ -129,7 +130,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
  CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END,
- CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END
+ CASE WHEN m.message_type IN (`+callTypes+`) THEN 1 ELSE 0 END,COALESCE(m.rfc822_message_id,'')
  FROM activity_event_persons aep
  JOIN activity_events ae ON ae.message_id=aep.message_id
  JOIN messages m ON m.id=ae.message_id
@@ -155,7 +156,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
 	for rows.Next() {
 		var r tierSignalRow
 		var inbound, meeting, list, call int
-		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list, &call); err != nil {
+		if err = rows.Scan(&r.PersonID, &r.MessageID, &r.LocalDate, &r.Channel, &inbound, &meeting, &list, &call, &r.RFC822MessageID); err != nil {
 			return nil, fmt.Errorf("scan person tier signals: %w", err)
 		}
 		r.Inbound, r.Meeting, r.List, r.Call = inbound != 0, meeting != 0, list != 0, call != 0
@@ -200,10 +201,12 @@ func (s *Store) personTierBroadcast(ctx context.Context, tx *loggedTx, rows []ti
 // A call is its own channel, even though calls share the chat channel in the
 // projection, so calls plus texts reach the breadth rule.
 type tierTally struct {
-	cfg    persontiers.Config
-	short  string
-	result map[int64]persontiers.Signals
-	seen   map[int64]*tierDays
+	cfg         persontiers.Config
+	short       string
+	result      map[int64]persontiers.Signals
+	seen        map[int64]*tierDays
+	emailPerson int64
+	emailCopies map[string]struct{}
 }
 
 // tierCallChannel names calls as a channel. It cannot collide with a
@@ -233,6 +236,18 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 			s.LargeAudienceInboundEvents++
 			t.result[r.PersonID] = s
 			continue
+		}
+		// Rows are person-ordered across pages. Retain IDs only for this
+		// person, and only after list and audience qualification succeeds.
+		if t.emailPerson != r.PersonID {
+			t.emailPerson = r.PersonID
+			t.emailCopies = map[string]struct{}{}
+		}
+		if r.Channel == "email" && r.RFC822MessageID != "" {
+			if _, seen := t.emailCopies[r.RFC822MessageID]; seen {
+				continue
+			}
+			t.emailCopies[r.RFC822MessageID] = struct{}{}
 		}
 		d := t.seen[r.PersonID]
 		if d == nil {
