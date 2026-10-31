@@ -208,6 +208,9 @@ func TestCalendarRequestEnumNamesPreserveGeneratedClientExports(t *testing.T) {
 		assertions.Equal(want, field.Extensions["x-enum-names"], property)
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"ExploreGroupRow": {
+			"level": {"ExploreGroupRowLevelNone", "ExploreGroupRowLevelFirstQuartile", "ExploreGroupRowLevelSecondQuartile", "ExploreGroupRowLevelThirdQuartile", "ExploreGroupRowLevelFourthQuartile"},
+		},
 		"CreateAttributeDefinitionRequest": {
 			"cardinality": {"Single", "Multi"},
 		},

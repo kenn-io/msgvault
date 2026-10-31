@@ -758,6 +758,26 @@ func (e ExploreGroupDimension) Validate() error {
 	}
 }
 
+type ExploreGroupRowLevel string
+
+const (
+	ExploreGroupRowLevelFirstQuartile  ExploreGroupRowLevel = "FIRST_QUARTILE"
+	ExploreGroupRowLevelFourthQuartile ExploreGroupRowLevel = "FOURTH_QUARTILE"
+	ExploreGroupRowLevelNone           ExploreGroupRowLevel = "NONE"
+	ExploreGroupRowLevelSecondQuartile ExploreGroupRowLevel = "SECOND_QUARTILE"
+	ExploreGroupRowLevelThirdQuartile  ExploreGroupRowLevel = "THIRD_QUARTILE"
+)
+
+// Validate checks if the ExploreGroupRowLevel value is valid
+func (e ExploreGroupRowLevel) Validate() error {
+	switch e {
+	case ExploreGroupRowLevelFirstQuartile, ExploreGroupRowLevelFourthQuartile, ExploreGroupRowLevelNone, ExploreGroupRowLevelSecondQuartile, ExploreGroupRowLevelThirdQuartile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreGroupRowLevel value, got: %v", e))
+	}
+}
+
 type ExploreGroupSortDirection string
 
 const (

@@ -30,16 +30,14 @@
       if (abort.signal.aborted) return;
       if (result.status !== 'ready') { error = result.unavailable.message; return; }
       const counts = result.result.rows;
-      const positive = counts.map((row) => row.count).filter((count) => count > 0).sort((a, b) => a - b);
-      const [q25, q50, q75] = [.25, .5, .75].map((fraction) => positive[Math.max(0, Math.ceil(fraction * positive.length) - 1)]!);
-      const byDate = new Map(counts.map((row) => [row.key, row.count]));
+      const byDate = new Map(counts.map((row) => [row.key, row]));
       const days: Calendar['days'] = [];
       const end = Math.min(new Date(wanted + 1, 0, 1).getTime(), Date.now());
       for (const at = new Date(wanted, 0, 1); at.getTime() < end; at.setDate(at.getDate() + 1)) {
         const date = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
-        const count = byDate.get(date) ?? 0;
+        const count = byDate.get(date)?.count ?? 0;
         days.push({ date, total: count, email: count, chat: 0, meetings: 0, sent: 0, received: 0, modality_mask: 0,
-          level: count === 0 ? 'NONE' : count <= q25! ? 'FIRST_QUARTILE' : count <= q50! ? 'SECOND_QUARTILE' : count <= q75! ? 'THIRD_QUARTILE' : 'FOURTH_QUARTILE',
+          level: byDate.get(date)?.level ?? 'NONE',
         });
       }
       calendar = { year: wanted, days };

@@ -3,6 +3,7 @@ package query
 import (
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
 
@@ -251,6 +252,8 @@ type ExploreGroupRow struct {
 	Count          int64     `json:"count"`
 	EstimatedBytes int64     `json:"estimated_bytes"`
 	LatestAt       time.Time `json:"latest_at"`
+	// Level ranks a day row among the returned day rows; other dimensions omit it.
+	Level identityindex.HeatLevel `json:"level,omitempty" enum:"NONE,FIRST_QUARTILE,SECOND_QUARTILE,THIRD_QUARTILE,FOURTH_QUARTILE"`
 }
 
 type ExploreGroupResponse struct {

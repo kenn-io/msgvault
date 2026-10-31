@@ -5389,6 +5389,14 @@ components:
         latest_at:
           format: date-time
           type: string
+        level:
+          enum:
+            - NONE
+            - FIRST_QUARTILE
+            - SECOND_QUARTILE
+            - THIRD_QUARTILE
+            - FOURTH_QUARTILE
+          type: string
       required:
         - key
         - label

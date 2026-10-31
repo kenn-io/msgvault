@@ -14,11 +14,12 @@ it.each([
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     bodies.push(await request.json());
-    return Response.json({ rows: [{ key: `${year}-07-18`, label: `${year}-07-18`, count: 1, estimated_bytes: 0 }], total_count: 1, cache_revision: 'cache-domain', search_provenance: {} });
+    return Response.json({ rows: [1, 2, 3, 4].map(count => ({ key: `${year}-07-${17 + count}`, label: `${year}-07-${17 + count}`, count, estimated_bytes: 0, level: 'FOURTH_QUARTILE' })), total_count: 4, cache_revision: 'cache-domain', search_provenance: {} });
   });
   const view = render(DomainCalendarHost, { props: { client, domain: 'example.com', firstAt: '2022-01-01T12:00:00Z', lastAt, selectedDate: null, onDateChange: vi.fn() } });
   try {
-    await screen.findAllByRole('button', { name: `1 message on Jul 18, ${year}` });
+    const cells = await screen.findAllByRole('button', { name: `1 message on Jul 18, ${year}` });
+    expect(cells[0].classList.contains('level-fourth-quartile')).toBe(true);
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toMatchObject({ grouping: ['day'], timezone: 'America/New_York', sent_only: true, limit: 366,
       filters: [{ dimension: 'domain', values: ['example.com'] }, { dimension: 'after', values: [`${year}-01-01T05:00:00.000Z`] }, { dimension: 'before', values: [`${year + 1}-01-01T05:00:00.000Z`] }] });

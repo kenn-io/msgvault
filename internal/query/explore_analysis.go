@@ -124,7 +124,23 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate analytical groups: %w", err)
 	}
-	return response, nil
+	return withDayHeatLevels(request.Dimension, response), nil
+}
+
+// withDayHeatLevels ranks the returned day rows into the shared relationship
+// heat levels; other dimensions carry no level.
+func withDayHeatLevels(dimension string, response *ExploreGroupResponse) *ExploreGroupResponse {
+	if dimension != "day" {
+		return response
+	}
+	signals := make([]identityindex.DailyTemperatureSignals, len(response.Rows))
+	for i, row := range response.Rows {
+		signals[i].Total = row.Count
+	}
+	for i, level := range identityindex.AssignRelationshipHeatLevels(signals) {
+		response.Rows[i].Level = level
+	}
+	return response
 }
 
 // groupExpressions describes how one grouping dimension renders into the

@@ -4913,15 +4913,36 @@ func (e ExploreFilter) Validate() error {
 }
 
 type ExploreGroupRow struct {
-	Count          int64     `json:"count"`
-	EstimatedBytes int64     `json:"estimated_bytes"`
-	Key            string    `json:"key" validate:"required"`
-	Label          string    `json:"label" validate:"required"`
-	LatestAt       time.Time `json:"latest_at" validate:"required"`
+	Count          int64                 `json:"count"`
+	EstimatedBytes int64                 `json:"estimated_bytes"`
+	Key            string                `json:"key" validate:"required"`
+	Label          string                `json:"label" validate:"required"`
+	LatestAt       time.Time             `json:"latest_at" validate:"required"`
+	Level          *ExploreGroupRowLevel `json:"level,omitempty"`
 }
 
 func (e ExploreGroupRow) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Key, "required"); err != nil {
+		errors = errors.Append("Key", err)
+	}
+	if err := typesValidator.Var(e.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	if err := typesValidator.Var(e.LatestAt, "required"); err != nil {
+		errors = errors.Append("LatestAt", err)
+	}
+	if e.Level != nil {
+		if v, ok := any(e.Level).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Level", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ExploreGroupSort struct {
