@@ -514,7 +514,64 @@ func (s *Store) loadPersonSplitMergeTx(
 	if err != nil {
 		return nil, personMergeSnapshot{}, err
 	}
+	for index := range snapshot.Rows {
+		snapshot.Rows[index], err = restoreLegacyPersonInstructionText(snapshot.Rows[index])
+		if err != nil {
+			return nil, personMergeSnapshot{}, err
+		}
+	}
 	return merge, snapshot, nil
+}
+
+// Snapshots written before person_instructions.original_text was added still
+// contain normalized_text. Restore that value as the display-text fallback.
+func restoreLegacyPersonInstructionText(
+	row personMergeSnapshotRow,
+) (personMergeSnapshotRow, error) {
+	if row.TableName != personInstructionsTableName {
+		return row, nil
+	}
+	columns := personSplitSnapshotColumnsByName(row.Columns)
+	if _, exists := columns["original_text"]; exists {
+		return row, nil
+	}
+	normalized, exists := columns["normalized_text"]
+	if !exists || normalized.Kind != personMergeSnapshotText || normalized.Text == nil {
+		return row, fmt.Errorf("%w: missing person instruction normalized text",
+			ErrPersonMergeSnapshotCorrupt)
+	}
+	row.Columns = slices.Clone(row.Columns)
+	row.Columns = append(row.Columns, personMergeSnapshotColumn{
+		Name: "original_text", Value: normalized,
+	})
+	return row, nil
+}
+
+func restoreLegacyPersonInstructionPostMergeJSON(
+	tableName string,
+	encoded sql.NullString,
+) (sql.NullString, error) {
+	if tableName != personInstructionsTableName || !encoded.Valid || encoded.String == "" {
+		return encoded, nil
+	}
+	var row personMergeSnapshotRow
+	if err := json.Unmarshal([]byte(encoded.String), &row); err != nil {
+		return sql.NullString{}, fmt.Errorf("%w: decode person instruction post-merge row: %w",
+			ErrPersonMergeSnapshotCorrupt, err)
+	}
+	columns := len(row.Columns)
+	row, err := restoreLegacyPersonInstructionText(row)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	if len(row.Columns) == columns {
+		return encoded, nil
+	}
+	data, err := json.Marshal(row, json.Deterministic(true))
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("encode person instruction post-merge row: %w", err)
+	}
+	return sql.NullString{String: string(data), Valid: true}, nil
 }
 
 func (s *Store) loadPersonSplitLineageTx(
@@ -1548,6 +1605,12 @@ func loadPersonSplitJournalTx(
 		); err != nil {
 			return nil, fmt.Errorf("scan person split journal: %w", err)
 		}
+		row.postMergeJSON, err = restoreLegacyPersonInstructionPostMergeJSON(
+			row.tableName, row.postMergeJSON,
+		)
+		if err != nil {
+			return nil, err
+		}
 		result = append(result, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -2213,6 +2276,12 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 			&item.currentRowID, &item.currentKey, &item.postMergeJSON,
 		); err != nil {
 			return fmt.Errorf("scan prior %s split journal: %w", journal.tableName, err)
+		}
+		item.postMergeJSON, err = restoreLegacyPersonInstructionPostMergeJSON(
+			journal.tableName, item.postMergeJSON,
+		)
+		if err != nil {
+			return err
 		}
 		prior = append(prior, item)
 	}

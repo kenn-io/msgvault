@@ -1,9 +1,15 @@
 package store_test
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,6 +38,154 @@ func insertTestInstructionEvent(t *testing.T, st *store.Store, row *store.Person
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO person_instruction_events(person_id,instruction_id,instruction_key,action,actor,detail_json) VALUES (?,?,?,?,'owner','{}') RETURNING id`), row.PersonID, row.ID, row.InstructionKey, action).Scan(&id))
 	return id
 }
+
+func removeOriginalTextFromLegacyInstructionSnapshots(t *testing.T, st *store.Store, mergeID int64) {
+	t.Helper()
+	response, err := st.GetPersonMergeSnapshotContext(t.Context(), mergeID)
+	require.NoError(t, err)
+	var snapshot map[string]any
+	require.NoError(t, json.Unmarshal(response.JSON, &snapshot))
+	rows, ok := snapshot["rows"].([]any)
+	require.True(t, ok)
+	removed := false
+	for _, value := range rows {
+		row, ok := value.(map[string]any)
+		if ok && row["table_name"] == "person_instructions" {
+			removed = removeOriginalTextFromSnapshotRow(t, row) || removed
+		}
+	}
+	require.True(t, removed, "expected an instruction snapshot with original_text")
+	canonical, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	digest := sha256.Sum256(canonical)
+	var compressed bytes.Buffer
+	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
+	require.NoError(t, err)
+	_, err = writer.Write(canonical)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_merges
+		SET snapshot_blob=?, snapshot_sha256=? WHERE id=?`),
+		compressed.Bytes(), hex.EncodeToString(digest[:]), mergeID)
+	require.NoError(t, err)
+
+	rowsToUpdate, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT original_row_key,
+		post_merge_row_json FROM person_merge_rows
+		WHERE merge_id=? AND table_name='person_instructions'`), mergeID)
+	require.NoError(t, err)
+	type postMergeRow struct {
+		key  string
+		json sql.NullString
+	}
+	var postMergeRows []postMergeRow
+	for rowsToUpdate.Next() {
+		var row postMergeRow
+		require.NoError(t, rowsToUpdate.Scan(&row.key, &row.json))
+		postMergeRows = append(postMergeRows, row)
+	}
+	require.NoError(t, rowsToUpdate.Err())
+	require.NoError(t, rowsToUpdate.Close())
+	postMergeRemoved := false
+	for _, row := range postMergeRows {
+		if !row.json.Valid || row.json.String == "" {
+			continue
+		}
+		var encoded map[string]any
+		require.NoError(t, json.Unmarshal([]byte(row.json.String), &encoded))
+		if removeOriginalTextFromSnapshotRow(t, encoded) {
+			postMergeRemoved = true
+			data, err := json.Marshal(encoded)
+			require.NoError(t, err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_merge_rows
+				SET post_merge_row_json=? WHERE merge_id=? AND table_name='person_instructions'
+				  AND original_row_key=?`), string(data), mergeID, row.key)
+			require.NoError(t, err)
+		}
+	}
+	require.True(t, postMergeRemoved, "expected an instruction post-merge row with original_text")
+}
+
+func removeOriginalTextFromSnapshotRow(t *testing.T, row map[string]any) bool {
+	t.Helper()
+	columns, ok := row["columns"].([]any)
+	if !ok {
+		return false
+	}
+	filtered := make([]any, 0, len(columns))
+	removed := false
+	for _, value := range columns {
+		column, ok := value.(map[string]any)
+		if ok && column["name"] == "original_text" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	row["columns"] = filtered
+	return removed
+}
+
+func TestExactSplitRestoresLegacyInstructionTextAfterSchemaUpgrade(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		postMergeOwnerEdit bool
+		wantText           string
+	}{
+		{name: "normalized fallback", wantText: "call me vee"},
+		{name: "post-merge owner edit", postMergeOwnerEdit: true, wantText: "Call me Vee"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			if st.IsPostgreSQL() {
+				t.Skip("the test store uses SQLite column migration behavior")
+			}
+			alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+			bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+			survivor := addTestInstruction(t, st, alice.ID, "Vee")
+			deduplicated := addTestInstruction(t, st, bob.ID, "Vee")
+			merged, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+			require.NoError(err)
+			removeOriginalTextFromLegacyInstructionSnapshots(t, st, merged.Merge.ID)
+
+			_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE person_instructions DROP COLUMN original_text`)
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+				`DELETE FROM applied_migrations WHERE name=?`), "person_instruction_original_text_v1")
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+				`UPDATE archive_metadata SET value=? WHERE key='schema_version'`),
+				strconv.Itoa(store.SchemaVersion-1))
+			require.NoError(err)
+			require.NoError(st.InitSchemaContext(t.Context()))
+
+			var backfilled string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+				`SELECT original_text FROM person_instructions WHERE id=?`), survivor.ID).Scan(&backfilled))
+			assert.Equal("call me vee", backfilled)
+			if test.postMergeOwnerEdit {
+				current := testInstruction(t, st, survivor.ID)
+				text, value := "Call me Vee", "Vee"
+				_, err := st.DecidePersonInstructionContext(t.Context(), store.PersonInstructionDecision{
+					InstructionID: survivor.ID, ExpectedRevision: current.Revision,
+					Action: personfacts.InstructionActionConfirm,
+					Edit:   &store.PersonInstructionEdit{Text: &text, ValueText: &value},
+					Actor:  "owner",
+				})
+				require.NoError(err)
+			}
+
+			split := splitInstructionMerge(t, st, merged, bob.ParticipantIDs)
+			require.True(split.ExactReversal)
+			restored := testInstruction(t, st, deduplicated.ID)
+			assert.Equal(split.NewPerson.ID, restored.PersonID)
+			assert.Equal(test.wantText, restored.Text)
+			assert.Equal("call me vee", restored.NormalizedText)
+		})
+	}
+}
+
 func TestMergeMovesCuratedInstructionsAndDiscardsProposals(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
