@@ -255,3 +255,42 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 	}
 	return out, nil
 }
+// callIdentitySQL also serves fallback observations without a canonical key.
+func callIdentitySQL(alias string) string {
+	return "CASE WHEN " + alias + ".canonical_key = '' THEN 'm:' || CAST(" + alias + ".message_id AS TEXT) ELSE 'n:' || " + alias + ".canonical_key END"
+}
+
+func (s *Store) callActiveSQL(extra string) string {
+	return `SELECT c.*, ` + callIdentitySQL("c") + ` AS identity_key
+ FROM (` + s.callRowsSQL() + `) c JOIN messages m ON m.id = c.message_id
+ WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + extra
+}
+
+// Resolve all active evidence before filtering an identity by its earliest date.
+func callIdentityCTEs(active string) string {
+	return `active AS (` + active + `), identities AS (
+ SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
+ MIN(message_id) AS message_id, MAX(duration_seconds) AS duration_seconds,
+ MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
+ MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled') THEN 1 ELSE 0 END) AS negative,
+ MAX(CASE WHEN outcome = 'missed' THEN 1 ELSE 0 END) AS missed,
+ MAX(CASE WHEN outcome = 'declined' THEN 1 ELSE 0 END) AS declined,
+ MAX(CASE WHEN outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+ FROM active GROUP BY identity_key)`
+}
+
+func callCategorySQL(confirmed string) string {
+	return fmt.Sprintf(`CASE WHEN i.kind = 'scheduled_meeting' AND i.cancelled = 1 THEN 'scheduled_cancelled'
+ WHEN i.kind = 'scheduled_meeting' THEN 'scheduled'
+ WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
+ WHEN %s = 1 THEN 'answered'
+ WHEN i.missed = 1 THEN 'missed'
+ WHEN i.declined = 1 THEN 'declined'
+ WHEN i.cancelled = 1 THEN 'cancelled'
+ ELSE 'unknown' END`, confirmed)
+}
+
+func callConfirmedSQL() string {
+	return `CASE WHEN a.outcome = 'answered' AND a.owner_participation = 'joined'
+ AND r.recipient_type = 'call_joined' THEN 1 ELSE 0 END`
+}
