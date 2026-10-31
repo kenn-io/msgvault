@@ -63,6 +63,27 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it('shows a status-load failure and Refresh inside the open source panel', async () => {
+    let statusReads = 0;
+    const fetchFn = api([source()], url => {
+      if (url.pathname.endsWith('/sources/status') && ++statusReads === 2) {
+        return Response.json({ message: 'Source status unavailable' }, { status: 500 });
+      }
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+
+    rendered.component.refresh();
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert.textContent).toContain('Source status unavailable');
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(statusReads).toBe(3));
+    await waitFor(() => expect(within(panel).queryByText('Source status unavailable')).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
+  });
+
   it('shows a readable type and a muted reason with the raw code in its tooltip', async () => {
     const fetchFn = api([source({ id: 1, identifier: 'import@example.com', display_name: 'Imported', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', source_type: 'mbox' })]);
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
