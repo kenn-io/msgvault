@@ -324,6 +324,8 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 }
 
 func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("owner@example.com")
 	person := b.AddParticipant("person@example.com", "example.com", "Person")
@@ -345,17 +347,17 @@ func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *test
 	engine := b.BuildEngine()
 	request := ExploreRequest{Context: Context{ParticipantIDs: []int64{person}, AdditionalParticipantGroups: [][]int64{{other}}}, Page: PageSpec{Limit: 1}}
 	fast, legacy := runExploreBothPaths(t, engine, request)
-	assert.Equal(t, legacy, fast)
-	require.Len(t, fast.Rows, 1)
-	assert.Equal(t, int64(3), fast.TotalCount)
-	assert.Equal(t, fmt.Sprintf("source:%d:conversation:900", source), fast.Rows[0].Key)
-	assert.ElementsMatch(t, []int64{alias, other}, fast.Rows[0].ParticipantIDs)
+	assert.Equal(legacy, fast)
+	require.Len(fast.Rows, 1)
+	assert.Equal(int64(3), fast.TotalCount)
+	assert.Equal(fmt.Sprintf("source:%d:conversation:900", source), fast.Rows[0].Key)
+	assert.ElementsMatch([]int64{alias, other}, fast.Rows[0].ParticipantIDs)
 	profile, err := profileDomainPopulation(t, engine, request)
-	require.NoError(t, err)
+	require.NoError(err)
 	var check func(domainPopulationProfile)
 	check = func(operator domainPopulationProfile) {
 		if strings.Contains(fmt.Sprint(operator.ExtraInfo["Aggregates"]), "list(") {
-			assert.LessOrEqual(t, operator.IntermediateRows, int64(3), "participant lists must be enriched only for the selected page")
+			assert.LessOrEqual(operator.IntermediateRows, int64(3), "participant lists must be enriched only for the selected page")
 		}
 		for _, child := range operator.Children {
 			check(child)

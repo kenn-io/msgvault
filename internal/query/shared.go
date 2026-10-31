@@ -32,6 +32,7 @@ const (
 	messageTypeEmail                = "email"
 	messageTypeCalendar             = "calendar_event"
 	timeGranularityMonth            = "month"
+	timeGranularityDay              = "day"
 	sortDirectionAsc                = "asc"
 	sortDirectionDesc               = "desc"
 	sortFieldCount                  = "count"

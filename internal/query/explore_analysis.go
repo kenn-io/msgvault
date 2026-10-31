@@ -42,7 +42,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		return nil, err
 	}
 	var groupArgs []any
-	if request.Dimension == "day" {
+	if request.Dimension == timeGranularityDay {
 		_, zone, err := validateRelationshipTimezone(request.Timezone)
 		if err != nil {
 			return nil, err
@@ -87,7 +87,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	queryText := buildPopulation(conditions, "NULL::BIGINT") +
 		exploreLogicalEntriesCTE(!spec.noLists)
 	byteExpression := "estimated_bytes"
-	if request.Dimension == "day" {
+	if request.Dimension == timeGranularityDay {
 		byteExpression = exploreEstimatedBytesSQL
 	}
 	queryText += spec.cte + `
@@ -130,7 +130,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 // withDayHeatLevels ranks the returned day rows into the shared relationship
 // heat levels; other dimensions carry no level.
 func withDayHeatLevels(dimension string, response *ExploreGroupResponse) *ExploreGroupResponse {
-	if dimension != "day" {
+	if dimension != timeGranularityDay {
 		return response
 	}
 	signals := make([]identityindex.DailyTemperatureSignals, len(response.Rows))
@@ -293,7 +293,7 @@ func exploreGroupExpressions(
 		return simple("strftime(occurred_at, '%Y')"), nil
 	case timeGranularityMonth:
 		return simple("strftime(occurred_at, '%Y-%m')"), nil
-	case "day":
+	case timeGranularityDay:
 		return groupExpressions{
 			key: "local_day", label: "local_day", groupBy: "local_day", source: "day_bucketed", noLists: true,
 			cte: `), day_bucketed AS (
