@@ -1109,6 +1109,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	if observation := schemas["CallObservationView"]; observation != nil {
+		if duration := observation.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(observation, "duration_seconds")
+	}
 	for schemaName, property := range map[string]string{
 		"MeetingPerson": emailProperty,
 		"Source":        "account_email",

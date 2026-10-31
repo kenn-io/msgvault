@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -48,8 +49,14 @@ func mergeBursts(full, cold []store.ActivityBurst) []store.ActivityBurst {
 	return out
 }
 func (c *composer) displays(ids []int64) map[int64]store.MessageDisplay {
+	r := c.readDisplays(ids)
+	c.gap("text", r.err, false)
+	return r.value
+}
+
+func (c *composer) readDisplays(ids []int64) readResult[map[int64]store.MessageDisplay] {
 	if c.src.Activity == nil {
-		return map[int64]store.MessageDisplay{}
+		return readResult[map[int64]store.MessageDisplay]{value: map[int64]store.MessageDisplay{}}
 	}
 	ids = slices.Clone(ids)
 	slices.Sort(ids)
@@ -57,7 +64,6 @@ func (c *composer) displays(ids []int64) map[int64]store.MessageDisplay {
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
 		return c.src.Activity.MessageDisplayContext(ctx, ids)
 	})
-	c.gap("text", r.err, false)
 	if !c.req.Scope.Owner {
 		for id, display := range r.value {
 			if display.MessageType == "call_record" {
@@ -65,7 +71,7 @@ func (c *composer) displays(ids []int64) map[int64]store.MessageDisplay {
 			}
 		}
 	}
-	return r.value
+	return r
 }
 
 func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.ActivityMessage, occurrences []store.CalendarOccurrence, calls []store.LogicalCall, notes []store.DailyNoteEntry) ([]Entry, []Entry) {
@@ -477,7 +483,15 @@ func (c *composer) groupDays(entries []Entry) {
 			for _, p := range people {
 				summary.People = append(summary.People, p)
 			}
-			slices.SortFunc(summary.People, func(a, b Person) int { return compare(a.Name, b.Name) })
+			slices.SortFunc(summary.People, func(a, b Person) int {
+				if n := compare(a.Name, b.Name); n != 0 {
+					return n
+				}
+				if n := cmp.Compare(a.PersonID, b.PersonID); n != 0 {
+					return n
+				}
+				return cmp.Compare(a.ParticipantID, b.ParticipantID)
+			})
 			summary.PeopleCount = len(summary.People)
 			key := reverseDigits(date) + "|summary"
 			c.keys["days|day:"+date] = key

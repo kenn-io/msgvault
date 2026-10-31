@@ -1767,6 +1767,10 @@ components:
           format: double
           nullable: true
           type: number
+          x-go-type: "*float64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         ended_at:
           format: date-time
           type: string
