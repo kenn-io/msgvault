@@ -367,6 +367,56 @@ func personVCardSnapshotFingerprint(snapshot *PersonVCardSnapshot) (string, erro
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// personVCardFingerprintDefinition preserves the pre-stability JSON shape.
+// Stability changes resolver policy, not the vCard projection or its existing
+// compare-and-swap fingerprints.
+type personVCardFingerprintDefinition struct {
+	ID            int64                `json:"id"`
+	UniversalID   string               `json:"universal_id"`
+	ObjectType    AttributeObjectType  `json:"object_type"`
+	Slug          string               `json:"slug"`
+	Label         string               `json:"label"`
+	Description   *string              `json:"description,omitzero" nullable:"false"`
+	ValueType     AttributeValueType   `json:"value_type"`
+	FieldType     AttributeFieldType   `json:"field_type"`
+	RecordTarget  *string              `json:"record_target,omitzero" nullable:"false"`
+	Cardinality   AttributeCardinality `json:"cardinality"`
+	DisplayOrder  int64                `json:"display_order"`
+	IsRequired    bool                 `json:"is_required"`
+	Ownership     AttributeOwnership   `json:"ownership"`
+	UICreatable   bool                 `json:"ui_creatable"`
+	UIEditable    bool                 `json:"ui_editable"`
+	APIMutable    bool                 `json:"api_mutable"`
+	IsSearchable  bool                 `json:"is_searchable"`
+	IsSensitive   bool                 `json:"is_sensitive"`
+	IsAudited     bool                 `json:"is_audited"`
+	IsDeletable   bool                 `json:"is_deletable"`
+	HistoryExempt bool                 `json:"history_exempt"`
+	DerivedSource *string              `json:"derived_source,omitzero" nullable:"false"`
+	Options       *AttributeOptions    `json:"options,omitzero" nullable:"false"`
+	VCardProperty *string              `json:"vcard_property,omitzero" nullable:"false"`
+	IsActive      bool                 `json:"is_active"`
+	Revision      int64                `json:"revision"`
+	CreatedAt     time.Time            `json:"created_at"`
+	UpdatedAt     time.Time            `json:"updated_at"`
+}
+
+type personVCardFingerprintAttribute struct {
+	Definition personVCardFingerprintDefinition `json:"definition"`
+	Values     []PersonAttributeValue           `json:"values"`
+}
+
+type personVCardFingerprintSnapshot struct {
+	Profile                     PersonProfile                     `json:"profile"`
+	MediaData                   []PersonVCardMediaData            `json:"media_data"`
+	Attributes                  []personVCardFingerprintAttribute `json:"attributes"`
+	Employments                 []PersonVCardEmployment           `json:"employments"`
+	Relationships               []PersonRelationshipView          `json:"relationships"`
+	RelationshipTypes           []RelationshipType                `json:"relationship_types"`
+	PendingRelationshipReviews  []RelationshipReview              `json:"pending_relationship_reviews"`
+	AcceptedRelationshipReviews []PersonVCardAcceptedReview       `json:"accepted_relationship_reviews"`
+}
+
 // personVCardFingerprintView copies the snapshot with every field that is not
 // projection input zeroed. Revisions and timestamps are compare-and-swap
 // tokens and watermarks: the person record's move when a participant is
@@ -378,11 +428,36 @@ func personVCardSnapshotFingerprint(snapshot *PersonVCardSnapshot) (string, erro
 // envelopes' own timestamps: those change only through component writes that
 // do bump. The projection revision remains the lock; this is only what the
 // no-op check compares.
-func personVCardFingerprintView(snapshot *PersonVCardSnapshot) PersonVCardSnapshot {
-	view := *snapshot
-	view.Fingerprint = ""
+func personVCardFingerprintView(snapshot *PersonVCardSnapshot) personVCardFingerprintSnapshot {
+	view := personVCardFingerprintSnapshot{
+		Profile:                     snapshot.Profile,
+		MediaData:                   snapshot.MediaData,
+		Attributes:                  make([]personVCardFingerprintAttribute, len(snapshot.Attributes)),
+		Employments:                 slices.Clone(snapshot.Employments),
+		Relationships:               snapshot.Relationships,
+		RelationshipTypes:           slices.Clone(snapshot.RelationshipTypes),
+		PendingRelationshipReviews:  snapshot.PendingRelationshipReviews,
+		AcceptedRelationshipReviews: snapshot.AcceptedRelationshipReviews,
+	}
 	view.Profile.Person = vcardFingerprintPerson(view.Profile.Person)
-	view.Employments = slices.Clone(view.Employments)
+	for i, attribute := range snapshot.Attributes {
+		definition := attribute.Definition
+		view.Attributes[i] = personVCardFingerprintAttribute{
+			Definition: personVCardFingerprintDefinition{
+				ID: definition.ID, UniversalID: definition.UniversalID, ObjectType: definition.ObjectType,
+				Slug: definition.Slug, ValueType: definition.ValueType, FieldType: definition.FieldType,
+				RecordTarget: definition.RecordTarget, Cardinality: definition.Cardinality,
+				IsRequired: definition.IsRequired, Ownership: definition.Ownership,
+				UICreatable: definition.UICreatable, UIEditable: definition.UIEditable,
+				APIMutable: definition.APIMutable, IsSearchable: definition.IsSearchable,
+				IsSensitive: definition.IsSensitive, IsAudited: definition.IsAudited,
+				IsDeletable: definition.IsDeletable, HistoryExempt: definition.HistoryExempt,
+				DerivedSource: definition.DerivedSource, Options: definition.Options,
+				VCardProperty: definition.VCardProperty, IsActive: definition.IsActive,
+			},
+			Values: attribute.Values,
+		}
+	}
 	for i := range view.Employments {
 		employment := &view.Employments[i]
 		employment.Employment.Revision = 0
@@ -392,7 +467,6 @@ func personVCardFingerprintView(snapshot *PersonVCardSnapshot) PersonVCardSnapsh
 		employment.Organization.Organization.CreatedAt = time.Time{}
 		employment.Organization.Organization.UpdatedAt = time.Time{}
 	}
-	view.Attributes = slices.Clone(view.Attributes)
 	for i := range view.Attributes {
 		definition := &view.Attributes[i].Definition
 		definition.Label = ""
