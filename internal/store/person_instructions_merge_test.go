@@ -147,18 +147,7 @@ func TestExactSplitRestoresLegacyInstructionTextAfterSchemaUpgrade(t *testing.T)
 			deduplicated := addTestInstruction(t, st, bob.ID, "Vee")
 			merged, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
 			require.NoError(err)
-			removeOriginalTextFromLegacyInstructionSnapshots(t, st, merged.Merge.ID)
-
-			_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE person_instructions DROP COLUMN original_text`)
-			require.NoError(err)
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(
-				`DELETE FROM applied_migrations WHERE name=?`), "person_instruction_original_text_v1")
-			require.NoError(err)
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(
-				`UPDATE archive_metadata SET value=? WHERE key='schema_version'`),
-				strconv.Itoa(store.SchemaVersion-1))
-			require.NoError(err)
-			require.NoError(st.InitSchemaContext(t.Context()))
+			upgradeLegacyInstructionSnapshots(t, st, merged.Merge.ID)
 
 			var backfilled string
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
@@ -184,6 +173,60 @@ func TestExactSplitRestoresLegacyInstructionTextAfterSchemaUpgrade(t *testing.T)
 			assert.Equal("call me vee", restored.NormalizedText)
 		})
 	}
+}
+
+func TestExactSplitKeepsLegacyInstructionTextAcrossLaterCollision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+	addTestInstruction(t, st, alice.ID, "Vee")
+	deduplicated := addTestInstruction(t, st, bob.ID, "Vee")
+	first, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	upgradeLegacyInstructionSnapshots(t, st, first.Merge.ID)
+
+	carolInstruction, err := st.AddPersonInstructionContext(t.Context(), store.PersonInstructionInput{
+		PersonID: carol.ID, Kind: personfacts.InstructionKindAddressAs,
+		ValueText: "Vee", Text: "Call me Vee", Actor: "owner",
+	})
+	require.NoError(err)
+	second, err := mergeInstructionPeople(t.Context(), t, st, carol.ID, first.Person.ID)
+	require.NoError(err)
+	current, err := st.GetPersonContext(t.Context(), second.Person.ID)
+	require.NoError(err)
+	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: second.Person.ID, MergeID: first.Merge.ID,
+		ParticipantIDs:         bob.ParticipantIDs,
+		ExpectedSourceRevision: current.Revision,
+		IdempotencyKey:         "legacy-instruction-nested-split",
+		Actor:                  "owner",
+	})
+	require.NoError(err)
+	require.True(split.ExactReversal)
+
+	restored := testInstruction(t, st, deduplicated.ID)
+	assert.Equal(split.NewPerson.ID, restored.PersonID)
+	assert.Equal("call me vee", restored.Text)
+	assert.Equal("call me vee", restored.NormalizedText)
+	assert.Equal("Call me Vee", testInstruction(t, st, carolInstruction.ID).Text)
+}
+
+func upgradeLegacyInstructionSnapshots(t *testing.T, st *store.Store, mergeID int64) {
+	t.Helper()
+	removeOriginalTextFromLegacyInstructionSnapshots(t, st, mergeID)
+	_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE person_instructions DROP COLUMN original_text`)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+		`DELETE FROM applied_migrations WHERE name=?`), "person_instruction_original_text_v1")
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+		`UPDATE archive_metadata SET value=? WHERE key='schema_version'`),
+		strconv.Itoa(store.SchemaVersion-1))
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchemaContext(t.Context()))
 }
 
 func TestMergeMovesCuratedInstructionsAndDiscardsProposals(t *testing.T) {

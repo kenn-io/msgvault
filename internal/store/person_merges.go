@@ -1708,9 +1708,14 @@ func rebasePersonMergeInstructionPostRow(
 			"%w: decode prior instruction merge row: %w", ErrPersonMergeSnapshotCorrupt, err,
 		)
 	}
+	columnCount := len(post.Columns)
+	post, err := restoreLegacyPersonInstructionText(post)
+	if err != nil {
+		return sql.NullString{}, false, err
+	}
 	beforeByName := personSplitSnapshotColumnsByName(before.Columns)
 	afterByName := personSplitSnapshotColumnsByName(after.Columns)
-	changed := false
+	changed := len(post.Columns) != columnCount
 	for index := range post.Columns {
 		column := &post.Columns[index]
 		if !personMergeInstructionBaselineColumn(column.Name) {

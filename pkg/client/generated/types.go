@@ -12151,7 +12151,7 @@ type PersonInstruction struct {
 	PersonID            int64      `json:"person_id"`
 	ReviewState         string     `json:"review_state" validate:"required"`
 	Revision            int64      `json:"revision"`
-	ScopeKey            string     `json:"scope_key" validate:"required"`
+	ScopeKey            string     `json:"scope_key"`
 	ScopeMissing        bool       `json:"scope_missing"`
 	SourceObservationID *int64     `json:"source_observation_id,omitempty"`
 	StatedAt            *time.Time `json:"stated_at,omitempty"`
@@ -12161,7 +12161,7 @@ type PersonInstruction struct {
 	UpdatedAt           time.Time  `json:"updated_at" validate:"required"`
 	ValidFrom           time.Time  `json:"valid_from" validate:"required"`
 	ValidUntil          *time.Time `json:"valid_until,omitempty"`
-	ValueText           string     `json:"value_text" validate:"required"`
+	ValueText           string     `json:"value_text"`
 	VisibleToAgents     bool       `json:"visible_to_agents"`
 }
 

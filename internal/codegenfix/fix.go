@@ -162,6 +162,13 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			return nil, shapeErr
 		}
 	}
+	for _, field := range []string{"ScopeKey", "ValueText"} {
+		var err error
+		result, err = removeRequiredStringFieldValidator(result, "PersonInstruction", field)
+		if err != nil {
+			return nil, err
+		}
+	}
 	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
 	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
 	start := bytes.Index(result, startMarker)
@@ -206,5 +213,49 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
+	return result, nil
+}
+
+func removeRequiredStringFieldValidator(source []byte, typeName, fieldName string) ([]byte, error) {
+	marker := []byte("type " + typeName + " struct {\n")
+	start := bytes.Index(source, marker)
+	if start < 0 {
+		return nil, fmt.Errorf("generated %s.%s field shape changed", typeName, fieldName)
+	}
+	bodyStart := start + len(marker)
+	endOffset := bytes.Index(source[bodyStart:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, fmt.Errorf("generated %s.%s field shape changed", typeName, fieldName)
+	}
+	bodyEnd := bodyStart + endOffset
+	lines := bytes.Split(source[bodyStart:bodyEnd], []byte("\n"))
+	fieldPrefix := []byte("\t" + fieldName + " ")
+	stringField := regexp.MustCompile(`^\t` + regexp.QuoteMeta(fieldName) + `\s+string\s+`)
+	validatorTag := []byte(` validate:"required"`)
+	found := false
+	for index, line := range lines {
+		if !bytes.HasPrefix(line, fieldPrefix) {
+			continue
+		}
+		if found || !stringField.Match(line) {
+			return nil, fmt.Errorf("generated %s.%s field shape changed", typeName, fieldName)
+		}
+		found = true
+		switch {
+		case bytes.Contains(line, validatorTag) && bytes.HasSuffix(line, []byte("`")):
+			lines[index] = bytes.Replace(line, validatorTag, nil, 1)
+		case !bytes.Contains(line, []byte("validate:")):
+		default:
+			return nil, fmt.Errorf("generated %s.%s validator tag shape changed", typeName, fieldName)
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("generated %s.%s field shape changed", typeName, fieldName)
+	}
+	body := bytes.Join(lines, []byte("\n"))
+	result := make([]byte, 0, len(source)-len(source[bodyStart:bodyEnd])+len(body))
+	result = append(result, source[:bodyStart]...)
+	result = append(result, body...)
+	result = append(result, source[bodyEnd:]...)
 	return result, nil
 }

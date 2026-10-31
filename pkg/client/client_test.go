@@ -38,6 +38,35 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedPersonInstructionAcceptsEmptyScopeAndValue(t *testing.T) {
+	const response = `{
+		"adopted":false,
+		"content_trust":"owner",
+		"created_at":"2026-10-31T09:00:00Z",
+		"id":1,
+		"instruction_key":"timing::during-work-hours",
+		"kind":"timing",
+		"normalized_text":"contact during work hours",
+		"origin":"owner",
+		"person_id":42,
+		"review_state":"none",
+		"revision":1,
+		"scope_key":"",
+		"scope_missing":false,
+		"status":"active",
+		"text":"Contact during work hours",
+		"updated_at":"2026-10-31T09:00:00Z",
+		"valid_from":"2026-10-31T09:00:00Z",
+		"value_text":"",
+		"visible_to_agents":false
+	}`
+	var instruction generated.PersonInstruction
+	require.NoError(t, json.Unmarshal([]byte(response), &instruction))
+	assert.Empty(t, instruction.ScopeKey)
+	assert.Empty(t, instruction.ValueText)
+	require.NoError(t, instruction.Validate())
+}
+
 func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {
 	requirements := require.New(t)
 	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)

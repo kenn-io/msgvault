@@ -51,7 +51,7 @@ func firstDifference(left, right []byte) int {
 	return min(len(left), len(right))
 }
 
-func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) {
+func TestRewriteGeneratedValidatorsAllowsEmptyResponseStrings(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
@@ -62,6 +62,10 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
+	assertions.NotContains(string(got), "ScopeKey string `json:\"scope_key\" validate:\"required\"`")
+	assertions.NotContains(string(got), "ValueText string `json:\"value_text\" validate:\"required\"`")
+	assertions.Contains(string(got), "ScopeKey string `json:\"scope_key\"`")
+	assertions.Contains(string(got), "ValueText string `json:\"value_text\"`")
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -185,7 +189,14 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() +
+		personInstructionEmptyStringValidatorFixture()
+}
+
+func personInstructionEmptyStringValidatorFixture() string {
+	return "type PersonInstruction struct {\n" +
+		"\tScopeKey string `json:\"scope_key\" validate:\"required\"`\n" +
+		"\tValueText string `json:\"value_text\" validate:\"required\"`\n}\n"
 }
 
 func contactRouteEmptyStringValidatorFixture() string {
