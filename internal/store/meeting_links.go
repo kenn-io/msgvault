@@ -81,8 +81,10 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	}
 	// Occurrence keys represent whole seconds. Keep fractional exceptions
 	// addressable by their message instead of querying a truncated original start.
-	if original := row.Event.Original; row.Event.Kind == meetingExceptionKind && key != "" && original != nil && !original.AllDay && original.Instant.Nanosecond() != 0 {
+	if original := row.Event.Original; row.Event.Kind == meetingExceptionKind && original != nil && !original.AllDay && original.Instant.Nanosecond() != 0 {
+		key = ""
 		id.ICalUID = ""
+		id.OccurrenceKey = original.Key()
 	}
 	if id.ICalUID == "" {
 		id.EventMessageID = row.MessageID
@@ -134,7 +136,7 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 			return nil, err
 		}
 		o := occurrenceFromRow(master, instance.Original.Key())
-		if instance.HasException && instance.Original == (calrecur.Identity{}) {
+		if instance.HasException && (instance.Original == (calrecur.Identity{}) || !instance.Original.AllDay && instance.Original.Instant.Nanosecond() != 0) {
 			o = occurrenceFromRow(effective, "")
 		}
 		o.Row = effective
@@ -162,12 +164,15 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 			if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
 				row.Event.Status = meetingCancelledStatus
 			}
-		} else if len(masters) == 1 {
+		} else if len(masters) == 1 && (row.Event.Original.AllDay || row.Event.Original.Instant.Nanosecond() == 0) {
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else {
 			row, err = freshestOrphanCalendarException(ctx, r, row, budget)
 			if err != nil {
 				return linkOccurrence{}, err
+			}
+			if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
+				row.Event.Status = meetingCancelledStatus
 			}
 			if row.Event.Start == nil || row.Event.End == nil {
 				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
@@ -340,7 +345,7 @@ func meetingICSUID(ctx context.Context, r reboundReader, row CalendarEventRow, b
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, calrecur.ErrBudgetExceeded) {
 			return "", fmt.Errorf("decode meeting ICS identity: %w", err)
 		}
-		return "", nil //nolint:nilerr // Invalid retained evidence cannot supply a UID.
+		return "", nil // Invalid retained evidence cannot supply a UID.
 	}
 	if len(components) != 1 {
 		return "", nil
@@ -526,6 +531,7 @@ type meetingLinkDecision struct {
 
 type meetingMemberCandidate struct {
 	linkOccurrence
+
 	Provenance string // manual or automatic
 }
 

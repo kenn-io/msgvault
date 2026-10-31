@@ -60,6 +60,7 @@ func (s *Store) ParticipantsByEmailContext(ctx context.Context, emails []string)
 		if err != nil {
 			return nil, fmt.Errorf("look up meeting attendees: %w", err)
 		}
+		defer func() { _ = rows.Close() }()
 		ambiguous := map[string]bool{}
 		for rows.Next() {
 			var address string
@@ -106,9 +107,9 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 	r := s.meetingReader(ctx)
 	for start := 0; start < len(ids); start += 500 {
 		batch := ids[start:min(start+500, len(ids))]
-		args := make([]any, len(batch))
-		for i, id := range batch {
-			args[i] = id
+		args := make([]any, 0, len(batch))
+		for _, id := range batch {
+			args = append(args, id)
 		}
 		scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 		args = append(args, scopeArgs...)
@@ -118,6 +119,7 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 		if err != nil {
 			return nil, fmt.Errorf("count meeting action items: %w", err)
 		}
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var id int64
 			var count int
