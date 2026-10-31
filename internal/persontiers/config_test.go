@@ -27,6 +27,8 @@ func TestConfigValidation(t *testing.T) {
 		{"upper pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"Alert"} }, `exclusion pattern "Alert"`},
 		{"address pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"alert@example.com"} }, `exclusion pattern "alert@example.com"`},
 		{"middle wildcard", func(c *Config) { c.ExcludeDomainPatterns = []string{"resource.*.example.com"} }, `exclusion pattern "resource.*.example.com"`},
+		{"empty subdomain suffix", func(c *Config) { c.ExcludeDomainPatterns = []string{"*."} }, `exclusion pattern "*."`},
+		{"mixed domain wildcards", func(c *Config) { c.ExcludeDomainPatterns = []string{"*.rooms.*"} }, `exclusion pattern "*.rooms.*"`},
 		{"double wildcard", func(c *Config) { c.ExcludeAddressPatterns = []string{"alerts**"} }, `exclusion pattern "alerts**"`},
 		{"first bad threshold in fixed order", func(c *Config) {
 			c.Tier2.MinActiveDaysLong = 0
