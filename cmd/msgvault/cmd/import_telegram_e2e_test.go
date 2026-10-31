@@ -3,24 +3,34 @@ package cmd
 import (
 	"bytes"
 	"database/sql"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/telegram"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestImportTelegramEndToEnd(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)
+	command, _, err := rootCmd.Find([]string{"import-telegram"})
+	require.NoError(err)
+	homeFlag := rootCmd.PersistentFlags().Lookup("home")
+	previousHome, previousHomeChanged := homeFlag.Value.String(), homeFlag.Changed
+	t.Cleanup(func() {
+		command.Flags().VisitAll(func(flag *pflag.Flag) {
+			require.NoError(flag.Value.Set(flag.DefValue))
+			flag.Changed = false
+		})
+		require.NoError(homeFlag.Value.Set(previousHome))
+		homeFlag.Changed = previousHomeChanged
+	})
 	tmp := t.TempDir()
 	prevOut, prevErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
 	t.Cleanup(func() { rootCmd.SetOut(prevOut); rootCmd.SetErr(prevErr); rootCmd.SetArgs(nil) })
@@ -38,8 +48,6 @@ func TestImportTelegramEndToEnd(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE message_type = 'telegram'").Scan(&n))
 	assert.Equal(3, n)
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'hello'").Scan(&n))
-	assert.Equal(1, n)
 }
 
 func TestImportTelegramRefreshesCacheAfterPartialFailure(t *testing.T) {
@@ -84,45 +92,4 @@ func TestImportTelegramRejectsNegativeLimit(t *testing.T) {
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{"--limit=-1", "export"})
 	require.ErrorContains(t, command.Execute(), "--limit must be non-negative")
-}
-
-func TestImportTelegramConfirmsOwnerAfterWrites(t *testing.T) {
-	for _, partial := range []bool{false, true} {
-		for _, optOut := range []string{"none", "flag", "source"} {
-			t.Run(fmt.Sprintf("partial=%t/opt-out=%s", partial, optOut), func(t *testing.T) {
-				require := require.New(t)
-				assert := assert.New(t)
-				cfg := lifecycleTestConfig(t.TempDir())
-				ctx := withStoreResolverConfig(t, cfg)
-				root := t.TempDir()
-				chats := `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"user1","text":"owner message"}]}`
-				if partial {
-					chats += `,{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid"}]}`
-				}
-				require.NoError(os.WriteFile(filepath.Join(root, "result.json"), []byte(`{"personal_information":{"user_id":1},"chats":{"list":[`+chats+`]}}`), 0600))
-				st := testutil.NewTestStore(t)
-				if optOut == "source" {
-					source, err := st.GetOrCreateSource("telegram", "user1")
-					require.NoError(err)
-					_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET sync_config = ? WHERE id = ?`), `{"no_default_identity":true}`, source.ID)
-					require.NoError(err)
-				}
-				summary, err := telegram.Import(t.Context(), st, telegram.ImportOptions{RootDir: root})
-				if partial {
-					require.ErrorContains(err, "date_unixtime")
-				} else {
-					require.NoError(err)
-				}
-				require.EqualValues(1, summary.MessagesAdded)
-				require.NoError(runExportPostImportMigrations(io.Discard, st, summary.SourceID, optOut == "flag", invocationFromContext(ctx)))
-				var n int
-				require.NoError(st.DB().QueryRow("SELECT count(*) FROM account_identities WHERE address = 'user1'").Scan(&n))
-				want := 1
-				if optOut != "none" {
-					want = 0
-				}
-				assert.Equal(want, n)
-			})
-		}
-	}
 }

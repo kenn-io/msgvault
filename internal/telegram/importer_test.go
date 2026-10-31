@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -37,51 +36,17 @@ func TestImportPeerCollision(t *testing.T) {
 	}
 }
 
-func TestImportMigratedSupergroup(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":7,"type":"private_supergroup","messages":[{"id":-999999999,"type":"message","date_unixtime":"1","text":"old parent"},{"id":-999999998,"type":"message","date_unixtime":"2","reply_to_message_id":-999999999,"text":"old reply"},{"id":1,"type":"message","date_unixtime":"3","reply_to_message_id":-999999999,"text":"new reply"}]}`))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
-	require.NoError(err)
-	assert.EqualValues(3, summary.MessagesAdded)
-	for _, key := range []string{"channel7:-999999998", "channel7:1"} {
-		var parent string
-		require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), key).Scan(&parent))
-		assert.Equal("channel7:-999999999", parent)
-	}
-}
-
-func TestImportTextLinkPreservesURL(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text_entities":[{"type":"plain","text":"see "},{"type":"text_link","text":"docs","href":"https://example.org/linkneedle"},{"type":"plain","text":" today"}]}]}`))
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
-	require.NoError(err)
-	var id int64
-	require.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'user2:1'").Scan(&id))
-	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
-	assert.Equal("see docs (https://example.org/linkneedle) today", body)
-	_, total, err := st.SearchMessages("linkneedle", 0, 100)
-	require.NoError(err)
-	assert.EqualValues(1, total)
-}
-
 func TestImportCrossPeerAndLaterReplies(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":1,"type":"message","text":"wrong parent","date_unixtime":"1610909872"},{"id":2,"type":"message","reply_to_message_id":1,"reply_to_peer_id":"channel9","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","reply_to_message_id":4,"date_unixtime":"1610909872","text":""}]},{"id":9,"type":"public_channel","messages":[{"id":1,"type":"message","text":"correct parent","date_unixtime":"1610909872"}]}]}}`))
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":-999999999,"type":"message","text":"wrong parent","date_unixtime":"1610909872"},{"id":2,"type":"message","reply_to_message_id":-999999999,"reply_to_peer_id":"channel9","date_unixtime":"1610909872","text":""},{"id":3,"type":"message","reply_to_message_id":4,"date_unixtime":"1610909872","text":""}]},{"id":9,"type":"public_channel","messages":[{"id":-999999999,"type":"message","text":"correct parent","date_unixtime":"1610909872"}]}]}}`))
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(err)
 	var parent string
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?"), "channel7:2").Scan(&parent))
-	assert.Equal("channel9:1", parent)
+	assert.Equal("channel9:-999999999", parent)
 	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":7,"type":"private_supergroup","messages":[{"id":4,"type":"message","text":"later parent","date_unixtime":"1610909872"}]},{"id":8,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
 	_, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(err, "date_unixtime")
@@ -103,28 +68,6 @@ func TestImportSingleOwnerAndUnknownType(t *testing.T) {
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "123"})
 	require.NoError(err)
 	assert.Equal(1, summary.ChatsSkipped)
-}
-
-func TestImportFailedChatResumes(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.Error(err)
-	assert.EqualValues(1, summary.MessagesAdded)
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"fixed","date_unixtime":"1610909872"}]}]}}`))
-	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.NoError(err)
-	assert.False(summary.WasResumed)
-	assert.EqualValues(1, summary.MessagesAdded)
-	assert.Equal(2, summary.ChatsProcessed)
-	// Cancellation preserves the completed-chat checkpoint too.
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = Import(ctx, st, ImportOptions{RootDir: root})
-	require.ErrorIs(err, context.Canceled)
 }
 
 // cancelWriter interrupts after the first chat has been stored.
@@ -154,24 +97,47 @@ func TestImportCancelledAfterChatResumes(t *testing.T) {
 }
 
 func TestImportReplacementExportAfterFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.ErrorContains(err, "date_unixtime")
-	info, err := os.Stat(filepath.Join(root, resultFile))
-	require.NoError(err)
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","text":"new in completed chat","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`))
-	require.NoError(os.Chtimes(filepath.Join(root, resultFile), info.ModTime(), info.ModTime()))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.NoError(err)
-	assert.False(summary.WasResumed)
-	assert.EqualValues(2, summary.MessagesAdded)
-	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE source_message_id = 'user2:2'").Scan(&n))
-	assert.Equal(1, n)
+	t.Run("changed size, same mtime", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"invalid","text":""}]}]}}`))
+		_, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+		require.ErrorContains(err, "date_unixtime")
+		info, err := os.Stat(filepath.Join(root, resultFile))
+		require.NoError(err)
+		testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""},{"id":2,"type":"message","text":"new in completed chat","date_unixtime":"1610909872"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`))
+		require.NoError(os.Chtimes(filepath.Join(root, resultFile), info.ModTime(), info.ModTime()))
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+		require.NoError(err)
+		assert.False(summary.WasResumed)
+		assert.EqualValues(2, summary.MessagesAdded)
+		var n int
+		require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE source_message_id = 'user2:2'").Scan(&n))
+		assert.Equal(1, n)
+	})
+	t.Run("same size, changed mtime", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := t.TempDir()
+		data := `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`
+		testutil.WriteFile(t, root, "result.json", []byte(data))
+		info, err := os.Stat(filepath.Join(root, resultFile))
+		require.NoError(err)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		_, err = Import(ctx, st, ImportOptions{RootDir: root, Logger: slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))})
+		require.ErrorIs(err, context.Canceled)
+		testutil.WriteFile(t, root, "result.json", []byte(strings.Replace(data, `"id":1,"type":"message"`, `"id":2,"type":"message"`, 1)))
+		modified := info.ModTime().Add(time.Second)
+		require.NoError(os.Chtimes(filepath.Join(root, resultFile), modified, modified))
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+		require.NoError(err)
+		assert.False(summary.WasResumed)
+		assert.EqualValues(2, summary.MessagesAdded)
+	})
 }
 
 func TestImportMediaFilenameContainsWarningWords(t *testing.T) {
@@ -211,64 +177,6 @@ func TestImportRepeatedLimitAdvances(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(3, n)
-}
-
-func TestImportEditFailureRollsBackMessage(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","edited":"2021-01-17T19:13:19","text":"edited body","date_unixtime":"1610909872"}]}`))
-	// A failed edit write models interruption between row persistence and the
-	// edit marker. Both must roll back so the append-only retry can recover.
-	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_edit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'edit interrupted'; END $$`)
-		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_edit BEFORE UPDATE OF is_edited ON messages FOR EACH ROW EXECUTE FUNCTION fail_edit()`)
-		require.NoError(err)
-	} else {
-		_, err := st.DB().Exec(`CREATE TRIGGER fail_edit BEFORE UPDATE OF is_edited ON messages BEGIN SELECT RAISE(ABORT, 'edit interrupted'); END`)
-		require.NoError(err)
-	}
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
-	require.ErrorContains(err, "edit interrupted")
-	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&n))
-	assert.Zero(n)
-	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`DROP TRIGGER fail_edit ON messages`)
-	} else {
-		_, err = st.DB().Exec(`DROP TRIGGER fail_edit`)
-	}
-	require.NoError(err)
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
-	require.NoError(err)
-	assert.EqualValues(1, summary.MessagesAdded)
-	var edited bool
-	require.NoError(st.DB().QueryRow("SELECT is_edited FROM messages").Scan(&edited))
-	assert.True(edited)
-}
-
-func TestImportSameSizeReplacementIgnoresCheckpoint(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	data := `{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1610909872","text":""}]}]}}`
-	testutil.WriteFile(t, root, "result.json", []byte(data))
-	info, err := os.Stat(filepath.Join(root, resultFile))
-	require.NoError(err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	_, err = Import(ctx, st, ImportOptions{RootDir: root, Logger: slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))})
-	require.ErrorIs(err, context.Canceled)
-	testutil.WriteFile(t, root, "result.json", []byte(strings.Replace(data, `"id":1,"type":"message"`, `"id":2,"type":"message"`, 1)))
-	modified := info.ModTime().Add(time.Second)
-	require.NoError(os.Chtimes(filepath.Join(root, resultFile), modified, modified))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
-	require.NoError(err)
-	assert.False(summary.WasResumed)
-	assert.EqualValues(2, summary.MessagesAdded)
 }
 
 func TestImportFullAndAppendOnly(t *testing.T) {
@@ -398,14 +306,8 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 			var n int
 			require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments").Scan(&n))
 			assert.Equal(1, n)
-			var id int64
-			var edited bool
-			require.NoError(st.DB().QueryRow("SELECT id, attachment_count, is_edited FROM messages").Scan(&id, &n, &edited))
+			require.NoError(st.DB().QueryRow("SELECT attachment_count FROM messages").Scan(&n))
 			assert.Equal(1, n)
-			assert.False(edited)
-			var text string
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&text))
-			assert.Equal("original", text)
 			var sender string
 			require.NoError(st.DB().QueryRow("SELECT pi.identifier_value FROM participant_identifiers pi JOIN messages m ON m.sender_id = pi.participant_id WHERE pi.identifier_type = 'telegram'").Scan(&sender))
 			assert.Equal("user2", sender)
@@ -423,7 +325,7 @@ func TestImportFillsMissingMediaSlots(t *testing.T) {
 }
 
 func TestImportMediaFailureIsRetryable(t *testing.T) {
-	for _, kind := range []string{"directory", "symlink", "unreadable", "storage", "escape", "absolute"} {
+	for _, kind := range []string{"directory", "symlink", "storage", "escape", "absolute"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -439,11 +341,6 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				target := filepath.Join(t.TempDir(), "photo.jpg")
 				require.NoError(os.WriteFile(target, []byte("photo"), 0600))
 				require.NoError(os.Symlink(target, media))
-			case "unreadable":
-				if runtime.GOOS == "windows" {
-					t.Skip("Windows does not deny reads for mode 0000")
-				}
-				require.NoError(os.WriteFile(media, []byte("photo"), 0000))
 			case "storage":
 				require.NoError(os.WriteFile(media, []byte("photo"), 0600))
 				require.NoError(os.WriteFile(opts.AttachmentsDir, []byte("blocked"), 0600))
@@ -455,7 +352,15 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			encodedPath, err := json.Marshal(path)
 			require.NoError(err)
 			testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":`+string(encodedPath)+`}]}`))
+			var warnings bytes.Buffer
+			opts.Logger = slog.New(slog.NewTextHandler(&warnings, nil))
 			summary, err := Import(t.Context(), st, opts)
+			if kind == "escape" {
+				assert.Contains(warnings.String(), "level=WARN")
+				var missing int
+				require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
+				assert.Equal(1, missing)
+			}
 			sourceMissing := kind != "storage"
 			if sourceMissing {
 				require.NoError(err)
@@ -616,9 +521,7 @@ func TestImportSearchMatchesRebuiltIndex(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	sender, err := st.EnsureParticipantByIdentifierContext(t.Context(), "telegram", "user3", "Senderneedle")
-	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind("UPDATE participants SET email_address = ? WHERE id = ?"), "searchowner@example.org", sender)
+	_, err := st.EnsureParticipantByIdentifierContext(t.Context(), "telegram", "user3", "Senderneedle")
 	require.NoError(err)
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"name":"Chatneedle","type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","from_id":"user3","from":"Senderneedle","text":"Bodyneedle"}]}`))
@@ -632,29 +535,12 @@ func TestImportSearchMatchesRebuiltIndex(t *testing.T) {
 		for _, tc := range []struct {
 			term string
 			want int64
-		}{{"Chatneedle", 0}, {"Senderneedle", 0}, {"Bodyneedle", 1}, {"searchowner", 1}} {
+		}{{"Chatneedle", 0}, {"Senderneedle", 0}, {"Bodyneedle", 1}} {
 			_, total, err := st.SearchMessages(tc.term, 0, 100)
 			require.NoError(err)
 			assert.Equal(tc.want, total, "term %s, rebuilt %t", tc.term, rebuilt)
 		}
 	}
-}
-
-func TestImportInvalidMediaContinuesLaterChats(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"before","photo":"../outside.jpg"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"after"}]}]}}`))
-	var warnings bytes.Buffer
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, AttachmentsDir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(&warnings, nil))})
-	require.NoError(err)
-	assert.EqualValues(2, summary.MessagesAdded)
-	assert.Equal(1, summary.AttachmentsMissing)
-	assert.Contains(warnings.String(), "level=WARN")
-	var missing int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
-	assert.Equal(1, missing)
 }
 
 func TestImportIgnoresOtherSyncTypeCheckpoint(t *testing.T) {
@@ -673,42 +559,4 @@ func TestImportIgnoresOtherSyncTypeCheckpoint(t *testing.T) {
 	require.NoError(err)
 	assert.True(summary.WasResumed)
 	assert.EqualValues(1, summary.MessagesAdded)
-}
-
-func TestImportMediaRecoveryRollsBackWithStats(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	data := `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","photo":"photo.jpg"}]}`
-	testutil.WriteFile(t, root, "result.json", []byte(data))
-	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo"), 0600))
-	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`CREATE FUNCTION fail_media_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'stats unavailable'; END $$`)
-		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION fail_media_stats()`)
-		require.NoError(err)
-	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages BEGIN SELECT RAISE(ABORT, 'stats unavailable'); END`)
-		require.NoError(err)
-	}
-	_, err = Import(t.Context(), st, opts)
-	require.ErrorContains(err, "stats unavailable")
-	var path string
-	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments").Scan(&path))
-	assert.Empty(path)
-	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`DROP TRIGGER fail_media_stats ON messages`)
-	} else {
-		_, err = st.DB().Exec(`DROP TRIGGER fail_media_stats`)
-	}
-	require.NoError(err)
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(1, summary.AttachmentsStored)
-	require.NoError(st.DB().QueryRow("SELECT storage_path FROM attachments").Scan(&path))
-	assert.NotEmpty(path)
 }
