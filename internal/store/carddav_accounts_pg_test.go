@@ -47,7 +47,8 @@ func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *tes
 	require.Eventually(func() bool {
 		err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*)
 			FROM pg_stat_activity
-			WHERE cardinality(pg_blocking_pids(pid)) > 0
+			WHERE datname = current_database()
+			  AND cardinality(pg_blocking_pids(pid)) > 0
 			  AND POSITION('carddav_discovery_lock' IN query) > 0`).Scan(&blockedWriters)
 		return err == nil && blockedWriters == 2
 	}, 5*time.Second, 10*time.Millisecond,

@@ -73,7 +73,8 @@ func assertPostgreSQLPersonProfileSnapshot(t *testing.T, history bool) {
 			FROM pg_locks l
 			JOIN pg_class c ON c.oid = l.relation
 			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE c.relname = 'person_contact_points'
+			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			  AND c.relname = 'person_contact_points'
 			  AND n.nspname = current_schema()
 			  AND l.mode = 'AccessShareLock'
 			  AND NOT l.granted`).Scan(&waiting)
