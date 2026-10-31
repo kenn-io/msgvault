@@ -15,6 +15,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -27,53 +28,29 @@ var rootCmd = newRootCommand()
 
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   daemonService,
-		Short: "Offline email, chat, and meeting archive tool",
-		Long: `Archive email, chats, and meetings offline. Use the daemon
-or config.toml's [remote].url; --local forces local.
-
-Start here:
-  msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
-  msgvault show-message <id> --json
-  msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault person --help
-  msgvault daemon status
-  msgvault setup status --json
-
-Output:
-  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.`,
+		Use:           daemonService,
+		Short:         "Offline email, chat, and meeting archive tool",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Long:          rootHelp,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
 				return errors.New("missing invocation state")
 			}
-			// Cobra's command lifecycle (v1.10.x) is:
-			//   1. ParseFlags + ValidateArgs (Args:)
-			//   2. PersistentPreRunE  ← we are here
-			//   3. PreRunE
-			//   4. ValidateRequiredFlags  ← MarkFlagRequired
-			//   5. ValidateFlagGroups     ← MarkFlagsMutuallyExclusive
-			//   6. RunE
-			//
-			// Errors from (2) (config load, logger setup) are runtime
-			// failures: hide the usage block. Errors from (4)/(5) are
-			// invocation-contract failures: keep the usage block. To get
-			// both, silence usage on entry and clear it before a successful
-			// return so the subsequent built-in validators see the default
-			// (usage on). Each command's RunE is wrapped separately (see
-			// silenceUsageInRunE) to re-silence usage once those validators
-			// have run; usageErr() flips it back on for RunE-internal
-			// invocation-contract violations.
-			cmd.SilenceUsage = true
+			// Check invocation contracts before configuration or daemon startup.
+			// The final renderer owns concise diagnostics instead of usage dumps.
+			if err := cmd.ValidateRequiredFlags(); err != nil {
+				return usageErr(cmd, err)
+			}
+			if err := cmd.ValidateFlagGroups(); err != nil {
+				return usageErr(cmd, err)
+			}
 
 			// A help-only group prints help and reads nothing, so it needs
 			// neither config nor the agent-delegated capability gate.
-			if isHelpOnlyGroup(cmd) {
-				cmd.SilenceUsage = false
+			if isHelpOnlyGroup(cmd) || (cmd == importCmd && len(args) == 0) {
+				cmd.SilenceUsage = true
 				return nil
 			}
 
@@ -85,24 +62,24 @@ Output:
 			// writable local storage.
 			if isAgentMode(inv) {
 				if !agentDelegatedCapable(cmd) {
-					return fmt.Errorf("%s is not available in agent-delegated mode", cmd.Name())
+					return withHint(usageErr(cmd, fmt.Errorf("%s is not available in agent-delegated mode", strings.TrimPrefix(cmd.CommandPath(), "msgvault "))), "ask the archive owner to run it; delegated commands: "+agentDelegatedHelp())
 				}
 				if inv.options.cfgFile != "" {
-					return errors.New("--config is not allowed in agent-delegated mode")
+					return withHint(usageErr(cmd, errors.New("--config is not allowed in agent-delegated mode")), "remove --config; delegated mode does not read local configuration")
 				}
 				if inv.options.homeDir != "" {
-					return errors.New("--home is not allowed in agent-delegated mode")
+					return withHint(usageErr(cmd, errors.New("--home is not allowed in agent-delegated mode")), "remove --home; delegated mode does not read local archive storage")
 				}
 				inv.cfg = &config.Config{}
 				inv.logger = slog.New(slog.DiscardHandler)
-				cmd.SilenceUsage = false
+				cmd.SilenceUsage = true
 				return nil
 			}
 
 			// Skip config loading (and therefore logging setup) for
 			// commands that must run without touching disk or config.
 			if skipsConfigLoad(cmd) {
-				cmd.SilenceUsage = false
+				cmd.SilenceUsage = true
 				return nil
 			}
 
@@ -136,7 +113,7 @@ Output:
 				levelString = inv.cfg.Log.Level
 			}
 			if err := logging.ValidateLevel(levelString); err != nil {
-				return err
+				return validationErr(cmd, err)
 			}
 			logsDir := inv.cfg.LogsDir()
 			// File logging is opt-in: requires [log].enabled,
@@ -204,10 +181,9 @@ Output:
 
 			// Startup header: one structured line per run that
 			// captures everything you'd want to correlate later.
-			// Positional args may contain email addresses, search
-			// queries, or other PII — log only the count at info
-			// level and the full (sanitized) values at debug.
-			inv.logger.Info("msgvault startup",
+			// Keep argument values out of the startup header. The separate
+			// debug record contains sanitized argument values.
+			inv.logger.Debug("msgvault startup",
 				"command", cmd.CommandPath(),
 				"argc", len(args),
 				"version", Version,
@@ -222,10 +198,9 @@ Output:
 			inv.logger.Debug("msgvault startup args",
 				"args", sanitizeArgs(args),
 			)
-			// Restore the default so cobra's required-flag and
-			// mutually-exclusive-flag validators (steps 4/5 above) print
-			// usage if they fail.
-			cmd.SilenceUsage = false
+			// Cobra repeats its contract checks after this hook. The final
+			// renderer handles their failures without a usage dump.
+			cmd.SilenceUsage = true
 			return nil
 		},
 		// Note: log file closing is handled by ExecuteContext's deferred
@@ -295,12 +270,12 @@ func alreadyReported(runErr, err error) bool {
 // or touching the msgvault home directory (e.g. version, completion,
 // and the skills group, which only writes agent skill files).
 func skipsConfigLoad(cmd *cobra.Command) bool {
-	switch cmd.Name() {
+	switch stableCommandPath(cmd) {
 	case "schema-version":
 		database, _ := cmd.Flags().GetBool("database")
 		return !database
 	case "version", "update", "quickstart", "openapi", "completion",
-		embeddingsOptimizeWorkerName,
+		"embeddings " + embeddingsOptimizeWorkerName,
 		cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 		return true
 	}
@@ -317,21 +292,30 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
-	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
-		if ancestor.Name() == "calendar" {
-			return true
-		}
+	path := stableCommandPath(cmd)
+	if path == "calendar" || strings.HasPrefix(path, "calendar ") {
+		return true
 	}
-	return agentDelegatedCommand(cmd.Name()) && (!cmd.HasParent() || cmd.Parent() == cmd.Root())
+	return agentDelegatedCommand(path)
 }
 
 // agentDelegatedCommand owns the command set offered to an agent grant.
+var agentDelegatedCommands = []string{"search", "show-message", "show-thread", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp"}
+
 func agentDelegatedCommand(name string) bool {
-	switch name {
-	case "search", "show-message", "show-thread", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
-		return true
+	for _, allowed := range agentDelegatedCommands {
+		if allowed == name {
+			return true
+		}
 	}
 	return false
+}
+func agentDelegatedHelp() string {
+	paths := make([]string, 0, len(agentDelegatedCommands)+1)
+	for _, name := range agentDelegatedCommands {
+		paths = append(paths, strings.Join(cligrammar.Canonical([]string{name}), " "))
+	}
+	return strings.Join(append(paths, "calendar commands"), ", ")
 }
 
 // sanitizeArgs removes anything that might carry a secret before
@@ -374,31 +358,6 @@ func sanitizeArgs(args []string) []string {
 	return out
 }
 
-// recoverAndLogPanic catches a panic and records it as a single
-// structured log line with a stack trace before re-raising the
-// process exit. Called in a deferred statement at the top of
-// Execute/ExecuteContext so crashes always leave a trail on disk.
-func recoverAndLogPanic(inv *invocation) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	if inv != nil && inv.logger != nil {
-		inv.logger.Error("msgvault panic",
-			"panic", fmt.Sprint(r),
-			"stack", string(debug.Stack()),
-		)
-	} else {
-		fmt.Fprintf(os.Stderr,
-			"msgvault panic: %v\n%s\n", r, debug.Stack(),
-		)
-	}
-	if inv != nil && inv.logResult != nil {
-		inv.logResult.Close()
-	}
-	os.Exit(2)
-}
-
 // Execute runs the root command with a background context.
 // Prefer ExecuteContext for signal-aware execution.
 func Execute() error {
@@ -412,13 +371,13 @@ func Execute() error {
 func ExecuteContext(ctx context.Context) error {
 	ensureHelpLayout(rootCmd)
 	ensureSilenceUsageWrapped(rootCmd)
-	return executeRootContext(ctx, rootCmd)
+	return executeRootContext(ctx, rootCmd, os.Args[1:])
 }
 
 // executeRootContext gives one root execution a private owner for parsed
 // options, loaded configuration and cleanup resources. The Cobra registry is
 // shared by the process, so callers still serialize full tree executions.
-func executeRootContext(ctx context.Context, root *cobra.Command) error {
+func executeRootContext(ctx context.Context, root *cobra.Command, rawArgs ...[]string) (result error) {
 	if root == nil {
 		return errors.New("nil root command")
 	}
@@ -426,10 +385,7 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	inv := newInvocation()
 	root.SetContext(withInvocation(ctx, inv))
 
-	// Defer ordering is load-bearing. LIFO means recoverAndLogPanic
-	// runs before the log-file close. Because recoverAndLogPanic calls
-	// os.Exit (which skips remaining defers), it closes logResult
-	// itself before exiting. Do not reorder these defers.
+	// Recover and render before closing invocation resources.
 	defer func() {
 		inv.sends.Wait(50 * time.Millisecond)
 		if inv.logResult != nil {
@@ -439,20 +395,78 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 		inv.cfg = nil
 		clearInvocationFlags(root)
 	}()
-	defer recoverAndLogPanic(inv)
+	var executingCommand *cobra.Command
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if inv.logger != nil {
+				inv.logger.Error("msgvault panic", "panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
+			}
+			result = &cliError{Kind: "internal", Code: "internal", Message: "unexpected internal failure", Hint: "check 'msgvault version' and report this failure with the daemon logs", ExitCode: 1}
+			args := []string(nil)
+			if len(rawArgs) > 0 {
+				args = rawArgs[0]
+			}
+			command := inv.command
+			if command == nil {
+				command = executingCommand
+			}
+			if command == nil {
+				command = root
+			}
+			renderCLIError(command.ErrOrStderr(), classifyCLIError(command, result), cliJSONRequested(command, args))
+		}
+	}()
 
-	err := root.ExecuteContext(root.Context())
+	root.SilenceErrors, root.SilenceUsage = true, true
+	command, err := root.ExecuteContextC(root.Context())
+	executingCommand = command
+	if command == nil {
+		command = root
+	}
+	if err != nil && inv.command == nil {
+		// ExecuteC failed during discovery/argument parsing, before any pre-run.
+		// Runtime text is never guessed to be a usage error by its wording.
+		err = usageErr(command, err)
+	}
 	warnDaemonConfigError(root, inv.cfg, err)
+	if err != nil {
+		if proxy, reported := errors.AsType[proxiedChildError](err); !reported || !proxy.alreadyReported() {
+			diagnostic := classifyCLIError(command, err)
+			if errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled {
+				diagnostic = &cliError{Kind: "interrupted", Code: "interrupted", Message: err.Error(), Hint: "rerun the command when ready", ExitCode: 130, Err: err}
+			}
+			args := []string(nil)
+			if len(rawArgs) > 0 {
+				args = rawArgs[0]
+			}
+			jsonMode := cliJSONRequested(command, args)
+			legacyMessage := ""
+			if proxy, ok := errors.AsType[proxiedChildError](err); ok {
+				legacyMessage = proxy.legacyMessage()
+			}
+			if legacyMessage != "" {
+				diagnostic.Message = legacyMessage
+				if jsonMode {
+					renderCLIError(command.ErrOrStderr(), diagnostic, true)
+				} else {
+					_, _ = fmt.Fprintln(command.ErrOrStderr(), "hint:", diagnostic.Hint)
+				}
+			} else {
+				renderCLIError(command.ErrOrStderr(), diagnostic, jsonMode)
+			}
+			err = diagnostic
+		}
+	}
 
 	// Record the exit outcome so users can see the per-run
 	// result in the log without parsing error messages.
 	if inv.logResult != nil && inv.logger != nil {
 		if err != nil {
-			inv.logger.Info("msgvault exit",
+			inv.logger.Debug("msgvault exit",
 				"outcome", "error", "error", err.Error(),
 			)
 		} else {
-			inv.logger.Info("msgvault exit", "outcome", "ok")
+			inv.logger.Debug("msgvault exit", "outcome", "ok")
 		}
 	}
 	if err != nil {
@@ -461,23 +475,10 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	return nil
 }
 
-// usageErr re-enables the usage block for cmd and returns err. Use inside
-// RunE for validation that's semantically part of the invocation contract
-// (mutually exclusive flags, missing required values, bad enum values).
-// silenceUsageInRunE silences usage at RunE entry; this flips it back for
-// the specific case of "the user invoked me wrong."
-// A nil cmd is tolerated so tests can call RunE-internal helpers without
-// constructing a cobra.Command.
-func usageErr(cmd *cobra.Command, err error) error {
-	if cmd != nil {
-		cmd.SilenceUsage = false
-	}
-	return err
-}
-
 var silencedRoots sync.Map
 
 func ensureSilenceUsageWrapped(root *cobra.Command) {
+	ensureCommandGrammar(root)
 	if root == nil {
 		return
 	}
@@ -486,25 +487,42 @@ func ensureSilenceUsageWrapped(root *cobra.Command) {
 	}
 }
 
-// silenceUsageInRunE walks cmd's subtree and replaces each RunE with a
-// wrapper that sets SilenceUsage = true on entry, then delegates to the
-// original handler. Cobra's required-flag and mutually-exclusive-flag
-// validators run after PersistentPreRunE but before RunE, so wrapping
-// here suppresses usage only for the runtime errors RunE actually
-// returns — leaving the built-in invocation-contract validators free
-// to print the usage block on failure. RunE handlers that detect their
-// own invocation-contract violations flip SilenceUsage back on via
-// usageErr.
+// silenceUsageInRunE installs error classification at Cobra's validation boundaries.
 func silenceUsageInRunE(cmd *cobra.Command) {
-	if cmd.RunE != nil {
-		orig := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			return orig(cmd, args)
+	previousFlagError := cmd.FlagErrorFunc()
+	cmd.SetFlagErrorFunc(func(command *cobra.Command, err error) error {
+		if previousFlagError != nil {
+			err = previousFlagError(command, err)
+		}
+		return cliFlagError(command, err)
+	})
+	if cmd.Args != nil {
+		original := cmd.Args
+		cmd.Args = func(command *cobra.Command, args []string) error {
+			if err := original(command, args); err != nil {
+				if _, ok := errors.AsType[*cliError](err); ok {
+					return err
+				}
+				if _, ok := errors.AsType[interface {
+					error
+					Hint() string
+				}](err); ok {
+					return err
+				}
+				return withHint(usageErr(command, err), "usage: "+command.UseLine()+"; "+commandHelpHint(command))
+			}
+			return nil
 		}
 	}
-	for _, sub := range cmd.Commands() {
-		silenceUsageInRunE(sub)
+	if cmd.RunE != nil {
+		original := cmd.RunE
+		cmd.RunE = func(command *cobra.Command, args []string) error {
+			command.SilenceUsage = true
+			return original(command, args)
+		}
+	}
+	for _, child := range cmd.Commands() {
+		silenceUsageInRunE(child)
 	}
 }
 
@@ -524,7 +542,7 @@ Gmail and Google Calendar need a Google Cloud OAuth credential:
        client_secrets = "/path/to/client_secret.json"`, configPath)
 	if cfg != nil && len(cfg.OAuth.Apps) > 0 {
 		hint += "\n\nNamed OAuth apps are configured. " +
-			"Use 'add-account <email> --oauth-app <name>' to bind an account."
+			"Use 'source gmail add <email> --oauth-app <name>' to bind an account."
 	}
 	return hint
 }
@@ -655,8 +673,8 @@ type reauthHint func(email string, readonly bool) string
 func gmailReauthHint(email string, readonly bool) string {
 	flags := readonlyFlagSuffix(readonly)
 	return fmt.Sprintf(
-		"re-authorize with 'msgvault add-account %s%s --force' (or "+
-			"'msgvault add-account %s%s --headless' on a server without a browser)",
+		"re-authorize with 'msgvault source gmail add %s%s --force' (or "+
+			"'msgvault source gmail add %s%s --headless' on a server without a browser)",
 		email, flags, email, flags,
 	)
 }
@@ -666,8 +684,8 @@ func gmailReauthHint(email string, readonly bool) string {
 // preserve.
 func calendarReauthHint(email string, _ bool) string {
 	return fmt.Sprintf(
-		"re-authorize with 'msgvault add-calendar %s' (or "+
-			"'msgvault add-calendar %s --headless' on a server without a browser)",
+		"re-authorize with 'msgvault source calendar add %s' (or "+
+			"'msgvault source calendar add %s --headless' on a server without a browser)",
 		email, email,
 	)
 }
@@ -695,7 +713,7 @@ func getTokenSourceWithReauth(
 
 	// Missing or malformed token files need a new sign-in.
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, oauth.ErrInvalidTokenJSON) {
-		return nil, fmt.Errorf("get token source: %w (run 'add-account %s' first)", err, email)
+		return nil, fmt.Errorf("get token source: %w (run 'source gmail add %s' first)", err, email)
 	}
 
 	// Token exists but failed — only auto-reauth for auth-invalid errors
@@ -732,8 +750,8 @@ func getTokenSourceWithReauth(
 				"re-authorize %s: %w\n"+
 					"If this account uses an alias, remove "+
 					"and re-add with the primary address:\n"+
-					"  msgvault remove-account %s --type gmail\n"+
-					"  msgvault add-account %s%s",
+					"  msgvault account remove %s --type gmail\n"+
+					"  msgvault source gmail add %s%s",
 				email, authErr,
 				mismatch.Expected, mismatch.Actual,
 				readonlyFlagSuffix(narrowed),

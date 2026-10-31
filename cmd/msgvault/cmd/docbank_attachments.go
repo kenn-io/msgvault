@@ -13,57 +13,65 @@ import (
 )
 
 func newDocbankCmd(open func(context.Context) (*daemonclient.Client, func(), error)) *cobra.Command {
-	parent := &cobra.Command{Use: "docbank", Short: "Manage the Docbank attachment mirror"}
-	attachments := &cobra.Command{Use: "attachments", Short: "Mirror stored attachment bytes into Docbank"}
+	parent := &cobra.Command{Use: "docbank", Short: "Manage the Docbank attachment mirror",
+		Long:    "Manage the optional Docbank mirror of archived attachment bytes. Inspect consent and delivery status first; backfill schedules existing attachments and retries failed uploads under configured consent.",
+		Example: "  msgvault docbank attachments status --json"}
+	attachments := &cobra.Command{Use: "attachments", Short: "Mirror stored attachment bytes into Docbank",
+		Long:    "Inspect or schedule delivery of archived attachment bytes to the optional Docbank mirror. Uploads depend on configured attachment mirror consent.",
+		Example: "  msgvault docbank attachments status --json"}
 	var jsonOutput bool
-	status := &cobra.Command{Use: "status", Short: "Show consent, delivery counts and failure reasons", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		client, cleanup, err := open(cmd.Context())
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		result, err := client.DocbankAttachmentStatus(cmd.Context())
-		if err != nil {
-			return err
-		}
-		if jsonOutput {
-			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "State: %s\nUpload consent: %t\nFolder: %s\n", textutil.SanitizeTerminal(string(result.State)), result.UploadConsent, textutil.SanitizeTerminal(result.Folder)); err != nil {
-			return fmt.Errorf("write status: %w", err)
-		}
-		if result.Counts == nil {
-			return nil
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Delivered: %d\nSending: %d\nFiles left to examine: %d\nFailed: %d\n", result.Counts.Delivered, result.Counts.Sending, result.Counts.Remaining, result.Counts.Failed); err != nil {
-			return fmt.Errorf("write status: %w", err)
-		}
-		reasons := make([]string, 0, len(result.Counts.Reasons))
-		for reason := range result.Counts.Reasons {
-			reasons = append(reasons, reason)
-		}
-		sort.Strings(reasons)
-		for _, reason := range reasons {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: %d\n", textutil.SanitizeTerminal(reason), result.Counts.Reasons[reason]); err != nil {
+	status := &cobra.Command{Use: "status", Short: "Show consent, delivery counts and failure reasons",
+		Long:    "Inspect configured mirror consent, upload counts, and delivery failures without starting a backfill. Correct consent or delivery failures before scheduling attachment uploads.",
+		Example: "  msgvault docbank attachments status --json", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+			client, cleanup, err := open(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			result, err := client.DocbankAttachmentStatus(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "State: %s\nUpload consent: %t\nFolder: %s\n", textutil.SanitizeTerminal(string(result.State)), result.UploadConsent, textutil.SanitizeTerminal(result.Folder)); err != nil {
 				return fmt.Errorf("write status: %w", err)
 			}
-		}
-		return nil
-	}}
-	backfill := &cobra.Command{Use: "backfill", Short: "Schedule discovery of all stored attachments and retry failed uploads", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		client, cleanup, err := open(cmd.Context())
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		if err := client.BackfillDocbankAttachments(cmd.Context()); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Attachment mirror backfill scheduled. Use msgvault docbank attachments status to follow progress."); err != nil {
-			return fmt.Errorf("write attachment mirror backfill status: %w", err)
-		}
-		return nil
-	}}
+			if result.Counts == nil {
+				return nil
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Delivered: %d\nSending: %d\nFiles left to examine: %d\nFailed: %d\n", result.Counts.Delivered, result.Counts.Sending, result.Counts.Remaining, result.Counts.Failed); err != nil {
+				return fmt.Errorf("write status: %w", err)
+			}
+			reasons := make([]string, 0, len(result.Counts.Reasons))
+			for reason := range result.Counts.Reasons {
+				reasons = append(reasons, reason)
+			}
+			sort.Strings(reasons)
+			for _, reason := range reasons {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: %d\n", textutil.SanitizeTerminal(reason), result.Counts.Reasons[reason]); err != nil {
+					return fmt.Errorf("write status: %w", err)
+				}
+			}
+			return nil
+		}}
+	backfill := &cobra.Command{Use: "backfill", Short: "Schedule discovery of all stored attachments and retry failed uploads",
+		Long:    "Schedule discovery of stored attachment bytes for the configured Docbank mirror and retry failed deliveries. This can upload archived files under the existing mirror policy; inspect status first.",
+		Example: "  msgvault docbank attachments backfill", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+			client, cleanup, err := open(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if err := client.BackfillDocbankAttachments(cmd.Context()); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Attachment mirror backfill scheduled. Use msgvault docbank attachments status to follow progress."); err != nil {
+				return fmt.Errorf("write attachment mirror backfill status: %w", err)
+			}
+			return nil
+		}}
 	status.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	attachments.AddCommand(status, backfill)
 	parent.AddCommand(attachments)

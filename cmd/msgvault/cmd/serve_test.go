@@ -1975,7 +1975,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 				},
 				func(_ context.Context, args []string, _ func(string, string) error) error {
 					runnerCalls++
-					assert.Equal([]string{"sync", "alice@example.com"}, args)
+					assert.Equal([]string{"sync", "--", "alice@example.com"}, args)
 					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
 					return tt.predecessorErr
 				},
@@ -1997,7 +1997,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 
 func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 	assert.Equal(t,
-		[]string{"sync", "--folder", "INBOX", "--folder", "Archive", "--skip-folder", "Trash", "alice@example.com"},
+		[]string{"sync", "--folder", "INBOX", "--folder", "Archive", "--skip-folder", "Trash", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:       "alice@example.com",
 			Folders:     []string{"INBOX", "Archive"},
@@ -2005,20 +2005,39 @@ func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 		}),
 	)
 	assert.Equal(t,
-		[]string{"sync", "--folder", "Folder,With,Comma", "alice@example.com"},
+		[]string{"sync", "--folder", "Folder,With,Comma", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:   "alice@example.com",
 			Folders: []string{"Folder,With,Comma"},
 		}),
 	)
 	assert.Equal(t,
-		[]string{"sync", "--folder", "Path\\To\\File", "--skip-folder", "Fold,er", "alice@example.com"},
+		[]string{"sync", "--folder", "Path\\To\\File", "--skip-folder", "Fold,er", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:       "alice@example.com",
 			Folders:     []string{"Path\\To\\File"},
 			SkipFolders: []string{"Fold,er"},
 		}),
 	)
+}
+
+func TestCLISyncSubprocessArgsKeepsFullNamedAccountIncremental(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ensureCommandGrammar(rootCmd)
+	args := cliSyncSubprocessArgs(api.CLISyncRequest{Email: "full"})
+	require.Equal([]string{"sync", "--", "full"}, args)
+
+	selected, _, err := rootCmd.Find(args)
+	require.NoError(err)
+	syncCommand := directCommand(rootCmd, "sync")
+	assert.Same(syncCommand, selected)
+	fullSync, _, err := rootCmd.Find([]string{"sync", "full"})
+	require.NoError(err)
+	assert.NotSame(fullSync, selected)
 }
 
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
@@ -2185,15 +2204,28 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
+		wantArgs       []string
 		predecessorErr error
 		wantPacked     bool
 		wantAttempts   int
 	}{
 		{
 			name:         "allowlisted success",
-			args:         []string{importMboxCommand, "archive.mbox"},
+			args:         []string{importMboxCommand, "archive@example.com", "archive.mbox"},
 			wantPacked:   true,
 			wantAttempts: 1,
+		},
+		{
+			name:       "canonical import",
+			args:       []string{"import", "mbox", "archive@example.com", "archive.mbox"},
+			wantArgs:   []string{"import-mbox", "archive@example.com", "archive.mbox"},
+			wantPacked: true, wantAttempts: 1,
+		},
+		{
+			name:           "canonical sync failure",
+			args:           []string{"source", "teams", "sync", "user@example.com"},
+			wantArgs:       []string{"sync-teams", "user@example.com"},
+			predecessorErr: errors.New("command subprocess failed"),
 		},
 		{
 			name: "unrelated success",
@@ -2231,7 +2263,11 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 					_ func(string, string) error,
 				) error {
 					runnerCalls++
-					assert.Equal(tt.args, args)
+					wantArgs := tt.wantArgs
+					if wantArgs == nil {
+						wantArgs = tt.args
+					}
+					assert.Equal(wantArgs, args)
 					assert.Equal(map[string]string{"TEST": "value"}, env)
 					assert.Equal("/tmp", cwd)
 					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
@@ -2496,7 +2532,7 @@ func TestStoreAPIAdapterPostRemovalRepackWarningPreservesSuccess(t *testing.T) {
 	require.NoError(err)
 	require.Len(events, 1)
 	assert.Equal("stderr", events[0].Type)
-	assert.Contains(events[0].Data, "repack-attachments")
+	assert.Contains(events[0].Data, "attachment repack")
 }
 
 func TestStoreAPIAdapterPostRemovalRepackCancellationPreservesSuccess(t *testing.T) {
@@ -2571,7 +2607,7 @@ func TestStoreAPIAdapterMaintenanceWarningStreamsWithoutChangingSuccess(t *testi
 	require.NoError(err, "automatic maintenance failure must preserve sync success")
 	require.Len(events, 1, "one concise warning event")
 	assert.Equal("stderr", events[0].Type)
-	assert.Contains(events[0].Data, "pack-attachments")
+	assert.Contains(events[0].Data, "attachment pack")
 	assert.Contains(events[0].Data, "retry")
 	assert.Contains(logs.String(), "automatic attachment maintenance failed")
 }
@@ -2743,8 +2779,8 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 			_, err = runScheduledGmailSync(scheduledCtx, scopeEscalationAccount, nil, nil,
 				func(ctx context.Context, _ string) (*oauth.Manager, error) { return mgr, nil }, invocationFromContext(scheduledCtx))
 			require.Error(err)
-			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
-			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
+			assert.Contains(err.Error(), "msgvault source gmail add user@example.com"+tc.flags+" --force")
+			assert.Contains(err.Error(), "msgvault source gmail add user@example.com"+tc.flags+" --headless")
 		})
 	}
 }
@@ -2805,7 +2841,7 @@ func TestDaemonGmailClientCredentialFailures(t *testing.T) {
 		name, providerCode, remediation, tokenJSON string
 		removeToken                                bool
 	}{
-		{"missing token", "", "msgvault add-account", "", true},
+		{"missing token", "", "msgvault source gmail add", "", true},
 		{"revoked token", "invalid_grant", "expired or been revoked", "", false},
 		{"expired without refresh token", "", "expired or been revoked", `{"access_token":"expired","expiry":"2000-01-01T00:00:00Z"}`, false},
 		{"malformed file token", "", "expired or been revoked", "{", false},

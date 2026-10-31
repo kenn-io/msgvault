@@ -15,7 +15,7 @@ func printCommandHeadlessInstructions(out io.Writer, email string, accountArgs [
 	if !calendar {
 		browserArgs = append(browserArgs, "--force")
 	}
-	exportArgs := []string{"msgvault", "export-token", email}
+	exportArgs := []string{"msgvault", "account", "export-token", email}
 	if calendar {
 		exportArgs = append(exportArgs, "--upload-only")
 	}

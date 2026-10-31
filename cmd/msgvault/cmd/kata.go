@@ -19,18 +19,22 @@ import (
 
 func newKataCmd() *cobra.Command {
 	var jsonOutput bool
-	root := &cobra.Command{Use: "kata", Short: "Create Kata issues that quote archived evidence"}
+	root := &cobra.Command{Use: "kata", Short: "Create Kata issues that quote archived evidence",
+		Long:    "Create issues with exact archive citations. Prepare evidence first, then create an issue with a stable idempotency key or link evidence to an existing issue. Use issues to find existing citations and context to read their current archive state.",
+		Example: "  msgvault kata issues --message 1234 --json"}
 	root.PersistentFlags().BoolVar(&jsonOutput, flagJSON, false, "Output the full JSON response")
 
 	var prepareInput string
 	prepare := &cobra.Command{
-		Use:   "prepare",
-		Short: "Prepare exact citations from message bodies or extracted file chunks",
-		Args:  cobra.NoArgs,
+		Use:     "prepare",
+		Short:   "Prepare exact citations from message bodies or extracted file chunks",
+		Long:    "Read selectors from a JSON request file and return exact archive citations. Use the prepared references as evidence when creating or linking a Kata issue. The default input is standard input.",
+		Example: "  msgvault kata evidence prepare --input selectors.json --json",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			request, err := readKataInput[generated.KataEvidencePrepareRequest](cmd, prepareInput)
 			if err != nil {
-				return usageErr(cmd, err)
+				return validationErr(cmd, err)
 			}
 			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Selectors, func(s generated.Selector) bool { return s.Kind == generated.SelectorKindDocbankRendition }))
 			if err != nil {
@@ -45,18 +49,22 @@ func newKataCmd() *cobra.Command {
 		},
 	}
 	prepare.Flags().StringVar(&prepareInput, "input", "-", "JSON request file, or - for stdin")
-	evidence := &cobra.Command{Use: "evidence", Short: "Prepare exact archive evidence"}
+	evidence := &cobra.Command{Use: "evidence", Short: "Prepare exact archive evidence",
+		Long:    "Prepare citations before filing an issue. The prepare child accepts a JSON selector request and returns exact passages and reusable evidence references.",
+		Example: "  msgvault kata evidence prepare --input selectors.json --json"}
 	evidence.AddCommand(prepare)
 
 	var createInput, idempotencyKey string
 	create := &cobra.Command{
-		Use:   "create",
-		Short: "Create a Kata issue that quotes prepared evidence",
-		Args:  cobra.NoArgs,
+		Use:     "create",
+		Short:   "Create a Kata issue that quotes prepared evidence",
+		Long:    "Create an issue from a JSON request containing prepared archive evidence. Choose one idempotency key for this issue and reuse it with identical input when retrying.",
+		Example: "  msgvault kata create --idempotency-key review-example --input issue.json --json",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			request, err := readKataInput[generated.KataIssueCreateRequest](cmd, createInput)
 			if err != nil {
-				return usageErr(cmd, err)
+				return validationErr(cmd, err)
 			}
 			key := strings.TrimSpace(idempotencyKey)
 			if key == "" {
@@ -79,13 +87,15 @@ func newKataCmd() *cobra.Command {
 
 	var linkInput string
 	link := &cobra.Command{
-		Use:   "link <ref>",
-		Short: "Add prepared evidence to an existing Kata issue",
-		Args:  cobra.ExactArgs(1),
+		Use:     "link <ref>",
+		Short:   "Add prepared evidence to an existing Kata issue",
+		Long:    "Attach prepared citations from a JSON request to an existing qualified Kata issue reference. Prepare the citations first with kata evidence prepare.",
+		Example: "  msgvault kata link example#abcd --input evidence.json --json",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			request, err := readKataInput[generated.KataEvidenceLinkRequest](cmd, linkInput)
 			if err != nil {
-				return usageErr(cmd, err)
+				return validationErr(cmd, err)
 			}
 			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Evidence, citesDocbank))
 			if err != nil {
@@ -103,9 +113,11 @@ func newKataCmd() *cobra.Command {
 
 	var messageID, attachmentID int64
 	issues := &cobra.Command{
-		Use:   "issues",
-		Short: "List Kata issues, open or closed, that cite a message or one of its files",
-		Args:  cobra.NoArgs,
+		Use:     "issues",
+		Short:   "List Kata issues, open or closed, that cite a message or one of its files",
+		Long:    "Find open and closed Kata issues citing an internal archive message ID. Add --attachment to restrict the lookup to one file attached to that message. Check this list before creating a duplicate issue.",
+		Example: "  msgvault kata issues --message 1234 --json",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			query := generated.FindKataIssuesQuery{MessageID: messageID}
 			if cmd.Flags().Changed("attachment") {
@@ -143,9 +155,11 @@ func newKataCmd() *cobra.Command {
 
 	var offset int64
 	issueContext := &cobra.Command{
-		Use:   "context <ref>",
-		Short: "Show each passage a Kata issue cites, with its state in the archive and the text around it",
-		Args:  cobra.ExactArgs(1),
+		Use:     "context <ref>",
+		Short:   "Show each passage a Kata issue cites, with its state in the archive and the text around it",
+		Long:    "Read the archived passages cited by a qualified Kata issue reference. Results explain whether each passage remains available and include surrounding text. Use --offset to continue a paginated response.",
+		Example: "  msgvault kata context example#abcd --json",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, closeClient, err := openKataClient(cmd, kataLookupMinAPISchemaVersion)
 			if err != nil {
@@ -193,7 +207,7 @@ func openKataClient(cmd *cobra.Command, minVersion string) (*daemonclient.Client
 	}
 	if !supported {
 		closeClient()
-		return nil, nil, fmt.Errorf("this daemon is too old for Kata issues; upgrade it to API schema %s or newer", minVersion)
+		return nil, nil, withHint(fmt.Errorf("this daemon is too old for Kata issues; upgrade it to API schema %s or newer", minVersion), "upgrade the daemon host with 'msgvault update', then run 'msgvault daemon restart'")
 	}
 	return client, closeClient, nil
 }
@@ -214,7 +228,7 @@ func readKataInput[T any](cmd *cobra.Command, path string) (T, error) {
 		return value, err
 	}
 	if len(data) > kataevidence.MaxRequestBytes {
-		return value, errors.New("kata input exceeds 512 KiB")
+		return value, withHint(errors.New("kata input exceeds 512 KiB"), "split the evidence into smaller requests and add it with separate 'msgvault kata link <ref> --input <file>' calls")
 	}
 	if err := json.Unmarshal(data, &value, json.RejectUnknownMembers(true)); err != nil {
 		return value, fmt.Errorf("invalid Kata input: %w", err)

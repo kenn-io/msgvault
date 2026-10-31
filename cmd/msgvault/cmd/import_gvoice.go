@@ -29,13 +29,11 @@ var importGvoiceCmd = &cobra.Command{
 Google Takeout export.
 
 The directory should be the "Voice" folder inside the Takeout archive,
-containing "Calls/" and "Phones.vcf".
-
-Examples:
-  msgvault import-gvoice /path/to/Takeout/Voice
-  msgvault import-gvoice /path/to/Takeout/Voice --after 2020-01-01
-  msgvault import-gvoice /path/to/Takeout/Voice --limit 100`,
-	Args: cobra.ExactArgs(1),
+containing "Calls/" and "Phones.vcf".`,
+	Example: `  msgvault import gvoice /path/to/Takeout/Voice
+  msgvault import gvoice /path/to/Takeout/Voice --after 2020-01-01
+  msgvault import gvoice /path/to/Takeout/Voice --limit 100`,
+	Args: sourceExactArgs(1),
 	RunE: runImportGvoice,
 }
 

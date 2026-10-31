@@ -23,13 +23,13 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
 
-## import-whatsapp
+## import whatsapp
 
 Import direct and group chats from a decrypted Android `msgstore.db` or an
 Apple `ChatStorage.sqlite` database. msgvault detects the database format.
 
 ```bash
-msgvault import-whatsapp <database> --phone <your-number>
+msgvault import whatsapp <database> --phone <your-number>
 ```
 
 The `--phone` flag is required and must be in E.164 format (for example, `+447700900000`).
@@ -49,14 +49,14 @@ The `--phone` flag is required and must be in E.164 format (for example, `+44770
 
 ```bash
 # Basic import with required phone number
-msgvault import-whatsapp ~/whatsapp/msgstore.db --phone +14155551234
+msgvault import whatsapp ~/whatsapp/msgstore.db --phone +14155551234
 
 # With contacts file for name resolution
-msgvault import-whatsapp msgstore.db --phone +14155551234 \
+msgvault import whatsapp msgstore.db --phone +14155551234 \
   --contacts contacts.vcf
 
 # With contacts and media
-msgvault import-whatsapp msgstore.db --phone +14155551234 \
+msgvault import whatsapp msgstore.db --phone +14155551234 \
   --contacts contacts.vcf --media-dir ./Media
 ```
 
@@ -65,7 +65,7 @@ msgvault import-whatsapp msgstore.db --phone +14155551234 \
 Point the command at the native WhatsApp database or a copy of it:
 
 ```bash
-msgvault import-whatsapp --phone +447700900000 \
+msgvault import whatsapp --phone +447700900000 \
   "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
 ```
 
@@ -94,7 +94,7 @@ first, add `--after` (YYYY-MM-DD, local time; `--before` also works), then run
 the command again without it:
 
 ```bash
-msgvault import-whatsapp --phone +447700900000 --after 2026-01-01 \
+msgvault import whatsapp --phone +447700900000 --after 2026-01-01 \
   "$HOME/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
 ```
 
@@ -122,12 +122,12 @@ it as the source's confirmed “me” identity unless you pass
 `--no-default-identity`. This confirmation also happens after a completed run
 that reports recoverable message errors.
 
-## import-imessage
+## import imessage
 
 Import messages from the local iMessage database on macOS.
 
 ```bash
-msgvault import-imessage
+msgvault import imessage
 ```
 
 By default, the command reads from `~/Library/Messages/chat.db`. No positional arguments are needed.
@@ -142,7 +142,7 @@ missing dates. msgvault retains those messages and their raw timestamp
 evidence, including empty sync placeholders. Undated messages are excluded from
 dated analytics.
 
-To correct dates imported by an older version, rerun `import-imessage` against
+To correct dates imported by an older version, rerun `import imessage` against
 the same database without `--after`, `--before`, or `--limit`. The import updates
 existing messages without creating duplicates. When it clears a previously
 stored date, msgvault rebuilds analytics so the old date is removed there too.
@@ -163,30 +163,30 @@ Keep the original `--db-path` and `--me` options if you supplied them.
 
 ```bash
 # Import all iMessages (auto-discovers chat.db)
-msgvault import-imessage
+msgvault import imessage
 
 # Import only recent messages
-msgvault import-imessage --after 2024-01-01
+msgvault import imessage --after 2024-01-01
 
 # Use a custom database path (e.g., from a backup)
-msgvault import-imessage --db-path /Volumes/Backup/Messages/chat.db
+msgvault import imessage --db-path /Volumes/Backup/Messages/chat.db
 
 # Set your identity for recipient tracking
-msgvault import-imessage --me +14155551234
+msgvault import imessage --me +14155551234
 
 # Backfill display names from a Contacts.app vCard export
-msgvault import-imessage --contacts ~/contacts.vcf
+msgvault import imessage --contacts ~/contacts.vcf
 ```
 
 `--contacts` accepts a vCard file such as macOS Contacts.app's **File > Export > Export vCard** output. Display names are matched by phone number or email address, and only currently-empty participant names are updated.
 
-## import-imazing-csv
+## import imazing-csv
 
 Use this when the original Apple Messages database is gone but an iMazing CSV
 export still exists.
 
 ```bash
-msgvault import-imazing-csv ~/Downloads/messages-export \
+msgvault import imazing-csv ~/Downloads/messages-export \
   --me +14155550100 --timezone America/Los_Angeles
 ```
 
@@ -242,18 +242,18 @@ unlinked.
 !!! note
     iMazing CSV rows have no IDs shared with Apple's `chat.db`. A rerun of the
     same CSV is deterministic, but importing overlapping history through both
-    `import-imazing-csv` and `import-imessage` can create duplicates.
+    `import imazing-csv` and `import imessage` can create duplicates.
 
     `Chat Session` titles identify conversations within one imported source.
     Identical titles share a conversation. Renaming a title on a later export
     creates another conversation and can duplicate its messages.
 
-## import-gvoice
+## import gvoice
 
 Import texts, calls, and voicemails from a Google Voice Takeout export.
 
 ```bash
-msgvault import-gvoice <takeout-voice-dir>
+msgvault import gvoice <takeout-voice-dir>
 ```
 
 The directory must be the "Voice" folder from a [Google Takeout](https://takeout.google.com) export. It should contain a `Calls/` subdirectory and a `Phones.vcf` file.
@@ -285,10 +285,10 @@ voicemail with an archived recording.
 
 ```bash
 # Import from Google Takeout Voice directory
-msgvault import-gvoice ~/Downloads/Takeout/Voice
+msgvault import gvoice ~/Downloads/Takeout/Voice
 
 # Import only messages from a date range
-msgvault import-gvoice ~/Downloads/Takeout/Voice \
+msgvault import gvoice ~/Downloads/Takeout/Voice \
   --after 2020-01-01 --before 2024-01-01
 ```
 
@@ -299,12 +299,12 @@ msgvault import-gvoice ~/Downloads/Takeout/Voice \
 3. Export and download the archive
 4. Extract the zip. The `Voice` folder inside the `Takeout` directory is what you pass to the command.
 
-## import-messenger
+## import messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.
 
 ```bash
-msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
+msgvault import messenger --me <you@facebook.messenger> <dyi-export-dir>
 ```
 
 `--me` is required and must use msgvault's synthetic Messenger identifier format, for example `test.user@facebook.messenger`. It becomes the source identifier and determines which messages are marked as yours.
@@ -325,21 +325,21 @@ Messenger DYI exports may contain JSON, HTML, or both. The default `--format aut
 
 ```bash
 # Import a Facebook DYI export
-msgvault import-messenger --me test.user@facebook.messenger ~/Downloads/facebook-export
+msgvault import messenger --me test.user@facebook.messenger ~/Downloads/facebook-export
 
 # Import both JSON and HTML copies when you deliberately want both
-msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
+msgvault import messenger --me test.user@facebook.messenger --format both ./dyi
 ```
 
 !!! note
     Facebook DYI exports do not contain stable participant IDs. msgvault synthesizes participant identifiers from names as `<slug>@facebook.messenger`; identical slugs are treated as the same participant.
 
-## import-synctech-sms
+## import synctech-sms
 
 Import XML or ZIP backups produced by **SMS Backup & Restore** by SyncTech Pty Ltd.
 
 ```bash
-msgvault import-synctech-sms <path> --owner-phone <your-number>
+msgvault import synctech-sms <path> --owner-phone <your-number>
 ```
 
 The `--owner-phone` flag is required and must be in E.164 format. The importer can bring in SMS, MMS, call logs, and MMS attachments from local XML or ZIP backup files.
@@ -358,10 +358,10 @@ The `--owner-phone` flag is required and must be in E.164 format. The importer c
 
 ```bash
 # Import one local backup file
-msgvault import-synctech-sms sms-backup.xml --owner-phone +14155551234
+msgvault import synctech-sms sms-backup.xml --owner-phone +14155551234
 
 # Import a ZIP backup but skip call logs
-msgvault import-synctech-sms sms-backup.zip --owner-phone +14155551234 --calls=false
+msgvault import synctech-sms sms-backup.zip --owner-phone +14155551234 --calls=false
 ```
 
 !!! warning
@@ -372,15 +372,15 @@ msgvault import-synctech-sms sms-backup.zip --owner-phone +14155551234 --calls=f
 If SMS Backup & Restore writes backups to Google Drive, configure a source once and let `msgvault serve` schedule it.
 
 ```bash
-msgvault add-synctech-sms-drive phone-backups \
+msgvault source synctech-sms add phone-backups \
   --owner-phone +14155551234 \
   --folder-id <drive-folder-id> \
   --google-account you@gmail.com
 
-msgvault sync-synctech-sms phone-backups
+msgvault source synctech-sms sync phone-backups
 ```
 
-`add-synctech-sms-drive` appends a `[[synctech_sms.sources]]` entry to `config.toml`. Drive imports skip files that were already imported, wait for files to be stable before reading them, and stage downloads under the msgvault data directory while the import runs.
+`source synctech-sms add` appends a `[[synctech_sms.sources]]` entry to `config.toml`. Drive imports skip files that were already imported, wait for files to be stable before reading them, and stage downloads under the msgvault data directory while the import runs.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -425,7 +425,7 @@ same command again and existing rows are updated in place.
 
 Most chat import and sync commands rebuild the analytics cache automatically.
 If a newly imported or synced source does not appear in aggregate views
-immediately, run `msgvault build-cache`. Your imported texts, Teams messages,
+immediately, run `msgvault cache build`. Your imported texts, Teams messages,
 and Discord conversations are then available in the Web UI and TUI.
 
 ```bash

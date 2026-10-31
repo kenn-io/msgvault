@@ -16,7 +16,7 @@ see on your terminal, and the gotchas to know about when upgrading.
 | | Before | After |
 |---|---|---|
 | `msgvault stats`, `search`, `tui`, ... | CLI opens `msgvault.db` directly | CLI queries the daemon over HTTP; a local daemon is auto-started if needed |
-| `msgvault sync-full`, `import-*`, ... | CLI process performs the sync/import | The daemon runs the operation and streams output back to your terminal |
+| `msgvault sync full`, `import-*`, ... | CLI process performs the sync/import | The daemon runs the operation and streams output back to your terminal |
 | Two commands writing at once | Both open SQLite; risk of `database is locked` and WAL contention | The daemon is the single writer; concurrent operations queue with a visible `Waiting:` message |
 | Local vs remote | Different code paths and capabilities | Identical behavior; `[remote].url` just changes which daemon answers |
 | Long-running daemon + CLI | CLI could bypass a running `msgvault serve` | The running daemon owns the archive; the CLI always goes through it |
@@ -85,7 +85,7 @@ automatically and tell you what they are waiting for:
 Waiting: msgvault embeddings build has been running for 42m (Ctrl+C to cancel).
 ```
 
-Read-only commands — searches, stats, the TUI, `logs`, `list-deletions`,
+Read-only commands — searches, stats, the TUI, `logs`, `deletion list`,
 `embeddings list`, SQL `query` — are exempt and run immediately even while a
 long operation holds the archive.
 
@@ -96,7 +96,7 @@ interactive command does not queue behind background jobs.
 
 Interrupted syncs stay resumable. Cancelling a sync (Ctrl+C, daemon shutdown,
 or a scheduler yield) keeps its checkpoint, and the next
-`msgvault sync-full` for that account picks up where it left off — relevant
+`msgvault sync full` for that account picks up where it left off — relevant
 for initial multi-hour Gmail syncs.
 
 ## Gotcha: environment variables
@@ -116,8 +116,8 @@ listing, inspecting, and dry-running deletion batches remain ungated.
 
 | Variable | Used by |
 |---|---|
-| `MSGVAULT_IMAP_PASSWORD` | `add-imap` |
-| `MSGVAULT_ENABLE_REMOTE_DELETE` | One-command `delete-staged` consent; durable consent uses invoking-CLI config |
+| `MSGVAULT_IMAP_PASSWORD` | `source imap add` |
+| `MSGVAULT_ENABLE_REMOTE_DELETE` | One-command `deletion execute` consent; durable consent uses invoking-CLI config |
 | The variable named by `[vector.embeddings].api_key_env` | `embeddings build` / `embed` |
 
 If an operation needs any other environment variable (for example a proxy
@@ -127,15 +127,15 @@ and `msgvault daemon restart` after changing it.
 
 ## Gotcha: OAuth and browser flows
 
-`add-account`, `add-o365`, `add-teams`, and `add-synctech-sms-drive` run
+`source gmail add`, `source o365 add`, `source teams add`, and `source synctech-sms add` run
 their browser authorization in your terminal's process *before* handing off
 to the daemon, so the consent screen opens in your local browser exactly as
 before.
 
 With a `[remote]` server configured, tokens live on the remote host, so
 authorization happens there — same as pre-daemon remote behavior. For
-headless remote setups, keep using `add-account --headless` or
-`msgvault export-token` to push a locally minted token to the server (see
+headless remote setups, keep using `source gmail add --headless` or
+`msgvault account export-token` to push a locally minted token to the server (see
 [Remote Deployment](/docs/guides/remote-deployment/)).
 
 ## Gotcha: `--local` means "local daemon"

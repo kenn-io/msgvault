@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/cacheops"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/config"
@@ -626,9 +627,12 @@ type CLIDeduplicatePlanItem struct {
 }
 
 type CLIRunEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Code          string `json:"code,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 type cliDeleteDedupedScopeRequest struct {
@@ -1037,7 +1041,7 @@ func (s *Server) handleCLIInitDB(w http.ResponseWriter, r *http.Request) {
 	case migration.Deferred:
 		s.logger.Info("legacy [identity] block in config detected (migration deferred until a source exists)",
 			"address_count", migration.AddressCount,
-			"hint", "run 'msgvault add-account ...' to create a source; the migration will retry on the next command")
+			"hint", "run 'msgvault source gmail add ...' to create a source; the migration will retry on the next command")
 	case migration.Applied:
 		s.logger.Info("legacy identity migrated",
 			"addresses", migration.AddressCount,
@@ -1311,7 +1315,7 @@ func (s *Server) handleCLIRepairEncoding(w http.ResponseWriter, r *http.Request)
 
 	writeEvent := newCLINDJSONEventWriter[CLIRepairEncodingEvent](w)
 	if err := runner.RunCLIRepairEncoding(r.Context(), writeEvent); err != nil {
-		s.logger.Error("failed to run CLI repair-encoding", "error", err)
+		s.logger.Error("failed to run CLI repair encoding", "error", err)
 		if writeErr := writeEvent(CLIRepairEncodingEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
 			s.logger.Error("failed to stream CLI repair-encoding error event", "error", writeErr)
 		}
@@ -1358,7 +1362,7 @@ func (s *Server) handleCLIRepairMessage(w http.ResponseWriter, r *http.Request) 
 
 	writeEvent := newCLINDJSONEventWriter[CLIRepairMessageEvent](w)
 	if err := runner.RunCLIRepairMessage(r.Context(), req, writeEvent); err != nil {
-		s.logger.Error("failed to run CLI repair-message", "audit", req.Audit, "source_id", req.SourceID, "error", err)
+		s.logger.Error("failed to run CLI repair message", "audit", req.Audit, "source_id", req.SourceID, "error", err)
 		if writeErr := writeEvent(CLIRepairMessageEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
 			s.logger.Error("failed to stream CLI repair-message error event", "error", writeErr)
 		}
@@ -1388,7 +1392,8 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
 		return
 	}
-	if !cliRunCommandAllowed(req.Args) {
+	req.Args = cligrammar.Legacy(req.Args)
+	if !CLIRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
 	}
@@ -1435,7 +1440,23 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
 		}
-		if writeErr := writeEvent(CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+		event := CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}
+		if exit, ok := errors.AsType[interface {
+			error
+			ExitCode() int
+		}](err); ok {
+			event.ExitCode = exit.ExitCode()
+		}
+		if reported, ok := errors.AsType[interface {
+			error
+			ErrorReported() bool
+		}](err); ok {
+			event.ErrorReported = reported.ErrorReported()
+		}
+		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
+			event.Code = coded.Code
+		}
+		if writeErr := writeEvent(event); writeErr != nil {
 			s.logger.Error("failed to stream CLI run error event", "error", writeErr)
 		}
 		return
@@ -1446,6 +1467,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	args = cligrammar.Legacy(args)
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
@@ -1680,17 +1702,18 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 
 const cliRunPersonCommand = "person"
 
-// cliRunCommandAllowed reports whether a proxied CLI command may run through
+// cliRunStatusSubcommand is the read-only status subcommand shared by the
+// document and document-vector command groups.
+const cliRunStatusSubcommand = "status"
+
+// CLIRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
 // alone; command groups whose subcommand matters are checked against their
 // nested command path. Backup admits only the frozen create path, documents
 // admits only mutations that must run under the daemon's writer lock, and
 // person admits only the provider consent boundary and sweep operations.
-// cliRunStatusSubcommand is the read-only status subcommand shared by the
-// document and document-vector command groups.
-const cliRunStatusSubcommand = "status"
-
-func cliRunCommandAllowed(args []string) bool {
+func CLIRunCommandAllowed(args []string) bool {
+	args = cligrammar.Legacy(args)
 	if len(args) == 0 {
 		return false
 	}
@@ -2200,14 +2223,14 @@ func (s *Server) executeCLIDeleteDeduped(
 		return cliDeleteDedupedExecuteResponse{}, newAPIHTTPError(
 			http.StatusConflict,
 			"dedup_delete_plan_changed",
-			"Dedup deletion plan changed; rerun delete-deduped",
+			"Dedup deletion plan changed; rerun deletion purge-deduped",
 		)
 	}
 	if *req.ExpectedBatchCount != plan.BatchCount {
 		return cliDeleteDedupedExecuteResponse{}, newAPIHTTPError(
 			http.StatusConflict,
 			"dedup_delete_plan_changed",
-			"Dedup deletion plan changed; rerun delete-deduped",
+			"Dedup deletion plan changed; rerun deletion purge-deduped",
 		)
 	}
 	if !req.AllHidden {
@@ -2342,7 +2365,7 @@ func dedupDeletePlanChangedError() *apiHTTPError {
 	return newAPIHTTPError(
 		http.StatusConflict,
 		"dedup_delete_plan_changed",
-		"Dedup deletion plan changed; rerun delete-deduped",
+		"Dedup deletion plan changed; rerun deletion purge-deduped",
 	)
 }
 
@@ -3504,7 +3527,17 @@ func (s *Server) operationError(
 	err error,
 	policy operationErrorPolicy,
 	internalMessage string,
-) *apiHTTPError {
+) (response *apiHTTPError) {
+	defer func() {
+		if response != nil && opserr.KindOf(err) != opserr.KindInternal {
+			if hinted, ok := errors.AsType[interface {
+				error
+				Hint() string
+			}](err); ok {
+				response.Hint = hinted.Hint()
+			}
+		}
+	}()
 	switch opserr.KindOf(err) {
 	case opserr.KindInvalid:
 		return newAPIHTTPError(http.StatusBadRequest, policy.InvalidCode, err.Error())

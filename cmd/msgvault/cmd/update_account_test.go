@@ -16,6 +16,7 @@ import (
 )
 
 func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	ensureCommandGrammar(rootCmd)
 	cfg := testConfigValue()
 	useLocal := false
 
@@ -88,7 +89,7 @@ func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 	require.NoError(err, "update-account")
 
 	assert.Equal(1, int(requests.Load()), "update account endpoint calls")
-	assert.Empty(stderr.String(), "stderr")
+	assert.Empty(stderr.String())
 	assert.Equal("Updated account alice@example.com: display name set to \"Work\"\n", stdout.String())
 }
 

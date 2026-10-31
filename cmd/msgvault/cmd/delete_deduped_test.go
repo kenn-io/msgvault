@@ -131,7 +131,7 @@ func TestDeleteDedupedUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 Deleted 3 message(s) from 2 batch(es).
 
 Caches may have stale entries; maintain each separately:
-  'msgvault build-cache --full-rebuild'        (parquet analytics)
+  'msgvault cache build --full-rebuild'        (parquet analytics)
   'msgvault embeddings prune'                  (vector index, if enabled)
 `, stdout.String())
 }

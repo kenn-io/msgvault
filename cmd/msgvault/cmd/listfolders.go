@@ -19,10 +19,11 @@ func newListFoldersCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list-folders [name]",
 		Short: "List IMAP folders (mailboxes) available for an account",
+		Example: `  msgvault source imap folders you@example.com
+  msgvault sync you@example.com --folder INBOX`,
 		Long: `List all IMAP folders (mailboxes) available for one or all
-IMAP accounts, along with message count. This helps you
-  choose which folders to include or exclude via --folder or
-  --skip-folder on the sync command.`,
+IMAP accounts, with message counts. Use these folder names with --folder or
+--skip-folder on msgvault sync or msgvault sync full.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
@@ -61,7 +62,7 @@ func runListFoldersLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if len(sources) == 0 && len(matches) > 0 {
-			return fmt.Errorf("account %q is not an IMAP source (type: %s)", args[0], matches[0].SourceType)
+			return withHint(fmt.Errorf("account %q is not an IMAP source (type: %s)", args[0], matches[0].SourceType), "run 'msgvault account list --json' and choose an IMAP account")
 		}
 	} else {
 		all, err := s.ListSources(sourceTypeIMAP)
@@ -71,7 +72,7 @@ func runListFoldersLocal(cmd *cobra.Command, args []string) error {
 		sources = all
 	}
 	if len(sources) == 0 {
-		return errors.New("no IMAP accounts configured")
+		return sourceNotConfigured("imap", errors.New("no IMAP accounts configured"))
 	}
 
 	for i, src := range sources {
@@ -124,18 +125,18 @@ func listFolders(ctx context.Context, src *store.Source, cfg *config.Config, log
 		msRedirectURI := cfg.Microsoft.EffectiveRedirectURI()
 		msMgr := microsoft.NewManager(msClientID, msTenant, msRedirectURI, msTokensDir, logger)
 		if !msMgr.HasToken(imapCfg.Username) {
-			fmt.Println("  Microsoft token not found — run 'add-o365' first")
+			fmt.Printf("  Microsoft token not found — run 'msgvault source o365 add %s' first\n", imapCfg.Username)
 			return fmt.Errorf("no Microsoft token for %s", imapCfg.Username)
 		}
 		tokenFn, err = msMgr.TokenSource(ctx, imapCfg.Username)
 		if err != nil {
-			fmt.Printf("  Failed to load token: %v (run 'add-o365' first)\n", err)
+			fmt.Printf("  Failed to load token: %v (run 'msgvault source o365 add %s' first)\n", err, imapCfg.Username)
 			return fmt.Errorf("load Microsoft token: %w", err)
 		}
 	default:
 		password, err = imapclient.LoadCredentials(cfg.TokensDir(), src.Identifier)
 		if err != nil {
-			fmt.Println("  Credentials not found — run 'add-imap' first")
+			fmt.Printf("  Credentials not found — run 'msgvault source imap add --host %s --username %s' first\n", imapCfg.Host, imapCfg.Username)
 			return fmt.Errorf("load credentials: %w", err)
 		}
 	}

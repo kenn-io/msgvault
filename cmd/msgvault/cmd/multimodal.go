@@ -44,12 +44,16 @@ const (
 	multimodalBuildSubcommand  = "build"
 )
 
-var multimodalCmd = &cobra.Command{Use: "multimodal", Short: "Manage and search visual attachment embeddings"}
+var multimodalCmd = &cobra.Command{Use: "multimodal", Short: "Manage and search visual attachment embeddings",
+	Long:    "Build a visual search index from attachment media. Probe capabilities using synthetic fixtures, review the manifest and configure its path, then build with explicit consent to provider uploads. Inspect status before searching or retrying.",
+	Example: "  msgvault multimodal status --json"}
 
 var multimodalSearchCmd = &cobra.Command{
-	Use:   "search [text]",
-	Short: "Search attachment pixels by text or a query image",
-	Args:  cobra.ArbitraryArgs,
+	Use:     "search [text]",
+	Short:   "Search attachment pixels by text or a query image",
+	Long:    "Search visual attachment embeddings using text or --image. Query content is sent to the configured visual embedding provider. Build the consented visual index before searching.",
+	Example: "  msgvault multimodal search \"whiteboard sketch\" --json",
+	Args:    cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) (result error) {
 		text := strings.TrimSpace(strings.Join(args, " "))
 		if (text == "") == (multimodalSearchImage == "") {
@@ -158,7 +162,9 @@ var multimodalSearchCmd = &cobra.Command{
 }
 
 var multimodalStatusCmd = &cobra.Command{
-	Use: multimodalStatusSubcommand, Short: "Show visual attachment embedding status", Args: cobra.NoArgs,
+	Use: multimodalStatusSubcommand, Short: "Show visual attachment embedding status",
+	Long:    "Inspect the visual generation, coverage, retries, and reconciliation journal lag. This reports existing work without starting provider uploads.",
+	Example: "  msgvault multimodal status --json", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -185,7 +191,9 @@ var multimodalStatusCmd = &cobra.Command{
 }
 
 var multimodalBuildCmd = &cobra.Command{
-	Use: multimodalBuildSubcommand, Short: "Consent and build visual attachment embeddings", Args: cobra.NoArgs,
+	Use: multimodalBuildSubcommand, Short: "Consent and build visual attachment embeddings",
+	Long:    "Consent to the configured visual capability policy and build attachment embeddings. Probe first and configure vector.multimodal.capabilities_file with the reviewed manifest. --yes permits uploads of eligible attachment bytes and bounded message context.",
+	Example: "  msgvault multimodal build --yes", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !multimodalBuildYes {
 			return usageErr(cmd, errors.New("hosted visual processing sends eligible attachment bytes and bounded message context to the configured provider; pass --yes to continue"))
@@ -195,7 +203,9 @@ var multimodalBuildCmd = &cobra.Command{
 }
 
 var multimodalResumeCmd = &cobra.Command{
-	Use: cmdUseResume, Short: "Resume a consented visual attachment build", Args: cobra.NoArgs,
+	Use: cmdUseResume, Short: "Resume a consented visual attachment build",
+	Long:    "Continue unfinished visual embedding work under existing consent. Correct provider availability or reported retry conditions before resuming; use status to inspect convergence.",
+	Example: "  msgvault multimodal resume", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error { return runVisualBuildLoop(cmd, false) },
 }
 
@@ -235,7 +245,9 @@ func runVisualBuildLoop(cmd *cobra.Command, consent bool) error {
 }
 
 var multimodalRetryCmd = &cobra.Command{
-	Use: "retry", Short: "Retry one visual attachment owner", Args: cobra.NoArgs,
+	Use: "retry", Short: "Retry one visual attachment owner",
+	Long:    "Retry visual embedding for an attachment identified by its archived message ID and exact SHA-256. Find the failed owner in status and correct the reported condition first.",
+	Example: "  msgvault multimodal retry --message 1234 --hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if multimodalRetryMessageID <= 0 || strings.TrimSpace(multimodalRetryHash) == "" {
 			return usageErr(cmd, errors.New("--message and --hash are required"))
@@ -258,14 +270,16 @@ var multimodalRetryCmd = &cobra.Command{
 }
 
 var multimodalRetireCmd = &cobra.Command{
-	Use: "retire <generation-id>", Short: "Retire a visual generation and delete its vectors", Args: cobra.ExactArgs(1),
+	Use: "retire <generation-id>", Short: "Retire a visual generation and delete its vectors",
+	Long:    "Retire the selected visual generation and delete its stored vectors. Inspect multimodal status before choosing a generation; --yes confirms the destructive index operation.",
+	Example: "  msgvault multimodal retire 12 --yes", Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !multimodalRetireYes {
 			return usageErr(cmd, errors.New("pass --yes to retire the visual generation and delete its vectors"))
 		}
 		generationID, err := strconv.ParseInt(args[0], 10, 64)
 		if err != nil || generationID <= 0 {
-			return usageErr(cmd, errors.New("generation-id must be positive"))
+			return validationErr(cmd, errors.New("generation-id must be positive"))
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {

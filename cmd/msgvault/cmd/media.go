@@ -22,8 +22,11 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 	var jsonOutput bool
 	search := &cobra.Command{Use: "search <query>", Short: "Find transcript and document text in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) (result error) {
 		request.Query = strings.Join(args, " ")
-		if request.Limit < 1 || (command.Flags().Changed("person") && request.PersonID <= 0) {
-			return errors.New("limit and explicit --person must be positive")
+		if request.Limit < 1 {
+			return withHint(validationErr(command, errors.New("--limit must be positive")), "use --limit 1 through 100, for example --limit 20")
+		}
+		if command.Flags().Changed("person") && request.PersonID <= 0 {
+			return withHint(validationErr(command, errors.New("--person must be positive")), "find person IDs with 'msgvault person list --json'")
 		}
 		request.Directions = make([]personscope.Direction, len(directions))
 		for i, direction := range directions {

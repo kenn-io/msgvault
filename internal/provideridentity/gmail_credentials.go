@@ -44,9 +44,9 @@ func (e *GmailCredentialError) Remediation() string {
 	case GmailOAuthConfiguration:
 		return "authenticated Gmail credentials are unavailable; configure the selected source's OAuth app and client-secrets file (see https://msgvault.io/guides/oauth-setup/)"
 	case GmailTokenMissing:
-		return "authenticated Gmail credentials are missing; run 'msgvault add-account' for the selected account using its existing OAuth app"
+		return "authenticated Gmail credentials are missing; run 'msgvault source gmail add' for the selected account using its existing OAuth app"
 	case GmailAuthorizationRevoked:
-		return "authenticated Gmail authorization has expired or been revoked; run 'msgvault add-account' for the selected account using its existing OAuth app and permissions"
+		return "authenticated Gmail authorization has expired or been revoked; run 'msgvault source gmail add' for the selected account using its existing OAuth app and permissions"
 	case GmailServiceAccountConfiguration:
 		return "authenticated Gmail service-account credentials are unavailable; check the selected source's service_account_key, key permissions, and domain-wide delegation"
 	default:

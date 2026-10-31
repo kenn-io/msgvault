@@ -261,7 +261,7 @@ func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {
 	require.Error(err, "expected stale Graph scope error")
 	require.ErrorContains(err, "missing Microsoft Graph scopes")
 	require.ErrorContains(err, "User.ReadBasic.All")
-	require.ErrorContains(err, "msgvault add-teams user@company.com")
+	require.ErrorContains(err, "msgvault source teams add user@company.com")
 }
 
 // TestGraphManager_TokenSource_MissingRosterScopesReturnsError covers tokens
@@ -293,7 +293,7 @@ func TestGraphManager_TokenSource_MissingRosterScopesReturnsError(t *testing.T) 
 	require.ErrorContains(err, "missing Microsoft Graph scopes")
 	require.ErrorContains(err, "TeamMember.Read.All")
 	require.ErrorContains(err, "ChannelMember.Read.All")
-	require.ErrorContains(err, "msgvault add-teams user@company.com")
+	require.ErrorContains(err, "msgvault source teams add user@company.com")
 }
 
 func TestGraphManager_TokenSource_MissingToken(t *testing.T) {
@@ -343,7 +343,7 @@ func TestGraphManager_SeparateTokenAndScopes(t *testing.T) {
 			name: "mail", manager: NewGraphMailManager, file: "msmail_user@company.com.json",
 			other: NewGraphManager, otherScopes: GraphScopes(), otherWorks: true,
 			wrongScopes: []string{"https://graph.microsoft.com/User.Read", scopeOfflineAccess, "openid", scopeEmail},
-			wantScope:   "https://graph.microsoft.com/Mail.Read", wantHint: "msgvault add-o365 user@company.com --graph",
+			wantScope:   "https://graph.microsoft.com/Mail.Read", wantHint: "msgvault source o365 add user@company.com --graph",
 		},
 		{
 			name: "contacts", manager: NewGraphContactsManager, file: "mscontacts_user@company.com.json",

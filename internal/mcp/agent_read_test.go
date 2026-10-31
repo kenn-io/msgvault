@@ -104,7 +104,7 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 			}
 			if tc.name == ToolSearchMessageBodies {
 				if st.IsPostgreSQL() {
-					assertions.Contains(task5SDKResultText(result), "rebuild-fts")
+					assertions.Contains(task5SDKResultText(result), "fts rebuild")
 				} else {
 					assertions.Contains(task5SDKResultText(result), `"index_state":"checking"`)
 				}

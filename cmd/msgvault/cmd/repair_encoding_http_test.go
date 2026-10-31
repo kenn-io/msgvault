@@ -14,6 +14,7 @@ import (
 
 func TestRepairEncodingUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert := assert.New(t)
+	ensureCommandGrammar(rootCmd)
 
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

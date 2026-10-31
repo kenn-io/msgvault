@@ -326,8 +326,8 @@ func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cache
 
 var buildCacheCmd = &cobra.Command{
 	Use:     "build-cache",
-	Aliases: []string{"build-parquet"}, // Backward compatibility
 	Short:   "Build analytics cache for fast TUI queries",
+	Example: "  msgvault cache build\n  msgvault cache build --full-rebuild",
 	Long: `Build analytics cache from the SQLite database.
 
 This command exports normalized tables to Parquet files for fast aggregate queries.
@@ -412,7 +412,7 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 			_, writeErr := fmt.Fprintln(cmd.OutOrStdout(),
 				"Cache build complete. The daemon is running and using the analytics cache.")
 			if writeErr != nil {
-				return fmt.Errorf("write build-cache completion: %w", writeErr)
+				return fmt.Errorf("write cache build completion: %w", writeErr)
 			}
 			return nil
 		case startupCacheBuildOutcomeFailed:
@@ -436,12 +436,12 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 		case cliStreamStdout:
 			_, err := fmt.Fprint(cmd.OutOrStdout(), data)
 			if err != nil {
-				return fmt.Errorf("write build-cache stdout: %w", err)
+				return fmt.Errorf("write cache build stdout: %w", err)
 			}
 		case cliStreamStderr:
 			_, err := fmt.Fprint(cmd.ErrOrStderr(), data)
 			if err != nil {
-				return fmt.Errorf("write build-cache stderr: %w", err)
+				return fmt.Errorf("write cache build stderr: %w", err)
 			}
 		}
 		return nil
@@ -470,7 +470,7 @@ func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
 	// the SQLite driver inside buildCache fails immediately with a confusing
 	// driver error.
 	if store.IsPostgresURL(dbDSN) {
-		return errors.New("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+		return errors.New("cache build is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
 	}
 	dbPath, err := resolveCacheSQLitePath(dbDSN)
 	if err != nil {
@@ -478,7 +478,7 @@ func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
 	}
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return fmt.Errorf("database not found: %s\nRun 'msgvault init-db' first", dbPath)
+		return fmt.Errorf("database not found: %s\nRun 'msgvault database init' first", dbPath)
 	}
 
 	release, err := acquireBuildCacheWriteLock(cfg, state)
@@ -514,7 +514,7 @@ func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
 	case buildCacheModeDefault:
 		result, err = buildCache(dbPath, analyticsDir, false, builderOverrides)
 	default:
-		return fmt.Errorf("unknown build-cache mode %d", mode)
+		return fmt.Errorf("unknown cache build mode %d", mode)
 	}
 	if err != nil {
 		return err
@@ -1767,8 +1767,8 @@ func validateStagedReplacementDatasets(
 
 var cacheStatsCmd = &cobra.Command{
 	Use:     "cache-stats",
-	Aliases: []string{"parquet-stats"}, // Backward compatibility
 	Short:   "Show statistics about the analytics cache",
+	Example: "  msgvault cache stats",
 	Long: `Display statistics about the analytics cache, including row counts and file sizes.
 
 Total messages counts the analytics-cache population: it includes messages
@@ -1807,35 +1807,35 @@ func printCacheStats(out io.Writer, errOut io.Writer, stats *cacheops.CacheStats
 		if err := writeCacheStatsLine(out, "No cache files found.\n"); err != nil {
 			return err
 		}
-		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to create them.\n"); err != nil {
+		if err := writeCacheStatsLine(out, "Run 'msgvault cache build' to create them.\n"); err != nil {
 			return err
 		}
 	case cacheops.StatusNoCacheData:
 		if err := writeCacheStatsLine(out, "No cache data found (directory exists but contains no data).\n"); err != nil {
 			return err
 		}
-		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to populate it.\n"); err != nil {
+		if err := writeCacheStatsLine(out, "Run 'msgvault cache build' to populate it.\n"); err != nil {
 			return err
 		}
 	case cacheops.StatusInterrupted:
 		if err := writeCacheStatsLine(out, "Analytics cache publication was interrupted.\n"); err != nil {
 			return err
 		}
-		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to repair it.\n"); err != nil {
+		if err := writeCacheStatsLine(out, "Run 'msgvault cache build' to repair it.\n"); err != nil {
 			return err
 		}
 	case cacheops.StatusStaleSchema:
 		if err := writeCacheStatsLine(out, "Analytics cache schema is stale.\n"); err != nil {
 			return err
 		}
-		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache --full-rebuild' to upgrade it.\n"); err != nil {
+		if err := writeCacheStatsLine(out, "Run 'msgvault cache build --full-rebuild' to upgrade it.\n"); err != nil {
 			return err
 		}
 	case cacheops.StatusDrifted:
 		if err := writeCacheStatsLine(out, "Analytics cache files do not match the committed publication.\n"); err != nil {
 			return err
 		}
-		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache --full-rebuild' to repair them.\n"); err != nil {
+		if err := writeCacheStatsLine(out, "Run 'msgvault cache build --full-rebuild' to repair them.\n"); err != nil {
 			return err
 		}
 	case cacheops.StatusReady:
@@ -2359,7 +2359,7 @@ func rebuildCacheAfterManualSync(dbPath string, state *invocation) error {
 	return rebuildCacheAfterWrite(dbPath, state)
 }
 
-// buildCacheSubprocess runs `msgvault build-cache` as a child process
+// buildCacheSubprocess runs `msgvault cache build` as a child process
 // instead of calling buildCache in-process.
 //
 // The daemon (`serve`) holds a long-lived go-sqlite3 connection to the
@@ -2419,9 +2419,9 @@ func runBuildCacheSubprocessCommand(cmd *exec.Cmd, stderrWriter io.Writer) error
 	if err := cmd.Run(); err != nil {
 		output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
 		if output != "" {
-			return fmt.Errorf("build-cache subprocess: %w; output: %s", err, output)
+			return fmt.Errorf("cache build subprocess: %w; output: %s", err, output)
 		}
-		return fmt.Errorf("build-cache subprocess: %w", err)
+		return fmt.Errorf("cache build subprocess: %w", err)
 	}
 	return nil
 }
@@ -2453,14 +2453,14 @@ func buildCacheSubprocessStream(
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("open build-cache subprocess stdout: %w", err)
+		return fmt.Errorf("open cache build subprocess stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("open build-cache subprocess stderr: %w", err)
+		return fmt.Errorf("open cache build subprocess stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start build-cache subprocess: %w", err)
+		return fmt.Errorf("start cache build subprocess: %w", err)
 	}
 
 	var emitMu sync.Mutex
@@ -2491,7 +2491,7 @@ func buildCacheSubprocessStream(
 		return secondStreamErr
 	}
 	if waitErr != nil {
-		return fmt.Errorf("build-cache subprocess: %w", waitErr)
+		return fmt.Errorf("cache build subprocess: %w", waitErr)
 	}
 	return nil
 }
@@ -2503,7 +2503,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 	}
 
 	args := globalConfigFlagArgs(optionsFromContext(ctx))
-	args = append(args, "--no-log-file", "build-cache")
+	args = append(args, "--no-log-file", "cache", "build")
 	switch mode {
 	case buildCacheModeDefault:
 	case buildCacheModeFull:
@@ -2515,7 +2515,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 	case buildCacheModeScheduledAuto:
 		args = append(args, "--scheduled-auto")
 	default:
-		return nil, fmt.Errorf("construct build-cache subprocess: unknown mode %d", mode)
+		return nil, fmt.Errorf("construct cache build subprocess: unknown mode %d", mode)
 	}
 
 	// exe is this binary (os.Executable) and args are our own fixed subcommand
@@ -2549,7 +2549,7 @@ func streamBuildCachePipe(
 			if firstErr != nil {
 				return firstErr
 			}
-			return fmt.Errorf("read build-cache subprocess %s: %w", eventType, err)
+			return fmt.Errorf("read cache build subprocess %s: %w", eventType, err)
 		}
 	}
 }

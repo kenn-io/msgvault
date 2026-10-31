@@ -25,7 +25,7 @@ included when ready; counts_pending: true replaces them while refreshing.
 
 Pass email to --account or id to --source-id on other commands;
 export-messages takes --source <type>:<email>.`,
-	Example: `  msgvault list-accounts --json`,
+	Example: `  msgvault account list --json`,
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return listHTTPAccounts(cmd)
@@ -53,7 +53,7 @@ func outputAccountStats(stats []accountStats) error {
 		return outputAccountsJSON(stats)
 	}
 	if len(stats) == 0 {
-		fmt.Println("No accounts found. Use 'msgvault add-account <email>' to add one.")
+		fmt.Println("No accounts found. Use 'msgvault source gmail add <email>' to add one.")
 		return nil
 	}
 	outputAccountsTable(stats)

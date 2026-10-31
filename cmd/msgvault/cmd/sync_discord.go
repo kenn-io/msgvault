@@ -35,6 +35,8 @@ func newSyncDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync-discord [guild-id-or-name]",
 		Short: "Sync registered Discord guild history",
+		Example: `  msgvault source discord sync
+  msgvault source discord sync "Example Guild" --after 2026-01-01`,
 		Long: `Sync one registered Discord guild, or every registered guild when no
 argument is supplied. Guilds run sequentially in stable source order, and one
 guild failure does not prevent later guilds from running.`,
@@ -59,7 +61,7 @@ guild failure does not prevent later guilds from running.`,
 func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string, opts syncDiscordOptions) error {
 	after, err := parseDiscordAfter(opts.After)
 	if err != nil {
-		return usageErr(cmd, err)
+		return validationErr(cmd, err)
 	}
 	st, cleanup, err := deps.openStore()
 	if err != nil {

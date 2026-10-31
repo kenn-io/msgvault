@@ -11,11 +11,11 @@ bundle to a Linux host with Docker, such as a NAS, cloud VM, or Raspberry Pi.
 The flow is built on three capabilities:
 
 - `msgvault setup` interactive wizard that can generate a deployment bundle
-- `msgvault export-token` to upload OAuth tokens over API
+- `msgvault account export-token` to upload OAuth tokens over API
 - `[remote]` config for running local CLI commands against a remote server
 
 !!! note "Version Requirement"
-    Remote deployment requires msgvault with NAS/Docker support (`setup`, `export-token`, and the token upload API). Check that your installed version includes these commands before proceeding.
+    Remote deployment requires msgvault with NAS/Docker support (`setup`, `account export-token`, and the token upload API). Check that your installed version includes these commands before proceeding.
 
 ## Setup Flow Overview
 
@@ -147,18 +147,18 @@ For each mailbox:
 1. Add account locally (requires browser):
 
 ```bash
-msgvault add-account you@gmail.com
+msgvault source gmail add you@gmail.com
 ```
 
 2. Export the token to the remote endpoint:
 
 ```bash
-msgvault export-token you@gmail.com \
+msgvault account export-token you@gmail.com \
   --to http://nas-ip:8080 --api-key YOUR_API_KEY --allow-insecure
 ```
 
 !!! note "Why `--allow-insecure`?"
-    `export-token` requires HTTPS by default. Most deployments use Tailscale or a home LAN where HTTP is fine — use `--allow-insecure` in these cases.
+    `account export-token` requires HTTPS by default. Most deployments use Tailscale or a home LAN where HTTP is fine — use `--allow-insecure` in these cases.
 
     If you ran `msgvault setup` and configured a remote server, the wizard already set `allow_insecure = true` in your local config, so `--allow-insecure` is not needed on the command line.
 
@@ -167,14 +167,14 @@ The command uploads to `POST /api/v1/auth/token/{email}` and, by default, also p
 - default sync schedule `0 2 * * *`
 - account enabled
 
-For Calendar-only access, use `msgvault export-token <email> --upload-only` to upload the token without creating a Gmail sync schedule. Then register Calendar on the server with `msgvault add-calendar <email>`.
+For Calendar-only access, use `msgvault account export-token <email> --upload-only` to upload the token without creating a Gmail sync schedule. Then register Calendar on the server with `msgvault source calendar add <email>`.
 
 If you did not configure remote details during setup, you can also set:
 
 ```bash
 export MSGVAULT_REMOTE_URL=http://nas-ip:8080
 export MSGVAULT_REMOTE_API_KEY=YOUR_API_KEY
-msgvault export-token you@gmail.com --allow-insecure
+msgvault account export-token you@gmail.com --allow-insecure
 ```
 
 ## 4) Run Initial Full Sync
@@ -185,17 +185,17 @@ continues to own and serialize archive writes:
 
 ```bash
 # Required — scheduled sync will not work without this
-docker exec msgvault msgvault sync-full you@gmail.com
+docker exec msgvault msgvault sync full you@gmail.com
 
 # Optional: test with a small batch first
-docker exec msgvault msgvault sync-full you@gmail.com --limit 100
+docker exec msgvault msgvault sync full you@gmail.com --limit 100
 ```
 
 After the full sync completes, scheduled syncs run automatically on the cron schedule registered during token export (`0 2 * * *` by default). The daemon runs these itself, so there is no contention. You can also trigger manual syncs through the CLI or the incremental sync API:
 
 ```bash
 # Full or incremental sync through the daemon-backed CLI
-docker exec msgvault msgvault sync-full you@gmail.com
+docker exec msgvault msgvault sync full you@gmail.com
 docker exec msgvault msgvault sync you@gmail.com
 
 # Trigger incremental sync via API (only works after full sync)
@@ -206,9 +206,9 @@ curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/statu
 ```
 
 Maintenance commands that mutate the archive also go through the daemon-backed
-CLI. For example, `docker exec msgvault msgvault repair-encoding`,
-`docker exec msgvault msgvault build-cache`, and
-`docker exec msgvault msgvault rebuild-fts` send HTTP requests to the serving
+CLI. For example, `docker exec msgvault msgvault repair encoding`,
+`docker exec msgvault msgvault cache build`, and
+`docker exec msgvault msgvault fts rebuild` send HTTP requests to the serving
 process and stream its output back to the terminal instead of opening SQLite in
 a second writer process.
 
@@ -227,7 +227,7 @@ curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/statu
 
 !!! tip "Archive Google Calendar too"
     The same headless-token workflow archives Google Calendar. Authorize with
-    `msgvault add-calendar you@gmail.com` on a machine with a browser, copy the
+    `msgvault source calendar add you@gmail.com` on a machine with a browser, copy the
     token to the server (it now carries Gmail + Calendar), then add a `[[gcal]]`
     entry with a cron `schedule` so the daemon syncs it. See
     [Google Calendar](/docs/usage/calendar/).
@@ -267,7 +267,7 @@ api_key = "YOUR_API_KEY"
 allow_insecure = true
 ```
 
-HTTP-backed CLI commands automatically use the remote API. This includes `sync`, `sync-full`, `verify`, `search` in FTS mode, `query`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `show-message`, `export-eml`, `export-attachment`, `export-attachments`, `rebuild-fts`, `build-cache`, `cache-stats`, and `tui`.
+HTTP-backed CLI commands automatically use the remote API. This includes `sync`, `sync full`, `verify`, `search` in FTS mode, `query`, `stats`, `account list`, `sender list`, `domain list`, `label list`, `identity` subcommands, `collection` subcommands, `show`, `export eml`, `export attachment`, `export attachments`, `fts rebuild`, `cache build`, `cache stats`, and `tui`.
 
 Use `--local` only when you explicitly want the command to talk to this machine's local background daemon instead of the configured remote.
 
@@ -311,7 +311,7 @@ Give a laptop or another person read access without handing out the owner `api_k
 
 Reach the server over the same private network as the owner key, such as Tailscale. If you put an HTTPS reverse proxy on that network in front of the main listener, forward the `X-Api-Key` header unchanged. A reader key still reads the whole archive, so the advice in [Security Notes](#security-notes) about not exposing the server to the internet applies to it too.
 
-A remote client key can search, show messages and whole threads, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true` it can also create, edit, and delete collections. Aggregate views aren't available, so `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request gets HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
+A remote client key can search, show messages and whole threads, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true` it can also create, edit, and delete collections. Aggregate views aren't available, so `sender list`, `domain list`, `label list`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request gets HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
 
 Direct connections retain [API rate limiting](/docs/api-server/#rate-limiting), so a throttled thread export keeps files completed before the failed request.
 
@@ -322,10 +322,10 @@ Remote client responses have fixed limits:
 | Search results per request | 500 | 400 `remote_search_limit` |
 | Message content or raw MIME | 64 MiB | 413 `remote_message_too_large` |
 | Original-message endpoint | 64 MiB | 413 `original_message_too_large` |
-| Whole-thread export (`export-eml --thread`) | 500 messages | 413 `remote_thread_too_large` |
+| Whole-thread export (`export eml --thread`) | 500 messages | 413 `remote_thread_too_large` |
 | Attachment | 1 GiB | 413 `remote_attachment_too_large` |
 
-A reader key can't show a message whose text exceeds 64 MiB or list that message's attachments. When stored text is missing, the raw MIME used to build message details must also fit the 64 MiB limit. `export-eml` still exports raw MIME when it fits that limit.
+A reader key can't show a message whose text exceeds 64 MiB or list that message's attachments. When stored text is missing, the raw MIME used to build message details must also fit the 64 MiB limit. `export eml` still exports raw MIME when it fits that limit.
 
 ## Platform Notes
 
@@ -460,7 +460,7 @@ The `schedule` field in `[[accounts]]` uses standard cron format (5 fields):
 
 ### Export fails with HTTPS required
 
-`msgvault export-token` requires HTTPS by default. If your endpoint is `http://`, add `--allow-insecure`.
+`msgvault account export-token` requires HTTPS by default. If your endpoint is `http://`, add `--allow-insecure`.
 
 ### 401/authorization errors from export
 
@@ -471,7 +471,7 @@ Check that `X-API-Key` matches the server's `[server] api_key` and that `/api/v1
 Scheduled syncs and the public sync API run incremental syncs. You must run a full sync first through the daemon-backed CLI (see [Run Initial Full Sync](#4-run-initial-full-sync)):
 
 ```bash
-docker exec msgvault msgvault sync-full you@gmail.com
+docker exec msgvault msgvault sync full you@gmail.com
 ```
 
 ### Account not syncing after import
@@ -482,4 +482,4 @@ Verify the account exists in the server config:
 curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/accounts
 ```
 
-If missing, re-run `export-token` without `--upload-only`, which also posts account metadata.
+If missing, re-run `account export-token` without `--upload-only`, which also posts account metadata.

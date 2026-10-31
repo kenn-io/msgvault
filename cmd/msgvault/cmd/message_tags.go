@@ -22,7 +22,8 @@ func newMessageTagsCommand(backend messageTagBackend) *cobra.Command {
 	var change emailtags.MessageTagChange
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use: "message-tags <id>", Short: "Read or update native email tags", Args: cobra.ExactArgs(1),
+		Use: "message-tags <id>", Short: "Read or update native email tags",
+		Example: "  msgvault message tags 1234 --json\n  msgvault message tags 1234 --add project-example --dry-run --json", Args: cobra.ExactArgs(1),
 		Long: `Read tags from the provider or add and remove them on one archived message.
 Gmail edits use existing user label IDs returned in available_tags. IMAP edits
 use custom keyword atoms. Microsoft Graph edits use category names.
@@ -31,13 +32,13 @@ Use --dry-run with an edit to preview it without writing.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil || id <= 0 {
-				return errors.New("message ID must be a positive archived message ID")
+				return withHint(validationErr(cmd, errors.New("message ID must be a positive archived message ID")), "find internal message IDs with 'msgvault search <query> --json'")
 			}
 			var input *emailtags.MessageTagChange
 			if len(change.Add)+len(change.Remove) > 0 {
 				input = &change
 			} else if change.DryRun {
-				return errors.New("--dry-run requires --add or --remove")
+				return usageErr(cmd, errors.New("--dry-run requires --add or --remove"))
 			}
 			client := backend
 			if client == nil {

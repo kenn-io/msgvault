@@ -184,7 +184,7 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 	}
 
 	run := func(secret, draftID string, revision int64) []api.CLIRunEvent {
-		body, err := json.Marshal(api.CLIRunRequest{Args: []string{draftRecoverCommand, draftID, "--revision", strconv.FormatInt(revision, 10), "--json"}})
+		body, err := json.Marshal(api.CLIRunRequest{Args: []string{"draft", "recover", draftID, "--revision", strconv.FormatInt(revision, 10), "--json"}})
 		requirements.NoError(err)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 		requirements.NoError(err)

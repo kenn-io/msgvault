@@ -5,16 +5,30 @@ tool. The user's archive is stored locally in a SQLite database with
 Parquet-based analytics. Use the commands below to help the user set up, sync,
 explore, search, and manage their archive.
 
+Start by checking setup and finding the right account:
+
+```sh
+msgvault setup status --json
+msgvault account list --json
+msgvault search 'newer_than:30d' --json
+msgvault show <id> --json
+```
+
+Use the numeric `id` in search results to read a message. Source IDs and account
+identifiers come from `account list`; person IDs come from `person list`.
+Commands use a local daemon or `[remote].url` in config.toml. `--local` selects
+local operation; delegated agents use `--agent-url` and `--agent-token-file`.
+
 All data is stored in `~/.msgvault/` by default (override with `MSGVAULT_HOME`).
 
-For current search and reading options, run `msgvault search --help`, `msgvault show --help`, and `msgvault show-thread --help`.
+For current search and reading options, run `msgvault search --help`, `msgvault show --help`, and `msgvault thread show --help`.
 
 ## Setup and account management
 
 ### Initialize the database
 
 ```bash
-msgvault init-db
+msgvault database init
 ```
 
 Creates the SQLite database and schema at `~/.msgvault/msgvault.db`. Safe to
@@ -24,10 +38,10 @@ run multiple times — tables are only created if they don't exist.
 
 ```bash
 # Browser-based OAuth (default)
-msgvault add-account user@gmail.com
+msgvault source gmail add you@example.com
 
 # Headless / device code flow (for SSH sessions, no browser)
-msgvault add-account user@gmail.com --headless
+msgvault source gmail add you@example.com --headless
 ```
 
 Requires `oauth.client_secrets` to be set in `~/.msgvault/config.toml` pointing
@@ -59,19 +73,19 @@ run again to continue from the last checkpoint.
 
 ```bash
 # Sync everything
-msgvault sync-full user@gmail.com
+msgvault sync full you@example.com
 
 # Sync a date range
-msgvault sync-full user@gmail.com --after 2024-01-01 --before 2024-12-31
+msgvault sync full you@example.com --after 2024-01-01 --before 2024-12-31
 
 # Sync with a Gmail search query
-msgvault sync-full user@gmail.com --query "from:someone@example.com"
+msgvault sync full you@example.com --query "from:someone@example.com"
 
 # Limit message count (useful for testing)
-msgvault sync-full user@gmail.com --limit 100
+msgvault sync full you@example.com --limit 100
 
 # Force fresh sync (skip resume from checkpoint)
-msgvault sync-full user@gmail.com --noresume
+msgvault sync full you@example.com --noresume
 ```
 
 Sync is **read-only** — it never modifies anything in Gmail.
@@ -82,7 +96,7 @@ Fetches only changes since the last sync using the Gmail History API. Much
 faster than a full sync. Requires a prior full sync.
 
 ```bash
-msgvault sync user@gmail.com
+msgvault sync you@example.com
 ```
 
 If Gmail's history has expired (~7 days), it will suggest running a full sync.
@@ -95,10 +109,10 @@ can also build it manually:
 
 ```bash
 # Incremental update (only new messages)
-msgvault build-cache
+msgvault cache build
 
 # Full rebuild from scratch
-msgvault build-cache --full-rebuild
+msgvault cache build --full-rebuild
 ```
 
 Cache files are stored in `~/.msgvault/analytics/`.
@@ -168,21 +182,21 @@ and `"quoted phrases"` perform full-text search across subject and body.
 Existing archives can backfill List-Id values without contacting providers:
 
 ```bash
-msgvault repair-list-ids          # dry run
-msgvault repair-list-ids --apply  # write changes
+msgvault repair list-ids          # dry run
+msgvault repair list-ids --apply  # write changes
 ```
 
 ## View a single message
 
 ```bash
 # By internal ID (from search results)
-msgvault show-message 12345
+msgvault show 12345
 
 # By Gmail message ID
-msgvault show-message 18f0abc123def
+msgvault show 18f0abc123def
 
 # Structured output
-msgvault show-message 12345 --json
+msgvault show 12345 --json
 ```
 
 The JSON output includes: `id`, `source_message_id`, `subject`, `from`, `to`,
@@ -195,13 +209,13 @@ All support `--limit` (`-n`), `--after`, `--before`, and `--json`.
 
 ```bash
 # Top senders by email address
-msgvault list-senders --limit 20 --json
+msgvault sender list --limit 20 --json
 
 # Top sender domains
-msgvault list-domains --after 2024-01-01 --json
+msgvault domain list --after 2024-01-01 --json
 
 # Labels with message counts
-msgvault list-labels --json
+msgvault label list --json
 ```
 
 Each row in JSON output contains: `key`, `count`, `total_size`, `attachment_size`.
@@ -209,8 +223,8 @@ Each row in JSON output contains: `key`, `count`, `total_size`, `attachment_size
 ## Export a message as .eml
 
 ```bash
-msgvault export-eml 12345
-msgvault export-eml 12345 --output message.eml
+msgvault export eml 12345
+msgvault export eml 12345 --output message.eml
 ```
 
 Exports the raw MIME data as a standard `.eml` file compatible with most email
@@ -223,34 +237,34 @@ Staged deletions are stored as manifests and must be explicitly executed.
 
 ```bash
 # List all deletion batches (pending, in-progress, completed, failed)
-msgvault list-deletions
+msgvault deletion list
 
 # Show details of a specific batch
-msgvault show-deletion <batch-id>
+msgvault deletion show <batch-id>
 
 # Cancel a pending batch
-msgvault cancel-deletion <batch-id>
+msgvault deletion cancel <batch-id>
 
 # List staged batches without executing (always allowed)
-msgvault delete-staged --list
+msgvault deletion execute --list
 
 # Execute pending deletions (default = trash, recoverable for 30 days)
-msgvault delete-staged --yes
+msgvault deletion execute --yes
 
 # Execute a specific batch
-msgvault delete-staged <batch-id>
+msgvault deletion execute <batch-id>
 
 # Permanently delete via batch API (fast, no recovery — opt-in)
-msgvault delete-staged --permanent
+msgvault deletion execute --permanent
 
 # Dry run — show what would be deleted without doing it (always allowed)
-msgvault delete-staged --dry-run
+msgvault deletion execute --dry-run
 
 # Specify which account to delete from
-msgvault delete-staged --account user@gmail.com
+msgvault deletion execute --account you@example.com
 
 # One-command alternative to durable config consent
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged <batch-id>
+MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute <batch-id>
 ```
 
 **Note:** Starting in v0.20.0, remote deletion remains permanently opt-in. The
@@ -261,7 +275,7 @@ daemon's own `[deletion]` section is not policy for a command invoked
 elsewhere. Staging, listing, inspecting, and dry-running deletion batches
 remain ungated.
 
-**Warning:** `delete-staged --permanent` permanently deletes messages from
+**Warning:** `deletion execute --permanent` permanently deletes messages from
 Gmail with no Gmail-side recovery. The default mode moves messages to Gmail
 trash, which is recoverable for 30 days. Always verify with `--dry-run`
 first regardless of mode.
@@ -269,8 +283,8 @@ first regardless of mode.
 ## Verify archive integrity
 
 ```bash
-msgvault verify user@gmail.com
-msgvault verify user@gmail.com --sample 500
+msgvault verify you@example.com
+msgvault verify you@example.com --sample 500
 ```
 
 Compares local message count with Gmail, checks raw MIME data integrity, and
@@ -280,7 +294,7 @@ samples random messages to verify they can be decompressed.
 
 ```bash
 # Repair invalid UTF-8 encoding in message text fields
-msgvault repair-encoding
+msgvault repair encoding
 
 # Self-update to latest release
 msgvault update
@@ -346,19 +360,19 @@ file on the CLI machine.
 
 1. **Check status**: `msgvault stats` — see what's in the archive.
 2. **Search**: `msgvault search <query> --json` — find relevant messages.
-3. **Read details**: `msgvault show-message <id> --json` — get full message content.
-4. **Analyze**: `list-senders`, `list-domains`, `list-labels` with `--json` for patterns.
-5. **Sync new mail**: `msgvault sync user@gmail.com` if archive is stale.
+3. **Read details**: `msgvault show <id> --json` — get full message content.
+4. **Analyze**: `sender list`, `domain list`, `label list` with `--json` for patterns.
+5. **Sync new mail**: `msgvault sync you@example.com` if archive is stale.
 
 ## Tips
 
 - **Always use `--json`** for programmatic access. Available on: `search`,
-  `show-message`, `list-senders`, `list-domains`, `list-labels`.
-- Search results return an `id` field — use it with `show-message` for full content.
+  `show`, `sender list`, `domain list`, `label list`.
+- Search results return an `id` field — use it with `show` for full content.
 - Date filters use `YYYY-MM-DD` format.
 - Relative date units: `d` (days), `w` (weeks), `m` (months), `y` (years).
 - All query/search commands are read-only and never modify data.
-- Deletion requires explicit staging (TUI) + execution (`delete-staged`).
+- Deletion requires explicit staging (TUI) + execution (`deletion execute`).
 - Use `--verbose` (`-v`) on any command for debug logging.
 
 ## Restricted remote reads
@@ -371,7 +385,7 @@ their optional expiry, or when the daemon restarts.
 ```bash
 msgvault agent-token issue --label researcher --permissions search.read,message.read --source-ids 1,2 --expires 24h
 msgvault --agent-url https://archive.example.test --agent-token-file ./reader.token search 'subject:meeting' --json
-msgvault --agent-url https://archive.example.test --agent-token-file ./reader.token show-message 42 --json
+msgvault --agent-url https://archive.example.test --agent-token-file ./reader.token show 42 --json
 ```
 
 Add `stats.read` for source statistics and `attachment.read` for attachment
@@ -380,3 +394,32 @@ delegated draft and calendar tools. Explicit account,
 collection, and multi-source scopes must fit entirely inside the grant. Read
 grants do not authorize sync, deletion, SQL, export, or administration. See the
 CLI reference's agent-token section for supported read paths and limitations.
+
+## Errors and recovery
+
+Errors go to stderr and end with `hint: <next step>`. Commands offering `--json`
+write their final error as a JSON line on stderr; warnings or progress may
+precede it. Successful JSON data stays on stdout.
+
+```json
+{"error":{"code":"usage","message":"unknown flag: --typo","hint":"run 'msgvault search --help' for flags and examples","exit_code":2}}
+```
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Internal or unclassified failure |
+| 2 | Wrong command, flags, required arguments, or combinations |
+| 3 | Invalid value |
+| 4 | Resource not found |
+| 5 | Archive or provider not initialized |
+| 6 | State conflict |
+| 7 | Daemon/provider unavailable or authentication failure |
+| 75 | Sync paused; daemon streams may report a paused outcome |
+| 130 | Interrupted by a signal |
+
+Run the command's `--help` for current flags. Check `msgvault daemon status`
+for connectivity. `MSGVAULT_HOME` selects a home, `MSGVAULT_IMAP_PASSWORD` supplies
+an IMAP password, and configured embedding providers read `VOYAGE_API_KEY` or
+`OPENAI_API_KEY`. Remote deletion requires deliberate owner consent; agents
+cannot grant it to themselves.

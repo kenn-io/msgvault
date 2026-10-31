@@ -1052,7 +1052,7 @@ func TestCLIIdentityDiscoverGmailProfileFailurePrecedesScan(t *testing.T) {
 		}, http.StatusInternalServerError, ""},
 		{"missing credentials", func(context.Context, *store.Source) (string, error) {
 			return "", provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing, errors.New("synthetic-secret-token"))
-		}, http.StatusBadRequest, "msgvault add-account"},
+		}, http.StatusBadRequest, "msgvault source gmail add"},
 		{"revoked credentials", func(context.Context, *store.Source) (string, error) {
 			return "", fmt.Errorf("profile: %w", provideridentity.NewGmailCredentialError(provideridentity.GmailAuthorizationRevoked, errors.New("synthetic-secret-token")))
 		}, http.StatusBadRequest, "expired or been revoked"},

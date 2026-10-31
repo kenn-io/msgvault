@@ -89,12 +89,17 @@ This command:
 3. Checks how many messages have raw MIME data stored
 4. Samples random messages and verifies their MIME can be decompressed
 
-Examples:
-  msgvault verify you@gmail.com
+Only Gmail accounts are compared with the provider. --skip-db-check skips the
+database integrity check; it does not enable other providers. --json returns
+one object with email, archive_account_found, database_integrity_checked,
+gmail_messages_total, archived_messages, difference, raw_mime_messages,
+raw_mime_coverage_percent, sample_size, sample_verified and sample_errors.
+A failed integrity or sample check returns a nonzero exit status.`,
+	Example: `  msgvault verify you@gmail.com
   msgvault verify you@gmail.com --sample 200
   msgvault verify you@gmail.com --skip-db-check
   msgvault verify you@gmail.com --json`,
-	Args: cobra.ExactArgs(1),
+	Args: sourceExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if isDaemonCLISubprocess() {
 			return runVerifyLocal(cmd, args)
@@ -286,7 +291,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		fmt.Printf("Gmail account %s not found in database.\n", email)
-		fmt.Println("Run 'sync-full' first to populate the archive.")
+		fmt.Printf("Run 'msgvault sync full %s' to populate the archive; if not yet registered, run 'msgvault source gmail add %s'. List sources with 'msgvault account list --json'.\n", email, email)
 		if dbCorrupt {
 			return errors.New("database integrity check failed")
 		}
@@ -463,7 +468,7 @@ func printIntegrityRecoveryHint(integrityErrors []string) {
 
 	if ftsErrs > 0 {
 		fmt.Println("  Search index (FTS5) corruption:")
-		fmt.Println("    Run: msgvault rebuild-fts")
+		fmt.Println("    Run: msgvault fts rebuild")
 		fmt.Println("    Drops and recreates messages_fts from the core tables.")
 		fmt.Println("    SQLite's 'rebuild' pragma reads from the corrupt shadow")
 		fmt.Println("    tables and cannot clear this state.")

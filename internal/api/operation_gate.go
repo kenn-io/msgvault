@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/msgvault/internal/cligrammar"
 )
 
 const cliRunGateInspectionMaxBytes = 1 << 20
@@ -583,7 +585,7 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 // Malformed and invalid bodies stay gated and are rejected by the handler.
 func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err error) {
 	if r == nil || r.Body == nil {
-		return "msgvault repair-message", false, nil
+		return "msgvault repair message", false, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, cliRunGateInspectionMaxBytes+1))
 	if err != nil {
@@ -599,7 +601,7 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 		req.Audit && strings.TrimSpace(req.Reference) == "" && req.SourceID >= 0 {
 		return "", true, nil
 	}
-	return "msgvault repair-message", false, nil
+	return "msgvault repair message", false, nil
 }
 
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
@@ -652,6 +654,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 		Args []string `json:"args"`
 	}
 	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
+		req.Args = cligrammar.Legacy(req.Args)
 		// Delegated callers are admitted by the same command and permission
 		// predicate as the handler, so rejected work never takes a gate slot.
 		if auth.Mode == AuthModeDelegated && !delegatedCLIRunAdmitted(req.Args, auth.Grant) {
@@ -662,7 +665,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 			return "", true, nil
 		}
 		if command != "" {
-			return "msgvault " + command, false, nil
+			return "msgvault " + strings.Join(cligrammar.Canonical(strings.Fields(command)), " "), false, nil
 		}
 	}
 	if auth.Mode == AuthModeDelegated {

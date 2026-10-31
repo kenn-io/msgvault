@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,18 +15,11 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/config"
 )
 
 func markDaemonCLISubprocessForTest(t *testing.T) {
 	t.Helper()
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-}
-
-type daemonCLIRunTestRequest struct {
-	Args []string          `json:"args"`
-	Env  map[string]string `json:"env"`
-	Cwd  string            `json:"cwd"`
 }
 
 type daemonCLIAddCalendarPlanTestRequest struct {
@@ -60,25 +52,6 @@ type daemonCLIDeduplicatePlanTestRequest struct {
 	Prefer                     string `json:"prefer"`
 	ContentHash                bool   `json:"content_hash"`
 	DeleteDupsFromSourceServer bool   `json:"delete_dups_from_source_server"`
-}
-
-func newDaemonCLIRunnerTestServer(
-	t *testing.T,
-	checkRequest func(daemonCLIRunTestRequest),
-	events ...string,
-) (*httptest.Server, *atomic.Int32) {
-	t.Helper()
-
-	requests := &atomic.Int32{}
-	mux := http.NewServeMux()
-	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
-		Service: daemonService,
-		Version: Version,
-	}))
-	mux.HandleFunc("/api/v1/cli/run", daemonCLIRunTestHandler(t, requests, checkRequest, events...))
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	return server, requests
 }
 
 func newDaemonCLIAddCalendarTestServer(
@@ -270,52 +243,6 @@ func newDaemonCLIDeduplicateTestServer(
 	return server, runRequests, planRequests
 }
 
-func daemonCLIRunTestHandler(
-	t *testing.T,
-	requests *atomic.Int32,
-	checkRequest func(daemonCLIRunTestRequest),
-	events ...string,
-) http.HandlerFunc {
-	t.Helper()
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		requests.Add(1)
-
-		var req daemonCLIRunTestRequest
-		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode request") {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if checkRequest != nil {
-			checkRequest(req)
-		}
-
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		if len(events) == 0 {
-			_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
-			return
-		}
-		for _, event := range events {
-			_, _ = w.Write([]byte(event + "\n"))
-		}
-	}
-}
-
-func configureRemoteDaemonForTest(t *testing.T, url string, configs ...*config.Config) context.Context {
-	t.Helper()
-	cfg := &config.Config{}
-	if len(configs) > 0 && configs[0] != nil {
-		cfg = configs[0]
-	}
-	if cfg.HomeDir == "" {
-		cfg.HomeDir = t.TempDir()
-	}
-	cfg.Remote.URL = url
-	cfg.Remote.AllowInsecure = true
-	return testInvocationContext(t.Context(), cfg, invocationOptions{})
-}
-
 func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -469,4 +396,18 @@ func TestDaemonCLIArgsFromCobraForwardsLoggingButSkipsOtherRootPersistentFlags(t
 	})
 
 	require.NoError(root.Execute(), "execute")
+}
+
+func TestCLIGrammarDaemonSerialization(t *testing.T) {
+	require := require.New(t)
+	root := &cobra.Command{Use: "msgvault"}
+	group := &cobra.Command{Use: "draft"}
+	cmd := newDraftReplyCommand()
+	cmd.Use = "reply <message-id>"
+	root.AddCommand(group)
+	group.AddCommand(cmd)
+	require.NoError(cmd.ParseFlags([]string{"--body", "source slack sync", "--json=false"}))
+	got, err := daemonCLIArgsFromCobra(cmd, []string{"42"})
+	require.NoError(err)
+	assert.Equal(t, []string{"draft-reply", "--body=source slack sync", "--json=false", "42"}, got)
 }

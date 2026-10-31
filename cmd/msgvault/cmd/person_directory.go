@@ -75,7 +75,7 @@ func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor string
 
 func writePersonDirectoryPage(cmd *cobra.Command, page *generated.DirectoryPeopleResponse, jsonOutput bool) error {
 	if page == nil {
-		return errors.New("person directory response was empty")
+		return readDaemonResponseError(errors.New("person directory response was empty"))
 	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), page, json.Deterministic(true))

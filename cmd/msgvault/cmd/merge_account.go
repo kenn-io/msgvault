@@ -16,14 +16,19 @@ func newMergeAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "merge-account --from <account> --into <account>",
 		Short: "Merge archived accounts",
-		Long:  "Move archived messages into a compatible account, preserve original evidence, and hide only unambiguous duplicates. Use --dry-run to preview the checks and counts. A merge retires the historical source, so preview first, then repeat with --yes to apply it.",
-		Args:  cobra.NoArgs,
+		Example: `  msgvault account merge --from old@example.com --into current@example.com --dry-run
+  msgvault account merge --from old@example.com --into current@example.com --yes`,
+		Long: "Move archived messages into a compatible account, preserve original evidence, and hide only unambiguous duplicates. Use --dry-run to preview the checks and counts. A merge retires the historical source, so preview first, then repeat with --yes to apply it.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			request.DryRunSet = true
 			request.FromSourceIDSet = cmd.Flags().Changed("from-source-id")
 			request.IntoSourceIDSet = cmd.Flags().Changed("into-source-id")
+			if (request.From == "" && !request.FromSourceIDSet) || (request.Into == "" && !request.IntoSourceIDSet) {
+				return withHint(usageErr(cmd, errors.New("account merge needs --from <account> and --into <account>, or --from-source-id and --into-source-id; list accounts with 'msgvault account list --json'")), "preview with 'msgvault account merge --from old@example.com --into current@example.com --dry-run'")
+			}
 			if !request.DryRun && !confirmed {
-				return errors.New("merge retires the historical source; preview with --dry-run, then repeat with --yes to apply")
+				return withHint(usageErr(cmd, errors.New("merge retires the historical source; preview with --dry-run, then repeat with --yes to apply")), "preview with 'msgvault account merge --from old@example.com --into current@example.com --dry-run', then repeat with --yes")
 			}
 			st, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {

@@ -27,14 +27,17 @@ const (
 )
 
 var embeddingsCmd = &cobra.Command{
-	Use:   embeddingsCommandName,
-	Short: "Manage message vector embeddings",
+	Use:     embeddingsCommandName,
+	Short:   "Manage message vector embeddings",
+	Long:    "Manage the generations used for semantic and hybrid message search. Inspect status, build or resume missing vectors, then inspect generations with list. Build completion normally activates the new generation; activate allows an explicit switch. Retire and prune remove vectors.",
+	Example: "  msgvault embeddings status\n  msgvault embeddings build --yes",
 }
 
 var embeddingsBuildCmd = newEmbeddingsBuildCmd("build")
 var embeddingsResumeCmd = &cobra.Command{
-	Use:   cmdUseResume,
-	Short: "Resume or top up the current vector embedding generation",
+	Use:     cmdUseResume,
+	Short:   "Resume or top up the current vector embedding generation",
+	Example: "  msgvault embeddings resume --backstop",
 	Long: `Resume or top up the current vector embedding generation.
 If a matching generation is building, this embeds any messages still
 needing embedding for it and activates it when complete. Otherwise it
@@ -44,35 +47,43 @@ watermark, catching any straggler messages the incremental scan skipped.`,
 	RunE: runEmbeddingsResume,
 }
 var embeddingsListCmd = &cobra.Command{
-	Use:   cmdUseList,
-	Short: "List vector embedding generations",
-	Args:  cobra.NoArgs,
-	RunE:  runEmbeddingsListCommand,
+	Use:     cmdUseList,
+	Short:   "List vector embedding generations",
+	Long:    "List generation IDs, state, and configuration for the message vector index. Use these IDs with activate, retire, and optimize; inspect status for message coverage and live progress.",
+	Example: "  msgvault embeddings list",
+	Args:    cobra.NoArgs,
+	RunE:    runEmbeddingsListCommand,
 }
 var embeddingsRetireCmd = &cobra.Command{
-	Use:   "retire <generation-id>",
-	Short: "Retire a vector embedding generation",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runEmbeddingsRetireCommand,
+	Use:     "retire <generation-id>",
+	Short:   "Retire a vector embedding generation",
+	Long:    "Retire a message vector generation selected by ID from embeddings list. Retirement removes its vectors; check which generation is active before confirming.",
+	Example: "  msgvault embeddings retire 12 --yes",
+	Args:    cobra.ExactArgs(1),
+	RunE:    runEmbeddingsRetireCommand,
 }
 var embeddingsActivateCmd = &cobra.Command{
-	Use:   "activate <generation-id>",
-	Short: "Activate a completed vector embedding generation",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runEmbeddingsActivateCommand,
+	Use:     "activate <generation-id>",
+	Short:   "Activate a completed vector embedding generation",
+	Long:    "Switch semantic and hybrid search to a completed message vector generation. Choose an ID from embeddings list. This changes the search index selection without changing archived messages.",
+	Example: "  msgvault embeddings activate 12 --yes",
+	Args:    cobra.ExactArgs(1),
+	RunE:    runEmbeddingsActivateCommand,
 }
 var embeddingsPruneCmd = &cobra.Command{
-	Use:   "prune",
-	Short: "Remove embeddings for hard-deleted messages",
-	Args:  cobra.NoArgs,
-	RunE:  runEmbeddingsPruneCommand,
+	Use:     "prune",
+	Short:   "Remove embeddings for hard-deleted messages",
+	Long:    "Remove vector entries whose messages have been permanently removed from the archive. Run after local purges to reclaim stale index entries; this does not delete archived messages.",
+	Example: "  msgvault embeddings prune",
+	Args:    cobra.NoArgs,
+	RunE:    runEmbeddingsPruneCommand,
 }
-var embedCmd = newEmbeddingsBuildCmd("build-embeddings")
 
 func newEmbeddingsBuildCmd(use string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   use,
-		Short: "Build or update the message vector index",
+		Use:     use,
+		Short:   "Build or update the message vector index",
+		Example: "  msgvault embeddings build --yes\n  msgvault embeddings build --full-rebuild --yes",
 		Long: `Build or update the vector embedding index for hybrid search.
 Writes vectors to the co-located vectors.db. In the default incremental
 mode, the command embeds any messages still needing embedding for the
@@ -119,8 +130,12 @@ func runEmbeddingsBuildLocal(cmd *cobra.Command) error {
 
 func runEmbeddingsBuildHTTP(cmd *cobra.Command, args []string) error {
 	if embedFullRebuild && !embedYes {
-		if !confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ") {
-			return errors.New("aborted")
+		confirmed, confirmationErr := confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
+		if confirmationErr != nil {
+			return confirmationErr
+		}
+		if !confirmed {
+			return withHint(errors.New("aborted"), "review the rebuild plan, then pass --yes to confirm noninteractively")
 		}
 		if err := cmd.Flags().Set("yes", "true"); err != nil {
 			return fmt.Errorf("set --yes after confirmation: %w", err)
@@ -170,7 +185,6 @@ func runEmbeddingsListCommand(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
-	embedCmd.Deprecated = "use 'msgvault embeddings build' instead"
 	embeddingsResumeCmd.Flags().BoolVar(&embedBackstop, "backstop", false,
 		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
 	embeddingsResumeCmd.Flags().StringArrayVar(&embedAccounts, "account", nil,
@@ -191,5 +205,4 @@ func init() {
 	embeddingsCmd.AddCommand(embeddingsOptimizeCmd)
 	embeddingsCmd.AddCommand(embeddingsOptimizeWorkerCmd)
 	rootCmd.AddCommand(embeddingsCmd)
-	rootCmd.AddCommand(embedCmd)
 }

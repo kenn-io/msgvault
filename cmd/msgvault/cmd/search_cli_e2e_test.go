@@ -117,7 +117,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	// Isolated command roots don't prove the packaged alias and thread command can read through the daemon.
 	out = run("show", strconv.FormatInt(ids[0], 10), "--body-only")
 	assert.Contains(out, "Reply 0")
-	out = run("show-thread", strconv.FormatInt(ids[0], 10))
+	out = run("thread", "show", strconv.FormatInt(ids[0], 10))
 	assert.Contains(out, "Reply 0")
 	// The full pipeline must preserve relevance unless the user requests another sort.
 	out = run("search", "project plan", "--mode", "vector", "--json")

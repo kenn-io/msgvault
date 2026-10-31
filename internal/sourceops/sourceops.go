@@ -46,6 +46,23 @@ type Selector struct {
 	SourceType  string `json:"-"`
 }
 
+// selectorHint retains transport-visible error text and classification while
+// letting frontends show a separate recovery step.
+type selectorHint struct {
+	error
+	hint string
+}
+
+func (e *selectorHint) Unwrap() error { return e.error }
+func (e *selectorHint) Hint() string  { return e.hint }
+
+func withSelectorHint(err error, hint string) error {
+	if err == nil {
+		return nil
+	}
+	return &selectorHint{error: err, hint: hint}
+}
+
 // Selection reports the normalized input, optional primary account source,
 // and every source selected by the chosen cardinality policy.
 type Selection struct {
@@ -179,14 +196,14 @@ func resolveSelectorContext(ctx context.Context, st Store, selector Selector) (s
 	case idSet:
 		source, err := getSourceByID(ctx, st, selector.SourceID)
 		if errors.Is(err, store.ErrSourceNotFound) {
-			return "", nil, opserr.NotFound(err)
+			return "", nil, withSelectorHint(opserr.NotFound(err), "list valid source IDs with 'msgvault account list --json'")
 		}
 		if err != nil {
 			return "", nil, opserr.Internal(fmt.Errorf("resolve source ID: %w", err))
 		}
 		return "", source, nil
 	case input == "":
-		return "", nil, opserr.Invalid(errors.New("account or source ID is required"))
+		return "", nil, withSelectorHint(opserr.Invalid(errors.New("account or source ID is required")), "choose an account identifier or source ID from 'msgvault account list --json'; see the command's --help for its selector flags")
 	default:
 		return input, nil, nil
 	}
@@ -244,13 +261,13 @@ func ambiguous(input string, sources []*store.Source) error {
 	for _, source := range sources {
 		details = append(details, fmt.Sprintf("%s (%s, id=%d)", source.Identifier, source.SourceType, source.ID))
 	}
-	return opserr.Invalid(fmt.Errorf(
+	return withSelectorHint(opserr.Invalid(fmt.Errorf(
 		"ambiguous source selector %q matches multiple sources: %s",
 		input,
 		strings.Join(details, ", "),
-	))
+	)), "list IDs with 'msgvault account list --json'; choose --source-id where supported, or --from-source-id and --into-source-id for 'msgvault account merge'")
 }
 
 func sourceNotFound(input string) error {
-	return opserr.NotFound(fmt.Errorf("no account found for %q", input))
+	return withSelectorHint(opserr.NotFound(fmt.Errorf("no account found for %q", input)), "run 'msgvault account list --json' to find account identifiers and source IDs")
 }

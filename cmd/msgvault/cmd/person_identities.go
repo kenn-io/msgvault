@@ -53,7 +53,7 @@ supported); supported means the value can be a draft recipient.`,
 
 func writePersonIdentities(cmd *cobra.Command, page *generated.PersonIdentitiesResponse, jsonOutput bool) error {
 	if page == nil {
-		return errors.New("person identities response was empty")
+		return readDaemonResponseError(errors.New("person identities response was empty"))
 	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), page, json.Deterministic(true))

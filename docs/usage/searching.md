@@ -6,7 +6,7 @@ description: Find archived messages by words, meaning, account, conversation, or
 
 Use `msgvault search` to find archived email, chats, calendar events, and
 meeting transcripts. Keyword search works without an embedding provider.
-Combine words with filters to narrow the result, then use `msgvault show-message <id>`
+Combine words with filters to narrow the result, then use `msgvault show <id>`
 to read a message. On newer `main` builds, `show` is an alias; use
 `show <id> --body-only --strip-quoted` for a shorter reading view.
 
@@ -60,7 +60,7 @@ msgvault search <query>
     in the background and keeps completed work across restarts. Indexed messages
     stay searchable. Automatic backfill doesn't refresh stale content in entries
     it considers complete or repair malformed SQLite search tables. Run
-    `msgvault rebuild-fts` to repair these problems by discarding and rebuilding
+    `msgvault fts rebuild` to repair these problems by discarding and rebuilding
     the full index.
     Search uses the current index and warns about
     incomplete results only for a known gap or rebuild, including a queued
@@ -155,7 +155,7 @@ address and calendar events of that calendar.
 - Repeating one operator matches any of the values; using both requires both.
 - Mail archived by an older version fills in on the source's next sync or
   import. For a file import you will not run again, use
-  [`msgvault repair-derived`](../cli-reference.md#repair-derived).
+  [`msgvault repair derived`](../cli-reference.md#repair-derived).
 - Confirming or removing an address updates the messages it affects before
   the command returns. If that update is interrupted, the next sync finishes
   it.
@@ -239,8 +239,8 @@ Fresh email ingest indexes `List-Id` automatically. For messages archived by
 an older msgvault version, preview the offline backfill first, then apply it:
 
 ```bash
-msgvault repair-list-ids
-msgvault repair-list-ids --apply
+msgvault repair list-ids
+msgvault repair list-ids --apply
 ```
 
 The default dry run reports what would change without modifying the archive.
@@ -286,7 +286,7 @@ search reject non-active deletion scopes instead of returning incomplete results
 Gmail incremental sync records History API deletion events. When the saved
 history cursor has expired, msgvault reconciles deletion metadata only after an
 unfiltered, unlimited snapshot of the complete mailbox succeeds. A regular
-`sync-full` result, including one narrowed by a query, limit, or date range, is
+`sync full` result, including one narrowed by a query, limit, or date range, is
 not treated as proof that omitted messages were deleted. In either path, the
 archive retains the message and raw MIME data; only its source-presence metadata
 changes.
@@ -341,7 +341,7 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Everything search](../web-ui.md#recording-matches).
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show <message_id>` to read a result in context. For browser recording search and its Person filter, see [Everything search](../web-ui.md#recording-matches).
 
 ## Search mirrored attachment text
 
@@ -362,7 +362,7 @@ also includes available attachment names and counts, and `conversation_id`.
 msgvault search 'project filename:budget' --snippet
 msgvault search 'filename:"budget plan.pdf"' --json
 msgvault show 42 --body-only --strip-quoted
-msgvault show-thread 7
+msgvault thread show 7
 ```
 
 `filename:` matches case-insensitive literal substrings, including `%` and `_`.
@@ -370,7 +370,7 @@ Repeating it requires every value to match an attachment of the message.
 It searches filenames, not document contents.
 Filename filters require daemon API schema 3.14.0 or newer.
 
-`show-thread` takes a message ID as the conversation anchor. It shows up to
+`thread show` takes a message ID as the conversation anchor. It shows up to
 100 archived messages in chronological order, strips quoted history, and
 reports truncation on stderr. Raise `--limit` up to 500, use `--offset` for later
 pages, or use `--json` for structured output. See the [CLI reference](../cli-reference.md#show-thread)

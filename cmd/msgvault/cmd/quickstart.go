@@ -16,13 +16,14 @@ var quickstartCmd = &cobra.Command{
 	Long: `Print a markdown quickstart guide explaining how to use the msgvault CLI.
 
 This is designed for AI agents that do not have MCP access. Pipe the output
-into your agent's context to give it full knowledge of available commands.
+into your agent's context for setup, source selection, search, exports, and recovery.
 
 Example:
   msgvault quickstart | pbcopy`,
-	Args: cobra.NoArgs,
+	Example: "  msgvault quickstart > QUICKSTART.md",
+	Args:    cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print(quickstartText)
+		fmt.Fprint(cmd.OutOrStdout(), quickstartText)
 	},
 }
 

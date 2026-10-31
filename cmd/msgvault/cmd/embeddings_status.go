@@ -23,13 +23,15 @@ var embeddingsStatusSource int64
 var embeddingsStatusInterval time.Duration
 
 var embeddingsStatusCmd = &cobra.Command{
-	Use: "status", Short: "Show embedding coverage, live progress, and batch timings", Args: cobra.NoArgs,
+	Use: "status", Short: "Show embedding coverage, live progress, and batch timings",
+	Long:    "Inspect message vector coverage, current build progress, and provider batch timing through the local daemon. Use --watch for repeated observations and embeddings list for generation IDs.",
+	Example: "  msgvault embeddings status --json", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if embeddingsStatusSource < 0 || cmd.Flags().Changed("source") && embeddingsStatusSource == 0 {
-			return usageErr(cmd, errors.New("--source must be positive"))
+			return validationErr(cmd, errors.New("--source must be positive"))
 		}
 		if embeddingsStatusWatch && embeddingsStatusInterval < time.Second {
-			return usageErr(cmd, errors.New("--interval must be at least 1s"))
+			return validationErr(cmd, errors.New("--interval must be at least 1s"))
 		}
 		client, info, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -79,7 +81,7 @@ func reconnectLocalDaemon(ctx context.Context, current localDaemonEndpoint) (*da
 	case err != nil:
 		return nil, current, fmt.Errorf("find local daemon: %w", err)
 	case !found:
-		return nil, current, errors.New("local daemon is not running")
+		return nil, current, withHint(errors.New("local daemon is not running"), "start the local daemon with 'msgvault daemon start'")
 	}
 	if err := inv.cfg.ResolveServerKey(); err != nil {
 		return nil, current, fmt.Errorf("resolve server API key: %w", err)

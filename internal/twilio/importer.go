@@ -38,7 +38,7 @@ type (
 	ImportSummary = callsync.Summary
 )
 
-var spec = callsync.Spec{SourceType: SourceType, Label: "Twilio", Command: "sync-twilio", RowPrefix: "twilio:"}
+var spec = callsync.Spec{SourceType: SourceType, Label: "Twilio", Command: "source twilio sync", RowPrefix: "twilio:"}
 
 const recordingPageSize = 1000
 

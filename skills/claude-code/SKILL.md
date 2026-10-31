@@ -142,9 +142,9 @@ For tasks that don't need SQL aggregation, use these directly:
 |------|---------|
 | Archive stats | `msgvault stats` |
 | Full-text search | `msgvault search "<query>" --json` |
-| Incremental sync | `msgvault sync-incremental <email>` |
-| Full sync | `msgvault sync-full <email>` |
-| Build analytics cache | `msgvault build-cache` |
+| Incremental sync | `msgvault sync <email>` |
+| Full sync | `msgvault sync full <email>` |
+| Build analytics cache | `msgvault cache build` |
 | Interactive TUI | `msgvault tui` |
 
 ## Tips

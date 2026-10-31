@@ -34,12 +34,13 @@ func newImportRawDirectoryCommand(format string, runImport func(context.Context,
 		Short: "Import a tree of RFC 5322 .eml files",
 		Long: `Import RFC 5322 .eml files stored in MailMate-style .mailbox
 directories. Nested mailbox names become slash-separated labels, and exact
-duplicate messages receive every mailbox label where they appear.`,
+duplicate messages receive every mailbox label where they appear. Use import maildir for cur/new mailbox directories instead. --identifier is the archive account identifier for this export.`,
+		Example: "  msgvault import eml ./Mail --identifier you@example.com\n  msgvault import eml ./Mail --identifier you@example.com --no-attachments",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return usageErr(cmd, fmt.Errorf("import-%s requires exactly 1 arg: <mail-dir>", format))
+				return usageErr(cmd, fmt.Errorf("import %s requires exactly 1 argument: <mail-dir>", format))
 			}
-			return nil
+			return sourceRequiredString(cmd, "identifier", "the account to file these messages under (for example you@example.com)", "msgvault import "+format+" ./mail --identifier you@example.com")
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -50,9 +51,6 @@ duplicate messages receive every mailbox label where they appear.`,
 			logger := state.logger
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
-			}
-			if flags.identifier == "" {
-				return usageErr(cmd, errors.New("--identifier is required"))
 			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -108,10 +106,8 @@ duplicate messages receive every mailbox label where they appear.`,
 		cmd.Long = `Import raw MIME messages from Maildir cur and new directories.
 Nested folders become slash-separated labels. Exact duplicate messages collect
 all folder and flag labels. The importer never modifies mailbox files and
-ignores tmp directories and symlinks. Import a stable mailbox snapshot.
-
-Example:
-  msgvault import-maildir ~/Maildir --identifier you@example.com`
+ignores tmp directories and symlinks. Import a stable mailbox snapshot.`
+		cmd.Example = "  msgvault import maildir ~/Maildir --identifier you@example.com"
 	}
 
 	cmd.Flags().StringVar(&flags.identifier, "identifier", "", "Account identifier for imported messages (required)")

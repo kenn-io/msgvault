@@ -72,12 +72,12 @@ List-Id substring to match.
 ## Read a message
 
 ```bash
-msgvault show-message 12345 --json
-msgvault export-eml 12345 -o message.eml
+msgvault show 12345 --json
+msgvault export eml 12345 -o message.eml
 ```
 
-`show-message --json` returns full headers, recipients, labels, an
-`attachments` array, and `body_text` / `body_html`. `export-eml` writes
+`show --json` returns full headers, recipients, labels, an
+`attachments` array, and `body_text` / `body_html`. `export eml` writes
 the raw MIME message (attachments included); `-o -` streams to stdout.
 
 ## Recipes

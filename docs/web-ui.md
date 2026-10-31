@@ -44,11 +44,11 @@ other workspace, `Enter` opens Everything with your query and search mode.
 ## Start and discover the URL
 
 ```bash
-msgvault build-cache
+msgvault cache build
 msgvault serve
 ```
 
-`build-cache` prepares the analytical tables before you open the browser. You
+`cache build` prepares the analytical tables before you open the browser. You
 can also run `serve` directly and let the default startup maintenance build a
 missing or stale cache in the background.
 
@@ -192,7 +192,7 @@ On unreleased builds, the same request adds an **Attachments** block when attach
 ## Read messages
 
 Open a `/messages/<id>` link to go directly to an archived message. CLI
-`search --json` and `show-message --json` responses include a `web_url` when
+`search --json` and `show --json` responses include a `web_url` when
 the selected daemon has an HTTP address. The link uses that daemon's address;
 the person opening it still needs access to the archive. Links to chat messages
 open a bounded part of the conversation around the selected message, with
@@ -225,7 +225,7 @@ for selection limits, source coverage, unknown duration, and action filters.
 
 The web tables share one analytical cache across message types. When it is missing,
 building, stale, or unavailable, the UI names that state and offers the
-available recovery steps. Run `msgvault build-cache` for an explicit rebuild, or leave `analytics.auto_build_cache =
+available recovery steps. Run `msgvault cache build` for an explicit rebuild, or leave `analytics.auto_build_cache =
 true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
@@ -504,7 +504,7 @@ and `D`, opens the Deletions workspace. The daemon first preflights the
 selection and reports any unavailable action before the UI offers a separate
 staging confirmation. The workspace lists, inspects, and cancels manifests; it
 cannot execute deletion against a provider. Use the explicit
-`msgvault delete-staged` CLI workflow for that final operation.
+`msgvault deletion execute` CLI workflow for that final operation.
 
 Without a selection, the workspace says "Nothing selected for deletion" and
 points back to Everything. With one, the **Review selection** panel shows the

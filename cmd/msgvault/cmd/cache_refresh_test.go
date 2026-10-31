@@ -86,7 +86,7 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 		assertions.Contains(err.Error(), "analytics.builder_memory_limit=1B")
 		assertions.Contains(err.Error(), "analytics.builder_temp_limit=32GB")
 		assertions.Contains(err.Error(), "analytics.builder_threads=")
-		assertions.Contains(err.Error(), "msgvault build-cache")
+		assertions.Contains(err.Error(), "msgvault cache build")
 	})
 
 	t.Run("derived refresh", func(t *testing.T) {

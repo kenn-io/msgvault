@@ -22,8 +22,9 @@ import (
 )
 
 var repairEncodingCmd = &cobra.Command{
-	Use:   "repair-encoding",
-	Short: "Repair invalid UTF-8 encoding in message text fields",
+	Use:     "repair-encoding",
+	Short:   "Repair invalid UTF-8 encoding in message text fields",
+	Example: "  msgvault repair encoding",
 	Long: `Scan for messages with invalid UTF-8 and repair them.
 
 This command repairs invalid UTF-8 in:

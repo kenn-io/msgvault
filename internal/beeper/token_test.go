@@ -16,7 +16,7 @@ func TestTokenRoundTrip(t *testing.T) {
 
 	_, err := LoadToken(dir)
 	require.Error(err)
-	assert.Contains(err.Error(), "add-beeper")
+	assert.Contains(err.Error(), "source beeper add")
 
 	require.NoError(SaveToken(dir, "secret-token"))
 

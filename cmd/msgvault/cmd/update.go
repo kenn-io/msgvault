@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -18,8 +18,9 @@ import (
 
 func newUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "update",
-		Short: "Update msgvault to the latest version",
+		Use:     "update",
+		Short:   "Update msgvault to the latest version",
+		Example: "  msgvault update --check\n  msgvault update --yes",
 		Long: `Check for and install msgvault updates.
 
 Shows exactly what will be downloaded and where it will be installed.
@@ -118,9 +119,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	if !yes {
 		fmt.Print("\nProceed with update? [y/N] ")
-		var response string
-		_, _ = fmt.Scanln(&response)
-		if !isYesAnswer(strings.ToLower(response)) {
+		confirmed, err := readYesNoConfirmation(bufio.NewReader(cmd.InOrStdin()))
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			fmt.Println("Update cancelled")
 			return nil
 		}

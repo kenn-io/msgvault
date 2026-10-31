@@ -70,18 +70,16 @@ Use --no-tls for a plain unencrypted connection (not recommended).
 
 You will be prompted to enter your password interactively.
 For scripting, pipe the password via stdin or set the environment variable:
-  read -s PASS && echo "$PASS" | msgvault add-imap --host ... --username ...
-  MSGVAULT_IMAP_PASSWORD="..." msgvault add-imap --host ... --username ...
+  read -s PASS && echo "$PASS" | msgvault source imap add --host ... --username ...
+  MSGVAULT_IMAP_PASSWORD="..." msgvault source imap add --host ... --username ...
 
 Security note: Your password is stored on disk with restricted file
 permissions (0600). For stronger security, use an app-specific password
-instead of your primary account password.
-
-Examples:
-  msgvault add-imap --host imap.example.com --username user@example.com
-  msgvault add-imap --host mail.example.com --port 993 --username user@example.com
-  msgvault add-imap --host mail.example.com --username user@example.com --starttls
-  msgvault add-imap --host mail.example.com --username user@example.com --no-tls`,
+instead of your primary account password.`,
+		Example: `  msgvault source imap add --host imap.example.com --username user@example.com
+  msgvault source imap add --host mail.example.com --port 993 --username user@example.com
+  msgvault source imap add --host mail.example.com --username user@example.com --starttls
+  msgvault source imap add --host mail.example.com --username user@example.com --no-tls`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -90,10 +88,10 @@ Examples:
 			cfg := state.cfg
 			logger := state.logger
 			if imapHost == "" {
-				return usageErr(cmd, errors.New("--host is required"))
+				return usageErr(cmd, errors.New("--host is required (for example --host imap.example.com)"))
 			}
 			if imapUsername == "" {
-				return usageErr(cmd, errors.New("--username is required"))
+				return usageErr(cmd, errors.New("--username is required (for example --username you@example.com)"))
 			}
 			if imapNoTLS && imapSTARTTLS {
 				return usageErr(cmd, errors.New("--no-tls and --starttls are mutually exclusive"))
@@ -182,13 +180,13 @@ Examples:
 			fmt.Printf("  Note: Password stored on disk at %s\n", imapclient.CredentialsPath(cfg.TokensDir(), identifier))
 			fmt.Println()
 			fmt.Println("You can now run:")
-			fmt.Printf("  msgvault sync-full %s\n", identifier)
+			fmt.Printf("  msgvault sync full %s\n", identifier)
 
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&imapHost, "host", "", "IMAP server hostname (required)")
-	cmd.Flags().IntVar(&imapPort, "port", 0, "IMAP server port (default: 993 for TLS, 143 otherwise; matches defaults in internal/microsoft/imap package)")
+	cmd.Flags().IntVar(&imapPort, "port", 0, "IMAP server port (default: 993 with TLS, 143 with --starttls or --no-tls)")
 	cmd.Flags().StringVar(&imapUsername, "username", "", "IMAP username / email address (required)")
 	cmd.Flags().BoolVar(&imapNoTLS, "no-tls", false, "Disable TLS (plain connection, not recommended)")
 	cmd.Flags().BoolVar(&imapSTARTTLS, "starttls", false, "Use STARTTLS instead of implicit TLS")

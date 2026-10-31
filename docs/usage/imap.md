@@ -9,7 +9,7 @@ unchanged messages again. Start with [IMAP account setup](../setup.md#add-an-ima
 if you have not connected the account yet.
 
 ```bash
-msgvault sync-full you@example.com
+msgvault sync full you@example.com
 msgvault sync you@example.com
 ```
 
@@ -37,14 +37,14 @@ connection problem.
 
 By default, msgvault scans every selectable folder. Folder filters let you
 start with a small part of an account or leave out folders you do not need.
-They work with both `sync-full` and `sync` and affect IMAP sources only.
+They work with both `sync full` and `sync` and affect IMAP sources only.
 
 ## Find the Folder Names
 
 Ask the IMAP server for its folder names before creating a filter:
 
 ```bash
-msgvault list-folders you@example.com
+msgvault source imap folders you@example.com
 ```
 
 The command shows each selectable folder and its approximate message count:
@@ -63,7 +63,7 @@ Account: you@example.com
 Leave out the account name to list folders for every configured IMAP account:
 
 ```bash
-msgvault list-folders
+msgvault source imap folders
 ```
 
 Some servers do not provide a message count for every folder. In that case,
@@ -74,7 +74,7 @@ msgvault shows `??`, but you can still use the folder name in a filter.
 Repeat `--folder` once for each folder you want to include:
 
 ```bash
-msgvault sync-full you@example.com \
+msgvault sync full you@example.com \
   --folder INBOX \
   --folder Archive
 ```
@@ -92,7 +92,7 @@ names with commas. This also means a folder whose name contains a comma works
 without special handling:
 
 ```bash
-msgvault sync-full you@example.com --folder "Receipts, 2025"
+msgvault sync full you@example.com --folder "Receipts, 2025"
 ```
 
 ## Skip Selected Folders
@@ -100,7 +100,7 @@ msgvault sync-full you@example.com --folder "Receipts, 2025"
 Use `--skip-folder` to scan every folder except the ones you name:
 
 ```bash
-msgvault sync-full you@example.com \
+msgvault sync full you@example.com \
   --skip-folder Trash \
   --skip-folder Spam
 ```
@@ -109,7 +109,7 @@ You can combine include and exclude filters. msgvault first keeps the folders
 named by `--folder`, then removes any named by `--skip-folder`:
 
 ```bash
-msgvault sync-full you@example.com \
+msgvault sync full you@example.com \
   --folder INBOX \
   --folder Archive \
   --folder "Archive/Newsletters" \
@@ -120,7 +120,7 @@ That example scans `INBOX` and `Archive`.
 
 To skip folders on every scheduled and manual sync, set
 [`sync.imap_skip_folders`](../configuration.md#sync) in `config.toml` and restart
-the daemon. Copy the exact `ACCOUNT` identifier from `msgvault list-accounts`:
+the daemon. Copy the exact `ACCOUNT` identifier from `msgvault account list`:
 
 ```toml
 [sync]
@@ -135,7 +135,7 @@ allowing Trash and Junk.
 
 - Folder names are matched exactly, without wildcards or prefix matching.
 - Matching is case-insensitive.
-- Nested folders use the full name shown by `list-folders`, such as
+- Nested folders use the full name shown by `source imap folders`, such as
   `Projects/Alpha`.
 - With no folder flags, msgvault applies the account's saved exclusions and
   stored folder allow list, if configured.
@@ -166,12 +166,12 @@ configured remote msgvault server.
 
 ## Edit keyword tags
 
-Use [`message-tags`](../cli-reference.md#message-tags) to read, add, or remove
+Use [`message tags`](../cli-reference.md#message-tags) to read, add, or remove
 custom keywords on a message's recorded server copy:
 
 ```bash
-msgvault message-tags 42 --mailbox INBOX --json
-msgvault message-tags 42 --mailbox INBOX --add Next --remove Old
+msgvault message tags 42 --mailbox INBOX --json
+msgvault message tags 42 --mailbox INBOX --add Next --remove Old
 ```
 
 Keywords are separate from the folder labels shown in the archive. The daemon
@@ -201,20 +201,20 @@ current tags before retrying.
 
 ## Repair stored labels
 
-Use `repair-labels` when an archived message still shows a folder label that
+Use `repair labels` when an archived message still shows a folder label that
 no longer belongs to it. The command rebuilds labels from the folder
 memberships already stored in msgvault. It does not contact the provider.
 
 1. Preview the repair for one source:
 
     ```bash
-    msgvault repair-labels you@example.com
+    msgvault repair labels you@example.com
     ```
 
 2. Review the `scanned` and `changed` counts, then apply it:
 
     ```bash
-    msgvault repair-labels you@example.com --apply
+    msgvault repair labels you@example.com --apply
     ```
 
 Omit the identifier to check or repair every IMAP source. Applying a repair
@@ -228,10 +228,10 @@ If the stored memberships themselves need refreshing, enumerate the server
 again first:
 
 ```bash
-msgvault sync-full you@example.com --noresume
+msgvault sync full you@example.com --noresume
 ```
 
-Leave out folder filters for a complete account scan. `repair-labels` cannot
+Leave out folder filters for a complete account scan. `repair labels` cannot
 recover memberships that the archive has never observed.
 
 ## Drafts
@@ -241,8 +241,8 @@ send it from your usual mail application. Msgvault never sends email. Draft
 creation is disabled until an operator grants it for one exact IMAP source on
 the daemon host.
 
-1. Run `msgvault list-accounts` to find the source ID. Confirm the Drafts
-    folder's exact name with `msgvault list-folders <account>`.
+1. Run `msgvault account list` to find the source ID. Confirm the Drafts
+    folder's exact name with `msgvault source imap folders <account>`.
 
 1. Add the grant to the daemon host's `config.toml`, using that source ID and
     folder name:
@@ -273,7 +273,7 @@ the daemon host.
 1. Find the parent email's local message ID with search, then create a reply:
 
     ```bash
-    msgvault draft-reply 123 --all --from you@example.com \
+    msgvault draft reply 123 --all --from you@example.com \
       --body 'Thanks for the update. I will review it tomorrow.' --json
     ```
 
@@ -285,7 +285,7 @@ the daemon host.
     flags as needed:
 
     ```bash
-    msgvault draft-compose --source-id 42 --from you@example.com \
+    msgvault draft compose --source-id 42 --from you@example.com \
       --to recipient@example.com --cc copy@example.com \
       --bcc private@example.com --subject 'Project update' --body 'Draft text'
     ```
@@ -335,21 +335,21 @@ The creation result includes an opaque `draft_id` and revision `1`. Read the
 archived draft and its current revision through the daemon:
 
 ```bash
-msgvault draft-get <draft-id> --json
+msgvault draft get <draft-id> --json
 ```
 
-`draft-get` never connects to IMAP or changes pending operations. It also reads
+`draft get` never connects to IMAP or changes pending operations. It also reads
 discarded drafts and works when the source's draft mutation grant is disabled
 or its provider configuration is unavailable.
 
 ### Edit or delete the provider draft
 
-Use the current revision from `draft-get` or the last successful operation:
+Use the current revision from `draft get` or the last successful operation:
 
 ```bash
-msgvault draft-edit <draft-id> --revision 1 --body 'Updated text' --json
-msgvault draft-delete <draft-id> --revision 2 --json
-msgvault draft-recover <draft-id> --revision 1 --json
+msgvault draft edit <draft-id> --revision 1 --body 'Updated text' --json
+msgvault draft delete <draft-id> --revision 2 --json
+msgvault draft recover <draft-id> --revision 1 --json
 ```
 
 Edit and delete require the same daemon-host `[[imap.drafts]]` grant and provider
@@ -364,7 +364,7 @@ removes the exact old UID, and confirms that it is absent.
 
 Delete removes the exact provider draft and marks the managed draft
 `discarded` after confirming its absence. The local archived content remains
-readable with `draft-get`; ordinary archive garbage collection retains it.
+readable with `draft get`; ordinary archive garbage collection retains it.
 A discarded draft cannot be edited. Repeating delete with its current revision
 returns `already_discarded`.
 
@@ -398,7 +398,7 @@ publishes or removes anything. A pending edit without a known replacement
 returns `unknown_replacement` without opening an IMAP connection.
 
 ```bash
-msgvault draft-recover <draft-id> --revision 1 --json
+msgvault draft recover <draft-id> --revision 1 --json
 ```
 
 If another client already removed the exact original UID, recovery records that
@@ -419,7 +419,7 @@ If the original already has `\Deleted`, recovery returns `already_deleted`
 without a provider write. This includes removal interrupted after `UID STORE`
 succeeded. Repeating recovery cannot clear that state: use an IMAP client to
 expunge the exact original UID in the recorded mailbox and UIDVALIDITY, then run
-`draft-recover` with the revision from the recovery output or `draft-get`.
+`draft recover` with the revision from the recovery output or `draft get`.
 Recovery may have published a replacement locally and advanced the revision
 before cleanup was refused. For a published edit, remove the original
 copy, not the replacement. Check the receipt before expunging; do not purge all
@@ -443,15 +443,15 @@ receipts, timestamp, and revision unchanged. Output keeps the saved
   candidate and available receipt evidence. The operation stays pending and
   blocks further changes. Inspect the provider state before any manual
   reconciliation; general recovery for uncertain writes is not available.
-- If `draft-get <draft-id> --json` reports `pending_code: "removed"`, removal was
-  confirmed and saved, but local completion is still pending. `draft-recover` is
+- If `draft get <draft-id> --json` reports `pending_code: "removed"`, removal was
+  confirmed and saved, but local completion is still pending. `draft recover` is
   the preferred local completion route. Run it with the revision from that
   read; it finishes locally without another remote write. You can also repeat
-  the matching `draft-edit` or `draft-delete` command with that revision. The
+  the matching `draft edit` or `draft delete` command with that revision. The
   source policy still applies. For an edit, `--body` must match the already
   published replacement after MIME normalization. A `removed` observation in
   an error response alone is not enough;
-  `draft-get` must report the saved pending code.
+  `draft get` must report the saved pending code.
 
 ## Keep edited outgoing mail current
 

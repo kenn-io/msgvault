@@ -66,25 +66,24 @@ msgvault at https://myaccount.google.com/permissions, remove its token from the 
 then add it again with --readonly.
 
 For Google Workspace orgs that require their own OAuth app, use --oauth-app to
-specify a named app from config.toml.
-
-Examples:
-  msgvault add-account you@gmail.com
-  msgvault add-account you@gmail.com --headless
-  msgvault add-account you@example.com --force
-  msgvault add-account you@gmail.com --readonly
-  msgvault add-account you@acme.com --oauth-app acme
-  msgvault add-account you@gmail.com --display-name "Work Account"`,
+specify a named app from config.toml.`,
+	Example: `  msgvault source gmail add you@gmail.com
+  msgvault source gmail add you@gmail.com --headless
+  msgvault source gmail add you@example.com --force
+  msgvault source gmail add you@gmail.com --readonly
+  msgvault source gmail add you@acme.com --oauth-app acme
+  msgvault source gmail add you@gmail.com --display-name "Work Account"`,
 	Args: validateAddAccountArgs,
 	RunE: runAddAccountLocal,
 }
 
 func newAddAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   addAccountUse,
-		Short: addAccountCmd.Short,
-		Long:  addAccountCmd.Long,
-		Args:  validateAddAccountArgs,
+		Use:     addAccountUse,
+		Short:   addAccountCmd.Short,
+		Long:    addAccountCmd.Long,
+		Example: addAccountCmd.Example,
+		Args:    validateAddAccountArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if headless && forceReauth {
 				return usageErr(cmd, errors.New("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode"))
@@ -100,12 +99,12 @@ func newAddAccountCmd() *cobra.Command {
 }
 
 func validateAddAccountArgs(cmd *cobra.Command, args []string) error {
-	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+	if err := sourceExactArgs(1)(cmd, args); err != nil {
 		return err
 	}
 	address, err := mail.ParseAddress(args[0])
 	if err != nil || address.Address != args[0] {
-		return errors.New("account must be a bare email address; use --display-name for a label")
+		return validationErr(cmd, errors.New("account must be a bare email address; use --display-name for a label"))
 	}
 	return nil
 }
@@ -231,7 +230,7 @@ func addAccountAuthorizeError(err error, sourceExists bool) error {
 	if errors.As(err, &mismatch) && !sourceExists {
 		return fmt.Errorf(
 			"%w\nIf %s is the primary address, re-add with:\n"+
-				"  msgvault add-account %s%s",
+				"  msgvault source gmail add %s%s",
 			err, mismatch.Actual, mismatch.Actual, addAccountGrantFlagSuffix(),
 		)
 	}
@@ -447,7 +446,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(resolvedApp)
 	if headless {
 		if saKeyPath != "" {
-			return usageErr(cmd, errors.New("service accounts do not use --headless; run add-account without --headless"))
+			return usageErr(cmd, errors.New("service accounts do not use --headless; run msgvault source gmail add without --headless"))
 		}
 		// The grant decision applies here too. --headless only prints
 		// instructions, but those instructions are what the operator then runs
@@ -493,7 +492,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 				if existing == nil {
 					return fmt.Errorf(
 						"%w\nIf %s is the primary address, re-add with:\n"+
-							"  msgvault add-account %s",
+							"  msgvault source gmail add %s",
 						saErr, mismatch.Actual, mismatch.Actual,
 					)
 				}
@@ -532,7 +531,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("Account %s authorized via service account.\n", email)
-		fmt.Println("Next step: msgvault sync-full", email)
+		fmt.Println("Next step: msgvault sync full", email)
 		return nil
 	}
 
@@ -634,7 +633,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("Account %s is already authorized.\n", email)
 		}
-		fmt.Println("Next step: msgvault sync-full", email)
+		fmt.Println("Next step: msgvault sync full", email)
 		return nil
 	}
 
@@ -690,7 +689,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nAccount %s authorized successfully!\n", email)
-	fmt.Println("You can now run: msgvault sync-full", email)
+	fmt.Println("You can now run: msgvault sync full", email)
 
 	return nil
 }
@@ -890,7 +889,7 @@ func refuseReadonlyUnderAliasSpelling(ctx context.Context, mgr *oauth.Manager, e
 				"A read-only setup under a second spelling would leave that token's "+
 				"access in place, unnarrowed.\n"+
 				"Use the stored spelling instead:\n"+
-				"  msgvault add-account %s%s",
+				"  msgvault source gmail add %s%s",
 			email, equivalents[0], equivalents[0], flags)
 	}
 	removals := []string{"  2. rm " + oauth.ShellQuote(mgr.TokenPath(email))}
@@ -906,7 +905,7 @@ func refuseReadonlyUnderAliasSpelling(ctx context.Context, mgr *oauth.Manager, e
 			"To make this account read-only, remove its access and grant it again:\n"+
 			"  1. Revoke msgvault at https://myaccount.google.com/permissions\n"+
 			"%s\n"+
-			"  3. msgvault add-account %s%s\n"+
+			"  3. msgvault source gmail add %s%s\n"+
 			"Revoking also clears other Google scopes for this OAuth app, including\n"+
 			"Calendar and Drive. Re-authorize those integrations separately.\n"+
 			"%s",
@@ -957,7 +956,7 @@ func narrowingSteps(email, tokenPath, resolvedApp string) string {
 		"To make this account read-only, remove its access and grant it again:\n"+
 			"  1. Revoke msgvault at https://myaccount.google.com/permissions\n"+
 			"  2. rm %s\n"+
-			"  3. msgvault add-account %s%s\n"+
+			"  3. msgvault source gmail add %s%s\n"+
 			"Revoking also clears other Google scopes for this OAuth app, including\n"+
 			"Calendar and Drive. Re-authorize those integrations separately.\n"+
 			"Archived mail is not affected.",

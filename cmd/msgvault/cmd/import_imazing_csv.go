@@ -50,8 +50,9 @@ func ResolveLocalTimezone() (string, error) {
 func newImportIMazingCSVCmd() *cobra.Command {
 	var opts imazingcsv.Options
 	command := &cobra.Command{
-		Use:   "import-imazing-csv <export-dir>",
-		Short: "Import Messages CSV exports created by iMazing",
+		Use:     "import-imazing-csv <export-dir>",
+		Short:   "Import Messages CSV exports created by iMazing",
+		Example: `  msgvault import imazing-csv ./imazing-export --me +15551234567 --timezone America/New_York`,
 		Long: `Import iMessage and SMS history from an iMazing Messages CSV export.
 
 The input can be the export root containing csv/ and attachments/, or the csv/
@@ -59,7 +60,7 @@ directory itself. --me identifies your phone number or email address. Offset-fre
 message dates use --timezone. On Unix, an omitted --timezone resolves the local
 IANA zone; Windows has no dependable local IANA zone, so --timezone is required
 there.`,
-		Args: cobra.ExactArgs(1),
+		Args: sourceImportArgs("me", "your phone number or email (for example +15551234567)", "msgvault import imazing-csv ./imazing-export --me +15551234567 --timezone America/New_York"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Timezone == "" {
 				zone, err := resolveLocalTimezone()

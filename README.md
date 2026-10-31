@@ -27,6 +27,8 @@ Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 > **Alpha software.** APIs, storage format, and CLI flags may change. Back up
 > your data. This README follows current `main`; see the
 > [0.21.0 changelog](docs/changelog.md#0210) for features and upgrade steps.
+> The [grouped CLI names](docs/cli-reference.md#command-grammar-and-compatibility)
+> shown below are unreleased; use your binary's `--help` for its command names.
 
 ## What you can do
 
@@ -104,9 +106,9 @@ For Gmail, first create an OAuth credential with the
 [OAuth setup guide](docs/guides/oauth-setup.md). Then archive a small first batch:
 
 ```bash
-msgvault init-db
-msgvault add-account you@gmail.com
-msgvault sync-full you@gmail.com --limit 100
+msgvault database init
+msgvault source gmail add you@gmail.com
+msgvault sync full you@gmail.com --limit 100
 msgvault serve
 ```
 

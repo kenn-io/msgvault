@@ -63,7 +63,7 @@ func SaveCredentials(tokensDir string, creds Credentials) error {
 func LoadCredentials(tokensDir, userID string) (Credentials, error) {
 	creds, err := readCredentials(tokenPath(tokensDir, userID), userID)
 	if os.IsNotExist(err) {
-		return Credentials{}, fmt.Errorf("no Matrix credentials for %s (run 'add-matrix' first)", userID)
+		return Credentials{}, fmt.Errorf("no Matrix credentials for %s (run 'source matrix add' first)", userID)
 	}
 	return creds, err
 }

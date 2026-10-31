@@ -5944,8 +5944,8 @@ func TestHandleFastSearchReportsCacheEncodingError(t *testing.T) {
 	var got ErrorResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal("cache_encoding_error", got.Error)
-	assert.NotContains(got.Message, "msgvault repair-encoding")
-	assert.Contains(got.Message, "msgvault build-cache --full-rebuild")
+	assert.NotContains(got.Message, "msgvault repair encoding")
+	assert.Contains(got.Message, "msgvault cache build --full-rebuild")
 }
 
 func TestHandleFastSearchForwardsSourceIDs(t *testing.T) {
@@ -6715,7 +6715,7 @@ func TestHandleDeepSearchBodyReadinessErrorIsActionable(t *testing.T) {
 	engine := &bodySearchTestEngine{
 		MockEngine: &querytest.MockEngine{},
 		searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' or complete the FTS backfill", query.ErrMessageBodySearchIndexStale)
+			return nil, fmt.Errorf("%w: run 'msgvault fts rebuild' or complete the FTS backfill", query.ErrMessageBodySearchIndexStale)
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
@@ -6727,7 +6727,7 @@ func TestHandleDeepSearchBodyReadinessErrorIsActionable(t *testing.T) {
 	var resp ErrorResponse
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
 	assert.Equal("body_search_index_unavailable", resp.Error, "error code")
-	assert.Contains(resp.Message, "rebuild-fts", "actionable rebuild guidance")
+	assert.Contains(resp.Message, "fts rebuild", "actionable rebuild guidance")
 	assert.Contains(resp.Message, "backfill", "actionable backfill guidance")
 }
 

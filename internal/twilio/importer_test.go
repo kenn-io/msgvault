@@ -298,7 +298,7 @@ func TestImporterSizeCapSkipWaitsForFullRetry(t *testing.T) {
 	require.NoError(err)
 	require.Equal(1, f.audioCalls)
 	assert.Equal(attachmentpolicy.SkipSizeCap, onlyAttachment(t, st).SkipReason)
-	assert.Contains(sum.Diagnostics, "recording "+testRE+" skipped: larger than the 1 MiB cap; raise max_media_mb and run sync-twilio --full")
+	assert.Contains(sum.Diagnostics, "recording "+testRE+" skipped: larger than the 1 MiB cap; raise max_media_mb and run source twilio sync --full")
 
 	imp.now = func() time.Time { return time.Date(2026, 10, 3, 18, 0, 0, 0, time.UTC) }
 	_, err = imp.Import(t.Context(), opts)
@@ -575,7 +575,7 @@ func TestImporterRelistWindowWalk(t *testing.T) {
 	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal([]string{testCA}, f.getCalls)
-	assert.Equal([]string{"1 recording(s) no longer retried: the call is older than the 7-day relist window; run sync-twilio --full to retry"}, sum.Diagnostics)
+	assert.Equal([]string{"1 recording(s) no longer retried: the call is older than the 7-day relist window; run source twilio sync --full to retry"}, sum.Diagnostics)
 	rows, err = st.MessageProviderAttachments(msg.ID, "twilio:")
 	require.NoError(err)
 	assert.Equal(attachmentpolicy.StateUnavailable, rows["twilio:"+never].State, "Twilio never produced it")

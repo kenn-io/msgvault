@@ -45,8 +45,8 @@ func TestHintRepairEncoding(t *testing.T) {
 		orig := errors.New("Invalid string encoding found in Parquet file")
 		got := HintRepairEncoding(orig)
 		require.Error(t, got, "HintRepairEncoding returned nil")
-		assert.Contains(got.Error(), "msgvault build-cache --full-rebuild")
-		assert.NotContains(got.Error(), "repair-encoding")
+		assert.Contains(got.Error(), "msgvault cache build --full-rebuild")
+		assert.NotContains(got.Error(), "repair encoding")
 		// Original error should be preserved in the chain
 		assert.ErrorIs(got, orig, "wrapped error should preserve original via errors.Is")
 	})
@@ -55,7 +55,7 @@ func TestHintRepairEncoding(t *testing.T) {
 		inner := errors.New("Invalid string encoding found in Parquet file")
 		wrapped := fmt.Errorf("aggregate query: %w", inner)
 		got := HintRepairEncoding(wrapped)
-		assert.Contains(t, got.Error(), "msgvault build-cache --full-rebuild")
+		assert.Contains(t, got.Error(), "msgvault cache build --full-rebuild")
 	})
 
 	t.Run("CSV encoding error explains DuckDB option", func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestHintRepairEncoding(t *testing.T) {
 		orig := errors.New("CSV Error on Line: 4\nInvalid unicode (byte sequence mismatch) detected\nignore_errors = false")
 		got := HintRepairEncoding(orig)
 		require.Error(got)
-		assert.Contains(got.Error(), "msgvault repair-encoding")
+		assert.Contains(got.Error(), "msgvault repair encoding")
 		assert.Contains(got.Error(), "not a msgvault option")
 		assert.ErrorIs(got, orig)
 	})

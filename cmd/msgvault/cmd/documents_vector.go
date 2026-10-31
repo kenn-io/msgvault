@@ -21,7 +21,9 @@ const (
 )
 
 func newDocumentVectorsCmd(deps documentsCommandDeps) *cobra.Command {
-	command := &cobra.Command{Use: documentVectorsSubcommand, Short: "Manage document attachment vectors"}
+	command := &cobra.Command{Use: documentVectorsSubcommand, Short: "Manage document attachment vectors",
+		Long:    "Manage vector generations derived from extracted document text. Consent separately to document and query uploads, then build and inspect status. Resume unfinished work or retire generations using IDs from status.",
+		Example: "  msgvault documents vectors status --json"}
 	command.AddCommand(
 		newDocumentVectorConsentCmd(deps),
 		newDocumentVectorBuildCmd(deps, false),
@@ -140,9 +142,11 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 	var yes bool
 	var purpose string
 	command := &cobra.Command{
-		Use:   cmdUseConsent,
-		Short: "Consent to hosted embedding for the configured document policy",
-		Args:  cobra.NoArgs,
+		Use:     cmdUseConsent,
+		Short:   "Consent to hosted embedding for the configured document policy",
+		Long:    "Record exact-policy consent for hosted document embeddings or query embeddings. --purpose selects which plaintext class may leave the archive. Review the disclosure before --yes; restart the daemon to enable scheduled work.",
+		Example: "  msgvault documents vectors consent --purpose documents --yes\n  msgvault documents vectors consent --purpose queries --yes",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDocumentVectorCommandHTTP(command, args, false)
@@ -224,7 +228,7 @@ func newDocumentVectorBuildCmd(deps documentsCommandDeps, resume bool) *cobra.Co
 	var generationID int64
 	var limit int
 	command := &cobra.Command{
-		Use: name, Short: short, Args: cobra.NoArgs,
+		Use: name, Short: short, Long: "Build or resume document vector publication under the exact configured embedding policy and its recorded consent. Build starts the configured generation; resume requires --generation-id from documents vectors status and continues publication or retired-generation cleanup.", Example: "  msgvault documents vectors " + name, Args: cobra.NoArgs,
 		RunE: lockedDocumentVectorRunE(deps, true, "", func(command *cobra.Command, st *store.Store) error {
 			if resume {
 				generation, err := st.GetDocumentVectorGeneration(command.Context(), generationID)
@@ -267,6 +271,7 @@ func newDocumentVectorBuildCmd(deps documentsCommandDeps, resume bool) *cobra.Co
 	if resume {
 		command.Flags().Int64Var(&generationID, "generation-id", 0, "Building or retired generation to resume")
 		_ = command.MarkFlagRequired("generation-id")
+		command.Example += " --generation-id 12"
 	}
 	return command
 }
@@ -312,7 +317,9 @@ func newDocumentVectorRetryCmd(deps documentsCommandDeps) *cobra.Command {
 	var generationID int64
 	var afterToken string
 	var limit int
-	command := &cobra.Command{Use: "retry", Short: "Reset current failed publications for retry", Args: cobra.NoArgs,
+	command := &cobra.Command{Use: "retry", Short: "Reset current failed publications for retry",
+		Long:    "Reset failed vector publications in one generation after correcting their cause. Find its generation ID and failure details with documents vectors status, then resume that generation.",
+		Example: "  msgvault documents vectors retry --generation-id 12", Args: cobra.NoArgs,
 		RunE: lockedDocumentVectorRunE(deps, false, "", func(command *cobra.Command, st *store.Store) error {
 			result, err := st.ResetDocumentVectorFailures(command.Context(), generationID, afterToken, limit, time.Now())
 			if err != nil {
@@ -330,7 +337,9 @@ func newDocumentVectorRetryCmd(deps documentsCommandDeps) *cobra.Command {
 func newDocumentVectorRebuildCmd(deps documentsCommandDeps) *cobra.Command {
 	var activeID int64
 	var limit int
-	command := &cobra.Command{Use: "rebuild", Short: "Build a fresh generation while the active generation remains searchable", Args: cobra.NoArgs,
+	command := &cobra.Command{Use: "rebuild", Short: "Build a fresh generation while the active generation remains searchable",
+		Long:    "Replace an active document vector generation while keeping it searchable until the replacement is ready. Select its ID from status and confirm the rebuild after reviewing provider consent.",
+		Example: "  msgvault documents vectors rebuild --generation-id 12 --yes", Args: cobra.NoArgs,
 		RunE: lockedDocumentVectorRunE(deps, true, "document vector rebuild requires --yes", func(command *cobra.Command, st *store.Store) error {
 			spec, err := desiredDocumentVectorSpec(command.Context(), st)
 			if err != nil {
@@ -354,7 +363,9 @@ func newDocumentVectorRebuildCmd(deps documentsCommandDeps) *cobra.Command {
 
 func newDocumentVectorRetireCmd(deps documentsCommandDeps) *cobra.Command {
 	var generationID int64
-	command := &cobra.Command{Use: cliEmbeddingsOperationRetire, Short: "Retire a document vector generation without deleting its backend ledger", Args: cobra.NoArgs,
+	command := &cobra.Command{Use: cliEmbeddingsOperationRetire, Short: "Retire a document vector generation without deleting its backend ledger",
+		Long:    "Mark a document vector generation retired while retaining its backend cleanup ledger. Cleanup resumes when vector operations next run. Inspect status before selecting a generation and confirming.",
+		Example: "  msgvault documents vectors retire --generation-id 12 --yes", Args: cobra.NoArgs,
 		RunE: lockedDocumentVectorRunE(deps, false, "document vector retirement requires --yes", func(command *cobra.Command, st *store.Store) error {
 			retired, err := st.RetireDocumentVectorGeneration(command.Context(), generationID, time.Now())
 			if err != nil {
@@ -374,7 +385,9 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 	var afterToken string
 	var limit int
 	var jsonOutput bool
-	command := &cobra.Command{Use: statusValue, Short: "Inspect document vector generations, consent, usage, and failures", Args: cobra.NoArgs,
+	command := &cobra.Command{Use: statusValue, Short: "Inspect document vector generations, consent, usage, and failures",
+		Long:    "Inspect active and building document vector generation IDs, exact-policy consent, provider usage, and publication failures. Use these IDs with resume, retry, rebuild, or retire.",
+		Example: "  msgvault documents vectors status --json", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDocumentVectorCommandHTTP(command, args, false)
