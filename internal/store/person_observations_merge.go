@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personobs"
@@ -744,13 +745,18 @@ func (s *Store) restoreObservationCopiesTx(ctx context.Context, tx *loggedTx, me
 }
 
 type personMergeObservationSuppressionDecision struct {
-	id         int64
-	contentKey string
-	reason     string
-	actor      string
-	rejected   requiredTimestamp
-	cleared    nullableTimestamp
-	originSide personMergeOriginSide
+	id               int64
+	contentKey       string
+	reason           string
+	actor            string
+	rejected         requiredTimestamp
+	cleared          nullableTimestamp
+	originSide       personMergeOriginSide
+	baselineReason   string
+	baselineActor    string
+	baselineRejected time.Time
+	baselineCleared  nullableTimestamp
+	hasBaseline      bool
 }
 
 func (s *Store) capturePostMergeObservationSuppressionsTx(
@@ -841,6 +847,31 @@ func (s *Store) capturePostMergeObservationSuppressionsTx(
 			actor: row.actor, rejected: row.rejected, cleared: row.cleared,
 			originSide: originSideByID[row.id],
 		}
+		if baseline, ok := baselineByID[row.id]; ok {
+			values := personSplitSnapshotColumnsByName(baseline.Columns)
+			rejectedAt, err := time.Parse(time.RFC3339Nano, personSplitSnapshotRowText(baseline, "rejected_at"))
+			if err != nil {
+				return nil, fmt.Errorf("%w: decode survivor observation suppression boundary: %w", ErrPersonMergeSnapshotCorrupt, err)
+			}
+			clearedAt := nullableTimestamp{}
+			clearedValue := values["cleared_at"]
+			if clearedValue.Kind != personMergeSnapshotNull {
+				if clearedValue.Text == nil {
+					return nil, fmt.Errorf("%w: missing survivor suppression clear timestamp", ErrPersonMergeSnapshotCorrupt)
+				}
+				clearedAt.Time, err = time.Parse(time.RFC3339Nano, *clearedValue.Text)
+				if err != nil {
+					return nil, fmt.Errorf("%w: decode survivor suppression clear timestamp: %w", ErrPersonMergeSnapshotCorrupt, err)
+				}
+				clearedAt.Time = clearedAt.Time.UTC()
+				clearedAt.Valid = true
+			}
+			decision.baselineReason = personSplitSnapshotRowText(baseline, "reason")
+			decision.baselineActor = personSplitSnapshotRowText(baseline, "actor")
+			decision.baselineRejected = rejectedAt.UTC()
+			decision.baselineCleared = clearedAt
+			decision.hasBaseline = true
+		}
 		previous, exists := decisions[row.contentKey]
 		if !exists || observationSuppressionDecisionAfter(decision, previous) {
 			decisions[row.contentKey] = decision
@@ -914,7 +945,11 @@ func (s *Store) restorePostMergeObservationSuppressionsTx(
 				decision.reason, decision.actor, decision.rejected.Time, clearedAt, restoredSuppressionID); err != nil {
 				return fmt.Errorf("restore post-merge observation suppression state: %w", err)
 			}
-			if sourceExists && decision.originSide == "" {
+			if sourceExists && decision.originSide == personMergeOriginSurvivor {
+				if err := s.restoreSurvivorObservationSuppressionBaselineTx(ctx, tx, sourceID, decision); err != nil {
+					return err
+				}
+			} else if sourceExists && decision.originSide == "" {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_suppressions WHERE id=? AND person_id=?`,
 					decision.id, sourceID); err != nil {
 					return fmt.Errorf("move post-merge observation suppression to restored profile: %w", err)
@@ -938,7 +973,42 @@ func (s *Store) restorePostMergeObservationSuppressionsTx(
 				decision.rejected.Time, clearedAt); err != nil {
 				return fmt.Errorf("copy post-merge observation suppression: %w", err)
 			}
+			if sourceExists && decision.originSide == personMergeOriginSurvivor {
+				if err := s.restoreSurvivorObservationSuppressionBaselineTx(ctx, tx, sourceID, decision); err != nil {
+					return err
+				}
+			}
 		}
+	}
+	return nil
+}
+
+func (s *Store) restoreSurvivorObservationSuppressionBaselineTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	decision personMergeObservationSuppressionDecision,
+) error {
+	if !decision.hasBaseline {
+		return fmt.Errorf("%w: missing survivor observation suppression baseline", ErrPersonMergeSnapshotCorrupt)
+	}
+	clearedAt := any(nil)
+	if decision.baselineCleared.Valid {
+		clearedAt = decision.baselineCleared.Time
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE person_observation_suppressions
+		SET reason=?,actor=?,rejected_at=?,cleared_at=? WHERE id=? AND person_id=?`,
+		decision.baselineReason, decision.baselineActor, decision.baselineRejected,
+		clearedAt, decision.id, sourceID)
+	if err != nil {
+		return fmt.Errorf("restore survivor observation suppression baseline: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count restored survivor observation suppression baseline: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("%w: survivor observation suppression changed during split", ErrPersonSplitParticipants)
 	}
 	return nil
 }
