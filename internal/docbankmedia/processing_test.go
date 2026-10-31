@@ -66,28 +66,10 @@ func TestStartProcessingReturnsBeforeStreamEnds(t *testing.T) {
 func TestProcessingInvalidReceipts(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
+		invalid    bool
 	}{
-		{name: "wrong event", body: `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a", "profile") + `"}}`},
-		{name: "missing job id", body: `{"type":"job","job":{}}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, err := io.WriteString(w, tc.body)
-				assert.NoError(t, err)
-			}))
-			defer server.Close()
-			client, err := docbankmedia.NewClient(server.URL, nil)
-			require.NoError(t, err)
-			_, err = client.StartProcessing(t.Context(), docbankmedia.ProcessingSelector{NodeID: 7}, "plan")
-			assert.ErrorIs(t, err, docbankmedia.ErrInvalidReceipt)
-		})
-	}
-}
-
-func TestStartProcessingMalformedResponsesRetry(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-	}{
+		{name: "wrong event", body: `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a", "profile") + `"}}`, invalid: true},
+		{name: "missing job id", body: `{"type":"job","job":{}}`, invalid: true},
 		{name: "empty", body: ""},
 		{name: "truncated", body: `{"type":"job"`},
 	} {
@@ -103,6 +85,10 @@ func TestStartProcessingMalformedResponsesRetry(t *testing.T) {
 			require.NoError(err)
 			_, err = client.StartProcessing(t.Context(), docbankmedia.ProcessingSelector{NodeID: 7}, "plan")
 			require.Error(err)
+			if tc.invalid {
+				assert.ErrorIs(err, docbankmedia.ErrInvalidReceipt)
+				return
+			}
 			require.NotErrorIs(err, docbankmedia.ErrInvalidReceipt)
 			assert.True(docbankmedia.Retryable(err))
 		})

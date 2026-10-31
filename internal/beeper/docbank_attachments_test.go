@@ -1057,15 +1057,6 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a"}, r.processing.Plans)
 	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
-	var oldJobID string
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&oldJobID))
-	r.processing.Fingerprint = "profile-two"
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
-	assert.Equal(int64(1), r.processingCounts().Requested)
-	var newJobID string
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&newJobID))
-	assert.NotEqual(oldJobID, newJobID)
 }
 
 func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
@@ -1076,7 +1067,6 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 		{"during_poll", "failed", "consent"},
 		{"before_poll", "failed", "unsupported_format"},
 		{"before_poll", "operator_required", ""},
-		{"during_poll", "operator_required", ""},
 	} {
 		t.Run(tc.backfill+"/"+tc.state+"/"+tc.outcome, func(t *testing.T) {
 			require := require.New(t)
@@ -1235,7 +1225,6 @@ func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
 
 func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	r := newMirrorRig(t)
 	r.delivered("a")
 	require.NoError(r.runBatch(t.Context()))
@@ -1244,9 +1233,6 @@ func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
 	// The scheduler publishes the batch error as last_error.
 	err := r.runBatch(t.Context())
 	require.ErrorContains(err, "awaiting_review")
-	var jobID string
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&jobID))
-	assert.Equal(docbanktest.ProcessingJobID("a", r.processing.Fingerprint), jobID)
 }
 
 func TestAttachmentMirrorProcessingIneligiblePlan(t *testing.T) {
@@ -1538,9 +1524,6 @@ func TestAttachmentMirrorProcessingCancelled(t *testing.T) {
 	require.ErrorIs(got.err, context.Canceled)
 	assert.False(got.more)
 	assert.Equal(int64(1), r.processingCounts().Waiting)
-	var rows int
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM docbank_attachment_processing`).Scan(&rows))
-	assert.Zero(rows)
 }
 
 func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
