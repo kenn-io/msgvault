@@ -175,7 +175,8 @@
       {#if detailError}<div class="notice" role="alert"><span>{detailError}</span><Button label="Retry" onclick={() => void readDetail(selectedID!)} /></div>{/if}
       <div class="line">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
-        <span class="muted">{panelDetail?.account || 'Account unavailable'}</span>
+        {#if panelDetail}<span class="muted">{panelDetail.account || 'Account unavailable'}</span>
+        {:else if !detailError}<span class="muted">Loading…</span>{/if}
       </div>
       {#if panelDetail?.description}<p>{panelDetail.description}</p>{/if}
       <section class="block" aria-label="Messages">
