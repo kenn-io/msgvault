@@ -369,10 +369,10 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState, workspace: 'everything', settingsCategory: 'search'
     });
     expect(elsewhere).not.toContain('settingsCategory');
-    for (const invalid of ['<script>', 42, '', 'Search', 'toString']) {
+    for (const [category, expected] of [['<script>', 'overview'], [42, 'overview'], ['', 'overview'], ['Search', 'overview'], ['toString', 'overview'], ['people', 'enrichment']]) {
       expect(parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'settings', settingsCategory: invalid
-      } as unknown as ExploreURLState)).settingsCategory).toBe('overview');
+        ...defaultExploreURLState, workspace: 'settings', settingsCategory: category
+      } as unknown as ExploreURLState)).settingsCategory).toBe(expected);
     }
   });
 
@@ -905,11 +905,6 @@ describe('Explore URL state', () => {
     }));
 
     expect(restored.selectedRow).toBeNull();
-  });
-
-  it('restores the people Settings link to enrichment', () => {
-    const restored = parseExploreURLState(`?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people' }))}`);
-    expect(restored.settingsCategory).toBe('enrichment');
   });
 });
 

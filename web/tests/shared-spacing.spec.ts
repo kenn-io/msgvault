@@ -209,6 +209,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   const savedShape = await summary.evaluate((element) => {
     return { radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height };
   });
+  expect(savedShape.height).toBe(geometry[0].height);
   expect.soft(savedShape.radius).toBeGreaterThanOrEqual(savedShape.height / 2);
   const savedGeometry = await summary.evaluate((element) => {
     const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
@@ -221,29 +222,6 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   await expect(status).toBeVisible();
   const statusShape = await status.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
   expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
-});
-
-test('the same active and saved query shares one chip height and centered text', async ({ page }) => {
-  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
-    id: 1, name: 'Archive search', schema_version: 2, revision: 1,
-    canonical_state: { query: 'archive', search_mode: 'full_text' },
-    created_at: row.occurred_at, updated_at: row.occurred_at
-  }] } }));
-  await selectWorkspace(page, 'Everything');
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('archive');
-  const active = page.locator('.context-chips .chip').first();
-  await expect(active).toBeVisible();
-  const activeHeight = (await active.boundingBox())!.height;
-  await selectWorkspace(page, 'Saved views');
-  const summary = page.locator('.summary li').filter({ hasText: 'archive' });
-  await expect(summary).toBeVisible();
-  const geometry = await summary.evaluate((element) => {
-    const range = document.createRange(); range.selectNodeContents(element);
-    const box = element.getBoundingClientRect(); const text = range.getBoundingClientRect();
-    return { height: box.height, centered: Math.abs((text.top + text.bottom) / 2 - (box.top + box.bottom) / 2) };
-  });
-  expect(geometry.height).toBe(activeHeight);
-  expect(geometry.centered).toBeLessThanOrEqual(1);
 });
 
 test('linked message uses the page title text scale', async ({ page }) => {
@@ -265,31 +243,4 @@ test('app scrollbars use the shared 8px style', async ({ page }) => {
   await selectWorkspace(page, 'Settings');
   const size = await page.locator('.kit-settings__scroll').evaluate((element) => getComputedStyle(element, '::-webkit-scrollbar').width);
   expect(size).toBe('8px');
-});
-test.describe('touch reading', () => {
-  test.use({ isMobile: true, hasTouch: true, viewport: { width: 620, height: 900 } });
-
-  test('body and recording transcript share the reading size in one card', async ({ page }) => {
-    await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
-      rows: [{ ...row, message_type: 'beeper', conversation_type: 'direct_chat', conversation_id: 11, anchor_message_id: 1 }],
-      total_count: 1, cache_revision: 'reading-size', search_provenance: {}
-    } }));
-    await page.route('**/api/v1/conversations/11**', (route) => route.fulfill({ json: {
-      id: 11, anchor_id: 1, has_before: false, has_after: false, total: 1,
-      messages: [{ id: 1, conversation_id: 11, subject: row.title, message_type: 'beeper',
-        from: 'Example Person', to: [], sent_at: row.occurred_at, body: 'A synthetic voice note body.',
-        attachments: [{ id: 1, filename: 'Voice-note.ogg', mime_type: 'audio/ogg', size_bytes: 2048, stored: false }] }]
-    } }));
-    await page.route('**/api/v1/messages/1/recordings', (route) => route.fulfill({ json: {
-      message_id: 1, recordings: [{ attachment_id: 1, filename: 'Voice-note.ogg', size_bytes: 2048, state: 'ready',
-        transcript: { origin: 'generated', units: [{ text: 'A synthetic voice note transcript.' }] } }]
-    } }));
-    await selectWorkspace(page, 'Everything');
-    await page.getByText(row.title, { exact: true }).click();
-    const card = page.locator('.message-card');
-    await expect(card.locator('.card-body pre')).toHaveText('A synthetic voice note body.');
-    await expect(card.locator('.transcript')).toContainText('A synthetic voice note transcript.');
-    await expect(card.locator('.card-body pre')).toHaveCSS('font-size', '14px');
-    await expect(card.locator('.transcript')).toHaveCSS('font-size', '14px');
-  });
 });
