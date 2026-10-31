@@ -49,6 +49,8 @@ profiles, contact activity, and relationship curation. Start there to connect
 addresses and handles, maintain contacts, or set up optional profile automation.
 Use [accounts and collections](usage/multi-account.md) to organize sources and
 limit an archive view.
+Use [call history](usage/call-history.md) to inspect call evidence and per-person
+frequency separately from scheduled invitations.
 
 ## Maintain and operate the archive
 

@@ -375,11 +375,12 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
-// 3.25.0 adds archived chat discovery ranked by the best matching name or title.
-// 3.26.0 adds bounded search-aware deletion resolution with an explicit
+// 3.25.0 adds owner-only call evidence import, inspection and person summaries.
+// 3.26.0 adds archived chat discovery ranked by the best matching name or title.
+// 3.27.0 adds bounded search-aware deletion resolution with an explicit
 // max_results cap and matched_count for skipped matches.
-// 3.27.0 adds optional attachment text results and recording errors in media search.
-const APISchemaVersion = "3.27.0"
+// 3.28.0 adds optional attachment text results and recording errors in media search.
+const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1088,6 +1089,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	if observation := schemas["CallObservationView"]; observation != nil {
+		if duration := observation.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(observation, "duration_seconds")
+	}
 	for schemaName, property := range map[string]string{
 		"MeetingPerson": emailProperty,
 		"Source":        "account_email",

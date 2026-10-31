@@ -138,6 +138,22 @@ type ListAttributeDefinitionsQuery struct {
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 
+type ListCallObservationsQuery struct {
+	PersonID *int64     `json:"person_id,omitempty"`
+	Limit    *int64     `json:"limit,omitempty"`
+	AfterID  *int64     `json:"after_id,omitempty"`
+	After    *time.Time `json:"after,omitempty"`
+	Before   *time.Time `json:"before,omitempty"`
+}
+
+type SummarizeCallsQuery struct {
+	PersonID *int64     `json:"person_id,omitempty"`
+	Limit    *int64     `json:"limit,omitempty"`
+	Offset   *int64     `json:"offset,omitempty"`
+	After    *time.Time `json:"after,omitempty"`
+	Before   *time.Time `json:"before,omitempty"`
+}
+
 type ListCardDAVBooksQuery struct {
 	// Connection Saved connection name; omit for all connections
 	Connection *string `json:"connection,omitempty"`
