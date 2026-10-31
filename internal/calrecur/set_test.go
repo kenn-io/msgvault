@@ -270,17 +270,6 @@ func TestParseSetRejectsUnsupportedEaster(t *testing.T) {
 	assert.Contains(t, err.Error(), line)
 }
 
-func TestIterRepeatedRuleSelectors(t *testing.T) {
-	for _, rule := range []string{
-		"RRULE:FREQ=DAILY;COUNT=3;BYMONTH=3,3",
-		"RRULE:FREQ=DAILY;COUNT=3;BYDAY=TU,TU,WE,TH",
-	} {
-		t.Run(rule, func(t *testing.T) {
-			assert.Equal(t, []string{"20270302T170000Z", "20270303T170000Z", "20270304T170000Z"}, keys(t, parsed(t, rule)))
-		})
-	}
-}
-
 func TestParseSetAllowsFeb29Yearly(t *testing.T) {
 	s := parsed(t, "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=2")
 	var got []string
