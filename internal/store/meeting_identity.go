@@ -222,8 +222,7 @@ func visibleMeetingTranscript(ctx context.Context, r reboundReader, id int64) (b
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{id}, args...)
 	var found int
-	err := r.QueryRowContext(ctx, `SELECT 1 FROM messages m WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)`+scope, args...).Scan(&found)
+	err := r.QueryRowContext(ctx, `SELECT 1 FROM messages m WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, args...).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -284,7 +283,6 @@ func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o l
 		}
 	}
 	query := `SELECT m.id FROM messages m WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)
  AND (EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.member_message_id=m.id AND (` + strings.Join(clauses, " OR ") + `))
  OR EXISTS (SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id AND (` + strings.Join(keyClauses, " OR ") + `)))`
 	args = append(args, keyArgs...)
