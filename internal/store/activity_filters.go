@@ -149,9 +149,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	if f.Exclusions.ExcludeListMessages {
 		listExcluded = `CASE WHEN e.list_id IS NOT NULL THEN 1 ELSE 0 END`
 	}
-	large := `CASE WHEN e.direction='inbound' AND (
- CASE WHEN e.channel='chat' THEN (SELECT COUNT(*) FROM conversation_participants chat_cp WHERE chat_cp.conversation_id=e.conversation_id AND NOT ` + personTierOwnerMatch("chat_cp.participant_id", "e.source_id") + `)
- ELSE (SELECT COUNT(DISTINCT mail_mr.participant_id) FROM message_recipients mail_mr WHERE mail_mr.message_id=e.message_id AND mail_mr.recipient_type IN ('to','cc','bcc') AND NOT ` + personTierOwnerMatch("mail_mr.participant_id", "e.source_id") + `) END)>` + maxSQL + ` THEN 1 ELSE 0 END`
+	large := `CASE WHEN e.direction='inbound' AND (` + activityAudienceSizeSQL("e.channel", "e.conversation_id", "e.message_id", "e.source_id") + `)>` + maxSQL + ` THEN 1 ELSE 0 END`
 	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "e.direction", RefKind: "e.ref_kind", ListExcluded: listExcluded, LargeInbound: "e.large_inbound"})
 	// These reused sets must be evaluated once. SQLite can otherwise inline
 	// them into each correlated fact lookup and rebuild the scoped population
@@ -181,8 +179,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE WHEN e.list_id IS NOT NULL OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
  FROM message_flags e
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY source_id,message_id) AS copy_rank,
- COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` ORDER BY source_id,message_id) AS copy_rank,
+ COUNT(*) OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + `) AS copy_count
  FROM scored e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
@@ -197,3 +195,14 @@ const activityBurstGroupsCTE = `, burst_groups AS (
  COUNT(*) AS message_count,CASE WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
  FROM representatives GROUP BY source_id,conversation_id,local_date
 )`
+
+// activityCopyKeySQL is shared by projected and request-time cold readers.
+func activityCopyKeySQL(channel, rfcID, messageID string) string {
+	return `CASE WHEN ` + channel + `='email' THEN 'email:'||COALESCE(NULLIF(` + rfcID + `,''),'id:'||CAST(` + messageID + ` AS TEXT)) ELSE 'id:'||CAST(` + messageID + ` AS TEXT) END`
+}
+
+// activityAudienceSizeSQL preserves the counted rule's provider population.
+func activityAudienceSizeSQL(channel, conversationID, messageID, sourceID string) string {
+	return `CASE WHEN ` + channel + `='chat' THEN (SELECT COUNT(*) FROM conversation_participants chat_cp WHERE chat_cp.conversation_id=` + conversationID + ` AND NOT ` + personTierOwnerMatch("chat_cp.participant_id", sourceID) + `)
+ ELSE (SELECT COUNT(DISTINCT mail_mr.participant_id) FROM message_recipients mail_mr WHERE mail_mr.message_id=` + messageID + ` AND mail_mr.recipient_type IN ('to','cc','bcc') AND NOT ` + personTierOwnerMatch("mail_mr.participant_id", sourceID) + `) END`
+}
