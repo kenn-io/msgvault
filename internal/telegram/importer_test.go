@@ -58,6 +58,34 @@ func TestImportPeerCollision(t *testing.T) {
 	}
 }
 
+func TestImportConversationPerExportedChat(t *testing.T) {
+	for _, messages := range []string{`[]`, `[{"id":1,"type":"service"}]`} {
+		t.Run(messages, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"name":"Example chat","type":"personal_chat","messages":`+messages+`}`))
+			opts := ImportOptions{RootDir: root, Me: "1"}
+			var originalID int64
+			for range 2 {
+				summary, err := Import(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Zero(summary.MessagesAdded)
+				var id int64
+				var title, kind string
+				require.NoError(st.DB().QueryRow("SELECT id, title, conversation_type FROM conversations WHERE source_conversation_id = 'user2'").Scan(&id, &title, &kind))
+				assert.Equal("Example chat", title)
+				assert.Equal("direct_chat", kind)
+				if originalID == 0 {
+					originalID = id
+				}
+				assert.Equal(originalID, id)
+			}
+		})
+	}
+}
+
 func TestImportCrossPeerAndLaterReplies(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -383,6 +411,11 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 				var missing int
 				require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
 				assert.Equal(1, missing)
+			}
+			if kind == "directory" || kind == "symlink" {
+				assert.Contains(warnings.String(), "level=WARN")
+				assert.Contains(warnings.String(), media)
+				assert.Contains(warnings.String(), "not a regular file")
 			}
 			sourceMissing := kind != "storage"
 			if sourceMissing {

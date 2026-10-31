@@ -96,6 +96,9 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 				return nil, fmt.Errorf("telegram: store media %q: %w", slot.path, err)
 			}
 			if err != nil {
+				if opts.Logger != nil {
+					opts.Logger.Warn("telegram: cannot open media source; recording missing media", "slot", slot.key, "path", source, "error", err)
+				}
 				write.StoragePath, write.ContentHash, write.Size = "", "", 0
 			}
 		}

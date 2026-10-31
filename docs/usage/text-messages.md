@@ -472,4 +472,6 @@ Messages include senders, replies, edit markers, and available media. Service me
 
 A later or overlapping export adds new messages and fills media slots that still lack bytes. Archived messages keep their original text, sender, timestamp, and edit flag. Media already stored stays unchanged. Replies link when their parent arrives in a later export. Telegram participants remain separate from participants imported through Beeper.
 
+When an import adds a message to a chat, the latest export's non-empty chat name replaces the conversation title. An import that adds no messages to that chat keeps its existing title.
+
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
