@@ -90,8 +90,8 @@
     {/if}
     <section class="block" aria-label="Schedule">
       <h3>Schedule</h3>
-      <span class="muted">{source.scheduled ? source.schedule ? scheduleSummary(source.schedule) : 'Schedule unavailable' : source.source_type === 'meeting_import' ? 'On demand' : 'Not scheduled'}</span>
-      {#if source.scheduled && source.next_sync_at}<span class="muted">Next sync <time datetime={source.next_sync_at}>{formatDateTime(source.next_sync_at)}</time></span>{/if}
+      <span class="muted" title={source.scheduled ? source.schedule : undefined}>{source.scheduled ? source.schedule ? scheduleSummary(source.schedule) : 'Schedule unavailable' : source.source_type === 'meeting_import' ? 'On demand' : 'Not scheduled'}</span>
+      {#if source.scheduled && source.next_sync_at}<span class="muted">Next sync <time datetime={source.next_sync_at} title={formatDateTime(source.next_sync_at, 'long')}>{formatDateTime(source.next_sync_at)}</time></span>{/if}
     </section>
     {#if prefix}
       <section class="block" aria-label="Attachments">

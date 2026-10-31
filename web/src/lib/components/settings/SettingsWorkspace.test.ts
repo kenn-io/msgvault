@@ -439,7 +439,7 @@ it('locks fields and newly mounted category controls without holding leave while
   let hold: ((leave: () => void) => boolean) | undefined;
   render(SettingsWorkspace, {
     props: { client, operationsController, onStatusChange, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; return () => { if (hold === next) hold = undefined; }; }]])
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
   });
   await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));

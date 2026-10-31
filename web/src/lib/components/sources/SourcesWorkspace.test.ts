@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+import { formatDateTime } from '../../util/format';
 import { cardDAVRepairCopy } from '../../carddav/account-settings';
 import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
@@ -74,7 +75,10 @@ describe('SourcesWorkspace', () => {
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
+    expect(await screen.findByText('Mbox import')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Imported' }));
     expect(await screen.findByText('Mbox import · import@example.com')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     for (const [text, code] of [
       ['Imported file — nothing to sync', 'source_not_schedulable'],
       ['Sync in progress', 'sync_already_running'],
@@ -88,7 +92,6 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeDefined();
   });
 
-
   it('shows config-only Gmail schedules and next sync', async () => {
     render(SourcesWorkspace, { client: createAPIClient(api([source({ source_type: 'gmail', scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })])) });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
@@ -96,17 +99,16 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
   });
 
-
   it('keeps the cron text in the schedule tooltip only', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       scheduled: true, schedule: '0 */6 * * *', next_sync_at: '2026-07-19T18:00:00Z'
     })] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
     const summary = await screen.findByText('At :00 past every 6th hour');
     expect(summary.getAttribute('title')).toBe('0 */6 * * *');
     expect(screen.queryByText('0 */6 * * *')).toBeNull();
   });
-
 
   it('shows status and only exposes Sync now from server capability truth', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
@@ -116,18 +118,16 @@ describe('SourcesWorkspace', () => {
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
-    expect(await screen.findByRole('table', { name: 'Source status' })).toBeDefined();
+    expect(await screen.findByRole('table', { name: 'Sources' })).toBeDefined();
     expect(screen.getByText('Archive')).toBeDefined();
-    expect(screen.getByRole('columnheader', { name: 'Last successful sync' })).toBeDefined();
+    expect(screen.getByRole('columnheader', { name: 'Last good sync' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Sync now Archive' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Sync now readonly@example.com' })).toBeNull();
     expect(screen.getByText('Sync not set up')).toBeDefined();
-    expect(screen.getAllByText('Not scheduled')).toHaveLength(1);
-    expect(screen.getAllByText('Never synced')).toHaveLength(2);
-    expect(screen.getAllByTitle(formatDateTime('2026-07-19T10:00:00Z', 'long'))).toHaveLength(2);
-    expect(screen.queryAllByTitle('2026-07-19T10:00:00Z')).toHaveLength(0);
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for readonly@example.com' }));
+    expect(screen.getByText('Not scheduled')).toBeDefined();
+    expect(within(screen.getByRole('table', { name: 'Sources' })).getAllByText('Never synced')).toHaveLength(2);
   });
-
 
   it('presents generic meeting imports as on-demand API sources', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
@@ -140,13 +140,13 @@ describe('SourcesWorkspace', () => {
     })] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
-    expect(await screen.findByText('On demand · imported through the API')).toBeDefined();
-    expect(screen.getByText('On-demand API source')).toBeDefined();
+    expect(await screen.findByText('On demand')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Local Meetings' }));
+    expect(screen.getByText('Meeting import · local-meetings')).toBeDefined();
     expect(screen.queryByText('Not scheduled')).toBeNull();
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sync now Local Meetings' })).toBeNull();
   });
-
 
   it('shows authoritative schedule, fresh result, and bounded item error details', async () => {
     const latest = run('completed', 10, {
@@ -159,20 +159,18 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       scheduled: true, schedule: '0 */6 * * *', next_sync_at: '2026-07-19T18:00:00Z', latest_sync: latest
     })] }));
-    render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
-    });
+    vi.setSystemTime(new Date('2026-07-19T12:00:00Z'));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
     expect(await screen.findByText('At :00 past every 6th hour')).toBeDefined();
     expect(screen.getByTitle(formatDateTime('2026-07-19T18:00:00Z', 'long'))).toBeDefined();
-    expect(screen.getByTitle(formatDateTime('2026-07-19T11:30:00Z', 'long'))).toBeDefined();
+    expect(screen.getByText('10 processed · 10 added · 1 error')).toBeDefined();
     expect(screen.queryByTitle(/T\d\d:\d\d:\d\dZ$/)).toBeNull();
     expect(screen.queryByText('This result may be out of date.')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show details for Archive' }));
-    expect(screen.getByText('1 item error')).toBeDefined();
+    await fireEvent.click(screen.getByText('1 item failed'));
     expect(screen.getByText('Malformed MIME header')).toBeDefined();
   });
-
 
   it('shows the last successful sync with a readable full date in its tooltip', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
@@ -184,19 +182,15 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryByTitle('2026-07-18T08:15:00Z')).toBeNull();
   });
 
-
   it('names a terminal result older than the documented threshold as stale', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       latest_sync: run('completed', 10, { completed_at: '2026-07-17T11:00:00Z' })
     })] }));
-    render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
-    });
+    vi.setSystemTime(new Date('2026-07-19T12:00:00Z'));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
     expect(await screen.findByText('This result may be out of date.')).toBeDefined();
   });
-
-
 
   it('disables the other source panel while a start is pending and posts its next enabled click', async () => {
     let finish!: (response: Response) => void;
