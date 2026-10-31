@@ -59,6 +59,7 @@
   let adding = $state(false);
   let loading = $state(true);
   const initialLoading = $derived((loading || contactsLoading) && !sources.length && !contacts.length);
+  const STALE_STATUS_MESSAGE = 'Automatic refresh paused. Source status may be stale.';
   let lockStatusStale = $state(false);
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
   let statusError = $state('');
@@ -406,7 +407,7 @@
       <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
     </div>{/if}
   {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
-  {#if lockStatusStale}<div class="notice" role="status"><span>Automatic refresh paused. Source status may be stale.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
+  {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if triggerError}<div class="notice notice--error" role="alert">
       <span>{triggerError}</span>
@@ -524,7 +525,7 @@
       source={selectedSource}
       syncing={syncing(selectedSource)}
       starting={Boolean(triggering)}
-      triggerError={triggerErrorSourceID === selectedSource.id && triggerError ? triggerError : statusError}
+      triggerError={triggerErrorSourceID === selectedSource.id && triggerError ? triggerError : statusError || (lockStatusStale ? STALE_STATUS_MESSAGE : '')}
       onRefresh={refresh}
       onSync={() => void syncNow(selectedSource)}
       onclose={() => (selected = undefined)}
