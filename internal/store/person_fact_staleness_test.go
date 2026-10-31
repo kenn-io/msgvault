@@ -390,3 +390,72 @@ func TestPersonFactStalenessIncludesAttributesWithoutInferenceDescriptions(t *te
 		})
 	}
 }
+
+func TestPersonFactStalenessAcceptsStoredTextOutsideOptionalChoices(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, personID, _ := newPersonFactProjectionStore(t)
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), AttributeDefinitionInput{
+		UniversalID: "test-staleness-text-choices", ObjectType: AttributeObjectPerson,
+		Slug: "staleness_text_choices", Label: "Staleness text choices",
+		ValueType: AttributeValueText, FieldType: AttributeFieldText,
+		Cardinality: AttributeCardinalitySingle, Ownership: AttributeOwnershipUser,
+		UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true,
+		IsDeletable: true, Options: &AttributeOptions{Choices: []AttributeChoice{{Value: "a", Label: "A"}}},
+	})
+	require.NoError(err)
+	value := "b"
+	_, err = st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
+		PersonID: personID, DefinitionSlug: definition.Slug,
+		Value:  AttributeValue{Type: AttributeValueText, Text: &value},
+		Source: ProvenanceUser,
+	})
+	require.NoError(err)
+
+	item := stalenessTestItem(t, st, personID, definition.Slug, personFactLedgerNow)
+	assert.JSONEq(`"b"`, string(item.Value))
+}
+
+func TestPersonFactStalenessExcludesRetiredInferredEmployment(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, personID, _ := newPersonFactProjectionStore(t)
+	organization := createPersonFactOrganization(t, st, "Former Company", "former.example")
+	target := projectionTargetBySlug(t, st, "employment")
+	value, err := json.Marshal(personfacts.EmploymentValue{
+		Organization: personfacts.OrganizationReference{
+			ID: &organization.ID, Name: organization.Name, Domain: "former.example",
+		},
+		Title: "Engineer", StartDate: &personfacts.PartialDateValue{Year: 2015},
+		EndDate: &personfacts.PartialDateValue{Year: 2024},
+	})
+	require.NoError(err)
+	claim := personFactProjectionClaim(personID, target, string(value), "staleness-retired-employment")
+	claim.Evidence[0].EventTime = personFactLedgerNow.Add(-365 * 24 * time.Hour)
+	result, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(
+		personID, "staleness-retired-employment", []personfacts.ProposedClaim{claim}, nil), nil)
+	require.NoError(err)
+	require.Len(result.Projections, 1)
+	employment, err := st.GetEmploymentContext(t.Context(), result.Projections[0].RowID)
+	require.NoError(err)
+	assert.False(employment.IsCurrent)
+
+	var resolverProjections []personfacts.CurrentProjection
+	err = st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+		projector, err := st.personFactProjectorSnapshotTx(t.Context(), tx, target)
+		if err != nil {
+			return err
+		}
+		resolverProjections, err = projector.loadCurrent(t.Context(), personID, target)
+		return err
+	})
+	require.NoError(err)
+	require.Len(resolverProjections, 1)
+	assert.Equal(employment.ID, resolverProjections[0].Ref.RowID)
+
+	items, err := st.PersonFactStalenessContext(t.Context(), personID, personFactLedgerNow, true)
+	require.NoError(err)
+	for _, item := range items {
+		assert.False(item.Target.Kind == personfacts.TargetEmployment && item.Projection.RowID == employment.ID)
+	}
+}

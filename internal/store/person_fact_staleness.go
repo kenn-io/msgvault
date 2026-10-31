@@ -102,6 +102,13 @@ func (s *Store) PersonFactStalenessContext(
 			if err != nil {
 				return fmt.Errorf("load person fact staleness current values: %w", err)
 			}
+			if target.Kind == personfacts.TargetEmployment {
+				current, err = s.currentPersonFactEmploymentStalenessProjectionsTx(
+					ctx, tx, personID, current)
+				if err != nil {
+					return fmt.Errorf("filter person fact staleness employments: %w", err)
+				}
+			}
 			for _, value := range current {
 				newest := value.ActiveFrom.UTC()
 				if !value.Declared {
@@ -145,6 +152,32 @@ func (s *Store) PersonFactStalenessContext(
 		return a.Projection.RowID < b.Projection.RowID
 	})
 	return items, nil
+}
+
+func (s *Store) currentPersonFactEmploymentStalenessProjectionsTx(
+	ctx context.Context, tx *loggedTx, personID int64,
+	projections []personfacts.CurrentProjection,
+) ([]personfacts.CurrentProjection, error) {
+	if len(projections) == 0 {
+		return projections, nil
+	}
+	employments, err := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{
+		PersonID: personID, CurrentOnly: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	currentIDs := make(map[int64]struct{}, len(employments))
+	for _, employment := range employments {
+		currentIDs[employment.ID] = struct{}{}
+	}
+	filtered := make([]personfacts.CurrentProjection, 0, len(projections))
+	for _, projection := range projections {
+		if _, current := currentIDs[projection.Ref.RowID]; current {
+			filtered = append(filtered, projection)
+		}
+	}
+	return filtered, nil
 }
 
 type personFactStalenessTargetKey struct {

@@ -1173,7 +1173,8 @@ func (p *personFactAttributeProjector) loadCurrent(
 	}
 	current := make([]personfacts.CurrentProjection, 0, len(values))
 	for _, value := range values {
-		normalized, normalizeErr := normalizedPersonFactAttributeValue(target, value.Value)
+		normalized, normalizeErr := normalizedPersonFactAttributeValue(
+			target, value.Value, p.definition.FieldType)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
@@ -2624,8 +2625,11 @@ func personFactAttributeScalarEligible(definition AttributeDefinition, allowSens
 }
 
 func normalizedPersonFactAttributeValue(
-	target personfacts.TargetDescriptor, value AttributeValue,
+	target personfacts.TargetDescriptor, value AttributeValue, fieldType AttributeFieldType,
 ) (*personfacts.NormalizedValue, error) {
+	if fieldType != AttributeFieldSelect && fieldType != AttributeFieldMultiselect {
+		target.Choices = nil
+	}
 	raw, err := personFactAttributeValueJSON(value)
 	if err != nil {
 		return nil, err
