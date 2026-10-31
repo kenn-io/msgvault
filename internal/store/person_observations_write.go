@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personobs"
 )
@@ -29,6 +30,35 @@ const (
 func (s *Store) lockPersonMutationTx(ctx context.Context, tx *loggedTx, personID int64) error {
 	return s.lockProfileIdentityKeyTxContext(ctx, tx, "person-observations", personID)
 }
+
+func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) error {
+	messageIDs := make([]int64, 0)
+	for _, item := range batch.Items {
+		if item.Failure != nil {
+			continue
+		}
+		for _, support := range item.Proposal.Support {
+			ref, err := peoplesweep.DecodePersonSweepEvidenceRef(support.Evidence.SourceRef)
+			if err != nil || ref.MessageID <= 0 {
+				continue // Invalid evidence is dropped when the proposal is validated.
+			}
+			messageIDs = append(messageIDs, ref.MessageID)
+		}
+	}
+	slices.Sort(messageIDs)
+	messageIDs = slices.Compact(messageIDs)
+	for _, messageID := range messageIDs {
+		var lockedID int64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lock observation support message %d: %w", messageID, err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT message_id FROM message_bodies WHERE message_id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lock observation support body %d: %w", messageID, err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) nextObservationSequenceTx(ctx context.Context, tx *loggedTx, personID int64) (int64, error) {
 	var sequence int64
 	err := tx.QueryRowContext(ctx, `INSERT INTO person_observation_clocks(person_id,last_sequence) VALUES(?,1)
@@ -165,6 +195,11 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			return result, errors.New("observation generation belongs to another program")
 		}
 	}
+	// Source rows must be locked before the person row. That makes the
+	// apply-time alignment check stable against message edits and reassignment.
+	if err := s.lockObservationSupportSourcesTx(ctx, tx, b); err != nil {
+		return result, err
+	}
 	if err := s.lockPersonMutationTx(ctx, tx, b.PersonID); err != nil {
 		return result, err
 	}
@@ -172,6 +207,21 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		out := personobs.BatchItemResult{Index: index, Failure: item.Failure}
 		if item.Failure != nil {
 			out.Outcome = "dropped-invalid"
+			result.Items = append(result.Items, out)
+			continue
+		}
+		for _, support := range item.Proposal.Support {
+			alignment, err := (PersonSweepEvidenceAligner{Store: s}).Align(ctx, support.Evidence)
+			if err != nil {
+				return result, fmt.Errorf("revalidate observation support: %w", err)
+			}
+			if !alignment.Accepted || support.Evidence.PersonID != b.PersonID || support.Evidence.SubjectPersonID == nil || *support.Evidence.SubjectPersonID != b.PersonID || support.Evidence.Directness != personfacts.DirectSelf {
+				out.Outcome = "dropped-invalid"
+				out.Failure = &personobs.ValidationError{Field: "support", Reason: "unaligned-evidence"}
+				break
+			}
+		}
+		if out.Failure != nil {
 			result.Items = append(result.Items, out)
 			continue
 		}

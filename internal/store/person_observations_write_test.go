@@ -335,6 +335,67 @@ func TestApplyObservationBatchPreparedIntegrityAndIsolation(t *testing.T) {
 	require.ErrorContains(t, err, "integrity")
 }
 
+func TestApplyObservationBatchRejectsSupportChangedAfterPreparation(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		update func(t *testing.T, f personSweepJournalFixture, messageID int64)
+	}{
+		{
+			name: "message edited",
+			update: func(t *testing.T, f personSweepJournalFixture, messageID int64) {
+				t.Helper()
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+					`UPDATE message_bodies SET body_text=? WHERE message_id=?`), "I run now", messageID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "sender reassigned",
+			update: func(t *testing.T, f personSweepJournalFixture, messageID int64) {
+				t.Helper()
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+					`UPDATE messages SET sender_id=? WHERE id=?`), f.bobID, messageID)
+				require.NoError(t, err)
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f, in, generation := observationBatchFixture(t, "I run")
+			targetID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+			candidate := in
+			candidate.Proposals = append([]personobs.ProposedObservation(nil), in.Proposals...)
+			candidate.Proposals[0].Content = "[PERSON] runs every morning"
+			candidate.Proposals[0].SupersedesIDs = []int64{targetID}
+			batch, err := f.store.PreparePersonObservationBatch(t.Context(), candidate)
+			require.NoError(err)
+			require.Nil(batch.Items[0].Failure)
+			ref, err := peoplesweep.DecodePersonSweepEvidenceRef(candidate.Proposals[0].Support[0].Evidence.SourceRef)
+			require.NoError(err)
+
+			tt.update(t, f, ref.MessageID)
+
+			result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+			require.NoError(err)
+			require.Len(result.Items, 1)
+			assert.Equal("dropped-invalid", result.Items[0].Outcome)
+			require.NotNil(result.Items[0].Failure)
+			assert.Equal("support", result.Items[0].Failure.Field)
+			assert.Equal("unaligned-evidence", result.Items[0].Failure.Reason)
+
+			target, err := f.store.GetPersonObservation(t.Context(), targetID)
+			require.NoError(err)
+			assert.Equal(personobs.StatusActive, target.Status)
+			assert.Nil(target.SupersededByID)
+			page, err := f.store.ListPersonObservations(t.Context(), f.alicePersonID, personobs.Filter{Limit: 20})
+			require.NoError(err)
+			require.Len(page.Items, 1)
+			assert.Equal(targetID, page.Items[0].ID)
+		})
+	}
+}
+
 func TestApplyObservationBatchPreservesExplicitSensitivity(t *testing.T) {
 	t.Run("insert", func(t *testing.T) {
 		assert := assert.New(t)
