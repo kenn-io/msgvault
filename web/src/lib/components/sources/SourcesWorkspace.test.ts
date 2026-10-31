@@ -245,11 +245,12 @@ describe('SourcesWorkspace', () => {
 
   it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
     const onOpenSettings = vi.fn();
-    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, validation: { off: { value: '0', label: 'No size limit' } } }];
+    const settings = [{ key: 'beeper.media', kind: 'boolean', value: { boolean: true } }, { key: 'beeper.max_media_mb', kind: 'integer', value: { integer: 0 }, validation: { off: { value: '0', label: 'Beeper default of 250 MiB' } } }];
     const fetchFn = api([source({ source_type: 'beeper', identifier: 'beeper', display_name: 'Beeper', scheduled: true, schedule: '0 3 * * *', next_sync_at: '2026-07-19T11:00:00Z' })], url => url.pathname.endsWith('/settings') ? Response.json({ settings }) : undefined);
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Beeper' }));
-    await screen.findByText('No size limit');
+    await screen.findByText('Beeper default of 250 MiB');
+    expect(screen.getByText('Defaults for Beeper accounts. Account settings can override these values.')).toBeDefined();
     expect(screen.getByText('On')).toBeDefined();
     expect(screen.getByText('At 03:00 every day')).toBeDefined();
     expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
@@ -266,10 +267,13 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it('keeps a contacts-only archive populated', async () => {
-    const view = render(SourcesWorkspace, { client: createCaptureClient(api([], () => undefined, [contact]), []) });
+  it('uses Connections for idle contacts without reading statuses or address books', async () => {
+    const fetch = api([], () => undefined, [contact]);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
     expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
     expect(screen.queryByText('No sources yet')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(fetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname).sort()).toEqual(['/api/v1/carddav/connections', '/api/v1/sources/status']);
     view.unmount();
   });
 
@@ -283,7 +287,7 @@ describe('SourcesWorkspace', () => {
   it('offers contacts sync-state retry in the row and panel', async () => {
     let statusReads = 0;
     const fetch = api([], url => {
-      if (url.pathname.endsWith('/carddav/status') && ++statusReads === 2) return Response.json({}, { status: 500 });
+      if (url.pathname.endsWith('/carddav/status') && ++statusReads === 1) return Response.json({}, { status: 500 });
       if (url.pathname.endsWith('/carddav/sync')) return Response.json({ status: 'succeeded' });
     }, [contact]);
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
@@ -914,14 +918,14 @@ it('publishes usable contacts when mail status pends', async () => {
     if (url.pathname.endsWith('/carddav/status')) return Response.json(++reads === 1
       ? { ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } }
       : contact.status);
-  }, [contact, { ...contact, connection: 'slow', status: { ...contact.status, account: { ...contact.status.account, username: 'user-b' } } }]), []);
+  }, [{ ...contact, status: { ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null } } }, { ...contact, connection: 'slow', status: { ...contact.status, active: { ...contact.status.latest, state: 'running', finished_at: null }, account: { ...contact.status.account, username: 'user-b' } } }]), []);
   const view = render(SourcesWorkspace, { client });
   try {
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText('Running')).toBeDefined();
+    expect(within(screen.getByRole('row', { name: /user-a/ })).getByText('Running')).toBeDefined();
     await vi.advanceTimersByTimeAsync(1000);
     expect(within(screen.getByRole('row', { name: /user-a/ })).getByText('Succeeded')).toBeDefined();
     expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole('button', { name: 'Sync now user-b' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(screen.getByRole('row', { name: /user-b/ })).getByText('Sync in progress')).toBeDefined();
   } finally { view.unmount(); }
 });

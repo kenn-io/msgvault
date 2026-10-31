@@ -141,7 +141,12 @@
           controller.status = connection.status;
           contactControllers.set(connection.connection, controller);
         }
-        void controller.retryStatus();
+        if (connection.status.active) {
+          void controller.retryStatus();
+        } else {
+          controller.status = connection.status;
+          controller.statusLoading = false;
+        }
       }
       contactsError = '';
     } catch {

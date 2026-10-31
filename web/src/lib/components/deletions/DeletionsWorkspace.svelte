@@ -19,7 +19,9 @@
 
 <script lang="ts">
   import { Button, Checkbox, Chip, CopyButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { getDeletion } from '../../api/generated/api/api';
+  import type { APIClient } from '../../api/client';
   import type { DeletionsController } from '../../deletions/controller.svelte';
   import type {
     DeletionManifestSummary as GeneratedDeletionManifestSummary,
@@ -34,7 +36,7 @@
 
   type Batch = GeneratedDeletionManifestSummary;
   const DELETE_COMMAND = 'msgvault delete-staged';
-  let { controller, onChanged = () => undefined }: { controller: DeletionsController; onChanged?: () => void } = $props();
+  let { client, controller, onChanged = () => undefined }: { client: APIClient; controller: DeletionsController; onChanged?: () => void } = $props();
   const batches = $derived(controller.batches);
   const loading = $derived(controller.loading);
   let selectedID = $state<string>();
@@ -44,6 +46,8 @@
   let confirmCancel = $state<Batch>();
   let cancelling = $state(false);
   let detailGeneration = 0;
+  let detailRequest: AbortController | undefined;
+  onDestroy(close);
 
   const cancelledCount = $derived(batches.filter((batch) => batch.status === 'cancelled').length);
   const rows = $derived(
@@ -53,22 +57,25 @@
   );
 
   onMount(() => void load());
-  async function load(): Promise<void> { await controller.refresh(true); }
-  $effect(() => {
-    if (!loading) void Promise.all(rows.map(batch => controller.getDetail(batch.id)));
-  });
+  async function load(): Promise<void> { await controller.refresh(); }
   const selectedBatch = $derived(batches.find(batch => batch.id === selectedID));
-  const shownDetail = $derived(selectedID ? controller.details[selectedID] ?? panelDetail : undefined);
   async function open(batch: Batch): Promise<void> {
     const generation = ++detailGeneration;
+    detailRequest?.abort();
     if (selectedID === batch.id) { selectedID = undefined; return; }
     selectedID = batch.id;
     panelDetail = undefined;
-    const data = await controller.getDetail(batch.id, { retry: true, fresh: true });
-    if (generation !== detailGeneration) return;
-    error = data ? '' : "Can't open this batch."; panelDetail = data; selectedID = data ? batch.id : undefined;
+    const request = detailRequest = new AbortController();
+    try {
+      const { data } = await getDeletion({ id: batch.id }, { ...client, signal: request.signal });
+      if (generation !== detailGeneration || request.signal.aborted) return;
+      panelDetail = data;
+    } catch {
+      if (generation !== detailGeneration || request.signal.aborted) return;
+      panelDetail = undefined;
+    }
   }
-  function close(): void { detailGeneration++; selectedID = undefined; }
+  function close(): void { detailGeneration++; detailRequest?.abort(); selectedID = undefined; }
 
   async function cancelManifest(): Promise<void> {
     if (!confirmCancel || cancelling) return;
@@ -109,7 +116,6 @@
       {#snippet header()}
         <TableHeaderCell label="Date" />
         <TableHeaderCell label="Messages" />
-        <TableHeaderCell label="Account" />
         <TableHeaderCell label="Status" />
       {/snippet}
       {#each rows as batch (batch.id)}
@@ -127,7 +133,6 @@
             >
           </td>
           <td>{count(batch.message_count)}</td>
-          <td>{controller.details[batch.id]?.account ?? (controller.details[batch.id]?.summary?.accounts ?? []).join(', ')}</td>
           <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
         </tr>
       {/each}
@@ -148,50 +153,50 @@
   />
 {/snippet}
 
-{#if selectedID && shownDetail && selectedBatch}
+{#if selectedID && selectedBatch}
   {@const chip = batchStatus(selectedBatch.status)}
   <SidePanel
-    title={`Staged ${formatDateTime(shownDetail.created_at)}`}
+    title={`Staged ${formatDateTime(selectedBatch.created_at)}`}
     onclose={close}
     footer={cancellable(selectedBatch.status) ? cancelAction : undefined}
   >
     <div class="panel">
       <div class="line">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
-        <span class="muted">{shownDetail.account || (shownDetail.summary?.accounts ?? []).join(', ')}</span>
+        <span class="muted">{panelDetail?.account || 'Account unavailable'}</span>
       </div>
-      {#if shownDetail.description}<p>{shownDetail.description}</p>{/if}
+      {#if panelDetail?.description}<p>{panelDetail.description}</p>{/if}
       <section class="block" aria-label="Messages">
-        <h3>{count(shownDetail.message_count)}</h3>
-        {#if shownDetail.summary}
+        <h3>{count(selectedBatch.message_count)}</h3>
+        {#if panelDetail?.summary}
           <span class="muted">
-            {formatBytes(shownDetail.summary.total_size_bytes)}{#if shownDetail.summary.date_range?.[0]} · {shownDetail.summary.date_range[0].slice(0, 10)} to {shownDetail.summary.date_range[1]?.slice(0, 10)}{/if}
+            {formatBytes(panelDetail.summary.total_size_bytes)}{#if panelDetail.summary.date_range?.[0]} · {panelDetail.summary.date_range[0].slice(0, 10)} to {panelDetail.summary.date_range[1]?.slice(0, 10)}{/if}
           </span>
-          {#if shownDetail.summary.top_senders?.length}
+          {#if panelDetail.summary.top_senders?.length}
             <ul class="senders">
-              {#each shownDetail.summary.top_senders as sender (sender.sender)}
+              {#each panelDetail.summary.top_senders as sender (sender.sender)}
                 <li><span>{sender.sender}</span><span class="muted">{sender.count.toLocaleString()}</span></li>
               {/each}
             </ul>
           {/if}
         {/if}
       </section>
-      {#if shownDetail.execution}
+      {#if panelDetail?.execution}
         <span class="muted">
-          {shownDetail.execution.succeeded.toLocaleString()} deleted · {shownDetail.execution.failed.toLocaleString()} failed
+          {panelDetail.execution.succeeded.toLocaleString()} deleted · {panelDetail.execution.failed.toLocaleString()} failed
         </span>
-        {#if shownDetail.execution.failed_ids?.length}
+        {#if panelDetail.execution.failed_ids?.length}
           <section class="block" aria-label="Failed message IDs">
             <h3>Failed message IDs</h3>
-            {#each shownDetail.execution.failed_ids as id}<code>{id}</code>{/each}
+            {#each panelDetail.execution.failed_ids as id}<code>{id}</code>{/each}
           </section>
         {/if}
       {/if}
       <div class="id">
         <span class="muted">Batch ID</span>
         <span class="id__value">
-          <code>{shownDetail.id}</code>
-          <CopyButton text={shownDetail.id} ariaLabel="Copy batch ID" />
+          <code>{selectedBatch.id}</code>
+          <CopyButton text={selectedBatch.id} ariaLabel="Copy batch ID" />
         </span>
       </div>
     </div>
