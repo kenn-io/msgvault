@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { waitFor } from '@testing-library/svelte';
 
 import type {
   ExplorePredicate,
@@ -17,6 +18,150 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
+  it.each([
+    ['Back', 'stay'], ['Back', 'leave'], ['click', 'leave']
+  ] as const)('holds Back to an unindexed entry from dirty Settings, then handles %s and %s', async (navigation, outcome) => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    const go = vi.spyOn(window.history, 'go');
+    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    let leave!: () => void;
+    let stay: (() => void) | undefined;
+    state.holdLeave = (next, restore) => { leave = next; stay = restore; return true; };
+    try {
+      window.history.back();
+      await popped();
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=files');
+
+      if (navigation === 'click') {
+        state.commitWorkspace('sources');
+        expect(state.current.workspace).toBe('settings');
+        expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+      }
+      state.holdLeave = undefined;
+      if (outcome === 'leave') {
+        leave();
+        expect(state.current.workspace).toBe(navigation === 'click' ? 'sources' : 'files');
+        expect(window.location.search).toBe(navigation === 'click' ? '?workspace=sources&mode=full_text' : '?workspace=files');
+        if (navigation === 'click') window.history.back();
+        else window.history.forward();
+        await popped();
+      } else if (navigation === 'Back') {
+        stay?.();
+      }
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe(navigation === 'Back' && outcome === 'leave' ? '?workspace=settings' : '?workspace=settings&mode=full_text');
+      expect(go).not.toHaveBeenCalled();
+      window.history.back();
+      await popped();
+      expect(state.current.workspace).toBe('files');
+      expect(window.location.search).toBe('?workspace=files');
+    } finally {
+      go.mockRestore();
+      state.destroy();
+    }
+  });
+
+  it.each(['Forward', 'Settings click'])('drops a held Back to an unindexed entry when %s returns to Settings first', async (navigation) => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    const cancel = vi.fn();
+    state.holdLeave = () => true;
+    state.cancelHeldLeave = cancel;
+    try {
+      window.history.back();
+      await popped();
+      if (navigation === 'Forward') {
+        window.history.forward();
+        await popped();
+      } else {
+        state.commitWorkspace('settings');
+      }
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(state.current.workspace).toBe('settings');
+      state.holdLeave = undefined;
+      window.history.back();
+      await popped();
+      if (navigation === 'Settings click') {
+        window.history.back();
+        await popped();
+      }
+      expect(state.current.workspace).toBe('files');
+      expect(window.location.search).toBe('?workspace=files');
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it('drops a held indexed Back leave when Settings is clicked', async () => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    let leave!: () => void;
+    try {
+      state.commitWorkspace('settings');
+      state.commitWorkspace('files');
+      window.history.back();
+      await popped();
+      state.holdLeave = (next) => { leave = next; return true; };
+      window.history.back();
+      await popped();
+      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      const cancel = vi.fn();
+      state.cancelHeldLeave = cancel;
+      state.commitWorkspace('settings');
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(state.current.workspace).toBe('settings');
+      state.holdLeave = undefined;
+      window.history.back();
+      await popped();
+      expect(state.current.workspace).toBe('settings');
+      window.history.back();
+      await popped();
+      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it.each([
+    ['back', 'leave'], ['back', 'stay'], ['forward', 'leave'], ['forward', 'stay'],
+  ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome) => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    try {
+      state.commitWorkspace('settings');
+      state.commitWorkspace('files');
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      const historyLength = window.history.length;
+      let leave!: () => void;
+      state.holdLeave = (next) => { leave = next; return true; };
+      window.history[direction]();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current.workspace).toBe('settings');
+      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      expect(window.history.length).toBe(historyLength);
+      state.holdLeave = undefined;
+      if (outcome === 'leave') {
+        leave();
+        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+        expect(state.current.workspace).toBe(direction === 'back' ? 'sources' : 'files');
+        expect(window.location.search).toBe(direction === 'back' ? '?workspace=sources&mode=full_text' : '?workspace=files&mode=full_text');
+        expect(window.history.length).toBe(historyLength);
+      } else {
+        window.history[direction === 'back' ? 'forward' : 'back']();
+        await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'sources'));
+      }
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('preserves paused Operations filters from handwritten URLs and saved state', () => {
     const handwritten = new URLSearchParams({ explore: JSON.stringify({ workspace: 'operations', operationState: 'paused' }) });
     expect(parseExploreURLState(handwritten.toString()).operationState).toBe('paused');
@@ -237,10 +382,10 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState, workspace: 'everything', settingsCategory: 'search'
     });
     expect(elsewhere).not.toContain('settingsCategory');
-    for (const invalid of ['<script>', 42, '', 'Search']) {
+    for (const [category, expected] of [['<script>', 'overview'], [42, 'overview'], ['', 'overview'], ['Search', 'overview'], ['toString', 'overview'], ['people', 'enrichment']]) {
       expect(parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'settings', settingsCategory: invalid
-      } as unknown as ExploreURLState)).settingsCategory).toBe('browser');
+        ...defaultExploreURLState, workspace: 'settings', settingsCategory: category
+      } as unknown as ExploreURLState)).settingsCategory).toBe(expected);
     }
   });
 
@@ -290,12 +435,12 @@ describe('Explore URL state', () => {
     expect(invalid.settingsAuthority).toBe('');
   });
 
-  it('opens Settings on Appearance for a retired document authority link', () => {
+  it('opens Settings on Overview for a retired document authority link', () => {
     const restored = parseExploreURLState(`?workspace=settings&explore=${encodeURIComponent(JSON.stringify({
       schemaVersion: 2, settingsAuthority: 'document_index'
     }))}`);
     expect(restored.settingsAuthority).toBe('');
-    expect(restored.settingsCategory).toBe('browser');
+    expect(restored.settingsCategory).toBe('overview');
   });
 
   it.each([
@@ -1665,4 +1810,5 @@ describe('session-owned exploration selection', () => {
       })
     ).toThrow('candidate snapshot');
   });
+
 });

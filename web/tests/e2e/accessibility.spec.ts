@@ -124,6 +124,7 @@ for (const theme of ['light', 'dark'] as const) {
     await assertNoViolations(page, `Deletions review ${theme}`);
 
     await selectWorkspace(page, 'Settings');
+    await page.getByRole('button', { name: 'Advanced', exact: true }).click();
     await selectKitOption(page, 'Theme', theme === 'light' ? 'Dark' : 'Light');
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeVisible();
     const nav = page.getByRole('main', { name: 'Settings' }).getByRole('navigation');
@@ -502,7 +503,7 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
   ]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-    const cardDAVCategory = page.getByRole('button', { name: /^CardDAV account/ });
+    const cardDAVCategory = page.getByRole('button', { name: 'Contacts', exact: true });
     await cardDAVCategory.focus();
     await page.keyboard.press('Enter');
 

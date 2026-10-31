@@ -82,7 +82,7 @@
   }
 </script>
 
-<SettingsSection title="CardDAV status" description="Runtime, credential, scheduler, and recent synchronization state.">
+<SettingsSection title="CardDAV status">
   <div class="section-state" aria-busy={controller.statusLoading}>
     {#if controller.statusLoading}<p class="working">
         <Spinner size={14} label="Loading CardDAV status" /> Loading CardDAV status…
@@ -173,23 +173,14 @@
       <Button
         label={controller.syncPending ? 'Checking CardDAV state…' : 'Sync now'}
         disabled={!controller.canSync || !connectionReady}
-        onclick={() => void controller.sync(false, syncConnection)}
-      />
-      <Button
-        label={controller.syncPending ? 'Checking CardDAV state…' : 'Full sync'}
-        disabled={!controller.canSync || !connectionReady}
-        tone="info"
-        onclick={() => void controller.sync(true, syncConnection)}
+        onclick={() => void controller.sync(syncConnection)}
       />
       <Button label="View CardDAV operations" surface="soft" onclick={openOperations} />
     </div>
   </div>
 </SettingsSection>
 
-<SettingsSection
-  title="Address books"
-  description="Choose which discovered books participate in synchronization, lookup, and publication."
->
+<SettingsSection title="Address books">
   <div class="section-state" aria-busy={controller.booksLoading}>
     <p class="helper">
       The archive has one write target across all CardDAV connections. Applying “Publish here” to a book
@@ -216,7 +207,7 @@
         {@const draft = controller.bookDraft(book.id)}
         <Card level="default" padding="sm" class="book-card" ariaLabel={`Address book ${book.name}`} title={book.name}>
           {#snippet actions()}{#if book.needs_full_reconcile}<Chip size="sm" tone="warning" uppercase={false}
-                >Full reconciliation required</Chip
+                >Next sync reconciles this book</Chip
               >{/if}{/snippet}
           {#if book.connection}<p>Connection: {book.connection}</p>{/if}
           <div class="role-controls">
@@ -259,7 +250,7 @@
   </div>
 </SettingsSection>
 
-<SettingsSection title="Sync history" description="Recent manual and scheduled CardDAV runs.">
+<SettingsSection title="Sync history">
   <div class="section-state" aria-busy={controller.runsLoading || controller.runsPageLoading}>
     {#if controller.runsLoading}<p class="working">
         <Spinner size={14} label="Loading CardDAV sync history" /> Loading sync history…

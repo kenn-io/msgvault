@@ -50,18 +50,18 @@
       });
       if (response.status === 412) {
         await onConflict();
-        error = 'The configuration changed on disk. Latest settings were loaded; review the stable name and try again.';
+        error = 'The settings changed on disk. The latest are loaded. Try again.';
         return;
       }
       if (!data) {
-        error = apiErrorMessage(responseError, `Unable to create ${providerLabel} provider.`);
+        error = apiErrorMessage(responseError, `Can't add ${providerLabel}.`);
         return;
       }
       name = '';
       expanded = false;
       onSaved(data, response.headers.get('ETag') ?? configETag);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : `Unable to create ${providerLabel} provider.`;
+      error = cause instanceof Error ? cause.message : `Can't add ${providerLabel}.`;
     } finally {
       saving = false;
     }
@@ -72,11 +72,11 @@
     expanded = false;
   }
   function providerNameError(stableName: string, names: string[]): string {
-    if (!stableName) return 'A stable provider name is required.';
+    if (!stableName) return 'Enter a name.';
     if (!/^[A-Za-z0-9._:-]+$/.test(stableName)) {
-      return "Stable names may use only letters, digits, '.', '_', ':', or '-'.";
+      return 'Names can use letters, digits, dots, underscores, colons, and hyphens.';
     }
-    if (names.includes(stableName)) return `A provider named ${stableName} already exists.`;
+    if (names.includes(stableName)) return `${stableName} already exists.`;
     return '';
   }
   function canonicalProvider(providerKind: ProviderKind): ProviderUpdate {
@@ -124,65 +124,66 @@
   }
 </script>
 
-<section class="provider-creator" aria-label={`Add ${providerLabel} provider`}>
-  {#if expanded}
-    <div class="creator-copy">
-      <strong>Add {providerLabel} provider</strong>
-      <small>The provider starts disabled. Review its disclosure policy and add a credential before enabling it.</small>
-    </div>
+{#if expanded}
+  <form
+    class="provider-creator"
+    aria-label={`Add ${providerLabel}`}
+    onsubmit={(event) => {
+      event.preventDefault();
+      void createProvider();
+    }}
+  >
+    <small class="creator-disclosure">The provider starts disabled. Review its disclosure policy and add a credential before enabling it.</small>
     <label>
-      {providerLabel} stable provider name
-      <TextInput
-        bind:value={name}
-        ariaLabel={`${providerLabel} stable provider name`}
-        autocomplete="off"
-        disabled={saving}
-        required
-        block
-      />
+      {providerLabel} name
+      <TextInput bind:value={name} ariaLabel={`${providerLabel} name`} autocomplete="off" disabled={saving} required block />
       <small>Names are durable IDs and cannot change provider kind later.</small>
     </label>
     {#if error}<small class="creator-error" role="alert">{error}</small>{/if}
     <div class="creator-actions">
       <Button disabled={saving} label="Cancel" onclick={cancel} />
       <Button
+        type="submit"
+        tone="info"
+        surface="solid"
         disabled={saving}
-        label={saving ? 'Creating…' : `Create ${providerLabel} provider`}
-        onclick={() => void createProvider()}
+        label={saving ? 'Adding…' : `Add ${providerLabel}`}
       />
     </div>
-  {:else}
-    <Button
-      label={`Add ${providerLabel} provider`}
-      onclick={() => {
-        expanded = true;
-      }}
-    />
-  {/if}
-</section>
+  </form>
+{:else}
+  <Button
+    size="sm"
+    label={`Add ${providerLabel}`}
+    onclick={() => {
+      expanded = true;
+    }}
+  />
+{/if}
 
 <style>
   .provider-creator {
     display: grid;
-    gap: var(--space-3);
-    padding: var(--space-4);
-    border: 1px dashed var(--border-muted);
+    gap: var(--field-gap);
+    padding: var(--pane-pad-x);
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
   }
-  .creator-copy,
   label {
     display: grid;
-    gap: 0.35rem;
-  }
-  .creator-copy small,
-  label small {
-    color: var(--text-muted);
+    gap: var(--label-gap);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
   }
   .creator-actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: var(--space-2);
+    gap: var(--control-gap);
+  }
+  .creator-disclosure,
+  label small {
+    color: var(--text-muted);
   }
   .creator-error {
     color: var(--status-error-ink);

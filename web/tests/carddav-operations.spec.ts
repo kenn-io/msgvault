@@ -17,10 +17,10 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   const fixture = await installCardDAV(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
 
-  const cardDAVCategory = page.getByRole('button', { name: /^CardDAV account/ });
+  const cardDAVCategory = page.getByRole('button', { name: 'Contacts', exact: true });
   await cardDAVCategory.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'CardDAV account' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Contacts', exact: true })).toBeVisible();
   await expect(page.getByText('Not configured', { exact: true })).toBeVisible();
   await expect(page.getByRole('alert')).toHaveText('CardDAV account discovery is missing. Test and save the account again.');
   expect(fixture.requests.filter(({ path }) => /carddav\/(books|conflicts)$/.test(path))).toEqual([]);
@@ -230,10 +230,10 @@ test('keyboard publication ambiguity locks mutation, retries GET only, and repea
 
 async function openCardDAVSettings(page: Page): Promise<void> {
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  const category = page.getByRole('button', { name: /^CardDAV account/ });
+  const category = page.getByRole('button', { name: 'Contacts', exact: true });
   await category.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'CardDAV account' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Contacts', exact: true })).toBeVisible();
 }
 
 function mutationCount(

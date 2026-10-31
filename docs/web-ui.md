@@ -458,9 +458,9 @@ history cannot be read shows "History unavailable" instead of looking like no
 work has ever run.
 
 An Off row offers **Set up** when Settings can turn the work on. Message
-embeddings, person embeddings, and visual embeddings open Settings on Search
-and focus their setting. Person enrichment opens Person enrichment, and person
-sweeps open People sweep. Document extraction and document embeddings are
+embeddings, person embeddings, and visual embeddings open Settings on Search & AI
+and focus their setting. Person enrichment and people sweeps open People lookups.
+Operations also links to Settings Overview. Document extraction and document embeddings are
 configured in `config.toml` on the daemon host, so their rows say so and link to
 [Document indexing setup](/docs/usage/document-indexing/#configure-the-policy)
 and [Document search setup](/docs/usage/document-indexing/#semantic-and-hybrid-document-search).
@@ -558,20 +558,18 @@ content.
 
 ## Settings and restart behavior
 
-Settings edits the daemon's `config.toml` from the browser. For every
-`config.toml` setting the daemon supplies the category, section, label,
-description, and allowed values, so the browser never decides on its own what
-a setting means. Those categories are Appearance, Daemon, Archive, Search,
-Sources, Attachments, Person enrichment, and Integrations. Larger categories
-split into titled sections, for example Search has separate sections for the
-text embedding provider, the embedding schedule, and visual attachment search.
-The CardDAV account and People sweep categories are separate browser-owned
-workflows with their own save actions; they are not part of the daemon's
-settings catalog. The selected category is part of the page link, so reload and
-Back keep it. A link to an unknown category opens Appearance.
+Settings opens on Overview, with status and setup or build actions for
+background features. Use **Refresh feature status** to update Overview after
+background work changes. **Build index** appears when offered by the daemon and
+asks for confirmation before a full rebuild. Its categories are Overview,
+Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced.
+Sources includes source and attachment settings. Advanced includes archive
+settings and Appearance. People lookups includes named enrichment providers and
+People sweep profiles.
 
-Each row shows the setting name and one sentence about what it does. Limits
-live on the control itself: a number input carries its minimum and maximum,
+The daemon supplies allowed values and validation. Settings supplies category and selected field labels, groups settings into the category rail and keeps tuning and host-managed values behind disclosures. The selected category is part of the page link, so reload and Back keep it. Old category links open their replacement category; unknown categories open Overview.
+
+Each row shows the setting name. Limits live on the control itself: a number input carries its minimum and maximum,
 and a syntax hint such as the accepted duration format sits under the control
 only when the syntax needs one. Settings where zero means "off", such as an
 attachment size cap that falls back to the provider default, show a switch.
@@ -579,7 +577,7 @@ Switch it off and the row states what happens instead; switch it on and a
 value input appears, starting from a suggested value. Rows you have changed
 carry an amber dot. A save bar appears at the bottom of the page only while you
 have unsaved changes. It counts them and offers **Discard** and **Save
-changes**. **Save changes** stays disabled while a number field is empty. When
+changes**. **Save changes** stays disabled while a number field is empty. During a save, fields and resource actions wait; category navigation stays available. When
 the bar disappears after a save or discard, focus moves to the category
 heading.
 
@@ -596,42 +594,25 @@ stored as a `CRON_TZ=` prefix on the schedule. The CardDAV account form uses
 the same field, and the Sources and CardDAV status views describe stored
 schedules the same way.
 
-Each category states once, in a line under its heading, how its changes take
-effect:
-
-- "Saved changes apply right away — no restart needed." Appearance uses this
-  line.
-- "Saved changes apply after the daemon restarts." Every other `config.toml`
-  category uses this line.
-- "Most saved changes apply after the daemon restarts. Rows that differ are
-  marked." A category that mixes both uses this line.
-- "Set in config.toml on the daemon host." A category whose settings are all
-  host-managed uses this line.
-
-After a save that needs a restart, the page shows "Saved. Restart the daemon to
-apply these changes." until the daemon restarts.
-
-Some controls save through their own buttons instead of **Save changes**:
-provider credentials, person-enrichment providers, the CardDAV account, and
-People sweep. Above the first such control, the page says "These save
-immediately when you use their buttons — not with Save changes." Two of them
-also apply right away and say so beside their controls: person-enrichment
-provider API keys and the CardDAV account.
+The Save changes bar covers ordinary settings, and its edits survive category
+changes. Some controls save through their own buttons instead: provider
+credentials, person-enrichment providers, contact accounts, and People sweep.
+The bar stays visible on Contacts while ordinary settings have unsaved changes.
+After a save that needs a restart, Settings shows “Saved. Restart msgvault to
+apply these changes.”
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the
 configuration; reload before saving again.
 
-A saved Appearance theme or density applies to the open tab at once, unless a
-Display menu override is active in that tab. The override still wins. The
-Appearance page explains how to return: choose “Use daemon theme” and Temporary
+A theme or density saved under Advanced applies to the open tab at once, unless a
+Display menu override is active in that tab. The override still wins. To return to the saved values, choose “Use daemon theme” and Temporary
 density “Auto” in the Display menu. A saved default search mode does not change
 the search you have open. Tabs you open later in this browser without a mode in
 their link use it.
 
 Host-managed values, such as the listener address and the server API key
-(`server.api_key`), show their current value with a Host-managed tag and no
-input. Change them in `config.toml` on the daemon host. After the API key
+(`server.api_key`), show their current value under Set in config.toml. Change them in `config.toml` on the daemon host. After the API key
 changes and the daemon restarts, old browser sessions end and the login
 screen appears.
 
@@ -650,10 +631,10 @@ a stored key. The box shows `None` when no key is set, or a masked
 hint of the set key, its first three and last three characters, such as
 `sk-…x9Q`, so you can tell which key is in place. A key under twelve
 characters shows as dots instead. The pencil opens a dialog to paste the
-new key, and the dialog says when it takes effect: a person-enrichment key
-applies right away, the text and visual embedding keys are stored at once
-but used after the daemon restarts, and the task integration key is saved
-with the rest of the page. A key that comes from an environment variable
+new key. A person-enrichment key applies right away; text and visual embedding
+keys are stored at once, and their dialog says the daemon uses them after a
+restart; the task integration key is saved with Save changes.
+A key that comes from an environment variable
 says so under the line and cannot be cleared from the browser.
 
 Credentials have a separate revision from `config.toml`. When changing both
@@ -664,8 +645,9 @@ the credential. This binds the key to the destination it was entered for.
 
 CardDAV settings manage contact accounts and discovered address books. Choose
 which books participate in sync, lookup, and publishing; publishing also
-enables contact sync for that book. The workspace offers incremental and full
-sync, recent run history, and conflict review. A conflict shows local and
+enables contact sync for that book. Sync now lets the daemon choose whether
+to reconcile the full address book. To force a full sync, run `msgvault sync-carddav --full`. The workspace also offers recent run
+history and conflict review. A conflict shows local and
 remote versions before you choose which to keep. See
 [People and CardDAV](/docs/usage/people-carddav/) for setup and publishing rules.
 

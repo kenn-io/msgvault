@@ -1,13 +1,10 @@
-import type { SyncResult } from '../api/generated/models';
 import {
   getOperationRun as generatedGetOperationRun,
   getOperationStatus as generatedGetOperationStatus,
   listOperationRuns as generatedListOperationRuns,
-  resumeVisualAttachmentBuild as generatedResumeVisualAttachmentBuild,
-  startVisualAttachmentBuild as generatedStartVisualAttachmentBuild,
-  syncCardDAV as generatedSyncCardDAV,
 } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
+import { runOperationAction } from './actions';
 import type {
   OperationAction,
   OperationActionOutcome,
@@ -259,43 +256,12 @@ export class OperationsController {
     let uncertain = false;
     let outcome: OperationActionOutcome = 'succeeded';
     try {
-      const result = action === 'carddav_sync'
-        ? await generatedSyncCardDAV({ full: false }, {
-          ...this.client,
-          signal: request.signal,
-        })
-        : action === 'visual_build'
-          ? await generatedStartVisualAttachmentBuild({ consent: true }, {
-            ...this.client,
-            signal: request.signal,
-          })
-          : await generatedResumeVisualAttachmentBuild({
-            ...this.client,
-            signal: request.signal,
-          });
+      const result = await runOperationAction(action, { ...this.client, signal: request.signal });
       if (!this.ownsAction(request, generation, context)) return 'discarded';
       reconcile = true;
-      if (result.response.status === 409) {
-        this.actionConflict = 'The operation could not start because current server state changed.';
-        outcome = 'conflict';
-      } else if (!result.response.ok) {
-        this.actionError = 'Unable to start the operation.';
-        outcome = 'failed';
-      } else if (
-        action === 'carddav_sync' &&
-        result.data &&
-        'status' in result.data &&
-        (result.data.status === 'partial' || result.data.status === 'failed')
-      ) {
-        const names =
-          'connections' in result.data
-            ? ((result.data as SyncResult).connections ?? [])
-                .filter((connection) => connection.status !== 'succeeded')
-                .map((connection) => connection.connection)
-            : [];
-        this.actionError = `CardDAV sync ${result.data.status}. Connections needing attention: ${names.join(', ')}.`;
-        outcome = 'failed';
-      }
+      outcome = result.outcome;
+      if (outcome === 'conflict') this.actionConflict = result.message ?? null;
+      else this.actionError = result.message ?? null;
     } catch {
       if (this.ownsAction(request, generation, context)) {
         reconcile = true;

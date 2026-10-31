@@ -1,3 +1,4 @@
+import { normalizeCategory } from '../settings/layout';
 import { SvelteSet } from 'svelte/reactivity';
 
 import type {
@@ -186,7 +187,7 @@ export const defaultExploreURLState: ExploreURLState = {
   operationRunID: null,
   operationStatus: '',
   settingsAuthority: '',
-  settingsCategory: 'browser',
+  settingsCategory: 'overview',
   columns: [...DEFAULT_EXPLORE_COLUMNS],
   columnWidths: {},
   activeRow: null,
@@ -198,7 +199,7 @@ export const defaultExploreURLState: ExploreURLState = {
 
 interface ExploreWindow {
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>;
-  history: Pick<History, 'state' | 'pushState' | 'replaceState'>;
+  history: Pick<History, 'state' | 'pushState' | 'replaceState' | 'go'>;
   addEventListener(type: 'popstate', listener: () => void): void;
   removeEventListener(type: 'popstate', listener: () => void): void;
 }
@@ -366,15 +367,11 @@ function operationRunID(value: unknown): string | null {
     : null;
 }
 
-const SETTINGS_CATEGORY_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
-
-// A Settings authority link chooses its category; otherwise keep a
-// well-formed category id. Settings shows Appearance for ids the daemon
-// does not list.
+// Authority links select their setting; old category links select its new home.
 function settingsCategory(value: unknown, authority: SettingsNavigationAuthority | ''): string {
   const target = settingsNavigationTarget(authority);
   if (target) return target.categoryID;
-  return typeof value === 'string' && SETTINGS_CATEGORY_PATTERN.test(value) ? value : 'browser';
+  return normalizeCategory(typeof value === 'string' ? value : 'overview');
 }
 
 function legacyRelationshipTarget(
@@ -609,9 +606,9 @@ export function serializeExploreURLState(state: ExploreURLState, baseSearch = ''
   return `?${parameters.toString()}`;
 }
 
-function historyEntry(search: string, state: ExploreURLState): { exploreSearch: string; exploreState: unknown } {
+function historyEntry(search: string, state: ExploreURLState, index: number): { exploreSearch: string; exploreState: unknown; exploreIndex: number } {
   // History entries must be structured-cloneable, so strip reactive proxies.
-  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)) };
+  return { exploreSearch: search, exploreState: JSON.parse(JSON.stringify(state)), exploreIndex: index };
 }
 
 export function parseExploreURLState(search: string): ExploreURLState {
@@ -633,19 +630,60 @@ export function parseExploreURLState(search: string): ExploreURLState {
 export class ExploreState {
   current = $state<ExploreURLState>(freshDefaults());
   restorationEpoch = $state(1);
+  holdLeave?: (leave: () => void, stay?: () => void) => boolean;
+  // Drops a held leave whenever another navigation or history move commits.
+  cancelHeldLeave?: () => void;
   private readonly browser: ExploreWindow;
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
   private committed: ExploreURLState;
+  private historyIndex: number;
+  private restoringHeldLeave = false;
+  private pendingHeldLeaveRestore?: () => void;
   private pendingRestorationEpoch = $state<number | undefined>(1);
   private pendingSearchPriorFocus?: Pick<ExploreURLState, 'activeRow' | 'scrollAnchor'>;
   private readonly handlePopState = (): void => {
-    this.current = this.readURLState();
+    if (this.restoringHeldLeave) {
+      this.restoringHeldLeave = false;
+      return;
+    }
+    const next = this.readURLState();
+    const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
+    const commit = () => this.commitPopped(next, nextIndex);
+    if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
+    commit();
+  };
+
+  // An entry from before exploreIndex existed gives no direction, so the
+  // browser stays on it while held: leaving commits it, staying pushes Settings back.
+  private holdPop(delta: number, commit: () => void): boolean {
+    if (delta === 0) {
+      this.pendingHeldLeaveRestore = () => this.pushCommitted();
+      return this.holdLeave?.(commit, this.pendingHeldLeaveRestore) ?? false;
+    }
+    if (!this.holdLeave?.(() => this.browser.history.go(delta))) return false;
+    this.restoringHeldLeave = true;
+    this.browser.history.go(-delta);
+    return true;
+  }
+
+  private commitPopped(next: ExploreURLState, index: number): void {
+    this.cancelHeldLeave?.();
+    this.pendingHeldLeaveRestore = undefined;
+    this.historyIndex = index;
+    this.current = next;
     this.committed = normalize(this.current);
     this.pendingSearchPriorFocus = undefined;
     this.restorationEpoch += 1;
     this.pendingRestorationEpoch = this.restorationEpoch;
-  };
+  }
+
+  private pushCommitted(): void {
+    this.pendingHeldLeaveRestore = undefined;
+    const search = serializeExploreURLState(this.committed);
+    const { pathname, hash } = this.browser.location;
+    this.browser.history.pushState(historyEntry(search, this.committed, this.historyIndex), '', `${pathname}${search}${hash}`);
+  }
 
   constructor(
     browser: ExploreWindow = window,
@@ -655,6 +693,8 @@ export class ExploreState {
   ) {
     this.browser = browser;
     this.preferenceStorage = preferenceStorage;
+    this.historyIndex = browser.history.state?.exploreIndex ?? 0;
+    browser.history.replaceState({ ...browser.history.state, exploreIndex: this.historyIndex }, '', browser.location.href);
     this.current = this.readURLState();
     this.committed = normalize(this.current);
     this.rewriteLegacyFilesURL();
@@ -676,7 +716,7 @@ export class ExploreState {
     history.replaceState(
       {
         ...(isRecord(history.state) ? history.state : {}),
-        ...historyEntry(search, this.current)
+        ...historyEntry(search, this.current, this.historyIndex)
       },
       '',
       `${location.pathname}${search}${location.hash}`
@@ -853,6 +893,10 @@ export class ExploreState {
     patch: Partial<ExploreURLState>,
     mode: 'push' | 'replace'
   ): void {
+    this.pendingHeldLeaveRestore?.();
+    this.cancelHeldLeave?.();
+    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
+      this.holdLeave?.(() => this.navigate(patch, mode))) return;
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
@@ -880,7 +924,7 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow) }, '', committedURL);
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -898,7 +942,8 @@ export class ExploreState {
     }
     const search = serializeExploreURLState(this.current, baseSearch);
     const url = `${this.browser.location.pathname}${search}${this.browser.location.hash}`;
-    const history = historyEntry(search, this.current);
+    if (mode === 'push') this.historyIndex += 1;
+    const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
       this.browser.history.pushState(history, '', url);
       this.committed = normalize(this.current);

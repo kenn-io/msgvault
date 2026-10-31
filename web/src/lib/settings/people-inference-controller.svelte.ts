@@ -30,7 +30,9 @@ export class PeopleInferenceController {
   private destroyed = false;
   private selectionEpoch = 0;
 
-  constructor(private readonly client: APIClient) {}
+  constructor(private readonly client: APIClient, private readonly onChanged: () => void | Promise<void> = () => undefined) {}
+
+  updateConfigRevision(etag: string): void { this.configETag = etag; }
 
   get selectedProfile(): PeopleInferenceProfileSetting | undefined {
     return this.status?.profiles.find((profile) => profile.name === this.selectedName);
@@ -72,14 +74,15 @@ export class PeopleInferenceController {
       // Creating a profile and storing its key are separate writes. Keep the
       // saved profile visible so a failed key write can be retried in place.
       this.choose(name);
+      if (key) await this.onChanged();
       if (key) await this.writeKey(name, key);
-    });
+    }, true);
   }
 
   async saveKey(key: string): Promise<void> {
     if (!this.selectedName || !key) return;
     this.clearCheck();
-    await this.run(() => this.writeKey(this.selectedName, key));
+    await this.run(() => this.writeKey(this.selectedName, key), true);
   }
 
   private async writeKey(name: string, key: string): Promise<void> {
@@ -134,7 +137,7 @@ export class PeopleInferenceController {
     if (!this.canSelect) return;
     await this.run(async () => {
       this.capture(await selectSettingsPeopleInference({ name: this.selectedName }, this.configOptions()));
-    });
+    }, true);
   }
 
   async revoke(): Promise<void> {
@@ -149,7 +152,7 @@ export class PeopleInferenceController {
     this.clearCheck();
     await this.run(async () => {
       this.capture(await disableSettingsPeopleInference(this.configOptions()));
-    });
+    }, true);
   }
 
   async remove(name: string): Promise<void> {
@@ -157,7 +160,7 @@ export class PeopleInferenceController {
     await this.run(async () => {
       this.capture(await deleteSettingsPeopleInferenceProvider({ name }, this.configOptions()));
       if (!this.destroyed) this.choose(this.status?.profiles[0]?.name ?? '');
-    });
+    }, true);
   }
 
   destroy(): void { this.destroyed = true; }
@@ -191,11 +194,14 @@ export class PeopleInferenceController {
     if (!this.configETag) throw new Error('People sweep settings response omitted its config ETag. Reload before editing.');
   }
 
-  private async run(action: () => Promise<void>): Promise<void> {
+  private async run(action: () => Promise<void>, changesConfig = false): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.error = '';
-    try { await action(); }
+    try {
+      await action();
+      if (changesConfig) await this.onChanged();
+    }
     catch (cause) {
       if (!this.destroyed) this.error = cause instanceof Error ? cause.message : 'Unable to update people sweep settings.';
     } finally {

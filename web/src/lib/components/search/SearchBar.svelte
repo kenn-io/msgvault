@@ -72,7 +72,7 @@
       bind:inputEl
       value={draft}
       ariaLabel="Search everything"
-      placeholder="Search people, conversations, events, and files…"
+      placeholder={compact ? 'Search' : 'Search people, conversations, events, and files…'}
       block
       oninput={changeQuery}
     />
