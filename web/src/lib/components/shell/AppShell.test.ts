@@ -119,10 +119,10 @@ describe('AppShell', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     await tick();
     if (leave) {
-      expect(screen.queryByText('The authorized raw message export is no longer available.')).toBeNull();
+      expect(screen.queryByText('The original message isn’t available.')).toBeNull();
       expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([]);
     } else {
-      await screen.findByText('The authorized raw message export is no longer available.');
+      await screen.findByText('The original message isn’t available.');
       await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([
         { event: 'error_shown', properties: { surface: 'web', kind: 'other' } }
       ]));
@@ -636,7 +636,7 @@ describe('AppShell', () => {
       ]);
     });
 
-    it('moves between Everything and Files with Show as, keeping the query and filters', async () => {
+    it('switches Messages to Files through Show as and returns through the sidebar, keeping query and filters', async () => {
       const state = shellState('everything');
       state.commitNavigation({ query: 'pasta', filters: [{ dimension: 'source', values: ['1'] }] });
       render(AppShell, { client: exploreClient(), state, enabled: false });
@@ -650,7 +650,7 @@ describe('AppShell', () => {
       });
       expect(screen.queryByRole('grid', { name: 'Files in current context' })).toBeNull();
 
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Table');
+      await fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
       expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
       expect(state.current).toMatchObject({
         workspace: 'everything', presentation: 'table', query: 'pasta',
@@ -2471,7 +2471,27 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('opens the Sort menu with s, announces the fixed order with r, and shows the count once', async () => {
+  it('keeps the selected message open when Filter clears its filters', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(async () => Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 })));
+    state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
+    const rendered = render(AppShell, { client, state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await screen.findByText('Synthetic subject 1');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: 'Enter' });
+      await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+      expect(state.current.filters).toEqual([]);
+      expect(state.current.selectedRow).toBe('message:1');
+      expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it('focuses the fixed Messages Sort with s and shows its count once', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
       rows: [entry(1), entry(2)], total_count: 2
@@ -2480,19 +2500,12 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     await screen.findByText('Synthetic subject 1');
 
-    await fireEvent.keyDown(window, { key: 's' });
-    const sort = screen.getByRole('combobox', { name: /^Sort: Newest first/ });
-    expect(document.activeElement).toBe(sort);
-    const listbox = screen.getByRole('listbox');
-    const note = within(listbox).getByRole('option', { name: 'Other orders aren’t available yet' });
-    expect((note as HTMLButtonElement).disabled).toBe(true);
-
-    await fireEvent.keyDown(window, { key: 'r' });
-    expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
-      .toBe('Messages is always shown newest first.');
-
     const main = screen.getByRole('main', { name: 'Messages' });
     expect(within(main).getAllByText('2 items')).toHaveLength(1);
+    await fireEvent.keyDown(document.body, { key: 's' });
+    const sort = screen.getByRole('combobox', { name: 'Sort: Newest first' });
+    expect(document.activeElement).toBe(sort);
+    expect(await screen.findByRole('option', { name: 'Other orders aren’t available yet' })).toHaveProperty('disabled', true);
     rendered.unmount();
     state.destroy();
   });
@@ -2611,7 +2624,7 @@ describe('AppShell', () => {
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('root'));
 
     await fireEvent.keyDown(window, { key: 'f' });
-    expect(screen.getByRole('button', { name: 'Filters' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Filter' }).getAttribute('aria-expanded')).toBe('true');
     await fireEvent.keyDown(window, { key: 'r' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
       .toBe('Sorting isn’t available while grouped.');
@@ -2754,6 +2767,7 @@ describe('AppShell', () => {
       states.push(state);
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [], total_count: 0 }));
         if (path.endsWith('/explore/preflight')) {
           return Response.json({
             count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
@@ -2780,8 +2794,27 @@ describe('AppShell', () => {
     it.each([
       {
         layer: 'Sort',
-        open: () => clickFocused(screen.getByRole('combobox', { name: /^Sort:/ })),
+        open: () => clickFocused(screen.getByRole('combobox', { name: 'Sort: Newest first' })),
         isOpen: () => screen.queryByRole('listbox') !== null
+      },
+      {
+        layer: 'Filter',
+        open: () => clickFocused(screen.getByRole('button', { name: 'Filter' })),
+        isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null
+      },
+      {
+        layer: 'Filter', outer: 'grouping',
+        openOuter: async () => {
+          const state = await openReadingPane();
+          await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
+          await fireEvent.click(screen.getByRole('option', { name: 'Source' }));
+          state.replaceTransient({ selectedRow: null });
+          return state;
+        },
+        isOuterOpen: (state: ExploreState) => state.current.groupingChain.join() === 'source',
+        isOuterClosed: (state: ExploreState) => state.current.groupingChain.length === 0,
+        open: () => clickFocused(screen.getByRole('button', { name: 'Filter' })),
+        isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null,
       },
       {
         layer: 'More selection actions',
@@ -2808,19 +2841,23 @@ describe('AppShell', () => {
         },
         isOpen: () => screen.queryByRole('dialog', { name: 'Save view' }) !== null
       }
-    ])('closes $layer first and leaves the reading pane for the next Escape', async ({ open, isOpen }) => {
-      const state = await openReadingPane();
+    ].map(row => ({
+      outer: 'reading pane', openOuter: openReadingPane,
+      isOuterOpen: (state: ExploreState) => state.current.selectedRow === 'message:1' && screen.queryByRole('complementary', { name: 'Reading pane: Synthetic subject 1' }) !== null,
+      isOuterClosed: (state: ExploreState) => state.current.selectedRow === null,
+      ...row,
+    })))('closes $layer first and leaves $outer for the next Escape', async ({ open, isOpen, openOuter, isOuterOpen, isOuterClosed }) => {
+      const state = await openOuter();
       await open();
       expect(isOpen()).toBe(true);
 
       await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 
       await waitFor(() => expect(isOpen()).toBe(false));
-      expect(state.current.selectedRow).toBe('message:1');
-      expect(screen.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
+      expect(isOuterOpen(state)).toBe(true);
 
       await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      await waitFor(() => expect(state.current.selectedRow).toBeNull());
+      await waitFor(() => expect(isOuterClosed(state)).toBe(true));
     });
 
     it('closes the reading pane again once the narrow navigation menu is gone', async () => {

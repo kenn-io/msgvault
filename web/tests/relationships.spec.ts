@@ -231,6 +231,46 @@ test('person attachment gallery preserves directions and Media state across sour
   });
 });
 
+test('Back restores the relationship message and its conversation window after following a participant', async ({ page }) => {
+  await prepare(page);
+  const windows: URLSearchParams[] = [];
+  await page.route('**/api/v1/conversations/70**', route => {
+    windows.push(new URL(route.request().url()).searchParams);
+    return route.fulfill({ json: {
+      id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
+      messages: [{
+        id: 500, conversation_id: 70, subject: 'Team Chat', message_type: 'chat',
+        from: 'Bob Example', from_participant_id: 2, to: [], sent_at: '2026-07-18T20:00:00Z',
+        snippet: 'Latest chat message', body: 'Latest chat message', body_html: '', attachments: []
+      }]
+    } });
+  });
+  await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
+    ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
+  } }));
+  await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
+    canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
+  } }));
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'Relationship results' }).getByText('Alice Example').click();
+  await page.getByRole('grid', { name: 'Relationship activity' }).getByText('6 messages in Team Chat').click();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: 6 messages in Team Chat' });
+  await reading.getByRole('button', { name: 'Bob Example', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+  await expect(reading).toBeHidden();
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
+  await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
+  expect(windows.at(-1)?.get('anchor')).toBe('500');
+  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
+  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+  await expect(reading).toBeHidden();
+  await page.goBack();
+  await expect(reading.getByText('Latest chat message')).toBeVisible();
+});
+
 for (const width of [1440, 420]) {
   test(`expanded relationship overview leaves usable activity at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });

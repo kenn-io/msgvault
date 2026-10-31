@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { appShortcuts, Button, Modal } from '@kenn-io/kit-ui';
+  import { claimDialogEscape } from './dialog-escape';
+  import { Button, Modal } from '@kenn-io/kit-ui';
   import { onMount, type Snippet } from 'svelte';
 
-  onMount(() => appShortcuts.pushScope('shell-dialog'));
+  const id = $props.id();
+  const scope = `shell-dialog:${id}`;
+  onMount(() => claimDialogEscape(scope, () => onclose()));
 
   interface Props {
     title: string;

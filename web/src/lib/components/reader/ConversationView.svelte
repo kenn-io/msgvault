@@ -1,16 +1,19 @@
 <script lang="ts">
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, setContext, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
 
   import {
     getConversation as generatedGetConversation,
+    getTaskIntegrationStatus,
     getMessage as generatedGetMessage,
   } from '../../api/generated/api/api';
   import type { MessageDetail as GeneratedMessageDetail } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail } from '../../archive/types';
   import type { MessageViewMode } from '../../archive/types';
+  import { isEmailMessageType } from '../../explore/models';
   import MessageCard from './MessageCard.svelte';
+  import { conversationTaskStatusKey, type TaskStatusLoader, type ConversationTaskStatus } from '../tasks/task-status';
   import { reportError, reportAction, reportWhenVisible } from '../../telemetry/actions';
 
   type APIMessageDetail = GeneratedMessageDetail;
@@ -22,8 +25,14 @@
     onAnchorChange = undefined,
     start = undefined,
     end = undefined,
+    onOpenPerson = undefined,
+    onOpenSettings = undefined,
+    onOpenMeeting = undefined,
   }: {
     client: APIClient;
+    onOpenPerson?: (participantID: number) => void;
+    onOpenSettings?: () => void;
+    onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
     onAnchorChange?: (anchorId: number) => void;
@@ -35,6 +44,20 @@
   } = $props();
 
   const apiClient = untrack(() => client);
+  const taskStatusController = new AbortController();
+  let taskStatus: ReturnType<TaskStatusLoader> | undefined;
+  let latestTaskStatus = $state<ConversationTaskStatus['latest']>();
+  setContext<ConversationTaskStatus>(conversationTaskStatusKey, {
+    load: () => taskStatus ??= getTaskIntegrationStatus({ ...apiClient, signal: taskStatusController.signal }).catch((cause): Awaited<ReturnType<TaskStatusLoader>> => ({
+      data: { state: 'unreachable', message: cause instanceof Error ? cause.message : 'Task integration status is unavailable.' },
+      response: Response.error(),
+    })).then(response => {
+      latestTaskStatus = response.data ?? { state: 'unreachable', message: response.error?.message ?? 'Task integration status is unavailable.' };
+      return response;
+    }).finally(() => { taskStatus = undefined; }),
+    get latest() { return latestTaskStatus; },
+  });
+  onDestroy(() => taskStatusController.abort());
   let scroller = $state<HTMLElement>();
   let messages = $state<APIMessageDetail[]>([]);
   let activeAnchor = $state(0);
@@ -68,6 +91,7 @@
   let total = $state(0);
   let viewModes = $state<Record<number, MessageViewMode>>({});
   const expanded = new SvelteSet<number>();
+  const taskSetupMessageID = $derived(messages.find(message => expanded.has(message.id) && isEmailMessageType(message.message_type ?? ''))?.id);
   const loadingBodies = new SvelteSet<number>();
   let bodyErrors = $state<Record<number, string>>({});
   const reportedBodyErrors = new Set<number>();
@@ -258,6 +282,8 @@
       conversationId: message.conversation_id ?? conversationId,
       subject: message.subject,
       sender: message.is_from_me ? 'You' : message.from,
+      senderParticipantID: message.is_from_me ? undefined : message.from_participant_id,
+      recipientParticipants: message.to_participants?.map((recipient) => ({ display: recipient.display, participantID: recipient.participant_id })),
       recipients: message.to ?? [],
       sentAt: message.sent_at,
       snippet: message.snippet,
@@ -293,9 +319,13 @@
     <div class="message-thread">
       {#each messages as message (message.id)}
         <MessageCard
+          {onOpenPerson}
+          {onOpenSettings}
+          {onOpenMeeting}
           client={apiClient}
           message={archiveDetail(message)}
           expanded={expanded.has(message.id)}
+          showTaskSetup={message.id === taskSetupMessageID}
           anchor={message.id === activeAnchor}
           viewMode={viewModes[message.id] ?? 'html'}
           bodyPending={loadingBodies.has(message.id)}

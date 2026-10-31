@@ -8,6 +8,7 @@
   import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
+  import FilterMenu from './FilterMenu.svelte';
 
   interface ExtraChip {
     key: string;
@@ -25,6 +26,7 @@
 
   let {
     client,
+    messages = false,
     query,
     searchMode,
     filters,
@@ -42,6 +44,7 @@
     onPresentationChange = undefined
   }: {
     client: APIClient;
+    messages?: boolean;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -92,6 +95,9 @@
 
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
+    {#if messages}
+      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} />
+    {:else}
     <Button
       size="sm"
       surface={filtersOpen || filters.length > 0 ? 'soft' : 'outline'}
@@ -100,6 +106,7 @@
       ariaExpanded={filtersOpen}
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
+    {/if}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
@@ -172,7 +179,7 @@
     </div>
   {/if}
 
-  {#if filtersOpen}
+  {#if filtersOpen && !messages}
     <div class="filter-panel">
       <div class="filter-summary">
         {#if filters.length === 0}

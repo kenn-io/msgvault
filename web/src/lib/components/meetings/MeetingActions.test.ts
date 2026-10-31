@@ -86,7 +86,7 @@ describe('MeetingActions', () => {
     const archiveLink = screen.getByRole('link', {
       name: 'Open archived meeting',
     });
-    expect(archiveLink.getAttribute('href')).toBe('/api/v1/messages/42');
+    expect(archiveLink.getAttribute('href')).toBe('/messages/42');
     await fireEvent.click(archiveLink);
     expect(onOpenMeeting).toHaveBeenCalledWith(meeting);
     await expect(requests[0]!.clone().json()).resolves.toEqual(request);
@@ -253,4 +253,10 @@ it('cancels a pending continuation and ignores its response after changing reade
   await screen.findByText('No recorded action items');
   expect(screen.queryByText('First action')).toBeNull();
   expect(screen.queryByText('Stale continuation')).toBeNull();
+});
+
+it('keeps a differing archived status visible in compact action rows', async () => {
+  render(MeetingActions, { compact: true, client: createAPIClient(async () => Response.json(page())), evidence: page({ rows: [{ meeting, action: { ordinal: 0, locator: 'a', origin: 'source', title: 'Review notes', status: 'unknown', source_status: 'in_progress' } }] }) });
+  expect(await screen.findByText('Source status: in_progress')).toBeDefined();
+  expect(screen.getByText('unknown')).toBeDefined();
 });

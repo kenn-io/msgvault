@@ -3025,6 +3025,15 @@ func (c ContextPassage) Validate() error {
 	return errors
 }
 
+type ConversationParticipant struct {
+	Display       string `json:"display" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+}
+
+func (c ConversationParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type ConversationResponse struct {
 	AnchorID  int64           `json:"anchor_id"`
 	HasAfter  bool            `json:"has_after"`
@@ -7866,11 +7875,14 @@ type MessageDetail struct {
 	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
-	ConversationTitle *string  `json:"conversation_title,omitzero"`
-	DeletedAt         *string  `json:"deleted_at,omitzero"`
-	From              string   `json:"from" validate:"required"`
-	FromEmail         *string  `json:"from_email,omitzero"`
-	FromName          *string  `json:"from_name,omitzero"`
+	ConversationTitle *string `json:"conversation_title,omitzero"`
+	DeletedAt         *string `json:"deleted_at,omitzero"`
+	From              string  `json:"from" validate:"required"`
+	FromEmail         *string `json:"from_email,omitzero"`
+	FromName          *string `json:"from_name,omitzero"`
+
+	// FromParticipantID Sender participant ID, populated for conversation windows.
+	FromParticipantID *int64   `json:"from_participant_id,omitempty"`
 	FromPhone         *string  `json:"from_phone,omitzero"`
 	HasAttachments    bool     `json:"has_attachments"`
 	ID                int64    `json:"id"`
@@ -7885,6 +7897,9 @@ type MessageDetail struct {
 	SourceMessageID   *string  `json:"source_message_id,omitzero"`
 	Subject           string   `json:"subject" validate:"required"`
 	To                []string `json:"to" validate:"required"`
+
+	// ToParticipants Recipient participants, populated for conversation windows.
+	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`
 }
 
 func (m MessageDetail) Validate() error {
@@ -7926,6 +7941,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.To, "required"); err != nil {
 		errors = errors.Append("To", err)
+	}
+	for i, item := range m.ToParticipants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ToParticipants[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil

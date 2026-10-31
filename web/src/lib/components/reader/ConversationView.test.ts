@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +9,12 @@ const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
 beforeEach(() => { telemetryEvents.length = 0; telemetryRequests.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+  const path = new URL((input as Request).url).pathname;
+  if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
+  if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'disabled', complete: false, tasks: [], outbound_metadata: {} });
+  return fetchFn(input, init);
+}, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
   return {
     id,
@@ -61,27 +66,25 @@ describe('ConversationView', () => {
     expect(url.searchParams.get('anchor')).toBe('2');
   });
 
-  it('labels an outgoing chat message with no sender identity as You', async () => {
+  it('shows owner messages as plain You and participant affordances from API identities', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: 7,
-      anchor_id: 2,
-      messages: [message(2, 'whatsapp')].map((entry) => ({
-        ...entry,
-        from: '',
-        is_from_me: true
-      })),
-      has_before: false,
-      has_after: false,
-      total: 1
+      id: 7, anchor_id: 2,
+      messages: [
+        { ...message(2, 'whatsapp'), from: '', from_participant_id: 11, is_from_me: true },
+        { ...message(3, 'whatsapp'), from: 'Chat sender', from_participant_id: 22, to: ['Chat recipient'], to_participants: [{ display: 'Chat recipient', participant_id: 33 }] }
+      ],
+      has_before: false, has_after: false, total: 2
     }));
-
-    render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
-    });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson: vi.fn() });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
     expect(anchorCard.textContent).toContain('You');
+    expect(within(anchorCard).queryByRole('button', { name: 'You' })).toBeNull();
     expect(anchorCard.textContent).not.toContain('Unknown sender');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 3/ }));
+    const incomingCard = screen.getByRole('article', { name: 'Message 3' });
+    expect(within(incomingCard).getByRole('button', { name: 'Chat sender' })).toBeDefined();
+    expect(within(incomingCard).getByRole('button', { name: 'Chat recipient' })).toBeDefined();
   });
 
   it('sends optional start/end bounds when scoping to a chat burst day', async () => {
@@ -116,29 +119,146 @@ describe('ConversationView', () => {
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
-    await fireEvent.click(screen.getByText('⋯'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Show plain text' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 2' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(screen.getByText('Body 2')).toBeDefined();
   });
 
   it('expands additional messages inline without refetching and reports the anchor change', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: 7, anchor_id: 2, messages: [message(1, 'imessage'), message(2, 'imessage')],
-      has_before: false, has_after: false, total: 2
-    }));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 }));
     const onAnchorChange = vi.fn();
-    render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange }
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange });
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
+    expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
+    expect(onAnchorChange).toHaveBeenCalledWith(1);
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
+  });
+
+  it.each(['disabled', 'unreachable'])('shares pending Tasks probes and one %s notice while preserving cached links', async (state) => {
+    const lookedUp: number[] = [];
+    let releaseStatus!: () => void;
+    const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        await statusPending;
+        return Response.json({ state, message: state === 'disabled' ? 'Task integration is disabled.' : 'Task service is unreachable.' });
+      }
+      const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: state === 'unreachable' ? 'unavailable' : state, complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }], outbound_metadata: {} }); }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [message(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+    const client = createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
+    const view = render(ConversationView, {
+      props: { client, conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    releaseStatus();
 
-    // Both stay expanded — a real thread, not a single-open stack.
-    expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
-    expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
-    expect(onAnchorChange).toHaveBeenCalledWith(1);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(lookedUp.sort()).toEqual([1, 2]));
+    await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
+    if (state === 'disabled') await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
+    else expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
+    expect(await screen.findByText('Linked task 1')).toBeDefined();
+    expect(await screen.findByText('Linked task 2')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+    if (state === 'disabled') expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
+    expect(screen.getByText('Linked task 2')).toBeDefined();
+    view.unmount();
+  });
+
+  it('shows one Tasks section when the service is unreachable and neither email has cached links', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
+      if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    });
+    render(ConversationView, { client: createCaptureClient(fetchFn, telemetryEvents, telemetryRequests), conversationId: 7, anchorId: 1 });
+    await screen.findByRole('button', { name: 'Open Settings' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/messages/2/tasks'))).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
+    expect(screen.getAllByRole('heading', { name: /^Tasks$/ })).toHaveLength(1);
+    expect(within(screen.getByRole('article', { name: 'Message 1' })).getByRole('button', { name: 'Open Settings' })).toBeDefined();
+  });
+
+  it('updates every card when Tasks recovers from unreachable to ready', async () => {
+    let statusCalls = 0;
+    const client = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) return Response.json({ state: ++statusCalls === 1 ? 'unreachable' : 'ready', message: 'Task service is unreachable.' });
+      const lookup = /messages\/(\d+)\/tasks$/.exec(path);
+      if (lookup) return Response.json({ state: lookup[1] === '1' ? 'unavailable' : 'ready', complete: false, tasks: [{ id: `task-${lookup[1]}`, title: `Linked task ${lookup[1]}` }], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client, conversationId: 7, anchorId: 1 });
+    await screen.findByText('Linked task 1');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    await screen.findByText('Linked task 2');
+    const owner = within(screen.getByRole('article', { name: 'Message 1' }));
+    expect(screen.getByText('Linked task 1')).toBeDefined();
+    expect(statusCalls).toBe(2);
+    expect(screen.queryByText('Task integration unreachable: Task service is unreachable.')).toBeNull();
+    expect(owner.getByText('The task service is unavailable; safe cached links may be shown.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink Linked task 2' })).toHaveProperty('disabled', false);
+  });
+
+  it.each(['HTTP 500', 'rejected fetch'])('disables every card and keeps cached links after a failed latest status probe: %s', async (failure) => {
+    let statusCalls = 0;
+    const client = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        if (++statusCalls === 1) return Response.json({ state: 'ready', project: 'example' });
+        if (failure === 'rejected fetch') throw new Error('Tasks status could not be read.');
+        return Response.json({ message: 'Tasks status could not be read.' }, { status: 500 });
+      }
+      const lookup = /messages\/(\d+)\/tasks$/.exec(path);
+      if (lookup) return Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client, conversationId: 7, anchorId: 1 });
+    await screen.findByText('Cached task 1');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    expect(await screen.findByText('Cached task 2')).toBeDefined();
+    expect(screen.getByText('Cached task 1')).toBeDefined();
+    expect(statusCalls).toBe(2);
+    const owner = within(screen.getByRole('article', { name: 'Message 1' }));
+    expect(owner.getByRole('alert').textContent).toContain('Tasks status could not be read.');
+    expect(screen.getAllByRole('button', { name: 'Open Settings' })).toHaveLength(1);
+    expect(owner.getByRole('button', { name: 'Open Settings' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink Cached task 1' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Unlink Cached task 2' })).toHaveProperty('disabled', true);
+  });
+
+  it('retries rejected and unreachable Tasks status when creating a task', async () => {
+    let statusCalls = 0;
+    const recoveryClient = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        if (++statusCalls === 1) throw new Error('Synthetic connection failed');
+        return Response.json({ state: statusCalls === 2 ? 'unreachable' : 'ready' });
+      }
+      if (path.endsWith('/messages/2/tasks')) return Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} });
+      if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client: recoveryClient, conversationId: 7, anchorId: 2 });
+    await screen.findByText('Task integration unreachable: Synthetic connection failed');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    await waitFor(() => expect(statusCalls).toBe(2));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 1' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+    expect(await screen.findByRole('dialog', { name: 'Add to task' })).toBeDefined();
+    await waitFor(() => expect(statusCalls).toBe(3));
   });
 
   it('collapses an expanded message back to its one-line card', async () => {
