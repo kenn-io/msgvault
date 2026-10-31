@@ -243,7 +243,8 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.swapPeopleMeetingState()
 			m.swapPeopleTextState()
 		}
-		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil)
+		next := nextMode(m.mode, m.textEngine != nil, m.peopleBackend != nil, m.timelineBackend != nil)
+		if m.mode == modeTimeline { m.cancelTimelineRequest() }
 		m.switchMessageReaderState(next)
 		m.presentationGeneration++
 		m.mode = next
@@ -253,6 +254,9 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.inlineSearchLoading = false
 		m.searchLoadingMore = false
 		switch m.mode {
+		case modeTimeline:
+			cmd := m.activateTimeline()
+			return m, cmd, true
 		case modeTexts:
 			return m, m.activateTextPresentation(), true
 		case modeMeetings:

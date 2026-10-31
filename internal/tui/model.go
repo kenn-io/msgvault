@@ -69,12 +69,14 @@ type Options struct {
 	TextEngine query.TextEngine
 
 	// PeopleBackend provides the People directory and contact workspace.
-	// When nil, embedders retain the three existing modes.
+	// When nil, the People mode is skipped.
 	PeopleBackend peoplebrowser.Backend
 
 	// LocalTimezone is the IANA name of the system zone that Go reports as
 	// "Local"; empty when unknown.
 	LocalTimezone string
+	// Timeline enables the daemon-composed Timeline mode when available.
+	Timeline TimelineBackend
 
 	// ManifestSaver saves staged deletion manifests. When nil, manifests are
 	// saved under DataDir for tests or direct embedding.
@@ -403,6 +405,9 @@ type Model struct {
 	peopleState   peopleState
 	localTimezone string
 
+	timelineBackend TimelineBackend
+	timelineState timelineState
+
 	// Settings is a global shell surface, deliberately separate from the
 	// content-mode cycle so opening it cannot disturb content navigation.
 	settingsBackend   SettingsBackend
@@ -556,6 +561,10 @@ func New(engine query.Engine, opts Options) Model {
 	peopleMeetingDetailInput.Placeholder = "find in transcript"
 	peopleMeetingDetailInput.CharLimit = 200
 	peopleMeetingDetailInput.SetWidth(40)
+	timelineMeetingDetailInput := textinput.New()
+	timelineMeetingDetailInput.Placeholder = "find in transcript"
+	timelineMeetingDetailInput.CharLimit = 200
+	timelineMeetingDetailInput.SetWidth(40)
 	peopleInput := textinput.New()
 	peopleInput.Placeholder = "search names and identifiers"
 	peopleInput.CharLimit = 200
@@ -588,6 +597,7 @@ func New(engine query.Engine, opts Options) Model {
 		sourceScope:           allSourceScope(),
 		peopleBackend:         opts.PeopleBackend,
 		localTimezone:         opts.LocalTimezone,
+		timelineBackend:       opts.Timeline,
 		settingsBackend:       opts.SettingsBackend,
 		settings:              newSettingsState(),
 		actions: NewActionControllerWithOptions(engine, ActionControllerOptions{
@@ -613,6 +623,7 @@ func New(engine query.Engine, opts Options) Model {
 			searchInput:       meetingInput,
 			detailSearchInput: meetingDetailInput,
 		},
+		timelineState: timelineState{meeting: meetingState{detailSearchInput: timelineMeetingDetailInput}},
 		peopleState: peopleState{
 			searchInput: peopleInput, location: time.Local,
 			parkedMeetingState: meetingState{detailSearchInput: peopleMeetingDetailInput},
@@ -1389,7 +1400,7 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			return
 		}
 		if updated.transitionBuffer == "" {
-			updated.contentScreen = map[tuiMode]string{modeEmail: "email", modeTexts: "texts", modeMeetings: "meetings", modePeople: "directory"}[updated.mode]
+			updated.contentScreen = map[tuiMode]string{modeEmail: "email", modeTexts: "texts", modeMeetings: "meetings", modePeople: "directory", modeTimeline: "timeline"}[updated.mode]
 		}
 		screen := updated.contentScreen
 		if updated.settings.active {
@@ -1545,6 +1556,10 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 		return m.handleMeetingMessagesLoaded(msg)
 	case meetingSearchLoadedMsg:
 		return m.handleMeetingSearchLoaded(msg)
+	case timelineLoadedMsg:
+		return m.handleTimelineLoaded(msg)
+	case timelineReaderLoadedMsg:
+		return m.handleTimelineReaderLoaded(msg)
 	case meetingDetailLoadedMsg:
 		return m.handleMeetingDetailLoaded(msg)
 	}
@@ -1698,6 +1713,9 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		m.peopleState.parkedMeetingState = m.reflowMeetingReader(
 			m.peopleState.parkedMeetingState,
 		)
+	}
+	if m.timelineState.meeting.detail != nil {
+		m.timelineState.meeting = m.reflowMeetingReader(m.timelineState.meeting)
 	}
 	return m, nil
 }
@@ -2188,8 +2206,13 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if msg.String() == "," && m.settingsShortcutAvailable() {
+	if msg.String() == "," && m.settingsShortcutAvailable() &&
+        !(m.mode == modeTimeline && (m.timelineState.reader == timelineReaderMessage && m.detailSearchActive ||
+            m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive)) {
 		return m.openSettings()
+	}
+	if m.mode == modeTimeline {
+		return m.handleTimelineKeyPress(msg)
 	}
 	if m.mode == modePeople {
 		return m.handlePeopleKeyPress(msg)
@@ -2531,6 +2554,9 @@ func (m Model) renderView() string {
 	if m.settings.active {
 		return m.renderSettingsView()
 	}
+	if m.mode == modeTimeline {
+		return m.renderTimelineView()
+	}
 	if m.mode == modePeople {
 		return m.renderPeopleView()
 	}
@@ -2593,13 +2619,16 @@ func (m Model) exportAttachments() (tea.Model, tea.Cmd) {
 // renders, or nil when no reader is visible.
 func (m Model) displayedDetail() *query.MessageDetail {
 	switch {
-	case m.mode == modeEmail && m.level == levelMessageDetail,
+	case m.mode == modeTimeline && m.timelineState.reader == timelineReaderMessage,
+		m.mode == modeEmail && m.level == levelMessageDetail,
 		m.mode == modeTexts && m.textState.level == textLevelDetail,
 		m.mode == modePeople && (m.peopleState.level == peopleLevelActivityMessage || m.peopleState.level == peopleLevelMessage):
 		return m.messageDetail
 	case m.mode == modeMeetings && m.meetingState.level == meetingLevelDetail,
 		m.mode == modePeople && m.peopleState.level == peopleLevelMeetingDetail:
 		return m.meetingState.detail
+	case m.mode == modeTimeline && m.timelineState.reader == timelineReaderMeeting:
+		return m.timelineState.meeting.detail
 	default:
 		return nil
 	}

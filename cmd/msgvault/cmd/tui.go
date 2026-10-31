@@ -31,7 +31,7 @@ var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive terminal UI",
 	Long: `Open an interactive terminal UI for browsing email, text messages,
-meeting transcripts, and people.
+meeting transcripts, people, and archived activity.
 
 Email mode provides aggregate views by:
   - Senders: Who sends you the most email
@@ -40,17 +40,17 @@ Email mode provides aggregate views by:
   - Labels: Gmail label distribution
   - Time: Message volume over time
 
-Press 'm' to cycle through Email, Texts, Meetings, and People. Texts is skipped
+Press 'm' to cycle through Email, Texts, Meetings, People, and Timeline. Texts is skipped
 when its engine is unavailable. Meetings remains available before a source is
 configured. People browses every observed contact and remains available when
-Texts is absent.
+Texts is absent. Timeline requires daemon API schema 3.29.0 or newer.
 
 Navigation:
   ↑/k, ↓/j    Move up/down
   PgUp/PgDn   Page up/down
   Enter       Drill down / view message
   Esc         Go back
-  m           Cycle Email / Texts / Meetings / People
+  m           Cycle Email / Texts / Meetings / People / Timeline
   ,           Open Settings
   g           Cycle aggregate view (Email and Texts)
   /           Search; Tab adds active-message-only Semantic mode when enabled
@@ -120,6 +120,7 @@ HTTP Mode:
 			TextEngine:            textEngine,
 			PeopleBackend:         peopleBackend,
 			LocalTimezone:         localTimezone,
+			Timeline:              tuiTimelineBackend(cmd.Context(), backend.client),
 			ManifestSaver:         backend.client,
 			AttachmentReader:      tuiAttachmentOpener{client: backend.client},
 			SemanticSearch:        semanticSearch,
@@ -412,4 +413,12 @@ func tuiActionReporter(gate *tuiTelemetryGate, client *daemonclient.Client, cfg 
 		}
 		return gate.report(ctx, client, event, property, value)
 	}
+}
+
+// tuiTimelineBackend gates the mode on the selected daemon's actual schema.
+func tuiTimelineBackend(ctx context.Context, client *daemonclient.Client) tui.TimelineBackend {
+    if client == nil { return nil }
+    compatible, err := client.SupportsAPISchemaVersion(ctx, timelineMinAPISchemaVersion)
+    if err != nil || !compatible { return nil }
+    return client
 }
