@@ -1,5 +1,6 @@
 import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
+import { batch as deletionBatch } from '../src/lib/deletions/fixtures.test-support';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
@@ -130,7 +131,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [row], total_count: 1, cache_revision: 'cache-management', search_provenance: {}
   } }));
-  const batch = { id: 'batch-1', status: 'pending', message_count: 1, created_at: '2026-07-19T10:00:00Z', created_by: 'api', description: 'Reviewed selection' };
+  const batch = deletionBatch('batch-1', 'pending', 1);
   await page.route('**/api/v1/deletions', route => {
     if (route.request().method() === 'POST') {
       staged = true;
