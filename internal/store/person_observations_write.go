@@ -290,6 +290,46 @@ ORDER BY ancestors.id`), rootID, personID)
 	return ids, citationIDs, nil
 }
 
+func (s *Store) observationCitationMessageIDsTx(ctx context.Context, tx *loggedTx, observationIDs []int64) ([]int64, error) {
+	messageIDs := make([]int64, 0)
+	for _, observationID := range observationIDs {
+		rows, err := tx.QueryContext(ctx, `SELECT message_id FROM person_observation_evidence WHERE observation_id=? ORDER BY message_id`, observationID)
+		if err != nil {
+			return nil, fmt.Errorf("read observation citation sources: %w", err)
+		}
+		for rows.Next() {
+			var messageID int64
+			if err := rows.Scan(&messageID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("read observation citation source message: %w", err)
+			}
+			messageIDs = append(messageIDs, messageID)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("read observation citation sources: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("close observation citation sources: %w", err)
+		}
+	}
+	slices.Sort(messageIDs)
+	return slices.Compact(messageIDs), nil
+}
+
+func (s *Store) observationCitationMessageIDsLiveTx(ctx context.Context, tx *loggedTx, messageIDs []int64) (bool, error) {
+	for _, messageID := range messageIDs {
+		var live bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages m WHERE m.id=? AND `+LiveMessagesWhere("m", true)+`)`, messageID).Scan(&live); err != nil {
+			return false, fmt.Errorf("check observation premise citation source: %w", err)
+		}
+		if !live {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (s *Store) observationReinforcementPremiseRootsTx(ctx context.Context, tx *loggedTx, personID int64, item PreparedObservation) ([]int64, error) {
 	candidateID := int64(0)
 	autoLookup := item.Proposal.ReinforcesID == nil
@@ -556,6 +596,20 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		premiseAncestors, citationAncestors, err := s.observationPremiseAncestorsTx(ctx, tx, b.PersonID, premiseRoots)
 		if err != nil {
 			return result, err
+		}
+		premiseMessageIDs, err := s.observationCitationMessageIDsTx(ctx, tx, citationAncestors)
+		if err != nil {
+			return result, err
+		}
+		premiseSourcesLive, err := s.observationCitationMessageIDsLiveTx(ctx, tx, premiseMessageIDs)
+		if err != nil {
+			return result, err
+		}
+		if !premiseSourcesLive {
+			out.Outcome = "dropped-invalid"
+			out.Failure = &personobs.ValidationError{Field: "support", Reason: "citation-source-missing"}
+			result.Items = append(result.Items, out)
+			continue
 		}
 		premiseAncestorSet := make(map[int64]struct{}, len(premiseAncestors))
 		for _, premiseID := range premiseAncestors {

@@ -1418,6 +1418,59 @@ func TestApplyObservationBatchRejectsCitationForDeletedMessage(t *testing.T) {
 	assert.Equal(1, activeSuppressions)
 }
 
+func TestApplyObservationBatchRejectsDerivedProposalAfterAncestorCitationSourceDeleted(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	rootID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+	childID := observationDerived(t, f.store, in, generation, personobs.LevelDeductive, "[PERSON] exercises", rootID)
+
+	targetInput := in
+	targetInput.Proposals = append([]personobs.ProposedObservation(nil), in.Proposals...)
+	targetInput.Proposals[0].Content = "[PERSON] runs every morning"
+	targetID := applyObservationInput(t, f.store, targetInput, generation).Items[0].ObservationID
+	proposal := personobs.ProposedObservation{
+		PersonID:      in.PersonID,
+		Level:         personobs.LevelDeductive,
+		Origin:        personobs.OriginReasoning,
+		Kind:          personobs.KindOther,
+		Content:       "[PERSON] has a running routine",
+		ConfidenceBP:  800,
+		Premises:      []personobs.PremiseInput{{ID: childID, Role: personobs.PremiseRoleSupport}},
+		SupersedesIDs: []int64{targetID},
+	}
+	candidateInput := in
+	candidateInput.Proposals = []personobs.ProposedObservation{proposal}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), candidateInput)
+	require.NoError(err)
+	require.Nil(batch.Items[0].Failure)
+
+	ref, err := peoplesweep.DecodePersonSweepEvidenceRef(in.Proposals[0].Support[0].Evidence.SourceRef)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`DELETE FROM messages WHERE id=?`), ref.MessageID)
+	require.NoError(err)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal("dropped-invalid", result.Items[0].Outcome)
+	require.NotNil(result.Items[0].Failure)
+	assert.Equal("support", result.Items[0].Failure.Field)
+	assert.Equal("citation-source-missing", result.Items[0].Failure.Reason)
+	assert.Zero(result.Items[0].ObservationID)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, rootID).Status)
+	assert.Equal(personobs.StatusActive, observationGet(t, f.store, childID).Status)
+	target := observationGet(t, f.store, targetID)
+	assert.Equal(personobs.StatusActive, target.Status)
+	assert.Nil(target.SupersededByID)
+	var candidateCount, retainedCitations int
+	candidateKey := personobs.ContentKey(proposal.Level, proposal.SubjectRef, proposal.Content)
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_observations WHERE person_id=? AND content_key=?`), in.PersonID, candidateKey).Scan(&candidateCount))
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_observation_evidence WHERE observation_id=? AND message_id=?`), rootID, ref.MessageID).Scan(&retainedCitations))
+	assert.Zero(candidateCount)
+	assert.Equal(1, retainedCitations)
+}
+
 func TestApplyObservationBatchRejectsSoftDeletedCitationSource(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
