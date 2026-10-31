@@ -9,6 +9,7 @@
   import RelationshipHeader from '../relationships/RelationshipHeader.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
   import { localDayBoundsUTC } from '../relationships/timeline-support';
+  import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import PersonHeader from './PersonHeader.svelte';
   import PersonMessages from './PersonMessages.svelte';
@@ -46,7 +47,13 @@
     return { after: bounds.start, before: bounds.end };
   });
   $effect(() => { void target; untrack(() => { selectedDate = null; domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
-  $effect(() => { if (filesOpen) selectedDate = null; });
+  // Files pushes its own entry first, so this drops the cleared day only from that entry's reader.
+  function clearDate(): void {
+    selectedDate = null;
+    const reader = relationshipReaderHistory(window.history.state, 'relationships', target);
+    if (reader) window.history.replaceState({ ...window.history.state, [RELATIONSHIP_READER_HISTORY_KEY]: { ...reader, bounds: undefined } }, '');
+  }
+  $effect(() => { if (filesOpen) clearDate(); });
 </script>
 
 <section class="person-page" role="group" aria-label="Person page">
