@@ -685,6 +685,51 @@ func TestUnlinkSystemAcceptedIdentityMatchSuppressesReplay(t *testing.T) {
 	assert.False(linkedPair(t, st, left, right))
 }
 
+func TestTelegramSystemAcceptancePreservesUnlinkAfterPairPrecheck(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier("beeper", "telegram-account-a-user", "Alice Example")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("beeper", "telegram-account-b-user", "Alice Example")
+	require.NoError(err)
+	previous, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchServiceScopeUsername, ServiceSlug: new("telegram"),
+		NormalizedValue: new("alice"), State: store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, previous.ID, "user", nil)
+	require.NoError(err)
+	require.True(linkedPair(t, st, left, right))
+
+	// Order the sync's precheck, the user's unlink, and system acceptance explicitly.
+	rejected, err := st.HasRejectedParticipantPairContext(ctx, left, right, "telegram")
+	require.NoError(err)
+	require.False(rejected)
+	shared, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, ServiceSlug: new("telegram"),
+		NormalizedValue: new("provider:8:telegram:7:service:0::6:482111"),
+		State:           store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+	_, err = st.UnlinkParticipants(left, right)
+	require.NoError(err)
+	require.False(linkedPair(t, st, left, right))
+	previous, err = st.GetIdentityMatchCandidateContext(ctx, previous.ID)
+	require.NoError(err)
+	require.Equal(store.IdentityMatchStateRejected, previous.State)
+
+	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, shared.ID, "system", nil)
+	require.ErrorIs(err, store.ErrIdentityMatchRejected)
+	assert.False(linkedPair(t, st, left, right), "system acceptance must preserve the unlink under the earlier key")
+}
+
 func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
