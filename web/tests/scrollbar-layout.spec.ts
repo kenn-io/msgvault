@@ -12,32 +12,41 @@ test.use({
 
 test('Settings panel stays in place when a long category makes it scroll', async ({ page }) => {
   await mockArchiveLayout(page);
+  const attachmentSections = [
+    { id: 'beeper', label: 'Beeper' },
+    { id: 'slack', label: 'Slack' },
+    { id: 'inline', label: 'Inline' },
+    { id: 'discord', label: 'Discord' },
+    { id: 'teams', label: 'Teams' }
+  ];
   await page.route('**/api/v1/settings', (route) => route.fulfill({
     headers: { ETag: '"synthetic-settings"' },
     json: {
       groups: [
-        { id: 'browser', label: 'Appearance', description: 'How the web app looks.' },
-        { id: 'server', label: 'Daemon', description: 'How the daemon runs.' }
+        { id: 'server', label: 'Daemon', sections: [{ id: 'lifecycle', label: 'Lifecycle' }] },
+        { id: 'attachments', label: 'Attachments', sections: attachmentSections }
       ],
       settings: [
-        { key: 'web.theme', group: 'browser', label: 'Theme', kind: 'string', value: { string: 'system' }, options: ['system', 'light', 'dark'], restart_required: false },
-        ...Array.from({ length: 30 }, (_, index) => ({
-          key: `server.option_${index}`, group: 'server', label: `Option ${index}`, kind: 'string', value: { string: 'value' }, restart_required: true
-        }))
+        { key: 'server.daemon_auto_start', group: 'server', section: 'lifecycle', label: 'Automatic start', kind: 'boolean', value: { boolean: true }, restart_required: true },
+        ...attachmentSections.flatMap(({ id, label }) => [
+          { key: `${id}.media_max_participants`, group: 'attachments', section: id, label: `${label} participant limit`, kind: 'integer', value: { integer: 25 }, restart_required: true },
+          { key: `${id}.max_media_mb`, group: 'attachments', section: id, label: `${label} maximum size`, kind: 'integer', value: { integer: 100 }, restart_required: true }
+        ])
       ],
       pending_restart: false
     }
   }));
   await page.goto('/');
   await selectWorkspace(page, 'Settings');
+  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Server', exact: true }).click();
   const scroller = page.locator('.kit-settings__scroll');
-  const short = page.getByRole('heading', { name: 'Appearance', exact: true });
+  const short = page.getByRole('heading', { name: 'Server', exact: true });
   await expect(short).toBeVisible();
   expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(false);
   const shortBox = await short.boundingBox();
 
-  await page.getByText('Daemon', { exact: true }).first().click();
-  const tall = page.getByRole('heading', { name: 'Daemon', exact: true });
+  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Sources', exact: true }).click();
+  const tall = page.getByRole('heading', { name: 'Sources', exact: true });
   await expect(tall).toBeVisible();
   expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   expect(await scroller.evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBeGreaterThan(0);
