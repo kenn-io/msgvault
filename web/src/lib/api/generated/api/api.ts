@@ -235,6 +235,7 @@ import type {
   ListDeletionsResponse,
   ListDirectoryPeopleParams,
   ListIdentityMatchCandidatesParams,
+  ListLoopsParams,
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
@@ -276,8 +277,11 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  LoopDecisionResponse,
+  LoopListResponse,
   MCPCapabilities,
   Manifest,
+  MarkLoopDonePathParameters,
   MediaSearchResponse,
   MediaSearchStatusResponse,
   MeetingImportRequest,
@@ -396,6 +400,7 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  ReopenLoopPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -432,6 +437,8 @@ import type {
   SettingsPatchRequest,
   SettingsResponse,
   SimilarSearchResponse,
+  SnoozeLoopPathParameters,
+  SnoozeLoopRequest,
   SourceIdentitiesResponse,
   SourceStatusResponse,
   SplitPersonMergePathParameters,
@@ -2203,6 +2210,66 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary List conversations waiting on a reply
+ */
+export const listLoops = (
+  params?: ListLoopsParams,
+  options?: SecondParameter<typeof orvalFetch<LoopListResponse>>,
+) => {
+  return orvalFetch<LoopListResponse>(
+    { url: `/api/v1/loops`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Mark a loop done
+ */
+export const markLoopDone = (
+  { messageId }: MarkLoopDonePathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/done`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Clear a loop decision
+ */
+export const reopenLoop = (
+  { messageId }: ReopenLoopPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/reopen`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Hide a loop until a later time
+ */
+export const snoozeLoop = (
+  { messageId }: SnoozeLoopPathParameters,
+  snoozeLoopRequest: SnoozeLoopRequest,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/snooze`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: snoozeLoopRequest,
+    },
     options,
   );
 };
