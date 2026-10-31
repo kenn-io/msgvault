@@ -377,8 +377,9 @@ func TestImportMediaFailureIsRetryable(t *testing.T) {
 			var warnings bytes.Buffer
 			opts.Logger = slog.New(slog.NewTextHandler(&warnings, nil))
 			summary, err := Import(t.Context(), st, opts)
-			if kind == "escape" {
+			if kind == "escape" || kind == "absolute" {
 				assert.Contains(warnings.String(), "level=WARN")
+				assert.Contains(warnings.String(), "media path must be local to the export")
 				var missing int
 				require.NoError(st.DB().QueryRow("SELECT count(*) FROM attachments WHERE source_part_key = 'photo' AND (content_hash IS NULL OR content_hash = '')").Scan(&missing))
 				assert.Equal(1, missing)
