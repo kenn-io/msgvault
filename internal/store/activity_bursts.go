@@ -81,7 +81,7 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	}
 	if q.AfterKey != nil {
 		where += ` AND (first_at ` + compare + ` ? OR (first_at=? AND key ` + compare + ` ?))`
-		args = append(args, q.AfterKey.FirstAt, q.AfterKey.FirstAt, q.AfterKey.Key)
+		args = append(args, q.AfterKey.FirstAt.UTC(), q.AfterKey.FirstAt.UTC(), q.AfterKey.Key)
 	}
 	args = append(args, q.Limit+1)
 	query := cte + activityBurstGroupsCTE + `, selected AS (
