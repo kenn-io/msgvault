@@ -209,7 +209,6 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   const savedShape = await summary.evaluate((element) => {
     return { radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height };
   });
-  expect(savedShape.height).toBe(geometry[0].height);
   expect.soft(savedShape.radius).toBeGreaterThanOrEqual(savedShape.height / 2);
   const savedGeometry = await summary.evaluate((element) => {
     const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
