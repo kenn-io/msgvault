@@ -81,7 +81,7 @@ describe('SourcesWorkspace', () => {
       unavailable(1, 'import@example.com', 'Imported', 'source_not_schedulable', { source_type: 'mbox' }),
       unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running'),
       unavailable(3, 'down@example.com', 'Down', 'scheduler_unavailable'),
-      unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured'),
+      unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured', { scheduled: false }),
       unavailable(5, 'other@example.com', 'Other', 'future_reason')
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
@@ -181,7 +181,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source(),
       source({ id: 2, source_type: 'imap', identifier: 'readonly@example.com', display_name: null,
-        can_sync: false, sync_unavailable_reason: 'sync_not_configured' })
+        scheduled: false })
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
@@ -191,7 +191,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Sync now Archive' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Sync now readonly@example.com' })).toBeNull();
     expect(screen.getByText('Sync not set up')).toBeDefined();
-    expect(screen.getAllByText('Not scheduled')).toHaveLength(2);
+    expect(screen.getAllByText('Not scheduled')).toHaveLength(1);
     expect(screen.getAllByText('Never synced')).toHaveLength(2);
     expect(screen.getAllByTitle(formatDateTime('2026-07-19T10:00:00Z', 'long'))).toHaveLength(2);
     expect(screen.queryAllByTitle('2026-07-19T10:00:00Z')).toHaveLength(0);
