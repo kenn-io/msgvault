@@ -64,25 +64,34 @@ describe('Explore URL state', () => {
     }
   });
 
-  it('drops a held Back to an unindexed entry when Forward returns to Settings first', async () => {
+  it.each(['Forward', 'Settings click'])('drops a held Back to an unindexed entry when %s returns to Settings first', async (navigation) => {
     window.history.replaceState(null, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
     const state = new ExploreState(window);
     const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    let leave!: () => void;
     const cancel = vi.fn();
-    state.holdLeave = (next) => { leave = next; return true; };
+    state.holdLeave = () => true;
     state.cancelHeldLeave = cancel;
     try {
       window.history.back();
       await popped();
-      window.history.forward();
-      await popped();
+      if (navigation === 'Forward') {
+        window.history.forward();
+        await popped();
+      } else {
+        state.commitWorkspace('settings');
+      }
       expect(cancel).toHaveBeenCalledOnce();
-      state.holdLeave = undefined;
-      leave();
       expect(state.current.workspace).toBe('settings');
-      expect(window.location.search).toBe('?workspace=settings');
+      state.holdLeave = undefined;
+      window.history.back();
+      await popped();
+      if (navigation === 'Settings click') {
+        window.history.back();
+        await popped();
+      }
+      expect(state.current.workspace).toBe('files');
+      expect(window.location.search).toBe('?workspace=files');
     } finally {
       state.destroy();
     }
