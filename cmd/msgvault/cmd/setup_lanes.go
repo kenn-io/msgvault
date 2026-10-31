@@ -681,6 +681,7 @@ func mediaPolicyLane(cfg *config.Config) laneStatus {
 		"slack " + mediaPolicySummary(cfg.Slack.MediaPolicy("")),
 		"discord " + mediaPolicySummary(cfg.Discord.MediaPolicy("")),
 		"teams " + mediaPolicySummary(cfg.Teams.MediaPolicy("")),
+		"imessage " + mediaPolicySummary(cfg.IMessage.MediaPolicy()),
 	}
 	lane.Reason = strings.Join(summaries, "; ")
 	return lane
