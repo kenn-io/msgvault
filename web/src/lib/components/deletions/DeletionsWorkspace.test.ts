@@ -96,24 +96,31 @@ describe('DeletionsWorkspace', () => {
 
   it.each(['success', 'failure', 'empty'])('shows the account in an opened batch panel: %s', async result => {
     const seen: Seen[] = [];
+    let finish!: (response: Response) => void;
     const client = createAPIClient(async input => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
       seen.push({ method: request.method, path });
       if (path.endsWith('/deletions')) return Response.json({ manifests: [batch('b1', 'pending', 2)] });
-      return result === 'failure' ? Response.json({}, { status: 503 }) : Response.json(detail('b1', 'completed', { account: result === 'empty' ? '' : 'archive@example.com' }));
+      return new Promise(resolve => { finish = resolve; });
     });
     render(DeletionsWorkspace, { client, controller: new DeletionsController(client) });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
     const panel = screen.getByRole('dialog', { name: /^Staged / });
-    expect(await within(panel).findByText(result === 'success' ? 'archive@example.com' : 'Account unavailable')).toBeDefined();
+    expect(within(panel).queryByText('Account unavailable')).toBeNull();
+    expect(within(panel).getByText('Loading…')).toBeDefined();
+    finish(result === 'failure' ? Response.json({}, { status: 503 }) : Response.json(detail('b1', 'completed', { account: result === 'empty' ? '' : 'archive@example.com' })));
     if (result === 'failure') {
+      expect(await within(panel).findByText("Can't load batch details.")).toBeDefined();
+      expect(within(panel).queryByText('Account unavailable')).toBeNull();
       expect(within(panel).getByText('Staged')).toBeDefined();
       expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
     } else {
+      expect(await within(panel).findByText(result === 'success' ? 'archive@example.com' : 'Account unavailable')).toBeDefined();
       expect(await within(panel).findByText('Deleted')).toBeDefined();
       expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
     }
+    expect(within(panel).queryByText('Loading…')).toBeNull();
     expect(seen).toEqual([{ method: 'GET', path: '/api/v1/deletions' }, { method: 'GET', path: '/api/v1/deletions/b1' }]);
   });
 
@@ -176,7 +183,7 @@ it.each(['failed', 'recovers'])('opens %s batch details without offering cancell
   render(DeletionsWorkspace, { client, controller: new DeletionsController(client) });
   await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
   if (status === 'recovers') {
-    await screen.findByText('Account unavailable');
+    await screen.findByText("Can't load batch details.");
     available = true;
     await fireEvent.click(screen.getByRole('button', { name: /^Open batch from/ }));
     await fireEvent.click(screen.getByRole('button', { name: /^Open batch from/ }));
