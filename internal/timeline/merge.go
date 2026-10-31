@@ -103,10 +103,20 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	} else {
 		c.unavailable("meetings")
 	}
+	// Resolve the provider/copy representative before using time, text or people.
+	canonical := make([]store.CalendarOccurrence, 0, len(occurrences))
+	for _, o := range occurrences {
+		if resolved, ok := c.canonicalOccurrence(o, identity.ByOccurrence[o.Ref]); ok {
+			canonical = append(canonical, resolved)
+			ids = append(ids, resolved.MessageID)
+		}
+	}
+	occurrences = canonical
 	for _, info := range identity.ByOccurrence {
 		ids = append(ids, info.LinkedTranscriptIDs...)
 	}
-	for _, info := range identity.ByTranscript {
+	for id, info := range identity.ByTranscript {
+		ids = append(ids, id)
 		ids = append(ids, info.LinkedTranscriptIDs...)
 	}
 	display := c.displays(ids)
@@ -162,10 +172,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		for _, id := range b.LatestMessageIDs {
 			hidden = hidden || display[id].HiddenText
 		}
-		snippet := d.Snippet
-		if snippet == "" {
-			snippet = d.Subject
-		}
+		snippet := displaySnippet(d)
 		if hidden {
 			snippet = ""
 		}
@@ -217,12 +224,18 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			e.Open = c.messageOpen(o.MessageID)
 		}
 		if c.req.Scope.Owner {
+			for id, suggestion := range identity.ByTranscript {
+				if _, visible := display[id]; visible && slices.Contains(suggestion.SuggestedOccurrenceRefs, o.Ref) {
+					e.Meeting.PossiblyRelated = append(e.Meeting.PossiblyRelated, messageRef(id))
+				}
+			}
 			for _, call := range calls {
 				if !call.OccurredAt.Before(at) && call.OccurredAt.Before(o.End) {
 					e.Meeting.PossiblyRelated = append(e.Meeting.PossiblyRelated, messageRef(call.MessageID))
 				}
 			}
 		}
+		e.Meeting.PossiblyRelated = sortedSet(e.Meeting.PossiblyRelated)
 		date := at.In(c.loc).Format(time.DateOnly)
 		if o.AllDay {
 			date = o.StartDate
@@ -306,6 +319,34 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	}
 	return entries, upcoming
 }
+func displaySnippet(d store.MessageDisplay) string {
+	if d.HiddenText {
+		return ""
+	}
+	if d.Encrypted {
+		return "[encrypted]"
+	}
+	if d.Snippet != "" {
+		return d.Snippet
+	}
+	return d.Subject
+}
+
+func (c *composer) canonicalOccurrence(o store.CalendarOccurrence, info store.MeetingIdentityInfo) (store.CalendarOccurrence, bool) {
+	if info.OccurrenceRef == "" || info.OccurrenceRef == o.Ref {
+		return o, true
+	}
+	if c.src.Calendar == nil {
+		c.unavailable("meetings")
+		return store.CalendarOccurrence{}, false
+	}
+	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
+		return c.src.Calendar.GetCalendarOccurrenceContext(ctx, info.OccurrenceRef)
+	})
+	c.gap("meetings", r.err, false)
+	return r.value.CalendarOccurrence, r.err == nil
+}
+
 func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	emails := []string{}
 	for _, a := range o.Attendees {
