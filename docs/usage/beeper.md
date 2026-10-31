@@ -439,6 +439,8 @@ participants still unify across archives via phone-number and email matching
 (the Beeper user ID is also persisted as an identifier, so later runs keep
 resolving to the same person).
 
+Telegram users also link to [Telegram Desktop imports](text-messages.md#import-telegram) by numeric user ID when a sync revisits their chat; `sync-beeper --full` covers quiet chats.
+
 ## Caveats
 
 - **Reinstalling Beeper Desktop**: Beeper's message IDs are only stable per

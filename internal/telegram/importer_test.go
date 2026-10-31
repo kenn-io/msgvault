@@ -646,6 +646,47 @@ func TestImportRecordsTelegramIdentities(t *testing.T) {
 	assert.Equal(count, after)
 }
 
+func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
+	for _, noResume := range []bool{false, true} {
+		t.Run("no-resume="+strconv.FormatBool(noResume), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			opts := ImportOptions{RootDir: "testdata/full", AttachmentsDir: t.TempDir()}
+			first, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			// An export imported before identity linking has participants and messages only.
+			_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
+			require.NoError(err)
+			bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Bob Sample")
+			require.NoError(err)
+			source, err := st.GetOrCreateSource("beeper", "telegram")
+			require.NoError(err)
+			key := "provider:8:telegram:7:service:0::19:7000000000000666666"
+			_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
+				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
+				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+			})
+			require.NoError(err)
+
+			opts.NoResume = noResume
+			summary, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(first.MessagesAdded, summary.MessagesSkipped)
+			var count int
+			require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM participant_contact_observations WHERE source_id = ?"), first.SourceID).Scan(&count))
+			assert.Equal(4, count, "every export user's identity is recorded again")
+			participant, err := st.EnsureParticipantByIdentifier("telegram", "user7000000000000666666", "Bob Sample")
+			require.NoError(err)
+			members, err := st.ClusterMembers(participant)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{participant, bridge}, members)
+		})
+	}
+}
+
 func TestImportIdentityFailureIsRetryable(t *testing.T) {
 	for _, table := range []string{"participant_contact_observations", "participant_links"} {
 		for _, noResume := range []bool{false, true} {

@@ -2,7 +2,6 @@ package beeper
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -10,11 +9,7 @@ import (
 
 // LinkTelegramUser records an export user's shared Telegram identity and matches it.
 func LinkTelegramUser(ctx context.Context, st *store.Store, sourceID, participantID int64, nativeID string) error {
-	raw, err := json.Marshal(map[string]string{providerNativeKey: nativeID})
-	if err != nil {
-		return err
-	}
-	key := telegramSharedKey("telegram", &User{Raw: raw})
+	key := telegramUserKey(nativeID)
 	if key == "" {
 		return nil
 	}

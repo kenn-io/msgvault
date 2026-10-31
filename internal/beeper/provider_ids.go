@@ -24,10 +24,10 @@ import (
 // unrelated ID on another network and auto-link two different people — the one
 // outcome the roadmap's matching policy forbids.
 
-// providerNativeKey is the one documented raw-payload key that may carry a
-// provider-native immutable user ID. An unknown key must be ignored, not
-// guessed at, because a wrong value here is the only input that can auto-link
-// two participants.
+// providerNativeKey is the documented raw-payload key for a provider-native
+// immutable user ID. Telegram also encodes numeric user IDs in bridge IDs
+// shaped like @telegram_<digits>:server. Other raw keys are ignored because
+// guessed values can auto-link unrelated participants.
 const providerNativeKey = "providerID"
 
 // telegramSharedKey has no account scope: Telegram user IDs are global,
@@ -43,11 +43,18 @@ func telegramSharedKey(serviceSlug string, u *User) string {
 		localID = ""
 	}
 	for _, digits := range []string{native, localID} {
-		if digits != "" && strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
-			return providerIdentityKey("telegram", "service", "", digits)
+		if key := telegramUserKey(digits); key != "" {
+			return key
 		}
 	}
 	return ""
+}
+
+func telegramUserKey(digits string) string {
+	if digits == "" || strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) != -1 {
+		return ""
+	}
+	return providerIdentityKey("telegram", "service", "", digits)
 }
 
 // providerUserIDScoped returns the namespaced stable identity for u.
