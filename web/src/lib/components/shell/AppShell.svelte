@@ -685,6 +685,7 @@
     commitWorkspace('deletions');
   }
   async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
+    if (exploreState.holdLeave?.(() => void openSavedView(state))) return;
     selection.clear();
     commitNavigation(state);
     if (exploreState.current.workspace === 'settings') return;

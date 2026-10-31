@@ -846,11 +846,15 @@ export class ExploreState {
   private clearOperationHistory(replaceURL = true): void {
     const patch: Partial<ExploreURLState> = { operationHistory: false, operationLane: '', operationKind: '',
       operationState: '', operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '' };
-    if (replaceURL) this.replaceCommittedNavigation(patch);
-    else {
-      // Keep the unindexed destination intact until the user chooses Stay or Discard.
-      Object.assign(this.current, patch);
-      this.committed = normalize(this.current);
+    Object.assign(this.current, patch);
+    this.committed = normalize(this.current);
+    if (replaceURL) {
+      // Closing the overlay preserves the Settings leave choice already being held.
+      this.pendingSearchPriorFocus = undefined;
+      this.pendingRestorationEpoch = undefined;
+      const search = serializeExploreURLState(this.current, this.browser.location.search);
+      const { pathname, hash } = this.browser.location;
+      this.browser.history.replaceState(historyEntry(search, this.current, this.historyIndex), '', `${pathname}${search}${hash}`);
     }
   }
 
