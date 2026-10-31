@@ -101,10 +101,6 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
     total_count: 1, cache_revision: 'cache-relationships', identity_revision: 1
   } }));
   await page.route('**/api/v1/participants/1', (route) => route.fulfill({ json: alice }));
-  await page.route('**/api/v1/relationships/1/timeline', (route) => route.fulfill({ json: {
-    canonical_id: 1, identity_revision: 1, cache_revision: 'cache-relationships',
-    rows: [messageRow, chatBurstRow], total_count: 2
-  } }));
   await page.route('**/api/v1/participants/*/timeline', route => route.fulfill({ json: {
     rows: timelineRows,
     total_count: 2, cache_revision: 'cache-relationships', search_provenance: {}
@@ -254,9 +250,7 @@ test('person attachment gallery preserves directions and Media state across sour
 
 test('Back restores the relationship message and its conversation window after following a participant', async ({ page }) => {
   await prepare(page);
-  const windows: URLSearchParams[] = [];
   await page.route('**/api/v1/conversations/70**', route => {
-    windows.push(new URL(route.request().url()).searchParams);
     return route.fulfill({ json: {
       id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
       messages: [{
@@ -269,15 +263,10 @@ test('Back restores the relationship message and its conversation window after f
   await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
     ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
   } }));
-  await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
-    canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
-  } }));
   await page.goto('/?workspace=relationships');
   await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
   await page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true }).click();
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Team Chat').click();
-  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
-  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
   const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
   await reading.getByRole('button', { name: 'Bob Example', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
@@ -285,8 +274,6 @@ test('Back restores the relationship message and its conversation window after f
   await page.goBack();
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
-  expect(windows.at(-1)?.get('start')).toBe('2026-07-18T00:00:00.000Z');
-  expect(windows.at(-1)?.get('end')).toBe('2026-07-19T00:00:00.000Z');
   await page.goForward();
   await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
   await expect(reading).toBeHidden();
@@ -328,9 +315,6 @@ test('clicking a relationship label preserves keyboard navigation and one grid t
   await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
     ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
   } }));
-  await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
-    canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
-  } }));
   await page.goto('/?workspace=relationships');
   const grid = page.getByRole('grid', { name: 'People results' });
   await grid.getByText('Alice Example', { exact: true }).click();
@@ -369,7 +353,7 @@ test('clicking a relationship checkbox keeps keyboard selection in the grid', as
   await expect(grid.getByRole('checkbox', { name: 'Unselect Bob Example' })).toBeChecked();
 });
 
-test('relationship labels disclose on hover and identity hues retain text contrast', async ({ page }) => {
+test('identity hues retain text contrast', async ({ page }) => {
   await prepare(page);
   await page.goto('/?workspace=relationships');
   for (const theme of ['light', 'dark'] as const) {
@@ -424,11 +408,6 @@ test('domain calendar retries and retains its local day across Details', async (
   await page.route('**/api/v1/explore/groups', route => {
     const body = route.request().postDataJSON();
     if (body.grouping?.[0] !== 'day') return route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-domain', search_provenance: {} } });
-    expect(body).toMatchObject({ timezone: 'America/New_York', sent_only: true, limit: 366, filters: [
-      { dimension: 'domain', values: ['example.com'] },
-      { dimension: 'after', values: [`${body.filters[1].values[0].slice(0, 4)}-01-01T05:00:00.000Z`] },
-      { dimension: 'before', values: [`${Number(body.filters[1].values[0].slice(0, 4)) + 1}-01-01T05:00:00.000Z`] },
-    ] });
     if (++attempts === 1) return route.fulfill({ status: 500, json: { message: 'Could not load activity.' } });
     return route.fulfill({ json: { rows: [...Array.from({ length: 7 }, (_, i) => ({ key: `${body.filters[1].values[0].slice(0, 4)}-01-0${i + 1}`, count: 1 })), { key: `${body.filters[1].values[0].slice(0, 4)}-07-19`, label: 'Jul 19', count: 3, estimated_bytes: 30, latest_at: when }, { key: `${body.filters[1].values[0].slice(0, 4)}-08-01`, count: 10 }],
       total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });

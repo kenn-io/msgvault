@@ -134,7 +134,7 @@ export class ExploreLoader {
     const predicate = untrack(() => this.callbacks.predicate?.() ?? this.state.predicate());
     const fingerprint = requestFingerprint;
     if (fingerprint !== this.selectionFingerprint) {
-      this.callbacks.onPredicateChange();
+      untrack(() => this.callbacks.onPredicateChange());
       this.selectionFingerprint = fingerprint;
     }
     const filesGrouping = workspace === 'files' && this.state.current.groupingChain.length > 0;

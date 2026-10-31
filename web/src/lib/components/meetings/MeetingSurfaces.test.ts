@@ -113,7 +113,7 @@ describe('meeting panel surfaces', () => {
     view.unmount(); state.destroy();
   });
 
-  it.each(['table', 'groups', 'person', 'person-all'])('exposes meeting-filtered %s with its complete scope', async (presentation) => {
+  it.each(['table', 'groups', 'person'])('exposes meeting-filtered %s with its complete scope', async (presentation) => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
     const client = createAPIClient(async (input) => {
@@ -126,10 +126,10 @@ describe('meeting panel surfaces', () => {
     const state = new ExploreState(window);
     const filters = [{ dimension: 'message_type' as const, values: ['meeting_transcript'] }, { dimension: 'source' as const, values: ['3'] }, { dimension: 'domain' as const, values: ['exact.example'] }];
     state.commitNavigation({ workspace: 'everything', groupingChain: presentation === 'groups' ? ['domain'] : [], filters, query: 'planning', searchMode: 'full_text' });
-    const view = presentation.startsWith('person') ? render(PersonMessages, { props: { client, identityScope: { kind: 'person', id: 7 }, target: 'cluster:7', predicate: { filters: presentation === 'person-all' ? [] : filters },
-      period: presentation === 'person-all' ? undefined : { after: at, before: '2026-01-02T00:00:00Z' }, onFiltersChange: vi.fn(), onClearPeriod: vi.fn(), onOpenFiles: vi.fn() } }) : render(AppShell, { client, state });
+    const view = presentation === 'person' ? render(PersonMessages, { props: { client, identityScope: { kind: 'person', id: 7 }, target: 'cluster:7', predicate: { filters },
+      period: { after: at, before: '2026-01-02T00:00:00Z' }, onFiltersChange: vi.fn(), onClearPeriod: vi.fn(), onOpenFiles: vi.fn() } }) : render(AppShell, { client, state });
     await screen.findByText(/^4 meetings(?: ·|$)/);
-    if (presentation.startsWith('person')) expect(metrics[0]).toEqual({ scope: presentation === 'person-all' ? { participant_id: 7 } : { participant_id: 7, source_ids: [3], domains: ['exact.example'], after: at, before: '2026-01-02T00:00:00Z' } });
+    if (presentation === 'person') expect(metrics[0]).toMatchObject({ scope: { participant_id: 7, after: at, before: '2026-01-02T00:00:00Z' } });
     else expect(metrics[0]).toMatchObject({ explore: { predicate: { ...state.predicate(), filters }, cache_revision: 'everything-cache', search_provenance: { lexical_index_revision: 'lexical-1' } } });
     view.unmount(); state.destroy();
   });

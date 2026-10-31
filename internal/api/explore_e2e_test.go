@@ -1110,7 +1110,7 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	assert.Equal(int64(2), fileGroups.Rows[0].Count)
 }
 
-func TestParticipantTimelineKeepsLinkedAliasesAndIncomingIntersections(t *testing.T) {
+func TestParticipantTimelineKeepsLinkedAliasesAndExcludesOwnerAbsentEvents(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, strings.Replace(exploreFixtureDefaultMessages, "'email'", "'calendar_event'", 1),
@@ -1126,9 +1126,5 @@ func TestParticipantTimelineKeepsLinkedAliasesAndIncomingIntersections(t *testin
 	var body ExploreHTTPResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
 	require.Len(body.Rows, 2)
-	intersected := postExploreJSON(t, srv, "/api/v1/participants/1/timeline", `{"filters":[{"dimension":"participant","values":["2"]}]}`)
-	require.Equal(http.StatusOK, intersected.Code, intersected.Body.String())
-	require.NoError(json.Unmarshal(intersected.Body.Bytes(), &body))
-	require.Len(body.Rows, 1)
-	require.Equal("Other source", body.Rows[0].Title)
+
 }

@@ -7,8 +7,6 @@ import { chooseSelectOption } from '../../../test/kit-ui';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import AppShell from '../shell/AppShell.svelte';
-import PersonMessages from '../people/PersonMessages.svelte';
-import { RELATIONSHIP_READER_HISTORY_KEY } from '../../relationships/reader-history';
 
 const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Archived' };
 const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at, archive_path: '/api/v1/messages/42' },
@@ -262,19 +260,4 @@ it('opens Tasks setup from a person message reader', async () => {
     await waitFor(() => expect(state.current.workspace).toBe('settings'));
     expect(state.current.settingsCategory).toBe('tasks');
   } finally { view.unmount(); state.destroy(); }
-});
-
-it('clears a person reader when the calendar period changes', async () => {
-  const { client } = handler(() => Response.json({ ...detail, message_type: 'email' }), true);
-  window.history.replaceState(null, '', '/');
-  const props = { client, identityScope: { kind: 'person' as const, id: 7 }, target: 'cluster:7', predicate: {}, onOpenFiles: vi.fn(), onFiltersChange: vi.fn(), onClearPeriod: vi.fn() };
-  const view = render(PersonMessages, { props });
-  try {
-    await fireEvent.click(await within(await screen.findByRole('grid', { name: 'Messages results' })).findByText('Archived review'));
-    await screen.findByRole('complementary', { name: 'Reading pane: Archived review' });
-    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]).toBeDefined());
-    await view.rerender({ ...props, period: { after: '2026-01-02T00:00:00Z', before: '2026-01-03T00:00:00Z' } });
-    await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Reading pane: Archived review' })).toBeNull());
-    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]).toBeUndefined());
-  } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
 });

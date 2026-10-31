@@ -64,6 +64,5 @@ describe('universal grouping catalog', () => {
     expect(validateGroupingChain(['mailing_list', 'source'])).toEqual(['mailing_list', 'source']);
     expect(validateGroupingChain(['source', 'kind'])).toEqual(['source', 'kind']);
     expect(validateGroupingChain(['source', 'unknown'])).toEqual([]);
-    expect(validateGroupingChain(['day'])).toEqual([]);
   });
 });

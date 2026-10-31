@@ -9,7 +9,7 @@ const at = '2026-07-18T10:00:00Z';
 const saved = { key: 'message:2', kind: 'email', title: 'Saved message', occurred_at: at, first_at: at, message_type: 'email', conversation_type: 'email', source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, conversation_id: 2, anchor_message_id: 2, match: {} };
 const first = { ...saved, key: 'message:1', title: 'First page message', conversation_id: 1, anchor_message_id: 1 };
 afterEach(() => window.history.replaceState(null, '', '/'));
-function setup(paged: boolean) {
+function setup(paged: boolean, row = saved) {
   const requests: Request[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -17,9 +17,9 @@ function setup(paged: boolean) {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/participants/1/timeline') {
       const body = await request.clone().json();
-      return Response.json({ rows: paged && !body.cursor ? [first] : [saved], total_count: paged ? 2 : 1, next_cursor: paged && !body.cursor ? 'page-two' : undefined, cache_revision: 'cache-1', search_provenance: {} });
+      return Response.json({ rows: paged && !body.cursor ? [first] : [row], total_count: paged ? 2 : 1, next_cursor: paged && !body.cursor ? 'page-two' : undefined, cache_revision: 'cache-1', search_provenance: {} });
     }
-    if (path === '/api/v1/conversations/2') return Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: at, message_type: 'email', from: 'Alice Example', to: [], body: 'Restored body', snippet: 'Restored body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false });
+    if (path === '/api/v1/conversations/2') return Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: at, message_type: row.message_type, from: 'Alice Example', to: [], body: 'Restored body', snippet: 'Restored body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
   const props = { client, identityScope: { kind: 'person' as const, id: 1 }, target: 'cluster:1', predicate: {}, onOpenFiles: vi.fn(), onFiltersChange: vi.fn(), onClearPeriod: vi.fn() };
@@ -60,5 +60,23 @@ it('restores the selected calendar day conversation window', async () => {
     const conversation = requests.filter(request => new URL(request.url).pathname === '/api/v1/conversations/2').at(-1)!;
     expect(new URL(conversation.url).searchParams.get('start')).toBe(period.after);
     expect(new URL(conversation.url).searchParams.get('end')).toBe(period.before);
+    expect(new URL(conversation.url).searchParams.get('anchor')).toBe('2');
+  } finally { view.unmount(); }
+});
+
+it('clears the previous reader on a period change and opens the first clicked conversation', async () => {
+  const { props, requests } = setup(false, { ...saved, key: 'conversation:2', kind: 'conversation', message_type: 'slack', conversation_type: 'chat', source_type: 'slack' });
+  const view = render(PersonMessages, { props });
+  try {
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
+    await fireEvent.click(await within(grid).findByText('Saved message'));
+    await screen.findByText('Restored body');
+    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]).toBeDefined());
+    await view.rerender({ ...props, period: { after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' } });
+    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]).toBeUndefined());
+    await waitFor(() => expect(grid.getAttribute('aria-busy')).toBe('false'));
+    await fireEvent.click(await within(grid).findByText('Saved message'));
+    await screen.findByText('Restored body');
+    expect(requests.filter(request => new URL(request.url).pathname.endsWith('/timeline'))).toHaveLength(2);
   } finally { view.unmount(); }
 });

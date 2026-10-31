@@ -1615,7 +1615,7 @@ describe('AppShell', () => {
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-legacy'
       });
       if (path === '/api/v1/participants/42/timeline') return Response.json({
-        canonical_id: 42, identity_revision: 1, cache_revision: 'cache-legacy', rows: [], total_count: 0
+        cache_revision: 'cache-legacy', rows: [], total_count: 0, search_provenance: {}
       });
       return Response.json(exploreResponse());
     });
@@ -1870,7 +1870,7 @@ describe('AppShell', () => {
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
       return Response.json(exploreResponse());
@@ -1909,7 +1909,7 @@ describe('AppShell', () => {
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
       if (path === '/api/v1/participants/11/timeline') return Response.json({
-        canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/people/directory') return Response.json({
         people: promoted ? [{
@@ -1981,7 +1981,7 @@ describe('AppShell', () => {
           last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
         });
         if (path === '/api/v1/participants/11/timeline') return Response.json({
-          canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+          cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
         });
         if (path === '/api/v1/people/directory') return Response.json({ people: [] });
         return Response.json(exploreResponse());
@@ -2031,7 +2031,7 @@ describe('AppShell', () => {
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
       if (path === '/api/v1/participants/11/timeline') return Response.json({
-        canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/people/directory') return Response.json({ people: [] });
       if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
@@ -2087,8 +2087,7 @@ describe('AppShell', () => {
         return Response.json({ id, display_label: `Candidate ${id}`, partial_label: false, identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel' });
       }
       if (path === '/api/v1/participants/11/timeline' || path === '/api/v1/participants/12/timeline') {
-        const canonicalID = Number(path.split('/')[3]);
-        return Response.json({ canonical_id: canonicalID, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 });
+        return Response.json({ cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {} });
       }
       if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
         error: 'person_binding_conflict', message: 'This identity is already bound to another person'
@@ -2137,7 +2136,7 @@ describe('AppShell', () => {
       if (path === '/api/v1/participants/1/timeline') {
         timelineBodies.push(await request.clone().json());
         return Response.json({
-          canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+          cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
         });
       }
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
@@ -2181,7 +2180,7 @@ describe('AppShell', () => {
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
       if (path === '/api/v1/participants/1/timeline') return Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
       });
       if (path === '/api/v1/participants/1/files/search') return Response.json({
         files: [fileRow], total_count: 1, cache_revision: 'cache-rel', search_provenance: {}

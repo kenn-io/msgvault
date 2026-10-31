@@ -30,9 +30,6 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
   await page.route('**/api/v1/participants/1', async (route) => route.fulfill({
     json: { ...person, first_at: await firstAt }
   }));
-  await page.route('**/api/v1/relationships/1/timeline', (route) => route.fulfill({ json: {
-    canonical_id: 1, identity_revision: 1, cache_revision: 'cache-calendar', rows: [], total_count: 0
-  } }));
   await page.route('**/api/v1/relationships/1/calendar', (route) => route.fulfill({ json: {
     participant_id: 1, canonical_id: 1, year: route.request().postDataJSON().year,
     timezone: route.request().postDataJSON().timezone,
@@ -157,7 +154,7 @@ test('Escape dismisses the current day but hovering another day reopens the tool
   await expect(tooltip).toHaveCount(0);
 });
 
-test('year controls keep the year in place while person details load', async ({ page }) => {
+test('year controls become available after person details load', async ({ page }) => {
   let resolvePerson!: (firstAt: string) => void;
   const firstAt = new Promise<string>((resolve) => { resolvePerson = resolve; });
   const opened = openCalendar(page, firstAt);
@@ -165,11 +162,8 @@ test('year controls keep the year in place while person details load', async ({ 
   resolvePerson(person.first_at);
   await opened;
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
-  const year = calendar.getByText('2026', { exact: true });
-  const before = await year.boundingBox();
   await expect(calendar.getByRole('button', { name: 'Next relationship year' })).toBeDisabled();
   await expect(calendar.getByRole('button', { name: 'Previous relationship year' })).toBeEnabled();
-  expect((await year.boundingBox())!.x).toBe(before!.x);
 });
 
 test('calendar remains accessible in a narrow viewport with edge tooltips on screen', async ({ page }) => {

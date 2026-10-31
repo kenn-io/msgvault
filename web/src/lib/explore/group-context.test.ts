@@ -87,6 +87,4 @@ describe('group context', () => {
     expect(filtersForGroup([], 'kind', 'message')).toBeUndefined();
     expect(parseGroupSelection('message:1')).toBeUndefined();
   });
-
-
 });

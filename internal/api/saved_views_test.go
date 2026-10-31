@@ -177,12 +177,10 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 		})
 	}
 
-	for _, dimension := range []string{"sender", "day"} {
-		invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-			[]byte(fmt.Sprintf(`{"name":"Unsupported","canonical_state":{"grouping":[%q]},"schema_version":1}`, dimension)),
-			session.mutationHeaders())
-		assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
-	}
+	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
+		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["sender"]},"schema_version":1}`),
+		session.mutationHeaders())
+	assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
 
 	createdResponse := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
 		[]byte(`{"name":"Before invalid patch","canonical_state":{"grouping":["source"]},"schema_version":1}`),
@@ -193,7 +191,7 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 	headers.Set("If-Match", savedViewETag(created))
 	patched := performSavedViewRequest(t, srv, http.MethodPatch,
 		savedViewsPath+"/"+strconv.FormatInt(created.ID, 10),
-		[]byte(`{"canonical_state":{"grouping":["day"]}}`), headers)
+		[]byte(`{"canonical_state":{"grouping":["arbitrary"]}}`), headers)
 	assert.Equal(t, http.StatusBadRequest, patched.Code, patched.Body.String())
 }
 
