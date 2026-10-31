@@ -127,10 +127,10 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	return withDayHeatLevels(request.Dimension, response), nil
 }
 
-// withDayHeatLevels ranks the returned day rows into the shared relationship
-// heat levels; other dimensions carry no level.
+// withDayHeatLevels assigns shared relationship heat levels only when the page
+// contains every day row; other dimensions carry no level.
 func withDayHeatLevels(dimension string, response *ExploreGroupResponse) *ExploreGroupResponse {
-	if dimension != timeGranularityDay {
+	if dimension != timeGranularityDay || int64(len(response.Rows)) != response.TotalCount {
 		return response
 	}
 	signals := make([]identityindex.DailyTemperatureSignals, len(response.Rows))
