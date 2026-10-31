@@ -234,6 +234,18 @@ func (s *Store) shareIdentityLockTxContext(ctx context.Context, tx *loggedTx) er
 	return nil
 }
 
+// withSharedIdentityTxContext holds the identity revision row for shared
+// access before the sync fence. It is for transactions that validate identity
+// ownership without changing account-attribution inputs.
+func (s *Store) withSharedIdentityTxContext(
+	ctx context.Context,
+	fn func(*loggedTx) error,
+) error {
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		return s.shareIdentityLockTxContext(ctx, tx)
+	}, fn)
+}
+
 // messageSourceIDContext reads a message's source before a transaction opens.
 // messages.source_id never changes after insert. A missing message yields 0.
 func (s *Store) messageSourceIDContext(ctx context.Context, messageID int64) (int64, error) {
