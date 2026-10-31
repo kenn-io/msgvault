@@ -94,6 +94,8 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	// Edited records a source edit atomically with the message.
+	Edited                    bool
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -2110,7 +2112,24 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	}
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		nil, nil, func([]int64) *MessagePersistData { return data }, nil, nil,
+		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
+		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+			q := boundQuerier{ctx: ctx, q: tx}
+			if data.MIMEAttachmentReplacement != nil {
+				if err := s.replaceMIMEAttachmentsWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+					return fmt.Errorf("persist attachments: %w", err)
+				}
+				if err := recomputeMessageAttachmentStatsWith(q, id); err != nil {
+					return fmt.Errorf("recompute attachment stats: %w", err)
+				}
+			}
+			if data.Edited {
+				if _, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, true, id); err != nil {
+					return fmt.Errorf("mark message edited: %w", err)
+				}
+			}
+			return nil
+		},
 	)
 }
 
@@ -7318,4 +7337,35 @@ func (s *Store) soleAddressParticipantContext(ctx context.Context, query, addres
 		return 0, nil
 	}
 	return ids[0], nil
+}
+
+// ResolveDeferredMessageRepliesContext links archived replies whose metadata
+// contains referenced_message_id once their parent is available.
+func (s *Store) ResolveDeferredMessageRepliesContext(ctx context.Context, sourceID int64, messageType string, pageSize int) error {
+	afterID := int64(0)
+	for {
+		unresolved, err := s.ListUnresolvedMessageRepliesAfterContext(ctx,
+			sourceID, messageType, afterID, pageSize,
+		)
+		if err != nil {
+			return err
+		}
+		for _, reply := range unresolved {
+			var metadata struct {
+				ReferencedMessageID string `json:"referenced_message_id"`
+			}
+			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
+				return fmt.Errorf("decode reply metadata for %s: %w", reply.SourceMessageID, err)
+			}
+			if metadata.ReferencedMessageID != "" {
+				if err := s.SetReplyToContext(ctx, sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
+					return fmt.Errorf("resolve deferred reply %s: %w", reply.SourceMessageID, err)
+				}
+			}
+			afterID = reply.MessageID
+		}
+		if len(unresolved) < pageSize {
+			return nil
+		}
+	}
 }
