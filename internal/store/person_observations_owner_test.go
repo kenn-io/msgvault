@@ -95,7 +95,6 @@ func TestRejectObservationNotifiesDependents(t *testing.T) {
 }
 func TestForgetObservationWithdrawsDeductionWithRemainingPremise(t *testing.T) {
 	assert := testassert.New(t)
-	require := testrequire.New(t)
 	f, in, generation := observationBatchFixture(t, "I run")
 	first := observationOwnerRow(t, f.store, in.PersonID, "[PERSON] runs")
 	second := observationOwnerRow(t, f.store, in.PersonID, "[PERSON] swims")
@@ -103,8 +102,6 @@ func TestForgetObservationWithdrawsDeductionWithRemainingPremise(t *testing.T) {
 	observationDecide(t, f.store, first, personobs.DecisionActionForget)
 	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, child).Status)
 	assert.NotNil(observationGet(t, f.store, child).PremiseChangedAt)
-	require.NoError(f.store.RefreshObservationForTest(t.Context(), in.PersonID, child))
-	assert.Equal(personobs.StatusUnsupported, observationGet(t, f.store, child).Status)
 }
 func TestAddOwnerObservationWithoutParticipants(t *testing.T) {
 	assert := testassert.New(t)

@@ -605,7 +605,7 @@ func (s *Store) hasPostMergeObservationOwnerAssertionTx(
 	snapshotEvents map[int64]struct{},
 ) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM person_observation_events
-		WHERE observation_id=? AND event='owner-assertion-confirmed' ORDER BY id`, observationID)
+		WHERE observation_id=? AND event='confirmed' AND detail='add-owner-observation' ORDER BY id`, observationID)
 	if err != nil {
 		return false, fmt.Errorf("read post-merge owner assertion events: %w", err)
 	}
