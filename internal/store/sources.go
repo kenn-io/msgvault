@@ -299,6 +299,19 @@ func (s *Store) RemoveSourceSerialized(
 		}
 		return hadActiveSync, 0, err
 	}
+	var sourceType string
+	if err := conn.QueryRowContext(ctx, s.dialect.Rebind(`SELECT source_type FROM sources WHERE id=?`), sourceID).Scan(&sourceType); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return hadActiveSync, 0, fmt.Errorf("check source type before removal: %w", err)
+	}
+	if sourceType == "x" {
+		var pending bool
+		if err := conn.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM x_post_versions WHERE source_id=? AND cleanup_pending=1)`), sourceID).Scan(&pending); err != nil {
+			return hadActiveSync, 0, fmt.Errorf("check pending X content cleanup: %w", err)
+		}
+		if pending {
+			return hadActiveSync, 0, ErrXRemovalPending
+		}
+	}
 
 	uniquePackedHashes, err := func() ([]string, error) {
 		rows, err := conn.QueryContext(ctx,

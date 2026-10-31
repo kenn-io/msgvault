@@ -29,7 +29,7 @@ type CardDAVReviewArtifactKind string
 
 const (
 	CardDAVReviewCurrent  CardDAVReviewArtifactKind = "current"
-	CardDAVReviewPending  CardDAVReviewArtifactKind = "pending"
+	CardDAVReviewPending  CardDAVReviewArtifactKind = statusPending
 	CardDAVReviewConflict CardDAVReviewArtifactKind = "conflict"
 )
 

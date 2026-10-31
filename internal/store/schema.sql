@@ -4682,3 +4682,66 @@ CREATE TABLE IF NOT EXISTS conversation_policy (
  override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
  last_activity_at DATETIME
 );
+
+-- X aliases retain only IDs/status after content removal. Local content can be
+-- deleted without forgetting an old version or its suppression.
+CREATE TABLE IF NOT EXISTS x_post_versions (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    post_id TEXT NOT NULL,
+    canonical_id TEXT NOT NULL,
+    message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    version_position INTEGER NOT NULL CHECK (version_position >= 0),
+    author_id TEXT,
+    source_conversation_id TEXT,
+    version_created_at DATETIME,
+    fetched_at DATETIME,
+    last_checked_at DATETIME,
+    availability TEXT NOT NULL DEFAULT 'unverified' CHECK (availability IN ('public', 'unverified', 'removed', 'protected', 'withheld', 'deleted')),
+    suppressed_at DATETIME,
+    suppression_reason TEXT,
+    cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
+    PRIMARY KEY (source_id, post_id)
+);
+CREATE INDEX IF NOT EXISTS idx_x_post_versions_canonical
+    ON x_post_versions(source_id, canonical_id, version_position);
+CREATE INDEX IF NOT EXISTS idx_x_post_versions_message
+    ON x_post_versions(message_id, version_position);
+CREATE INDEX IF NOT EXISTS idx_x_post_versions_author
+    ON x_post_versions(source_id, author_id, canonical_id);
+CREATE INDEX IF NOT EXISTS idx_x_post_versions_refresh
+    ON x_post_versions(source_id, last_checked_at, post_id);
+CREATE INDEX IF NOT EXISTS idx_x_post_versions_cleanup
+    ON x_post_versions(source_id, canonical_id) WHERE cleanup_pending = 1;
+
+-- Content-free receipts survive deletion of the reviewed draft. Full
+-- source/draft/attempt keys are required on every transition.
+CREATE TABLE IF NOT EXISTS x_reply_attempts (
+    draft_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL,
+    credential_generation INTEGER NOT NULL DEFAULT 0 CHECK (credential_generation >= 0),
+    draft_revision INTEGER NOT NULL CHECK (draft_revision > 0),
+    target_post_id TEXT NOT NULL,
+    target_canonical_id TEXT,
+    target_message_id INTEGER,
+    source_conversation_id TEXT NOT NULL,
+    conversation_id INTEGER,
+    body_digest TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('admitted', 'remote_unknown', 'remote_accepted', 'sent', 'rejected')),
+    result_code TEXT,
+    remote_id TEXT,
+    reservation_id TEXT NOT NULL,
+    reserved_micros INTEGER NOT NULL DEFAULT 0 CHECK (reserved_micros >= 0),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accepted_at DATETIME,
+    adoption_confirmed_at DATETIME,
+    adoption_owner_id TEXT,
+    adopted_post_id TEXT,
+    PRIMARY KEY (draft_id, attempt_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_x_reply_attempts_frozen_draft
+    ON x_reply_attempts(draft_id) WHERE state IN ('admitted', 'remote_unknown', 'remote_accepted', 'sent');
+CREATE INDEX IF NOT EXISTS idx_x_reply_attempts_source
+    ON x_reply_attempts(source_id, draft_id, attempt_id);

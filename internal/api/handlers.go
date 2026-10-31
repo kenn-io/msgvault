@@ -117,6 +117,7 @@ type SourceStatusResponse struct {
 
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
+	X                     *XSourceStatus `json:"x,omitzero" nullable:"false"`
 	ID                    int64          `json:"id"`
 	SourceType            string         `json:"source_type"`
 	Identifier            string         `json:"identifier"`
@@ -1607,7 +1608,14 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	sourceType := source.SourceType
+	if sourceType == "" {
+		sourceType = sourceTypeGmail
+	}
+	scheduling, err := s.sourceScheduling(ctx, sourceType, source.Identifier)
+	if err != nil {
+		return SourceStatus{}, err
+	}
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1659,6 +1667,9 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	}
 	status.LastSuccessfulSync = syncRunStatus(lastSuccessful)
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.LastSuccessfulSync); err != nil {
+		return SourceStatus{}, err
+	}
+	if err := s.addXSourceStatus(ctx, source, &status); err != nil {
 		return SourceStatus{}, err
 	}
 
@@ -1771,7 +1782,11 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	scheduling, err := s.sourceScheduling(r.Context(), sourceType, account)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve account schedule")
+		return
+	}
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
@@ -2460,10 +2475,10 @@ func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	} else if ok {
 		opts.SourceIDs = normalizeSourceIDs(sourceIDs)
 	}
-	if r.URL.Query().Get("attachments_only") == "true" {
+	if r.URL.Query().Get("attachments_only") == booleanTrueValue {
 		opts.WithAttachmentsOnly = true
 	}
-	if r.URL.Query().Get("hide_deleted") == "true" {
+	if r.URL.Query().Get("hide_deleted") == booleanTrueValue {
 		opts.HideDeletedFromSource = true
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
@@ -2552,10 +2567,10 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	} else if ok {
 		filter.SourceIDs = normalizeSourceIDs(ids)
 	}
-	if r.URL.Query().Get("attachments_only") == "true" {
+	if r.URL.Query().Get("attachments_only") == booleanTrueValue {
 		filter.WithAttachmentsOnly = true
 	}
-	if r.URL.Query().Get("hide_deleted") == "true" {
+	if r.URL.Query().Get("hide_deleted") == booleanTrueValue {
 		filter.HideDeletedFromSource = true
 	}
 
@@ -3893,6 +3908,8 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const messageBodySearchScope = "body"
+
 // handleDeepSearch performs composite full-text search, or exact body-only
 // search when scope=body is requested.
 // GET /api/v1/search/deep?q=invoice&scope=body&offset=0&limit=100&source_id=1&hide_deleted=true.
@@ -3909,7 +3926,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := r.URL.Query().Get("scope")
-	if scope != "" && scope != "body" {
+	if scope != "" && scope != messageBodySearchScope {
 		writeError(w, http.StatusBadRequest, "invalid_scope", "Invalid search scope. Must be 'body' or omitted")
 		return
 	}
@@ -3919,12 +3936,12 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	q := search.ParseWithOR(queryStr, scope != "body")
+	q := search.ParseWithOR(queryStr, scope != messageBodySearchScope)
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
-	if scope == "body" && len(q.TextTerms) == 0 {
+	if scope == messageBodySearchScope && len(q.TextTerms) == 0 {
 		writeError(w, http.StatusBadRequest, "missing_free_text",
 			"Body-scoped search requires at least one free-text term")
 		return
@@ -3938,7 +3955,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// Exact body-only search rejects view filters whose exact MessageFilter
 	// semantics cannot be preserved through search.Query. Generic Deep search
 	// below keeps the complete filter independent from user-entered operators.
-	if scope == "body" && (filter.Sender != "" || filter.SenderName != "" ||
+	if scope == messageBodySearchScope && (filter.Sender != "" || filter.SenderName != "" ||
 		filter.Recipient != "" || filter.RecipientName != "" ||
 		filter.Domain != "" || filter.Label != "" ||
 		filter.TimeRange.Period != "" || filter.HasEmptyTargets() ||
@@ -3965,7 +3982,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	var messages []query.MessageSummary
 	var totalCount int64
 	var stats *query.TotalStats
-	if scope == "body" {
+	if scope == messageBodySearchScope {
 		merged := query.MergeFilterIntoQuery(q, filter)
 		if filter.HideDeletedFromSource {
 			merged.DeletionScope = search.DeletionScopeActive
@@ -4006,11 +4023,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		if s.writeIfContextError(w, err) {
 			return
 		}
-		if scope == "body" && errors.Is(err, query.ErrMessageBodySearchInvalidQuery) {
+		if scope == messageBodySearchScope && errors.Is(err, query.ErrMessageBodySearchInvalidQuery) {
 			writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 			return
 		}
-		if scope == "body" && (errors.Is(err, query.ErrMessageBodySearchUnavailable) ||
+		if scope == messageBodySearchScope && (errors.Is(err, query.ErrMessageBodySearchUnavailable) ||
 			errors.Is(err, query.ErrMessageBodySearchIndexStale)) {
 			writeError(w, http.StatusServiceUnavailable, "body_search_index_unavailable", err.Error())
 			return
@@ -4024,7 +4041,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		messages = messages[:limit]
 	}
-	if scope == "body" {
+	if scope == messageBodySearchScope {
 		if hasMore || (offset > 0 && len(messages) == 0) {
 			totalCount = -1
 		} else {
@@ -4039,7 +4056,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 	var bodyContexts []BodySearchContext
-	if scope == "body" {
+	if scope == messageBodySearchScope {
 		bodyContexts = make([]BodySearchContext, len(messages))
 		for i, message := range messages {
 			bodyContexts[i] = toBodySearchContext(message)

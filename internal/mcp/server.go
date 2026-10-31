@@ -193,6 +193,7 @@ type ServeOptions struct {
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
 	// Drafts runs managed draft commands with the caller's credential.
+	Replies       ReplySender
 	Drafts        DraftRunner
 	DraftCommands []string
 }
@@ -242,6 +243,9 @@ func officialToolHandler(
 						IsError: true,
 						Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: "client confirmation is unavailable"}},
 					}, nil, nil
+				}
+				if required.reply != nil {
+					confirmation.manager.attachReply(state, required.reply)
 				}
 				return &sdkmcp.CallToolResult{
 					InputRequests: sdkmcp.InputRequestMap{"confirm": required.params},
@@ -397,6 +401,7 @@ func newMCPServerWithPolicy(
 		messageTags:          opts.MessageTags,
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
+		replies:              opts.Replies,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}

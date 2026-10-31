@@ -37,6 +37,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const booleanTrueValue = "true"
+
 // CLIStore exposes archive operations needed by CLI-compatible HTTP routes.
 // These routes preserve local CLI output contracts while keeping SQLite access
 // inside the daemon process.
@@ -1388,6 +1390,24 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
 		return
 	}
+	if IsCLIRunSendReply(req.Args) {
+		if _, err := ParseCLIRunSendReply(req); err != nil {
+			writeError(w, 400, "invalid_args", err.Error())
+			return
+		}
+	}
+	if IsCLIRunXSync(req.Args) {
+		if _, err := ParseCLIRunXSync(req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_args", err.Error())
+			return
+		}
+	}
+	if IsCLIRunXRegister(req.Args) {
+		if _, err := ParseCLIRunXRegister(req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_args", err.Error())
+			return
+		}
+	}
 	if !cliRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
@@ -1449,7 +1469,7 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunSendReply(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1691,6 +1711,18 @@ const cliRunPersonCommand = "person"
 const cliRunStatusSubcommand = "status"
 
 func cliRunCommandAllowed(args []string) bool {
+	if IsCLIRunSendReply(args) {
+		_, err := ParseCLIRunSendReply(CLIRunRequest{Args: args})
+		return err == nil
+	}
+	if IsCLIRunXSync(args) {
+		_, err := ParseCLIRunXSync(CLIRunRequest{Args: args})
+		return err == nil
+	}
+	if IsCLIRunXRegister(args) {
+		_, err := ParseCLIRunXRegister(CLIRunRequest{Args: args})
+		return err == nil
+	}
 	if len(args) == 0 {
 		return false
 	}
@@ -2039,7 +2071,7 @@ func cliRunStrictFlagValues(args []string) (map[string]string, []string, bool) {
 			return nil, nil, false
 		}
 		if !hasValue {
-			value = "true"
+			value = booleanTrueValue
 		}
 		if _, duplicate := values[name]; duplicate {
 			return nil, nil, false
@@ -2808,7 +2840,7 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
 		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
-		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
+		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == booleanTrueValue
 		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
 		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {

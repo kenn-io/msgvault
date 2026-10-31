@@ -373,7 +373,7 @@ func (s *Store) ClaimDocumentVectorChunk(
 			switch publication.state {
 			case "ready":
 				continue
-			case "pending":
+			case statusPending:
 				if publication.leaseUntil.Valid && publication.leaseUntil.Time.After(now) {
 					if publication.leaseOwner.String == owner {
 						claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence, publication.leaseUntil.Time, publication.attemptCount)

@@ -48,6 +48,8 @@ var (
 	backupRestoreJobs             int
 	backupRestoreLooseAttachments bool
 	backupRestoreIntegrityCheck   bool
+	backupRestoreXRemovals        string
+	backupRestoreXRemovalsHead    string
 
 	// backupCreateProgress selects backup create's progress rendering mode:
 	// auto (default), bar, or plain. It is hidden/undocumented — see
@@ -240,6 +242,9 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
+	if (backupRestoreXRemovals == "") != (backupRestoreXRemovalsHead == "") {
+		return errors.New("backup restore: --x-removals and --x-removals-head must be supplied together")
+	}
 	cfg := state.cfg
 	repo, err := resolveBackupRepo(backupRestoreRepo, cfg)
 	if err != nil {
@@ -283,7 +288,12 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		PackedContent:      backupRestorePackedContentTarget(looseAttachments),
 		TargetCoordinator:  targetCoordinatorOption,
 		AuxiliaryTarget:    backupapp.NewDocumentAuxiliaryTarget(),
-		BeforePublication:  backupapp.InvalidateRestoredDocumentVectors,
+		BeforePublication: func(ctx context.Context, target backup.RestorePublicationTarget) error {
+			return prepareRestoredArchive(ctx, target, xRestoreOptions{
+				RecordPath: backupRestoreXRemovals, Head: backupRestoreXRemovalsHead,
+				Isolated: !backupRestoreOverwrite && !coordinatedTarget,
+			})
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
@@ -1083,6 +1093,9 @@ func init() {
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "Backup repository directory")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "Directory to restore into (required)")
 	_ = backupRestoreCmd.MarkFlagRequired("target")
+	backupRestoreCmd.Flags().StringVar(&backupRestoreXRemovals, "x-removals", "", "Complete current X removal record from the authenticated daemon")
+	backupRestoreCmd.Flags().StringVar(&backupRestoreXRemovalsHead, "x-removals-head", "", "Independently retained current head for --x-removals")
+	backupRestoreCmd.MarkFlagsRequiredTogether("x-removals", "x-removals-head")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")

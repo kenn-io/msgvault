@@ -60,6 +60,7 @@ limit an archive view.
 | Hide duplicate copies | [Deduplication](usage/deduplication.md) |
 | Remove mail from a provider | [Deletion staging and execution](usage/deletion.md) |
 | Prepare a message draft for review | [Mail drafts](cli-reference.md#draft-reply), [Beeper drafts](cli-reference.md#beeper-chat-drafts), and [local chat drafts](cli-reference.md#local-chat-drafts) |
+| Collect public X conversations and send a reviewed reply | [X posts and replies](usage/x.md) (unreleased) |
 | Keep a recoverable copy | [Backup and restore](usage/backup.md) |
 | Take data elsewhere | [Exporting](usage/exporting.md) |
 | Diagnose a problem | [Troubleshooting](troubleshooting.md) and [FAQ](faq.md) |

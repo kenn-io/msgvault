@@ -158,6 +158,7 @@ type handlers struct {
 	messageTags          MessageTagBackend
 	identityScoring      IdentityScoringBackend
 	drafts               DraftRunner
+	replies              ReplySender
 	contactRoutesBackend ContactRoutesBackend
 	chatDiscoveryBackend ChatDiscoveryBackend
 

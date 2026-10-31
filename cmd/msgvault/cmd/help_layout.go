@@ -51,6 +51,7 @@ var topLevelCommandGroups = map[string]string{
 	"add-teams":              helpGroupSources,
 	"add-twenty":             helpGroupSources,
 	"add-twilio":             helpGroupSources,
+	"add-x":                  helpGroupSources,
 	"agent-token":            helpGroupOperations,
 	"archive-remote-images":  helpGroupSources,
 	"attribute-definition":   helpGroupPeople,
@@ -71,6 +72,7 @@ var topLevelCommandGroups = map[string]string{
 	"credentials":            helpGroupOperations,
 	"daemon":                 helpGroupOperations,
 	"deduplicate":            helpGroupDelete,
+	"draft":                  helpGroupWrite,
 	"delete-deduped":         helpGroupDelete,
 	"delete-staged":          helpGroupDelete,
 	"docbank":                helpGroupOperations,
@@ -83,6 +85,7 @@ var topLevelCommandGroups = map[string]string{
 	"draft-recover":          helpGroupWrite,
 	"draft-reply":            helpGroupWrite,
 	"draft-send-as":          helpGroupWrite,
+	"send-reply":             helpGroupWrite,
 	"embeddings":             helpGroupIndex,
 	"employment":             helpGroupPeople,
 	"eval":                   helpGroupIndex,
@@ -119,6 +122,7 @@ var topLevelCommandGroups = map[string]string{
 	"mcp":                    helpGroupOperations,
 	"media":                  helpGroupRead,
 	"meetings":               helpGroupRead,
+	"message":                helpGroupWrite,
 	"merge-account":          helpGroupSources,
 	"message-tags":           helpGroupWrite,
 	"migrate":                helpGroupMaintenance,
@@ -151,6 +155,7 @@ var topLevelCommandGroups = map[string]string{
 	"show-deletion":          helpGroupDelete,
 	"show-message":           helpGroupRead,
 	"show-thread":            helpGroupRead,
+	"source":                 helpGroupSources,
 	"skills":                 helpGroupOperations,
 	"stage-delete":           helpGroupDelete,
 	"stats":                  helpGroupRead,
@@ -174,6 +179,7 @@ var topLevelCommandGroups = map[string]string{
 	"sync-synctech-sms":      helpGroupSources,
 	"sync-teams":             helpGroupSources,
 	"sync-twenty":            helpGroupSources,
+	"sync-x":                 helpGroupSources,
 	"sync-twilio":            helpGroupSources,
 	"tui":                    helpGroupRead,
 	"unpack-attachments":     helpGroupMaintenance,
@@ -184,6 +190,7 @@ var topLevelCommandGroups = map[string]string{
 }
 
 func ensureHelpLayout(root *cobra.Command) {
+	ensureXCLICommandGroups(root)
 	if _, loaded := helpLayoutRoots.LoadOrStore(root, struct{}{}); loaded {
 		return
 	}
@@ -194,7 +201,7 @@ func ensureHelpLayout(root *cobra.Command) {
 		&cobra.Group{ID: helpGroupPeople, Title: "People, organizations, and identity:"},
 		&cobra.Group{ID: helpGroupSources, Title: "Add and sync sources:"},
 		&cobra.Group{ID: helpGroupImport, Title: "Import local exports:"},
-		&cobra.Group{ID: helpGroupWrite, Title: "Drafts, calendar, and Kata (write to providers):"},
+		&cobra.Group{ID: helpGroupWrite, Title: "Drafts, replies, calendar, and Kata:"},
 		&cobra.Group{ID: helpGroupDelete, Title: "Review and delete:"},
 		&cobra.Group{ID: helpGroupIndex, Title: "Indexes, embeddings, and analytics cache:"},
 		&cobra.Group{ID: helpGroupMaintenance, Title: "Maintenance and repair:"},

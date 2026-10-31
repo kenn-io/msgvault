@@ -653,6 +653,20 @@ func (c *Client) RunCLICommand(
 	req CLIRunRequest,
 	output func(stream, data string) error,
 ) error {
+	if len(req.Args) > 0 && req.Args[0] == "send-reply" {
+		if err := c.requireXReplySend(ctx); err != nil {
+			return err
+		}
+	}
+	if len(req.Args) > 0 && (req.Args[0] == "sync-x" || req.Args[0] == "add-x") {
+		supported, err := c.SupportsAPISchemaVersion(ctx, XIngestionMinAPISchemaVersion)
+		if err != nil {
+			return fmt.Errorf("check daemon x_ingestion capability: %w", err)
+		}
+		if !supported {
+			return fmt.Errorf("x_ingestion requires daemon API schema %s or newer; upgrade the selected daemon", XIngestionMinAPISchemaVersion)
+		}
+	}
 	if req.GrantDecided {
 		if c.localDaemonToken == "" {
 			return errors.New("grant preflight proof is unavailable for this daemon")
@@ -662,6 +676,10 @@ func (c *Client) RunCLICommand(
 	body := generated.RunCLIBody{Args: req.Args, Env: req.Env, Cwd: optionalString(req.Cwd)}
 	return c.runCLIStream(ctx, "/api/v1/cli/run", "run", &generated.RunCLIRequestOptions{Body: &body}, output)
 }
+
+// XIngestionMinAPISchemaVersion is the health-version capability for the full
+// in-process X collection, retention and source-lifecycle path.
+const XIngestionMinAPISchemaVersion = "3.29.0"
 
 func (c *Client) DiscoverCLIIdentities(
 	ctx context.Context,
