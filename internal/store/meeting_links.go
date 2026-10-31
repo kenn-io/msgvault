@@ -301,8 +301,7 @@ func memberLinkKey(ctx context.Context, r SQLReader, id int64) (meetingLinkKey, 
 	var at sql.NullTime
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{id}, args...)
-	err := r.QueryRowContext(ctx, `SELECT k.kind,k.value,k.calendar_id,k.scheduled_at FROM meeting_link_key k JOIN messages m ON m.id=k.message_id WHERE k.message_id = ? AND m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)`+scope, args...).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
+	err := r.QueryRowContext(ctx, `SELECT k.kind,k.value,k.calendar_id,k.scheduled_at FROM meeting_link_key k JOIN messages m ON m.id=k.message_id WHERE k.message_id = ? AND m.deleted_at IS NULL`+scope, args...).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, nil
 	}
