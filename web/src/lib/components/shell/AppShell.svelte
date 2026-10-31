@@ -17,6 +17,7 @@
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
+  import { visualReadiness } from '../../search/visual-ready.svelte';
   import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
@@ -95,6 +96,7 @@
   import RunHistoryDialog from './RunHistoryDialog.svelte';
 
   const media = mediaReadiness();
+  const visual = visualReadiness();
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -477,7 +479,7 @@
   onMount(() => {
     shellData.start();
     if (enabled) void shellData.jobs.refresh();
-    const refresh = () => { if (enabled) { void shellData.refresh(); void shellData.jobs.refresh(); } };
+    const refresh = () => { if (enabled) { void shellData.refresh(); void shellData.jobs.refresh(); void visual?.ready; } };
     window.addEventListener('focus', refresh);
     return () => { window.removeEventListener('focus', refresh); shellData.stop(); };
   });
