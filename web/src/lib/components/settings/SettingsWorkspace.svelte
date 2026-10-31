@@ -805,6 +805,14 @@
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
   }
+  /* Reserve the scrollbar's width up front so the centered panel does not
+     shift left when a long category makes it scroll. Positioning contains the
+     rows' absolutely positioned screen-reader labels, which otherwise stretch
+     the document past the viewport and add a second scrollbar. */
+  .settings :global(.kit-settings__scroll) {
+    position: relative;
+    scrollbar-gutter: stable;
+  }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {
     color: color-mix(in srgb, var(--accent-blue) 92%, var(--text-primary));
