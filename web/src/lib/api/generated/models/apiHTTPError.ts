@@ -4,6 +4,7 @@
 
 export interface ApiHTTPError {
   error: string;
+  hint?: string;
   message?: string;
   [key: string]: unknown;
 }
