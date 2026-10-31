@@ -1882,6 +1882,21 @@ func (s *Store) GetMessageIsFromMe(messageID int64) (bool, error) {
 	return isFromMe, err
 }
 
+// SetMessageSentState records a provider's send state after import.
+func (s *Store) SetMessageSentState(messageID int64, isSent bool) error {
+	return s.SetMessageSentStateContext(context.Background(), messageID, isSent)
+}
+
+// SetMessageSentStateContext records a provider's send state after import.
+func (s *Store) SetMessageSentStateContext(ctx context.Context, messageID int64, isSent bool) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		if _, err := q.Exec(`UPDATE messages SET is_sent = ? WHERE id = ?`, isSent, messageID); err != nil {
+			return fmt.Errorf("set message %d sent state: %w", messageID, err)
+		}
+		return nil
+	})
+}
+
 // ownerEmailMatch matches a nonblank email column to address case-insensitively.
 func ownerEmailMatch(column, address string) string {
 	return column + " IS NOT NULL AND TRIM(" + column + ") <> '' AND LOWER(" + column + ") = LOWER(" + address + ")"
