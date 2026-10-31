@@ -517,8 +517,8 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
-    operationHistory: value.operationHistory === true || !!(operationRunID(value.operationRunID) || operationStatus ||
-      operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore),
+    operationHistory: value.operationHistory === true || (value.operationHistory === undefined && value.workspace === 'operations' &&
+      !!(operationRunID(value.operationRunID) || operationStatus || operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore)),
     operationLane,
     operationKind,
     operationState,
