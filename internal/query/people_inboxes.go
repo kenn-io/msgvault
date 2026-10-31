@@ -57,7 +57,7 @@ WITH contact_chat AS (
 	SELECT DISTINCT message_id AS entry_key, source_id, source_type,
 	                conversation_id, occurred_at, is_from_me
 	FROM relationship_activity_expanded
-	WHERE canonical_id = ? AND is_chat
+	WHERE canonical_id = ? AND is_chat AND NOT unsent
 )
 SELECT c.source_id, c.source_type, s.account_email,
 	   COUNT(DISTINCT c.conversation_id),

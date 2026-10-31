@@ -635,7 +635,7 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 }
 
 type SearchMediaQuery struct {
-	// Q Spoken words to find in transcripts
+	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
 
 	// Mode Lexical mode; semantic and hybrid are unavailable
@@ -836,6 +836,9 @@ type GetGmailIDsByFilterQuery struct {
 
 	// SearchMode Search mode: fast, deep, or aggregate; required with q
 	SearchMode *string `json:"search_mode,omitempty"`
+
+	// MaxResults Maximum results for bounded search-aware deletion resolution (max 100001)
+	MaxResults *int64 `json:"max_results,omitempty"`
 
 	// ViewType Aggregate view type; required for aggregate search
 	ViewType *string `json:"view_type,omitempty"`

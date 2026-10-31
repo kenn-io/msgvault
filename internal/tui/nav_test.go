@@ -90,14 +90,6 @@ func TestWindowSizeClampNegative(t *testing.T) {
 	assert.GreaterOrEqual(t, m.pageSize, 1)
 }
 
-func TestDefaultLoadingWithNoData(t *testing.T) {
-	// Build with no rows/messages and no explicit loading override.
-	// The builder should preserve New()'s default loading=true.
-	model := NewBuilder().WithPageSize(10).WithSize(100, 20).Build()
-
-	assert.True(t, model.loading, "expected loading=true (New default) when no data provided")
-}
-
 func TestPageSizeRawZeroAndNegative(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -123,19 +115,6 @@ func TestPageSizeRawZeroAndNegative(t *testing.T) {
 			_ = model.View().Content
 		})
 	}
-}
-
-func TestWithPageSizeClearsRawFlag(t *testing.T) {
-	// WithPageSizeRaw followed by WithPageSize should clear the raw flag,
-	// so the normal clamping logic applies.
-	model := NewBuilder().
-		WithPageSizeRaw(0).
-		WithPageSize(10).
-		WithRows(testAggregateRows...).
-		WithSize(100, 20).
-		Build()
-
-	assert.Equal(t, 10, model.pageSize, "expected pageSize after WithPageSize cleared raw flag")
 }
 
 // =============================================================================

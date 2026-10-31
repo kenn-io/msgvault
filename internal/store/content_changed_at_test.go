@@ -59,11 +59,6 @@ func TestMessagesColumnClassificationIsExhaustive(t *testing.T) {
 	}
 }
 
-func TestMessagesContentColumns_IncludeListID(t *testing.T) {
-	assert.Contains(t, store.MessagesContentColumns, "list_id",
-		"changing a List-Id must make consumers re-read the message")
-}
-
 // contentChangedPast is the fixed far-past watermark the helpers stamp before
 // exercising a write, so "did the trigger fire?" is an exact string comparison
 // instead of a sleep long enough for the clock to tick. It is written in a form

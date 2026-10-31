@@ -46,6 +46,7 @@ type MockEngine struct {
 	GetDeletionTargetsByFilterFunc          func(context.Context, query.MessageFilter) ([]query.DeletionTarget, error)
 	GetDeletionTargetsByMessageIDsFunc      func(context.Context, []int64) ([]query.DeletionTarget, error)
 	GetDeletionTargetsBySearchFunc          func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode) ([]query.DeletionTarget, error)
+	GetDeletionTargetsBySearchBoundedFunc   func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error)
 	GetDeletionTargetsByAggregateSearchFunc func(context.Context, string, query.MessageFilter, query.ViewType, string) ([]query.DeletionTarget, error)
 	SearchByDomainsFunc                     func(context.Context, []string, *time.Time, *time.Time, int, int, []int64) (query.DomainSearchResult, error)
 	SearchFastWithStatsFunc                 func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
@@ -320,3 +321,10 @@ func (m *MockEngine) GetTotalStats(ctx context.Context, opts query.StatsOptions)
 }
 
 func (m *MockEngine) Close() error { return nil }
+
+func (m *MockEngine) GetDeletionTargetsBySearchBounded(ctx context.Context, q *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, int, error) {
+	if m.GetDeletionTargetsBySearchBoundedFunc != nil {
+		return m.GetDeletionTargetsBySearchBoundedFunc(ctx, q, filter, mode, maxResults)
+	}
+	return m.DeletionTargets, len(m.DeletionTargets), nil
+}

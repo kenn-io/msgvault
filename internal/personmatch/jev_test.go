@@ -103,7 +103,7 @@ func TestJevHonorsCanceledContext(t *testing.T) {
 	}))
 	defer server.Close()
 	client := JevClient{Endpoint: server.URL + "/v1/systemone", ModelID: "jev-1.13.0", Key: "fixture-key", HTTPClient: server.Client()}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks past it
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks past it
 	defer cancel()
 	_, err := client.Score(ctx, PairPacket{})
 	require.ErrorIs(t, err, context.DeadlineExceeded)

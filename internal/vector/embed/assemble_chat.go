@@ -213,7 +213,7 @@ func (a ChatWindowAssembler) document(
 			})
 		}
 	}
-	chunks = limitOwnedChunksToRequest(chunks, a.Policy.MaxDocumentUTF8Bytes,
+	chunks = limitOwnedChunksToRequest(dropBlankChunks(chunks), a.Policy.MaxDocumentUTF8Bytes,
 		defaultVoyageRequestLimits.MaxChunks, a.Policy.DocumentPrefixUTF8Bytes)
 	key := "chat:" + strconv.FormatInt(conversation.ID, 10) + ":" +
 		chatDocumentPolicyVersion + ":" + strconv.FormatInt(anchor.ID, 10)

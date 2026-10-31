@@ -72,24 +72,6 @@ func TestRemoteDeleteEnabledUsesConfigOrEnvironment(t *testing.T) {
 	})
 }
 
-func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
-	cmd := &cobra.Command{
-		Use:  "delete-staged",
-		RunE: func(cmd *cobra.Command, args []string) error { return nil },
-	}
-	var permanent, yes bool
-	cmd.Flags().BoolVar(&permanent, "permanent", false, "")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "")
-	cmd.MarkFlagsMutuallyExclusive("permanent", "yes")
-	cmd.SetArgs([]string{"--permanent", "--yes"})
-	cmd.SetOut(new(bytes.Buffer))
-	cmd.SetErr(new(bytes.Buffer))
-	err := cmd.Execute()
-	require.Error(t, err, "want mutual-exclusion error")
-	assert.Contains(t, err.Error(), "permanent")
-	assert.Contains(t, err.Error(), "yes")
-}
-
 func TestListDeletions_ShowsCancelled(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

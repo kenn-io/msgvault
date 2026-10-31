@@ -157,7 +157,7 @@ func TestCacheBuildJobsWaitsForShutdown(t *testing.T) {
 	require.NoError(err)
 	<-started
 	cancel()
-	waitCtx, stopWait := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the job blocks on release past the wait
+	waitCtx, stopWait := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the job blocks on release past the wait
 	defer stopWait()
 	require.False(jobs.waitContext(waitCtx))
 	close(release)
@@ -177,12 +177,6 @@ func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert.True(manualSyncCLICommand([]string{"sync-chatwoot", "support"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
-}
-
-func TestSyncMatrixRegistersManualCacheFlags(t *testing.T) {
-	cmd := newSyncMatrixCmd()
-	assert.NotNil(t, cmd.Flags().Lookup("build-cache"))
-	assert.NotNil(t, cmd.Flags().Lookup("no-build-cache"))
 }
 
 func TestManualSyncCacheRefreshIncludesNativeMeetingProviders(t *testing.T) {

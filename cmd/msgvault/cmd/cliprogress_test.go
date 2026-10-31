@@ -52,8 +52,8 @@ func TestCLIProgress_PlainModeEmitsNewlineTerminatedUpdates(t *testing.T) {
 		"a plain update is a permanent line and must end it: %q", out)
 	assert.NotContains(out, "\r",
 		"plain mode goes through pipes where \\r cannot overwrite")
-	assert.Contains(out, "Scanned: 1000")
-	assert.Contains(out, "Added: 500")
+	assert.Contains(out, "Scanned: 0001000")
+	assert.Contains(out, "Added: 0000500")
 
 	p.OnComplete(nil)
 	assert.Equal(out, buf.String(),
@@ -74,7 +74,7 @@ func TestCLIProgress_PlainModeLatestDateDoesNotConsumeThrottle(t *testing.T) {
 
 	p.OnProgress(1000, 500, 100)
 	out := buf.String()
-	assert.Contains(t, out, "Scanned: 1000", "rendered line must carry current counters")
+	assert.Contains(t, out, "Scanned: 0001000", "rendered line must carry current counters")
 	assert.Contains(t, out, "Apr 2026", "recorded date renders with the progress line")
 }
 
@@ -97,7 +97,7 @@ func TestCLIProgress_FirstProgressLinePrintsImmediately(t *testing.T) {
 	p.OnStart(0) // sets lastPrint to now; the throttle alone would go silent for 30s
 	p.OnProgress(100, 100, 0)
 
-	assert.Contains(t, buf.String(), "Scanned: 100",
+	assert.Contains(t, buf.String(), "Scanned: 0000100",
 		"the first page of a slow sync must produce output immediately")
 }
 

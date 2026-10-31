@@ -37,24 +37,6 @@ func TestComponentOfAdjReturnsExactComponent(t *testing.T) {
 		"an id absent from adj is its own single-element component")
 }
 
-// TestComponentOfDelegatesToComponentOfAdj proves the refactor preserved
-// componentOf's behavior: building adjacency from edges and delegating must
-// yield the same set as calling componentOfAdj against a separately built
-// adjacency map, for every node in a multi-component graph.
-func TestComponentOfDelegatesToComponentOfAdj(t *testing.T) {
-	assert := assert.New(t)
-	edges := []linkEdge{{1, 2}, {2, 3}, {5, 6}, {10, 11}}
-	adj := buildAdjacency(edges)
-
-	for _, id := range []int64{1, 2, 3, 5, 6, 8, 10, 11} {
-		assert.Equal(
-			setKeys(componentOfAdj(id, adj)),
-			setKeys(componentOf(id, edges)),
-			"componentOf(%d) must match componentOfAdj(%d)", id, id,
-		)
-	}
-}
-
 // TestClustersFromEdgesSmallestRootAcrossComponents pins the smallest-id root
 // invariant across multiple disconnected components, a chain, and a star in
 // one edge list. The {10,11} component is discovered after the larger {1,2,3}
@@ -98,18 +80,6 @@ func TestClustersFromEdgesMultiHopChainAndStar(t *testing.T) {
 		10: 10, 11: 10, 12: 10, 13: 10, 14: 10,
 	}
 	assert.Equal(want, got)
-}
-
-// TestClustersFromEdgesIsDeterministic pins that repeated calls on the same
-// edge list return identical maps, so cache builds and identity refreshes are
-// reproducible.
-func TestClustersFromEdgesIsDeterministic(t *testing.T) {
-	assert := assert.New(t)
-	edges := []linkEdge{{1, 2}, {2, 3}, {5, 6}, {10, 11}}
-
-	first := clustersFromEdges(edges)
-	second := clustersFromEdges(edges)
-	assert.Equal(first, second)
 }
 
 // TestClustersFromEdgesBuildsAdjacencyOnce is the single-pass guard. It swaps

@@ -1,7 +1,6 @@
 package synctechsms
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -21,12 +20,3 @@ func TestDriveImportSkipsUnstableAndAlreadyImportedFiles(t *testing.T) {
 	require.Len(t, got, 1, "stable selection should pick only old")
 	assert.Equal(t, "old", got[0].ID)
 }
-
-func TestDriveClientInterfaceIsSmall(t *testing.T) {
-	var _ DriveClient = fakeDriveClient{}
-}
-
-type fakeDriveClient struct{}
-
-func (fakeDriveClient) ListBackupFiles(context.Context, string) ([]DriveFile, error) { return nil, nil }
-func (fakeDriveClient) DownloadToFile(context.Context, string, string) error         { return nil }

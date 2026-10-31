@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -28,8 +29,9 @@ var setupCmd = &cobra.Command{
 This command helps you:
   1. Optionally configure Google OAuth credentials (Gmail and Google
      Calendar only; press Enter to skip)
-  2. Optionally configure a remote NAS server for token export
-  3. Create the config.toml file
+  2. Choose the IANA timezone used for activity day boundaries
+  3. Optionally configure a remote NAS server for token export
+  4. Create the config.toml file
 
 Run this once after installing msgvault to get started quickly. Then run
 "msgvault setup providers" to turn on search, attachment, and people lanes
@@ -70,8 +72,19 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Step 2: Optionally configure remote NAS
-	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
+	// Step 2: Choose the timezone used for activity day boundaries.
+	activityTimezone, err := setupActivityTimezone(reader, cfg)
+	if err != nil {
+		return err
+	}
+
+	bundleTimezone := cfg.Activity.Timezone
+	if activityTimezone != "" {
+		bundleTimezone = activityTimezone
+	}
+
+	// Step 3: Optionally configure remote NAS
+	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg, bundleTimezone)
 	if err != nil {
 		return err
 	}
@@ -92,6 +105,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 			config.Edit{Key: "remote.allow_insecure", Value: strings.HasPrefix(remoteURL, "http://")},
 		)
 	}
+	if activityTimezone != "" {
+		cfg.Activity.Timezone = activityTimezone
+		edits = append(edits, config.Edit{Key: "activity.timezone", Value: activityTimezone})
+	}
 
 	// Only save if we configured something
 	if len(edits) > 0 {
@@ -108,6 +125,54 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	namedOAuthApp, _ := setupOAuthApp(&cfg.OAuth)
 	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), cfg.Remote.URL != "",
 		cfg.OAuth.ClientSecrets != "" && cfg.OAuth.ServiceAccountKey == "", setupUsesServiceAccount(&cfg.OAuth), namedOAuthApp)
+	return nil
+}
+
+func setupActivityTimezone(reader *bufio.Reader, cfg *config.Config) (string, error) {
+	fmt.Println()
+	fmt.Println("Step 2: Activity timezone")
+	fmt.Println("--------------------------")
+	fmt.Println("Activity day views use this IANA timezone instead of UTC to group events.")
+	fmt.Println("Restart a running daemon after changing this setting.")
+	fmt.Println("Later projection passes re-date existing activity rows automatically.")
+
+	current := cfg.Activity.Timezone
+	if current == "" {
+		current = "UTC"
+	}
+
+	if detected, err := resolveLocalTimezone(); err == nil {
+		fmt.Printf("Detected host timezone: %s\n", detected)
+		if detected != current && promptYesNo(reader, fmt.Sprintf("Use %s for activity day boundaries?", detected)) {
+			if err := validateSetupActivityTimezone(detected); err != nil {
+				return "", err
+			}
+			return detected, nil
+		}
+	} else {
+		fmt.Println("Could not detect a concrete host timezone.")
+	}
+
+	fmt.Printf("Activity timezone is currently %s.\n", current)
+	fmt.Print("Enter UTC or an IANA timezone name (press Enter to keep current): ")
+	zone, _ := reader.ReadString('\n')
+	zone = strings.TrimSpace(zone)
+	if zone == "" || zone == current {
+		return "", nil
+	}
+	if err := validateSetupActivityTimezone(zone); err != nil {
+		return "", err
+	}
+	return zone, nil
+}
+
+func validateSetupActivityTimezone(zone string) error {
+	if zone == "Local" {
+		return fmt.Errorf("activity timezone %q is host-dependent; use UTC or an IANA zone name", zone)
+	}
+	if _, err := time.LoadLocation(zone); err != nil {
+		return fmt.Errorf("invalid activity timezone %q: %w", zone, err)
+	}
 	return nil
 }
 
@@ -243,9 +308,9 @@ func setupOAuthSecrets(reader *bufio.Reader, cfg *config.Config) (string, error)
 	return path, nil
 }
 
-func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config) (string, string, error) {
+func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config, activityTimezone string) (string, string, error) {
 	fmt.Println()
-	fmt.Println("Step 2: Remote NAS Server (Optional)")
+	fmt.Println("Step 3: Remote NAS Server (Optional)")
 	fmt.Println("-------------------------------------")
 	fmt.Println("Configure a remote msgvault server to export tokens for headless deployment.")
 	fmt.Println()
@@ -312,7 +377,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 		fmt.Println("Configure the credential commands and secret store separately on the NAS; the bundle does not contain command-backed credentials.")
 	}
 	bundleDir := filepath.Join(cfg.HomeDir, "nas-bundle")
-	if err := createNASBundle(bundleDir, apiKey, effectiveSecrets, port); err != nil {
+	if err := createNASBundle(bundleDir, apiKey, effectiveSecrets, port, activityTimezone); err != nil {
 		fmt.Printf("Warning: Could not create NAS bundle: %v\n", err)
 	} else {
 		fmt.Printf("\nNAS deployment files created in: %s\n", bundleDir)
@@ -339,7 +404,7 @@ func generateAPIKey() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int) error {
+func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int, activityTimezone string) error {
 	// Create bundle directory
 	if err := os.MkdirAll(bundleDir, 0700); err != nil {
 		return fmt.Errorf("create bundle dir: %w", err)
@@ -350,12 +415,15 @@ func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int) error
 	if oauthSecretsPath != "" {
 		oauthBlock = "[oauth]\nclient_secrets = \"/data/client_secret.json\"\n\n"
 	}
+	activityConfig := config.ActivityConfig{Timezone: activityTimezone}
+	activityConfig.ApplyDefaults()
+	activityBlock := fmt.Sprintf("[activity]\ntimezone = %q\n\n", activityConfig.Timezone)
 	nasConfig := fmt.Sprintf(`[server]
 bind_addr = "0.0.0.0"
 api_port = 8080
 api_key = %q
 
-%s[sync]
+%s%s[sync]
 rate_limit_qps = 5
 
 # Accounts will be added automatically when you export tokens.
@@ -364,7 +432,7 @@ rate_limit_qps = 5
 # email = "you@example.com"
 # schedule = "0 2 * * *"
 # enabled = true
-`, apiKey, oauthBlock)
+`, apiKey, oauthBlock, activityBlock)
 
 	configPath := filepath.Join(bundleDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(nasConfig), 0600); err != nil {

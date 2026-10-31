@@ -26,6 +26,7 @@ type ImportOptions struct {
 	Policy            attachmentpolicy.Policy
 	NoMedia           bool
 	AttachmentsDir    string
+	RecordingMaxBytes int64
 }
 
 type ImportSummary struct {
@@ -50,6 +51,9 @@ type Importer struct {
 
 // now is replaceable so tests can hold fixtures inside the refresh window.
 var now = time.Now
+
+// DefaultRecordingMaxBytes permits long call audio without buffering the file.
+const DefaultRecordingMaxBytes int64 = 4 << 30
 
 const (
 	maxSyncRequests = 10000
@@ -150,7 +154,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if imp == nil || imp.store == nil || imp.client == nil {
 		return nil, errors.New("chatwoot importer unavailable")
 	}
-	if opts.InboxID <= 0 || opts.Limit < 0 || opts.Policy.Validate() != nil {
+	if opts.InboxID <= 0 || opts.Limit < 0 || opts.Policy.Validate() != nil || opts.RecordingMaxBytes < 0 || opts.RecordingMaxBytes == math.MaxInt64 {
 		return nil, errors.New("invalid Chatwoot import options")
 	}
 	for _, id := range opts.SelfAgentIDs {

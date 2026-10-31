@@ -1,6 +1,6 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
+  import { Button, Chip, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
   import type { Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -132,38 +132,46 @@
   {#if hasChips}
     <div class="context-chips">
       {#if query}
-        <span class="chip">
+        <Chip size="sm" uppercase={false} class="chip" title={`${searchModeLabel(searchMode)}: “${query}”`}>
           {searchModeLabel(searchMode)}: “{query}”
-          <IconButton size="sm" ariaLabel="Remove search" onclick={() => onRemoveQuery?.()}
-          ><XIcon size="12" aria-hidden="true" /></IconButton>
-        </span>
+          {#snippet trailing()}
+            <IconButton size="sm" ariaLabel="Remove search" onclick={() => onRemoveQuery?.()}
+            ><XIcon size="12" aria-hidden="true" /></IconButton>
+          {/snippet}
+        </Chip>
       {/if}
       {#each filters as filter, index (`${filter.dimension}:${filter.values.join('\u0000')}`)}
-        <span class="chip chip--filter">
+        <Chip size="sm" uppercase={false} class="chip chip--filter" title={`${filterDimensionLabel(filter.dimension)}: ${filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}`}>
           {filterDimensionLabel(filter.dimension)}: {filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}
-          <IconButton
-            size="sm"
-            ariaLabel={`Remove ${filterDimensionLabel(filter.dimension)} filter`}
-            onclick={() => onRemoveFilter?.(index)}
-          ><XIcon size="12" aria-hidden="true" /></IconButton>
-        </span>
+          {#snippet trailing()}
+            <IconButton
+              size="sm"
+              ariaLabel={`Remove ${filterDimensionLabel(filter.dimension)} filter`}
+              onclick={() => onRemoveFilter?.(index)}
+            ><XIcon size="12" aria-hidden="true" /></IconButton>
+          {/snippet}
+        </Chip>
       {/each}
       {#each extraChips as chip (chip.key)}
-        <span class="chip chip--filter">
+        <Chip size="sm" uppercase={false} class="chip chip--filter" title={chip.label}>
           {chip.label}
-          <IconButton size="sm" ariaLabel={chip.removeLabel} onclick={chip.onRemove}
-          ><XIcon size="12" aria-hidden="true" /></IconButton>
-        </span>
+          {#snippet trailing()}
+            <IconButton size="sm" ariaLabel={chip.removeLabel} onclick={chip.onRemove}
+            ><XIcon size="12" aria-hidden="true" /></IconButton>
+          {/snippet}
+        </Chip>
       {/each}
       {#each groupingChain as dimension, index (`${dimension}:${index}`)}
-        <span class="chip chip--group">
+        <Chip size="sm" uppercase={false} class="chip chip--group" title={groupedByLabel([dimension])}>
           {groupedByLabel([dimension])}
-          <IconButton
-            size="sm"
-            ariaLabel={`Remove ${filterDimensionLabel(dimension)} grouping`}
-            onclick={() => onRemoveGroup(index)}
-          ><XIcon size="12" aria-hidden="true" /></IconButton>
-        </span>
+          {#snippet trailing()}
+            <IconButton
+              size="sm"
+              ariaLabel={`Remove ${filterDimensionLabel(dimension)} grouping`}
+              onclick={() => onRemoveGroup(index)}
+            ><XIcon size="12" aria-hidden="true" /></IconButton>
+          {/snippet}
+        </Chip>
       {/each}
     </div>
   {/if}
@@ -191,7 +199,7 @@
     min-width: 0;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
@@ -211,24 +219,17 @@
     width: 172px;
   }
 
-  .chip {
-    display: inline-flex;
-    max-width: 100%;
-    align-items: center;
-    gap: var(--space-1);
-    padding: 0 0 0 var(--space-2);
-    border-radius: var(--radius-sm);
+  .context-chips :global(.chip) {
     background: var(--bg-inset);
     color: var(--text-secondary);
-    overflow-wrap: anywhere;
   }
 
-  .chip--filter {
+  .context-chips :global(.chip--filter) {
     border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted));
     background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
   }
 
-  .chip--group {
+  .context-chips :global(.chip--group) {
     border: 1px solid color-mix(in srgb, var(--accent-teal) 35%, var(--border-muted));
     background: color-mix(in srgb, var(--accent-teal) 8%, var(--bg-surface));
   }

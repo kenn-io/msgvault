@@ -216,6 +216,12 @@ type Dialect interface {
 	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?
 	FTSBackfillBatchSQL() string
 
+	// FTSBackfillMissingBatchSQL populates missing search entries on SQLite.
+	// PostgreSQL also refreshes entries with an old indexing version.
+	// It uses the same ID range as FTSBackfillBatchSQL and selects the presence
+	// check supported by the archive's search tables.
+	FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error)
+
 	// FTSAvailable reports whether full-text search is available for this database.
 	// For SQLite this probes the FTS5 virtual table; for PostgreSQL it checks
 	// that the tsvector column exists.
@@ -240,9 +246,6 @@ type Dialect interface {
 	// comparison misses interior holes that only the full anti-join finds.
 	FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) bool
 
-	// FTSClearSQL returns the SQL to clear all FTS data before a full backfill.
-	FTSClearSQL() string
-
 	// SchemaFTS returns the embedded filename containing FTS DDL to execute during
 	// schema initialization. Returns "" if no separate FTS schema file is needed
 	// (e.g., PostgreSQL includes tsvector in its main schema).
@@ -257,7 +260,7 @@ type Dialect interface {
 	//
 	// Takes a querier (not *sql.DB) so RebuildFTS can run it on the
 	// maintenance transaction whose statement_timeout has been disabled — the
-	// PG path includes a full-table tsvector clear (same cost as FTSClearSQL)
+	// PG path includes a full-table tsvector clear
 	// plus a GIN rebuild over a populated table, both of which can exceed the
 	// pool-wide 30s timeout on a large archive (finding S1).
 	FTSRebuildSchema(ctx context.Context, q contextQuerier) error

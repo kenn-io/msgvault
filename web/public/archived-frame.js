@@ -51,7 +51,7 @@
       root.getBoundingClientRect().height,
       body ? body.scrollHeight : 0
     ));
-    if (root.scrollWidth > root.clientWidth) height += 18;
+    if (root.scrollWidth > root.clientWidth) height += innerHeight - root.clientHeight;
     height = Math.min(height, MAX_FRAME_HEIGHT);
     if (height > 0) parent.postMessage({ channel, nonce, type: 'height', height }, origin);
   };

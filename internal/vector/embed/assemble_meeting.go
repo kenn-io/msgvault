@@ -66,7 +66,7 @@ func AssembleMeetingDocument(row AssemblyMessage, policy AssemblyPolicy) (Docume
 		chunks[i].ChunkIndex = i
 		chunks[i].Truncated = chunks[i].Truncated || bodyTruncated
 	}
-	chunks = limitOwnedChunksToRequest(chunks, policy.MaxDocumentUTF8Bytes,
+	chunks = limitOwnedChunksToRequest(dropBlankChunks(chunks), policy.MaxDocumentUTF8Bytes,
 		defaultVoyageRequestLimits.MaxChunks, policy.DocumentPrefixUTF8Bytes)
 	key := "meeting:" + strconv.FormatInt(row.ID, 10)
 	return Document{

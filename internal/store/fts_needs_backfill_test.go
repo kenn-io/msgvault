@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"database/sql"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -9,8 +11,101 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
+	if isPostgresTestDB() {
+		t.Skip("SQLite FTS5 table option")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec(`DROP TABLE messages_fts;
+		CREATE VIRTUAL TABLE messages_fts USING fts5(
+			message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr, columnsize=0)`)
+	require.NoError(err)
+	ids := f.CreateMessages(2)
+	for _, id := range ids {
+		require.NoError(f.Store.UpsertMessageBody(id,
+			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+	}
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid = ?", ids[0])
+	require.NoError(err)
+	n, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(1), n)
+	assertFTSContains(t, f.Store, "orchard", 2)
+}
+
+func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	ids := f.CreateMessages(5001)
+	first, second := ids[0], ids[5000]
+	for _, id := range []int64{first, second} {
+		require.NoError(f.Store.UpsertMessageBody(id,
+			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assertFTSContains(t, f.Store, "orchard", 2)
+	if isPostgresTestDB() {
+		_, err = f.Store.DB().Exec("UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", first, second)
+	} else {
+		_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid IN (?, ?)", first, second)
+	}
+	require.NoError(err)
+
+	interrupted := errors.New("second batch interrupted")
+	restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(fromID, _ int64) error {
+		if fromID >= second {
+			return interrupted
+		}
+		return nil
+	})
+	t.Cleanup(restore)
+	n, err := f.Store.BackfillFTS(nil)
+	require.ErrorIs(err, interrupted)
+	assert.Equal(int64(1), n, "first batch committed before the interruption")
+	matches, total, err := f.Store.SearchMessages("orchard", 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	require.Len(matches, 1)
+	assert.Equal(first, matches[0].ID)
+	restore()
+
+	n, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(1), n, "retry indexes only the second-batch gap")
+	assertFTSContains(t, f.Store, "orchard", 2)
+}
+
+func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	ids := f.CreateMessages(2)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(`UPDATE messages
+		SET search_fts = to_tsvector('simple', 'obsolete'), indexing_version = $1
+		WHERE id = $2`, store.CurrentFTSIndexingVersion-1, ids[1])
+	require.NoError(err)
+
+	n, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
+	assertFTSContains(t, f.Store, "obsolete", 0)
+}
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,
 // inferred from MSGVAULT_TEST_DB. Used by backend-portable tests that must issue

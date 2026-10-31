@@ -216,7 +216,7 @@ func TestSQLiteAttachmentChangeAdvanceWaitsForWriterSlot(t *testing.T) {
 	select {
 	case advanceErr := <-result:
 		require.NoError(advanceErr, "cursor advance returned while the SQLite writer slot was held")
-	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the held SQLite writer slot keeps the cursor advance waiting
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held SQLite writer slot keeps the cursor advance waiting
 	}
 	_, err = holder.ExecContext(t.Context(), "COMMIT")
 	require.NoError(err)

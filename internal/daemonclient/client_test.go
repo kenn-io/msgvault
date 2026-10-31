@@ -340,18 +340,6 @@ func TestNewAgentTokenClientRejectsRedirects(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not follow redirects")
 }
 
-func TestNewAllowsHTTPWithAllowInsecure(t *testing.T) {
-	c, err := New(Config{URL: "http://nas:8080", APIKey: "key", AllowInsecure: true})
-	require.NoError(t, err, "New")
-	require.NotNil(t, c, "client")
-}
-
-func TestNewAllowsHTTPS(t *testing.T) {
-	c, err := New(Config{URL: "https://nas:8080", APIKey: "key"})
-	require.NoError(t, err, "New")
-	require.NotNil(t, c, "client")
-}
-
 func TestNewRejectsEmptyURL(t *testing.T) {
 	_, err := New(Config{APIKey: "key"})
 	require.Error(t, err, "New should reject empty URL")

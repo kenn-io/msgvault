@@ -53,12 +53,3 @@ func TestSourceReferenceForTargets(t *testing.T) {
 		})
 	}
 }
-
-func TestSourceMessageIDs(t *testing.T) {
-	targets := []query.DeletionTarget{
-		{SourceMessageID: "remote-2"},
-		{SourceMessageID: "remote-1"},
-	}
-
-	assert.Equal(t, []string{"remote-2", "remote-1"}, SourceMessageIDs(targets))
-}

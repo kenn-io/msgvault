@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -461,6 +462,29 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 		if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW relationship_activity_expanded AS SELECT * FROM "+relation); err != nil {
 			return fmt.Errorf("create relationship activity view: %w", err)
 		}
+	}
+	return nil
+}
+
+// refreshUnsentMessageIDs loads the entry-level exclusion set once per
+// committed cache publication. Querying sparse facts avoids roster expansion;
+// retaining only unsent IDs avoids a Parquet scan on every people search.
+func refreshUnsentMessageIDs(ctx context.Context, db *sql.DB, analyticsDir string) error {
+	if analyticsDir == "" {
+		return nil
+	}
+	path := filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin unsent message ID refresh: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_unsent_messages AS SELECT message_id FROM read_parquet('"+quoteIdentitySQLPath(path)+"', hive_partitioning=true, union_by_name=true) WHERE canonical_id IS NULL AND unsent")
+	if err != nil {
+		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit unsent message ID refresh: %w", err)
 	}
 	return nil
 }

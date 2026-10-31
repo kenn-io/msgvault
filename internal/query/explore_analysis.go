@@ -8,6 +8,20 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
+// analyticalGroupPageSQL resolves optional labels after grouping and pagination.
+func analyticalGroupPageSQL(pageLabel, order string) string {
+	if pageLabel != "" {
+		return `), page AS MATERIALIZED (
+	SELECT * FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
+)
+SELECT group_key, ` + pageLabel + ` AS group_label, group_count, estimated_bytes, latest_at, total_count
+FROM page ORDER BY ` + order
+	}
+	return `)
+SELECT group_key, group_label, group_count, estimated_bytes, latest_at, total_count
+FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+}
+
 const maxExploreFilesLimit = 100
 
 func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRequest) (*ExploreGroupResponse, error) {
@@ -23,7 +37,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	}
 	spec, err := exploreGroupExpressions(request.Dimension,
 		e.parquetPath(identityindex.DatasetPeople), e.parquetPath(identityindex.DatasetActivity),
-		e.parquetPath(datasetParticipantClusters))
+		e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetParticipants), e.parquetPath(datasetPersonDisplayNames))
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +87,8 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	GROUP BY ` + spec.groupBy + `
 ), counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM grouped` + keyFilter + `
-)
-SELECT group_key, group_label, group_count, estimated_bytes, latest_at, total_count
-FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+`
+	queryText += analyticalGroupPageSQL(spec.pageLabel, order)
 	if request.GroupKey != "" {
 		args = append(args, request.GroupKey)
 	}
@@ -111,6 +124,8 @@ type groupExpressions struct {
 	key     string
 	label   string
 	groupBy string
+	// pageLabel is resolved after pagination; empty uses group_label.
+	pageLabel string
 	// cte is an extra CTE chunk interposed between the population CTEs and
 	// the grouped aggregate ("participant" canonicalization; empty
 	// otherwise). ExploreGroups chunks open by closing the still-open
@@ -169,21 +184,20 @@ func sqlActivityEntryEdges(selectExpr, messagePredicate, conversationPredicate s
 `
 }
 
-// sqlIndexedPersonGroupLabelExpr renders a canonical "People" group row's
-// label from the relationship_people dataset, which bakes the shared cluster
-// label policy (see person_label.go and the identity index builder) at build
-// time. Evaluating the policy's correlated best-name scan per group row
-// exceeds the interactive memory budget on production archives — as does ANY
-// second correlated participants subquery here — so grouping reads the
-// precomputed label with only a constant fallback. That fallback is
-// unreachable in practice: group keys come from the same activity edge
-// population (direct edges for message entries, direct-or-roster for chat
-// entries) the dataset's people_totals aggregates, so every key has a
-// directory row.
+// sqlIndexedPersonGroupLabelExpr reads the shared label from the sent-activity
+// directory. Draft-only Explore groups have no directory row, so their
+// canonical participant label is resolved after pagination.
 func sqlIndexedPersonGroupLabelExpr(peopleGlob string) string {
-	return "COALESCE(" +
-		"(SELECT dp.display_label FROM read_parquet('" + peopleGlob + "') dp WHERE dp.canonical_id = person_id), " +
-		"'Unknown person #' || CAST(person_id AS VARCHAR))"
+	return "(SELECT dp.display_label FROM read_parquet('" + peopleGlob + "') dp WHERE dp.canonical_id = person_id)"
+}
+
+// sqlPersonGroupLabelExpr applies the shared cluster-name policy only to
+// paged groups missing from the sent-activity directory.
+func sqlPersonGroupLabelExpr(participantsGlob, clustersGlob, personDisplayNamesGlob string) string {
+	members := "(SELECT CAST(group_key AS BIGINT) UNION SELECT participant_id FROM read_parquet('" + clustersGlob + "') WHERE canonical_id = CAST(group_key AS BIGINT))"
+	name := sqlClusterBestNameExpr("pbn.id IN " + members)
+	override := sqlPersonNameOverrideExpr(personDisplayNamesGlob, "pnv.participant_id IN "+members)
+	return "(SELECT COALESCE(" + override + ", " + name + ", " + sqlPersonIdentifierFallbackExpr("pb") + ") FROM read_parquet('" + participantsGlob + "') pb WHERE pb.id = CAST(group_key AS BIGINT))"
 }
 
 // sqlMessageTypeGroupExpr renders the message-type group key/label: NULL or
@@ -203,7 +217,7 @@ func sqlMessageTypeGroupExpr() string {
 // dimension groups by canonical identity-cluster IDs. Membership is deduplicated
 // before aggregation so entries listing several aliases of one person count once.
 func exploreGroupExpressions(
-	dimension, peopleGlob, activityGlob, clustersGlob string,
+	dimension, peopleGlob, activityGlob, clustersGlob, participantsGlob, personDisplayNamesGlob string,
 ) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "logical_entries"}
@@ -219,12 +233,13 @@ func exploreGroupExpressions(
 		// participant_ids column this replaces. Chat entries also include
 		// the conversation roster and speakers in the filtered context.
 		return groupExpressions{
-			key:     "CAST(person_id AS VARCHAR)",
-			label:   sqlIndexedPersonGroupLabelExpr(peopleGlob),
-			groupBy: "person_id",
-			noLists: true,
-			cte:     exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob),
-			source:  "group_entries",
+			key:       "CAST(person_id AS VARCHAR)",
+			label:     sqlIndexedPersonGroupLabelExpr(peopleGlob),
+			pageLabel: "COALESCE(group_label, " + sqlPersonGroupLabelExpr(participantsGlob, clustersGlob, personDisplayNamesGlob) + ", 'Unknown person #' || group_key)",
+			groupBy:   "person_id",
+			noLists:   true,
+			cte:       exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob),
+			source:    "group_entries",
 		}, nil
 	case "domain":
 		// All edges for message entries: the aggregated participant_domains
@@ -326,6 +341,13 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, explore ExploreRequest) (ExploreRequest, error) {
 	if err := validateIdentityPredicate(explore.Context); err != nil {
 		return explore, err
+	}
+	// Every public Explore/Files consumer prepares its predicate here. SentOnly
+	// requests need current exclusions even when they have no participant filter.
+	if explore.SentOnly {
+		if _, err := e.sentIdentityConditions("true"); err != nil {
+			return explore, err
+		}
 	}
 	expanded, err := e.expandParticipantClusterMembers(ctx, explore.Context.ParticipantIDs)
 	if err != nil {

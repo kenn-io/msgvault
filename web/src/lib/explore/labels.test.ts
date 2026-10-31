@@ -8,19 +8,10 @@ import {
   fileTypeLabel,
   filterDimensionLabel,
   filterValueLabel,
-  preflightReasonLabel,
-  presentationLabel,
-  searchModeLabel
+  preflightReasonLabel
 } from './labels';
 
 describe('explore labels', () => {
-  it('names search modes and presentations', () => {
-    expect(searchModeLabel('full_text')).toBe('Full text');
-    expect(searchModeLabel('semantic')).toBe('Semantic');
-    expect(searchModeLabel('hybrid')).toBe('Hybrid');
-    expect(presentationLabel('timeline')).toBe('Timeline');
-  });
-
   it('names filter dimensions as chips and falls back to sentence case', () => {
     expect(filterDimensionLabel('source')).toBe('Source');
     expect(filterDimensionLabel('participant')).toBe('Person');
@@ -97,6 +88,7 @@ describe('entryKindPresentation', () => {
     ['sms', 'Conversation'],
     ['whatsapp', 'Conversation'],
     ['slack', 'Conversation'],
+    ['inline', 'Conversation'],
     ['chatwoot', 'Conversation'],
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],

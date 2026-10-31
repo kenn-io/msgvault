@@ -297,6 +297,7 @@ func (s *Store) filenameScopeConditions(scope FilenameSuggestionScope) ([]string
 		}
 	}
 	if scope.Person != nil {
+		conditions = append(conditions, "NOT EXISTS (SELECT 1 FROM messages m JOIN sources src ON src.id = m.source_id WHERE m.id = a.message_id AND "+s.activityUnsentSQL()+")")
 		predicate, personArgs := personscope.BoundedMessagePredicate(*scope.Person, "m", "c")
 		conditions = append(conditions, "("+predicate+")")
 		args = append(args, personArgs...)

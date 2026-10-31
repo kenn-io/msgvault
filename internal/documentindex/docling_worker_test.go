@@ -641,7 +641,7 @@ func TestDoclingWorkerStopsRetryingWhenJobOutlastsTotalTimeout(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	c := doclingTestConfig()
-	c.Endpoint, c.TotalTimeout, c.PollInterval, c.MaxPollAttempts = server.URL, 200*time.Millisecond, 10*time.Millisecond, 10_000
+	c.Endpoint, c.TotalTimeout, c.PollInterval, c.MaxPollAttempts = server.URL, 200*time.Millisecond, 10*time.Millisecond, 10_000 //nolint:kennlint // deadlinetest: the pending remote job must exhaust its total budget and become a terminal failure
 	provider, err := NewDoclingClient(&c)
 	requirements.NoError(err)
 	content := mistraltest.MinimalPDF("synthetic source")

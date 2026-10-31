@@ -1,0 +1,7 @@
+# Public write-only PostHog project tokens shipped by upstream main.
+Makefile:posthog-project-api-key:11
+.github/workflows/ci.yml:posthog-project-api-key:68
+Dockerfile:posthog-project-api-key:60
+# Synthetic credentials in endpoint validation rejection fixtures.
+internal/config/config_inline_test.go:generic-credential-uri:62
+internal/inline/mcp_test.go:generic-credential-uri:331

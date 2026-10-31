@@ -202,7 +202,7 @@ func waitForManualPersonAttributeTargetLock(
 
 		probe, err := st.db.BeginTx(t.Context(), nil)
 		requirements.NoError(err)
-		probeCtx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; a probe timeout shows the manual write holds the lock
+		probeCtx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; a probe timeout shows the manual write holds the lock
 		lockErr := st.lockProfileIdentityKeyTxContext(
 			probeCtx, probe, "person-fact-generation", personID)
 		_ = probe.Rollback()

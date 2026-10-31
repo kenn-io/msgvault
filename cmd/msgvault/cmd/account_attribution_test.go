@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -63,7 +64,8 @@ func TestAccountAttributionCacheParity(t *testing.T) {
 			require.NoError(err)
 
 			cache := filepath.Join(t.TempDir(), "analytics")
-			_, err = buildCache(path, cache, true)
+			// Both snapshot paths must work at the adaptive builder's minimum budget.
+			_, err = buildCache(path, cache, true, duckdbutil.BuilderOverrides{MemoryLimit: "256MiB"})
 			require.NoError(err)
 			duck, err := query.NewDuckDBEngine(cache, path, nil)
 			require.NoError(err)

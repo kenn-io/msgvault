@@ -32,6 +32,7 @@ account_id=10
 include_private=true
 media=false
 max_media_mb=3
+recording_max_bytes=8388608
 reconcile_interval_hours=2
 api_key_env="EXAMPLE_CHATWOOT_TOKEN"
 
@@ -48,6 +49,7 @@ include_private=false
 	assert.False(first.PrivateIncluded())
 	assert.Empty(first.MediaPolicy().DisabledReason)
 	assert.Equal(int64(250<<20), first.MediaPolicy().MaxBytes)
+	assert.Equal(int64(4<<30), first.EffectiveRecordingMaxBytes())
 	assert.Equal(24*time.Hour, first.ReconcileInterval())
 	assert.True(first.InboxIncluded(7))
 	assert.False(first.InboxIncluded(8))
@@ -60,6 +62,7 @@ include_private=false
 	assert.True(second.PrivateIncluded())
 	assert.Equal(attachmentpolicy.SkipAccountPolicy, second.MediaPolicy().DisabledReason)
 	assert.Equal(int64(3<<20), second.MediaPolicy().MaxBytes)
+	assert.Equal(int64(8<<20), second.EffectiveRecordingMaxBytes())
 	assert.Equal(2*time.Hour, second.ReconcileInterval())
 	assert.True(second.InboxIncluded(99))
 	assert.False(got.Chatwoot[2].PrivateIncluded())
@@ -72,6 +75,8 @@ func TestChatwootConfigRejectsInvalidProfiles(t *testing.T) {
 		{"nonpositive account", `account_id=0`, "account_id"},
 		{"negative media", `max_media_mb=-1`, "max_media_mb"},
 		{"overflow media", fmt.Sprintf("max_media_mb=%d", int64(math.MaxInt64)), "max_media_mb"},
+		{"negative recording cap", `recording_max_bytes=-1`, "recording_max_bytes"},
+		{"overflow recording cap", fmt.Sprintf("recording_max_bytes=%d", int64(math.MaxInt64)), "recording_max_bytes"},
 		{"negative reconcile", `reconcile_interval_hours=-1`, "reconcile_interval_hours"},
 		{"invalid schedule", `schedule="tomorrow"`, "schedule"},
 		{"invalid inbox", `inboxes=[0]`, "inboxes"},

@@ -44,6 +44,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
+- [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
@@ -73,6 +74,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [CLI Reference](https://msgvault.io/docs/cli-reference.md): every command and flag
 - [Configuration](https://msgvault.io/docs/configuration.md): config.toml reference
 - [Go library](https://msgvault.io/docs/guides/embedding.md): archive lifecycle, synchronization, and message reads
+- [External credential providers](https://msgvault.io/docs/guides/credential-providers.md): scoped message MCP access through a trusted local helper
 - [HTTP API](https://msgvault.io/docs/api-server.md)
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
 - [Kata Issues](https://msgvault.io/docs/usage/kata-issues.md): file issues that quote archived messages and files

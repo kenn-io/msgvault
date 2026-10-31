@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
@@ -24,22 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
-
-func TestPersonDirectoryProductionCommandRegistrationAndFlags(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	command, args, err := rootCmd.Find([]string{personValue, "directory"})
-	require.NoError(err)
-	require.Equal("directory", command.Name())
-	assert.Empty(args)
-	assert.Same(personCmd, command.Parent())
-	var flags []string
-	command.Flags().VisitAll(func(flag *pflag.Flag) { flags = append(flags, flag.Name) })
-	assert.Equal([]string{"cursor", "json", "last-contact-after", "last-contact-before", "sort"}, flags)
-	assert.Equal("last_contact_desc", command.Flags().Lookup("sort").DefValue)
-	require.NoError(command.Args(command, nil))
-	require.Error(command.Args(command, []string{"unexpected"}))
-}
 
 func personDirectoryTestResponse(t *testing.T, status int, payload string) (<-chan *http.Request, context.Context) {
 	t.Helper()

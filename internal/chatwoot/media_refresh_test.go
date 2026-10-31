@@ -97,7 +97,7 @@ func mediaRefreshCall(recordingURL, audioURL string) map[string]any {
 
 func mediaRefreshOptions(t *testing.T) ImportOptions {
 	t.Helper()
-	return ImportOptions{InboxID: 7, IncludePrivate: true, Policy: attachmentpolicy.Policy{MaxBytes: 4096}, AttachmentsDir: t.TempDir()}
+	return ImportOptions{InboxID: 7, IncludePrivate: true, Policy: attachmentpolicy.Policy{MaxBytes: 4096}, RecordingMaxBytes: 4096, AttachmentsDir: t.TempDir()}
 }
 
 func TestMediaRefreshMetadataOnlyAttachments(t *testing.T) {
@@ -602,6 +602,9 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 				path, payload = "/recording-b.ogg", "synthetic replacement recording B bytes"
 				attachment["data_url"] = router.url(t, media.server, path)
 				opts.Policy.MaxBytes = 28
+				if tc.call {
+					opts.RecordingMaxBytes = 28
+				}
 				if tc.declaredFile {
 					attachment["file_size"] = int64(38)
 				}
@@ -639,6 +642,9 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 					require.NoError(err)
 					assert.Equal(attempts, media.requestCount(path), "a cap below observed size still excludes the replacement")
 					opts.Policy.MaxBytes = 28
+					if tc.call {
+						opts.RecordingMaxBytes = 28
+					}
 				}
 				opts.NoMedia = true
 				_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
@@ -658,6 +664,9 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 				assert.Equal(attempts+1, media.requestCount(path), "a different resource can be attempted")
 			}
 			opts.Policy.MaxBytes = 4096
+			if tc.call {
+				opts.RecordingMaxBytes = 4096
+			}
 			_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
 			require.NoError(err)
 			refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)

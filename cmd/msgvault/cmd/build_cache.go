@@ -240,6 +240,14 @@ func sentCacheExportMessageWhere(alias string) string {
 	return qualifier + "sent_at IS NOT NULL"
 }
 
+// unsentMessagesSQL shares the candidate set with builds and full drift checks.
+func unsentMessagesSQL(through int64) string {
+	return fmt.Sprintf(`SELECT m.id AS message_id FROM messages m
+		JOIN sources src ON src.id = m.source_id
+		WHERE m.id IN (%s) AND m.id <= %d AND %s AND %s ORDER BY m.id`,
+		store.UnsentCandidateMessageIDsSQL(), through, exportableMessageWhere("m"), store.UnsentMessageSQL())
+}
+
 func exportableMessageWhere(alias string) string {
 	qualifier := ""
 	if alias != "" {
@@ -963,7 +971,7 @@ func (s *cacheSourceSnapshot) personDisplayNamesExportSelectSQL() string {
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
 	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
-		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift ||
+		staleness.HasConversationTypeDrift || staleness.HasUnsentDrift || staleness.HasParticipantIdentifierDrift ||
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift &&
@@ -975,7 +983,7 @@ func relatedDriftOnly(staleness cacheStaleness) bool {
 		!staleness.FullRebuild && !staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasDerivedDataDrift &&
 		!staleness.HasIdentityDrift && !staleness.HasAccountIdentityDrift &&
-		!staleness.HasConversationParticipantDrift && !staleness.HasConversationTypeDrift &&
+		!staleness.HasConversationParticipantDrift && !staleness.HasConversationTypeDrift && !staleness.HasUnsentDrift &&
 		!staleness.HasParticipantIdentifierDrift && !staleness.HasParticipantDisplayNameDrift &&
 		!staleness.HasPersonDisplayNameDrift
 }
@@ -1036,7 +1044,7 @@ func buildCacheLockedAttempt(
 	fullRebuild, recheckStaleness bool,
 	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
-) (*buildResult, error) {
+) (result *buildResult, buildErr error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
 	// below (sqlite ?mode=ro opens, the DuckDB attach, filepath.Dir for the
 	// staging dir) needs a plain filesystem path.
@@ -1167,13 +1175,12 @@ func buildCacheLockedAttempt(
 	}
 	defer func() { _ = staging.cleanup() }()
 
-	db, err := duckdbutil.Open(
-		context.Background(),
-		duckdbutil.BuilderPolicyWithOverrides(
-			filepath.Join(staging.root, "duckdb-tmp"),
-			firstBuilderOverrides(builderOverrides),
-		),
+	policy := duckdbutil.BuilderPolicyWithOverrides(
+		filepath.Join(staging.root, "duckdb-tmp"),
+		firstBuilderOverrides(builderOverrides),
 	)
+	defer func() { buildErr = duckdbutil.BuilderError(buildErr, policy) }()
+	db, err := duckdbutil.Open(context.Background(), policy)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,11 +1378,26 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
-	if err := sourceSnapshot.Prepare(); err != nil {
+	if err := sourceSnapshot.Prepare(maxID); err != nil {
 		return nil, err
 	}
 
 	exportDB := sourceSnapshot.DuckDB()
+	unsentFingerprint, err := stageUnsentMessages(context.Background(), sourceSnapshot, maxID)
+	if err != nil {
+		return nil, err
+	}
+	repairActivity := relatedKinds.recipients
+	if !replaceAll {
+		// The staleness decision precedes the pinned snapshot. Recheck the
+		// committed IDs before acknowledging its new unsent fingerprint.
+		coveredFingerprint, err := messageIDsFingerprint(context.Background(), exportDB, `SELECT message_id FROM tmp_unsent_messages
+			WHERE message_id <= ? ORDER BY message_id`, previousState.LastMessageID)
+		if err != nil {
+			return nil, fmt.Errorf("fingerprint covered unsent messages: %w", err)
+		}
+		repairActivity = repairActivity || coveredFingerprint != previousState.UnsentFingerprint
+	}
 
 	// Every COPY targets a same-filesystem sibling staging directory. Live
 	// Parquet and its commit marker remain untouched until verification passes.
@@ -1555,12 +1577,13 @@ func buildCacheLockedAttempt(
 	if replaceAll {
 		buildMode = identityindex.ModeFull
 	}
-	if relatedKinds.recipients && !replaceAll {
+	if repairActivity && !replaceAll {
 		buildMode = identityindex.ModeAppendRepair
 		delete(publicationPlan.Append, identityindex.DatasetActivity)
 		publicationPlan.Replace[identityindex.DatasetActivity] = true
 	}
 	derived, err := identityindex.Build(context.Background(), exportDB, identityindex.BuildOptions{
+		UnsentMessages:       "tmp_unsent_messages",
 		Mode:                 buildMode,
 		CommittedRoot:        analyticsDir,
 		StagedBaseRoot:       staging.root,
@@ -1659,6 +1682,7 @@ func buildCacheLockedAttempt(
 		PersonDisplayNameRevision:           personDisplayNameRevision,
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		ConversationTypesFingerprint:        typesFingerprint,
+		UnsentFingerprint:                   unsentFingerprint,
 		Stats:                               derived.Stats,
 		FullRebuildRequired:                 partialSnapshot,
 	}
@@ -2000,20 +2024,20 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
 // read transaction. sqlite_scanner needs no preparation because DuckDB's
 // transaction reads the attached database directly.
-func (s *cacheSourceSnapshot) Prepare() error {
-	return s.prepareTables(s.tables())
+func (s *cacheSourceSnapshot) Prepare(through int64) error {
+	return s.prepareTables(s.tables(through))
 }
 
 // PrepareDatasets materializes only the named SQLite tables on the CSV
 // fallback path. sqlite_scanner needs no materialization. Derived refreshes
 // use this to avoid exporting unrelated multi-million-row junction tables.
-func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
+func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) error {
 	wanted := make(map[string]bool, len(names))
 	for _, name := range names {
 		wanted[name] = true
 	}
 	var selected []cacheSnapshotTable
-	for _, table := range s.tables() {
+	for _, table := range s.tables(through) {
 		if wanted[table.name] {
 			selected = append(selected, table)
 			delete(wanted, table.name)
@@ -2030,7 +2054,7 @@ func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
 	return s.prepareTables(selected)
 }
 
-func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
+func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
 	attachmentMIMEColumn := "'' AS mime_type"
 	if s.hasAttachmentMIME {
 		attachmentMIMEColumn = "mime_type"
@@ -2073,6 +2097,7 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	// VARCHAR, which breaks downstream SQL that binds these columns against
 	// typed Parquet (e.g. COALESCE(BIGINT, VARCHAR) is a binder error).
 	return []cacheSnapshotTable{
+		{"cache_unsent_messages", unsentMessagesSQL(through), "types={'message_id': 'BIGINT'}", nil},
 		// deleted_at is exported so the main COPY query can apply the
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
@@ -2129,6 +2154,10 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 	}
 	for _, t := range tables {
 		csvPath := filepath.Join(s.tmpDir, t.name+".csv")
+		info, err := os.Stat(csvPath)
+		if err != nil {
+			return fmt.Errorf("stat CSV snapshot %s: %w", t.name, err)
+		}
 		// DuckDB handles both forward and backslash paths, but normalize to forward.
 		escaped := strings.ReplaceAll(csvPath, "\\", "/")
 		escaped = strings.ReplaceAll(escaped, "'", "''")
@@ -2136,6 +2165,12 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 		// need it, so the sniffer's 20,480-row sample may see none and settle
 		// on quote=(empty), splitting a later quoted field into extra columns.
 		csvOpts := "header=true, quote='\"', escape='\"', nullstr='\\N'"
+		// A row cannot exceed its snapshot file. Keep DuckDB's default 2 MB
+		// line limit and 16x buffer ratio, but shrink both for small tables:
+		// attribution queries scan these views repeatedly, and a default
+		// 32 MB buffer per scan can exhaust the builder's memory budget.
+		maxLineSize := min(info.Size(), int64(2_000_000))
+		csvOpts += fmt.Sprintf(", max_line_size=%d, buffer_size=%d", maxLineSize, 16*maxLineSize)
 		if t.typeOverrides != "" {
 			csvOpts += ", " + strings.TrimSuffix(t.typeOverrides, "}") + ", '__invalid_utf8': 'VARCHAR'}"
 		}
@@ -2634,7 +2669,7 @@ func rebuildCacheNow(
 		return nil
 	}
 	analyticsDir := cfg.AnalyticsDir()
-	staleness := cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
+	staleness := cacheNeedsBuildForScheduledRefresh(ctx, dbPath, analyticsDir)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

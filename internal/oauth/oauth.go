@@ -1205,11 +1205,6 @@ func isPathWithinDir(path, dir string) bool {
 	return hasPathPrefix(filepath.Clean(path), filepath.Clean(resolvedDir))
 }
 
-// scopesToString joins scopes with spaces.
-func scopesToString(scopes []string) string {
-	return strings.Join(scopes, " ")
-}
-
 // validateBrowserURL checks that rawURL is a valid http or https URL.
 // Returns an error for invalid URLs or disallowed schemes.
 func validateBrowserURL(rawURL string) error {

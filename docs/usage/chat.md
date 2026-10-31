@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-29"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -348,7 +348,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
-| `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
 | `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires unreleased API schema 3.24.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
@@ -432,6 +432,12 @@ support message-type filtering.
 slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
+
+For a calendar event, `get_message` also returns `calendar` with `status`,
+`sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an
+assistant can tell a cancelled or moved event from a confirmed one. A field
+is `null` when the stored event does not carry it; calendar sync does not
+store a `sequence` of 0, so a `null` sequence usually means 0.
 
 ### Find a person's messaging routes
 
@@ -756,7 +762,9 @@ provenance are user-authored; MCP writes use `enrichment` provenance.
 ## Staged Deletion via MCP
 
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
-plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Results are capped at 100,000 messages per call.
+plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Query staging includes Gmail, Microsoft Graph, and IMAP mail. It stages every match its source can delete, or refuses without saving a batch. Chats and mail from other sources are left out of the search. Matches no longer in the archive or that cannot be deleted from their source, including archive-only mail and meetings, are skipped and counted in `skipped_count`. A query with matches but none deletable refuses without saving a batch. The 100,000 limit counts Gmail, Microsoft Graph, and IMAP matches, including skipped ones. Structured filters stage eligible Gmail and Microsoft Graph mail and do not report `skipped_count`. Narrow a larger selection with `before:`, `after:`, or `account` and stage each part.
+
+Queries with OR and text terms use full-text search once, so body and metadata matches share date ordering and one limit. Other queries try metadata first and use full-text search only when metadata finds nothing and the query has text terms. CLI `stage-delete` refuses candidate sets above 10,000 messages.
 
 When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/docs/usage/deletion/) for the full workflow.
 

@@ -1326,9 +1326,10 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	delegated.Header.Set(apiprotocol.AgentTokenHeader, token)
 	markedDelegated := delegated.Clone(t.Context())
 	markedDelegated.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	var deadline time.Time
 	var hasDeadline bool
 	handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, hasDeadline = r.Context().Deadline()
+		deadline, hasDeadline = r.Context().Deadline()
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -1381,11 +1382,19 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 		{name: "bounded request", request: bounded, wantContextDeadline: true},
 		{name: "delegated search", request: delegated, wantContextDeadline: true},
 		{name: "marked delegated search", request: markedDelegated, wantContextDeadline: true},
+		{name: "POST /api/v1/carddav/account/test", request: httptest.NewRequest(http.MethodPost, "/api/v1/carddav/account/test", nil), wantReadDeadline: true, wantContextDeadline: true},
+		{name: "PUT /api/v1/carddav/account", request: httptest.NewRequest(http.MethodPut, "/api/v1/carddav/account", nil), wantReadDeadline: true, wantContextDeadline: true},
+		{name: "POST /api/v1/carddav/publications/7", request: httptest.NewRequest(http.MethodPost, "/api/v1/carddav/publications/7", nil), wantReadDeadline: true, wantContextDeadline: true},
+		{name: "DELETE /api/v1/carddav/publications/7", request: httptest.NewRequest(http.MethodDelete, "/api/v1/carddav/publications/7", nil), wantReadDeadline: true, wantContextDeadline: true},
+		{name: "POST /api/v1/carddav/conflicts/7/resolve", request: httptest.NewRequest(http.MethodPost, "/api/v1/carddav/conflicts/7/resolve", nil), wantReadDeadline: true, wantContextDeadline: true},
+		{name: "POST /api/v1/carddav/sync", request: httptest.NewRequest(http.MethodPost, "/api/v1/carddav/sync", nil), wantReadDeadline: true, wantContextDeadline: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			deadline = time.Time{}
+			hasDeadline = false
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 			started := time.Now()
 			handler.ServeHTTP(recorder, tt.request)
@@ -1393,6 +1402,9 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 				assert.True(hasDeadline)
 			}
 			finished := time.Now()
+			if tt.wantReadDeadline && tt.wantContextDeadline {
+				assertDeadlineWithin(t, deadline, started, finished)
+			}
 			if tt.wantReadClear {
 				require.Len(recorder.readDeadlines, 1, "read deadline changes")
 				assert.True(recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
@@ -1418,47 +1430,6 @@ func assertDeadlineWithin(t *testing.T, deadline, started, finished time.Time) {
 	const timeout = DaemonLongRequestTimeout
 	assert.False(t, deadline.Before(started.Add(timeout)), "deadline %v is earlier than %v after the request started at %v", deadline, timeout, started)
 	assert.False(t, deadline.After(finished.Add(timeout)), "deadline %v is later than %v after the request finished at %v", deadline, timeout, finished)
-}
-
-func TestCardDAVNetworkRoutesReceiveProtectiveDeadline(t *testing.T) {
-	t.Parallel()
-	srv := NewServerWithOptions(ServerOptions{
-		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Logger:         testLogger(),
-		RequestTimeout: 5 * time.Millisecond,
-	})
-	routes := []struct {
-		method string
-		path   string
-	}{
-		{method: http.MethodPost, path: "/api/v1/carddav/account/test"},
-		{method: http.MethodPut, path: "/api/v1/carddav/account"},
-		{method: http.MethodPost, path: "/api/v1/carddav/publications/7"},
-		{method: http.MethodDelete, path: "/api/v1/carddav/publications/7"},
-		{method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve"},
-		{method: http.MethodPost, path: "/api/v1/carddav/sync"},
-	}
-
-	for _, route := range routes {
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var deadline time.Time
-			var hasDeadline bool
-			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				deadline, hasDeadline = r.Context().Deadline()
-			}))
-			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
-			started := time.Now()
-			handler.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
-			finished := time.Now()
-
-			require.True(hasDeadline, "network route receives a context deadline")
-			assertDeadlineWithin(t, deadline, started, finished)
-			require.Len(recorder.readDeadlines, 1, "network route extends the server read deadline")
-			assert.Empty(recorder.writeDeadlines, "network route keeps the generous server write deadline")
-		})
-	}
 }
 
 func TestCLIRequestDurationPolicy(t *testing.T) {
@@ -1751,7 +1722,7 @@ func TestCLIRepairMessageWholeArchiveAuditHasNoOrdinaryRequestDeadline(t *testin
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  store, Scheduler: newMockScheduler(), Logger: testLogger(), RequestTimeout: time.Millisecond,
+		Store:  store, Scheduler: newMockScheduler(), Logger: testLogger(), RequestTimeout: time.Second,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/repair-message", strings.NewReader(`{"audit":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1881,7 +1852,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		}},
 		Logger: testLogger(),
 	})
-	srv.readTimeout = ordinaryReadTimeout
+	srv.readTimeout = ordinaryReadTimeout //nolint:kennlint // deadlinetest: the unmarked socket request must expire while its body stays incomplete
 	handlerEntered := make(chan struct{}, 1)
 	srv.router = srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerEntered <- struct{}{}
@@ -1944,7 +1915,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 			require.FailNow(t, "inner handler did not start")
 		}
 		if marked {
-			time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
+			time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // sleeptest: outlasts the real socket read deadline
 			_, err = conn.Write([]byte("b"))
 			require.NoError(t, err, "write delayed body byte")
 		}

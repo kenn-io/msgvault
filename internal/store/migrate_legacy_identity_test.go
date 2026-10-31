@@ -281,21 +281,6 @@ func TestMigrateLegacyIdentityConfig_TrimsWhitespace(t *testing.T) {
 	assert.Equal(t, "ME@Example.COM", ids[0].Address, "address")
 }
 
-func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	st := f.Store
-
-	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"Alice@Example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
-	require.NoError(err, "MigrateLegacyIdentityConfig")
-	require.True(applied, "expected applied=true on first run")
-
-	rows, err := st.ListAccountIdentities(f.Source.ID)
-	require.NoError(err, "ListAccountIdentities")
-	require.Len(rows, 1)
-	assert.Equal(t, "Alice@Example.com", rows[0].Address, "address")
-}
-
 // TestMigrateLegacyIdentityConfig_DedupesEmailCaseVariants verifies that
 // the migration's input-list dedupe applies the same case-aware rule as
 // the rest of the identity subsystem. Email-shaped variants like

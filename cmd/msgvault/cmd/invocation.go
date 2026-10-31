@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -51,15 +52,17 @@ type invocation struct {
 	logResult *logging.Result
 	sends     *posthog.SendGroup
 
-	syncFailures *telemetry.SyncFailures
+	syncFailures       *telemetry.SyncFailures
+	imapFolderAccounts *sync.Once
 }
 
 type invocationContextKey struct{}
 
 func newInvocation() *invocation {
 	return &invocation{
-		logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
-		sends:  &posthog.SendGroup{},
+		logger:             slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		sends:              &posthog.SendGroup{},
+		imapFolderAccounts: new(sync.Once),
 	}
 }
 

@@ -45,6 +45,7 @@ describe('ContextBar chips', () => {
       onRemoveQuery, onRemoveFilter
     });
     expect(screen.getByText('Full text: “network”')).toBeTruthy();
+    expect(screen.getByTitle('Full text: “network”')).toBeTruthy();
     expect(screen.getByText('Source: 7')).toBeTruthy();
     expect(screen.queryByText(/full_text/)).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Remove search' }));

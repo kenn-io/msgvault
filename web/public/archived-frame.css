@@ -6,12 +6,13 @@
  * html[data-scheme] attributes:
  *   - canvas: original email colors on a white canvas
  *   - themed: mail rendered transparently with shell inks
- * Themed ink values mirror web/src/styles/theme-light.css / theme-dark.css.
+ * Mail-body inks retain the reading palette for themed and original colors.
  */
 
 html {
   --mail-text: #20242a;
   --mail-muted: #59626e;
+  --scrollbar-ink: #5f6772;
   --mail-link: #1a5fce;
   --mail-border: #d8dade;
 
@@ -28,6 +29,7 @@ html[data-mode='themed'][data-scheme='light'] {
 html[data-mode='themed'][data-scheme='dark'] {
   --mail-text: #f2f3f5;
   --mail-muted: #a4a8af;
+  --scrollbar-ink: #92979f;
   --mail-link: #74acfe;
   --mail-border: #3a3d42;
 

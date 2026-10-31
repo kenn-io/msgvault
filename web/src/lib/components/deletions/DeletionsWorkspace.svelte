@@ -541,7 +541,7 @@
   }
   .staging {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--section-gap);
   }
   .staging-header,
   .detail-header {
@@ -578,7 +578,7 @@
   .notice,
   .result,
   .warning {
-    padding: var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--accent-amber);
     background: var(--bg-subtle);
   }

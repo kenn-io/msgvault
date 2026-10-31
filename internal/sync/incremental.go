@@ -13,8 +13,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// Incremental performs an incremental sync using the Gmail History API. It
-// returns ErrHistoryExpired when Gmail requires a full history recovery.
+// Incremental consumes Gmail History or resumes an already-pinned recovery.
+// It returns ErrHistoryExpired when an ordinary incremental cursor expires
+// and the caller must initiate full history recovery.
 //
 // The caller must resolve the correct *store.Source before calling this
 // method. This avoids ambiguity when multiple sources share the same
@@ -24,12 +25,25 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		return nil, errors.New("no source provided - run full sync first")
 	}
 	return s.runWithSyncExecution(ctx, source.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
+		prior, err := s.store.GetLatestCheckpointedSync(source.ID)
+		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+			return nil, err
+		}
+		if isPinnedHistoryRecovery(prior) {
+			return s.recoverExpiredHistory(ctx, source, execution)
+		}
 		return s.incremental(ctx, source, execution)
 	})
 }
 
 func (s *Syncer) incremental(
 	ctx context.Context, source *store.Source, execution *store.SyncExecution,
+) (summary *gmail.SyncSummary, err error) {
+	return s.incrementalWithRecovery(ctx, source, execution, false)
+}
+
+func (s *Syncer) incrementalWithRecovery(
+	ctx context.Context, source *store.Source, execution *store.SyncExecution, recovery bool,
 ) (summary *gmail.SyncSummary, err error) {
 	startTime := time.Now()
 	summary = &gmail.SyncSummary{StartTime: startTime}
@@ -51,8 +65,27 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("find pending fetch replays: %w", err)
 	}
 
+	var predecessorID int64
+	var acquisition *recoveryCounts
+	if recovery {
+		prior, err := s.store.GetLatestCheckpointedSync(source.ID)
+		if err != nil {
+			return nil, fmt.Errorf("find Gmail catch-up predecessor: %w", err)
+		}
+		predecessorID = prior.ID
+		cp, err := decodeRecoveryCheckpoint(prior.CursorBefore.String)
+		if err != nil {
+			return nil, err
+		}
+		acquisition = cp.Acquisition
+	}
+
 	// Start sync
-	syncID, err := s.startSync(ctx, execution, "incremental", "")
+	fingerprint := ""
+	if recovery {
+		fingerprint = gmailHistoryRecoveryCoverageFingerprint
+	}
+	syncID, err := s.startSync(ctx, execution, "incremental", fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
@@ -73,6 +106,19 @@ func (s *Syncer) incremental(
 			err = fmt.Errorf("sync panicked: %v", r)
 		}
 	}()
+
+	checkpoint := &store.Checkpoint{}
+	if recovery {
+		state := &syncState{
+			checkpoint: checkpoint, recoveryPhase: recoveryCatchup, acquisition: acquisition,
+			handoffCursor: source.SyncCursor.String, predecessorID: predecessorID,
+		}
+		checkpoint = state.durableCheckpoint()
+		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
+			s.failStoppedSync(syncID, err)
+			return nil, fmt.Errorf("inherit Gmail catch-up checkpoint: %w", err)
+		}
+	}
 
 	// Get profile for current history ID
 	profile, err := s.client.GetProfile(ctx)
@@ -106,7 +152,7 @@ func (s *Syncer) incremental(
 		); err != nil {
 			return nil, err
 		}
-		s.runSuccessfulSyncHook(ctx, source, false)
+		s.runSuccessfulSyncHook(ctx, source, recovery)
 		summary.EndTime = time.Now()
 		summary.Duration = summary.EndTime.Sub(summary.StartTime)
 		summary.FinalHistoryID = profile.HistoryID
@@ -120,7 +166,6 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
-	checkpoint := &store.Checkpoint{}
 	var discoveryHealth pageDiscoveryHealth
 
 	// Retry the prior run's absent fetches inside this scoped run, before history
@@ -235,9 +280,9 @@ func (s *Syncer) incremental(
 					for i, fetch := range rawMessages {
 						raw := fetch.Message
 						if raw == nil {
-							if isGmailNotFound(fetch.Err) {
+							if kind, gone := messageGoneKind(fetch.Err); gone {
 								s.logger.Debug("skipping message deleted before fetch", "id", newMsgIDs[i])
-								s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+								s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, fetch.Err)
 								continue
 							}
 							errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
@@ -294,8 +339,16 @@ func (s *Syncer) incremental(
 
 			// Save checkpoint
 			pageToken = historyResp.NextPageToken
-			checkpoint.PageToken = pageToken
+			if !recovery {
+				checkpoint.PageToken = pageToken
+			}
+			// Recovery preserves the catchup envelope and H, not this History
+			// page token: retries replay from H (see recoveryCheckpoint).
 			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+				if recovery {
+					s.failStoppedSync(syncID, err)
+					return nil, fmt.Errorf("save Gmail catch-up checkpoint: %w", err)
+				}
 				s.logger.Warn("failed to save checkpoint", "error", err)
 			}
 
@@ -312,9 +365,9 @@ func (s *Syncer) incremental(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Always advance the cursor so a single permanently-failing
-	// message doesn't block all future incremental syncs.
-	// Failed fetches carry forward to the next incremental run.
+	// Advance past item errors, including during recovery catch-up, so one
+	// permanently failing message cannot block the source. Failed fetches carry
+	// forward to the next incremental run.
 	historyIDStr := strconv.FormatUint(profile.HistoryID, 10)
 	if checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("incremental sync completed with errors",
@@ -322,7 +375,7 @@ func (s *Syncer) incremental(
 			"history_id", historyIDStr)
 	}
 	// Mark sync complete before running best-effort provider maintenance.
-	mailboxChanged := startHistoryID < profile.HistoryID || checkpoint.MessagesAdded > 0
+	mailboxChanged := recovery || startHistoryID < profile.HistoryID || checkpoint.MessagesAdded > 0
 	if err := s.completeSyncAndRunHook(ctx, syncID, historyIDStr, source, mailboxChanged); err != nil {
 		return nil, err
 	}
@@ -337,7 +390,9 @@ func (s *Syncer) incremental(
 	summary.FinalHistoryID = profile.HistoryID
 
 	s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, summary.MessagesSkipped)
-	s.progress.OnComplete(summary)
+	if !recovery {
+		s.progress.OnComplete(summary)
+	}
 	return summary, nil
 }
 
@@ -484,8 +539,8 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			checkpoint.MessagesProcessed++
 			raw, err := s.client.GetMessageRaw(ctx, messageID)
 			if err != nil {
-				if isGmailNotFound(err) {
-					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, err)
+				if kind, gone := messageGoneKind(err); gone {
+					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, kind, err)
 					return false, false, err
 				}
 				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)

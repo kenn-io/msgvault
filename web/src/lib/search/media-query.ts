@@ -4,10 +4,18 @@ export function admitsMediaQuery(query: string): boolean {
 
 const UNREADABLE_QUERY = 'Recording search cannot read this query. Check archive access or change the query.';
 
+export function attachmentScopeNotice(participantID: number | undefined): string {
+  return participantID === undefined
+    ? 'Attachment search supports at most 4096 mirrored files excluding images, audio, and video. Add a Person filter to search attachments.'
+    : 'This Person filter exceeds the attachment-search limit of 4096 mirrored files excluding images, audio, and video. Choose a Person filter with fewer attachments.';
+}
+
 export function refusedMediaSearchNotice(
   code: string | undefined, message: string | undefined, query: string, participantID: number | undefined,
 ): string {
   switch (code) {
+    case 'media_search_unavailable':
+      return 'Recording search unavailable.';
     case 'media_search_scope_limit':
       return participantID === undefined
         ? 'Add a Person filter to search recordings.'

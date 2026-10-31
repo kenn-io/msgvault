@@ -1,0 +1,43 @@
+:root {
+  --scrollbar-size: 8px;
+}
+
+/* One scrollbar everywhere: thin, themed, no arrow buttons. Chrome ignores
+ * the ::-webkit-scrollbar rules once scrollbar-width or scrollbar-color is
+ * set, and Windows then falls back to the classic bar with arrows, so the
+ * standard properties apply only where the pseudo-elements don't exist. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--scrollbar-ink) 38%, transparent) transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--scrollbar-size);
+  background: color-mix(in srgb, var(--scrollbar-ink) 38%, transparent);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--scrollbar-ink) 65%, transparent);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}

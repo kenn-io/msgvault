@@ -164,6 +164,13 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal("report", engine.request.FilenameQuery)
 	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, engine.request.MIMEFamilies)
 	assertions.Equal(query.SortSpec{Field: "size", Direction: "asc"}, engine.request.Sort)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.False(engine.request.Explore.SentOnly)
 }
 
 func TestFileAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
@@ -286,6 +293,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	}
 
 	search(primary)
+	assertions.True(engine.request.Explore.SentOnly)
 	requirements.NotNil(engine.request.Person)
 	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Person.ParticipantIDs,
 		"a linked participant's files search must scope to every cluster member")

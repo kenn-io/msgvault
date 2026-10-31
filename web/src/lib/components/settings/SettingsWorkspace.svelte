@@ -31,6 +31,7 @@
     Card,
     Chip,
     Notice,
+    NumberInput,
     SelectDropdown,
     SettingsLayout,
     SettingsSection,
@@ -362,6 +363,17 @@
     }
     return fallback;
   }
+  function numberFieldValue(setting: SettingState): number | null {
+    const value = currentValue(setting);
+    if (value === '' || value == null) return null;
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // Integer settings step by 1 and reject a decimal point. A float setting
+  // needs a fractional step, or NumberInput treats the field as an integer.
+  function numberFieldStep(setting: SettingState): number {
+    return setting.kind === 'integer' ? 1 : 0.1;
+  }
   function stringValue(setting: SettingState): string {
     const value = currentValue(setting);
     if (Array.isArray(value)) return value.join(', ');
@@ -612,21 +624,17 @@
               />
             </div>
           {:else if setting.kind === 'integer' || setting.kind === 'number'}
-            <label class="row__field" data-size="xs">
+            <label class="row__field" data-size="xs" data-mono>
               <span class="kit-sr-only">{label}</span>
-              <input
-                type="number"
-                data-mono
-                value={stringValue(setting)}
-                step={setting.kind === 'integer' ? '1' : 'any'}
+              <NumberInput
+                block
+                value={numberFieldValue(setting)}
+                step={numberFieldStep(setting)}
                 min={off?.on_minimum ?? setting.validation?.minimum}
                 max={setting.validation?.maximum}
                 required={setting.validation?.required || off !== undefined}
-                aria-invalid={drafts[setting.key] === '' || undefined}
-                oninput={(event) => {
-                  const raw = event.currentTarget.value;
-                  setDraft(setting.key, raw === '' ? '' : Number(raw));
-                }}
+                invalid={drafts[setting.key] === ''}
+                oninput={(value) => setDraft(setting.key, value === null ? '' : value)}
               />
             </label>
           {:else}
@@ -732,7 +740,7 @@
                 </SettingsSection>
               {/each}
             {:else}
-              <Card padding="md">
+              <Card padding="sm">
                 {@const firstOwnSave = group.settings.find(isCredentialControl)?.key}
                 <div class="rows">
                   {#each group.settings as setting (setting.key)}
@@ -791,14 +799,32 @@
     background: var(--bg-surface);
   }
   .settings-header {
-    padding: var(--space-5) var(--page-gutter) var(--space-4);
+    --page-header-gap: 0px;
+    padding: var(--space-5) var(--page-gutter) var(--field-gap);
   }
   .settings :global(.kit-settings) {
     background: var(--bg-surface);
   }
+  /* Reserve the scrollbar's width up front so the centered panel does not
+     shift left when a long category makes it scroll. Positioning contains the
+     rows' absolutely positioned screen-reader labels, which otherwise stretch
+     the document past the viewport and add a second scrollbar. */
+  .settings :global(.kit-settings__scroll) {
+    position: relative;
+    scrollbar-gutter: stable;
+  }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {
     color: color-mix(in srgb, var(--accent-blue) 92%, var(--text-primary));
+  }
+  .settings :global(.kit-settings__panel),
+  .settings :global(.kit-settings-section__header),
+  .settings :global(.kit-settings-section__body) {
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+  }
+  .settings :global(.kit-settings__footer) {
+    padding: var(--pane-pad-y) var(--pane-pad-x);
+    gap: var(--control-gap);
   }
   /* Section titles sit one step above row labels so the two levels read apart. */
   .settings :global(.kit-settings-section__title) {
@@ -817,12 +843,12 @@
     gap: var(--space-3);
   }
   .notices :global(.kit-notice) {
-    padding: var(--space-3) var(--space-4);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     gap: var(--space-3);
   }
   .notice {
     margin: 0;
-    padding: 0.75rem 1rem;
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--status-warning-ink);
     border-radius: var(--radius-md);
     background: var(--status-warning-bg);
@@ -888,7 +914,7 @@
   .rows {
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--section-gap);
   }
   .row {
     display: grid;
@@ -979,24 +1005,6 @@
   .row__value--unset,
   .row__value--off {
     color: var(--text-muted);
-  }
-  input[type='number'] {
-    box-sizing: border-box;
-    width: 100%;
-    height: 28px;
-    padding: 0 var(--space-3);
-    border: var(--border-width) solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    transition: border-color var(--transition-fast) var(--transition-ease, ease);
-  }
-  input[type='number']:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 1px;
-    border-color: var(--accent-blue);
   }
   .provider-list {
     display: grid;

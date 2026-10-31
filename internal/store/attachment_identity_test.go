@@ -20,6 +20,7 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 		{"discord", "discord:", (*store.Store).ReplaceMessageDiscordAttachments},
 		{"slack", "slack:", (*store.Store).ReplaceMessageSlackAttachments},
 		{"beeper", "beeper:", (*store.Store).ReplaceMessageBeeperAttachments},
+		{"inline", "inline:", (*store.Store).ReplaceMessageInlineProviderAttachments},
 		{"teams-inline", "teams:inline:", func(st *store.Store, messageID int64, refs []store.AttachmentRef) error {
 			return st.ReplaceMessageInlineAttachments(messageID, refs, true)
 		}},
@@ -29,7 +30,16 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := storetest.New(t)
-			messageID := f.CreateMessage("attachment-identity")
+			sourceMessageID := "attachment-identity"
+			if tc.name == "inline" {
+				source, err := f.Store.GetOrCreateSource("inline", "api.inline.chat:user:42")
+				requirements.NoError(err)
+				conversationID, err := f.Store.EnsureConversationWithType(source.ID, "chat:123", "group_chat", "Example group")
+				requirements.NoError(err)
+				f.Source, f.ConvID = source, conversationID
+				sourceMessageID = "chat:123:message:7"
+			}
+			messageID := f.CreateMessage(sourceMessageID)
 			keep := store.AttachmentRef{
 				Filename: "keep.txt", MimeType: "text/plain", Size: 12,
 				StoragePath: "https://files.example/keep.txt", SourceAttachmentID: tc.prefix + "keep",
@@ -37,6 +47,12 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 			drop := store.AttachmentRef{
 				Filename: "drop.txt", StoragePath: "https://files.example/drop.txt",
 				SourceAttachmentID: tc.prefix + "drop", SourcePartKey: tc.prefix + "drop-part",
+			}
+			if tc.name == "inline" {
+				keep.SourceAttachmentID, keep.SourcePartKey = "inline:document:7", "inline:document:7"
+				keep.StoragePath = "inline:pending:document:7"
+				drop.SourceAttachmentID, drop.SourcePartKey = "inline:document:8", "inline:document:8"
+				drop.StoragePath = "inline:pending:document:8"
 			}
 			requirements.NoError(tc.replace(f.Store, messageID, []store.AttachmentRef{keep, drop}))
 			var keepID, dropID int64

@@ -229,7 +229,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			return 0, err
 		}
 	}
-	failedSince, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, opts, sum, callMedia)
+	failedSince, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, m.ContentType == "voice_call", opts, sum, callMedia)
 	if err != nil {
 		return 0, err
 	}

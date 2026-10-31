@@ -18,6 +18,7 @@ const (
 	sourceTypeBeeper         = "beeper"
 	sourceTypeMatrix         = "matrix"
 	sourceTypeSlack          = "slack"
+	sourceTypeInline         = "inline"
 	sourceTypeSlackdump      = "slackdump"
 	sourceTypeGranola        = "granola"
 	sourceTypeCircleback     = "circleback"

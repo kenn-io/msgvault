@@ -1,7 +1,9 @@
 package imap
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"maps"
 	"net"
 	"strconv"
@@ -14,6 +16,17 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestListMessages_UnmatchedFolderExclusionWarning(t *testing.T) {
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
+	var logs bytes.Buffer
+	client := newTestClient(t, addr, WithFolderFilter(nil, []string{"trash", "Future Junk"}), WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	assert.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
+	assert.Contains(logs.String(), "IMAP folder exclusion matches no selectable mailbox")
+	assert.Contains(logs.String(), `mailbox="Future Junk"`)
+	assert.NotContains(logs.String(), "mailbox=trash")
+}
 
 func newTestClient(t *testing.T, addr string, opts ...Option) *Client {
 	t.Helper()

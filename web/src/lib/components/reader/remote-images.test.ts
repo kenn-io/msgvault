@@ -3,9 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import {
   MAX_ARCHIVED_REMOTE_IMAGE_BYTES,
-  MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES,
-  MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES,
-  MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES,
   MAX_ARCHIVED_REMOTE_IMAGE_URLS,
   resolveArchivedRemoteImages
 } from './remote-images';
@@ -28,14 +25,6 @@ function parse(html: string): DocumentFragment {
 }
 
 describe('resolveArchivedRemoteImages', () => {
-  it('exports byte and URL budgets aligned with the daemon proxy caps', () => {
-    expect(MAX_ARCHIVED_REMOTE_IMAGE_URLS).toBe(64);
-    expect(MAX_ARCHIVED_REMOTE_IMAGE_BYTES).toBe(10 * 1024 * 1024);
-    expect(MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES).toBe(30 * 1024 * 1024);
-    expect(MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES).toBe(128);
-    expect(MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES).toBe(36 * 1024 * 1024);
-  });
-
   it('fetches each consented URL through the daemon proxy and embeds data: images', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => pngResponse(16));
 

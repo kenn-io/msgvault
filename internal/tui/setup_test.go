@@ -88,6 +88,7 @@ type TestModelBuilder struct {
 	activeSearchQuery  string
 	activeSearchMode   *searchModeKind
 	selectedAggregates *selectedAggregates
+	distribution       string
 }
 
 func NewBuilder() *TestModelBuilder {
@@ -127,6 +128,11 @@ func (b *TestModelBuilder) WithAccounts(accounts ...query.AccountInfo) *TestMode
 // WithStandardAccounts adds the standard testAccounts (user1@gmail.com, user2@gmail.com).
 func (b *TestModelBuilder) WithStandardAccounts() *TestModelBuilder {
 	b.accounts = append([]query.AccountInfo(nil), testAccounts...)
+	return b
+}
+
+func (b *TestModelBuilder) WithDistribution(distribution string) *TestModelBuilder {
+	b.distribution = distribution
 	return b
 }
 
@@ -221,7 +227,7 @@ func (b *TestModelBuilder) Build() Model {
 		GmailIDs: b.gmailIDs,
 	})
 
-	model := New(engine, Options{DataDir: b.dataDir, Version: b.version})
+	model := New(engine, Options{DataDir: b.dataDir, Version: b.version, Distribution: b.distribution})
 
 	b.configureDimensions(&model)
 	b.configureData(&model)

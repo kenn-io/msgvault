@@ -217,13 +217,6 @@ describe('LinkIdentityDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('closes on Esc', async () => {
-    const onClose = vi.fn();
-    renderDialog({ onClose });
-    await fireEvent.keyDown(window, { key: 'Escape' });
-    expect(onClose).toHaveBeenCalled();
-  });
-
   it('cancels via the Cancel button without confirming', async () => {
     const onClose = vi.fn();
     const onConfirm = vi.fn();

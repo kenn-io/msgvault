@@ -270,6 +270,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"attachment_count", "INTEGER"},
 		{"has_attachments", duckDBTypeBoolean},
 		{"deleted_from_source", duckDBTypeBoolean},
+		{"unsent", duckDBTypeBoolean},
 		{"canonical_id", duckDBTypeBigInt},
 		{"participant_domain", duckDBTypeVarchar},
 		{"is_direct", duckDBTypeBoolean},

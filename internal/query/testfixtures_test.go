@@ -177,6 +177,7 @@ type TestDataBuilder struct {
 	conversationParticipants []ConversationParticipantFixture
 	ownerParticipants        []OwnerParticipantFixture
 	participantClusters      []ParticipantClusterFixture
+	unsentMessages           string
 
 	emptyAttachments bool // if true, write empty attachments file
 	// legacyRecipientSchema writes message_recipients without the
@@ -712,6 +713,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 	b.t.Helper()
 
 	pb := newParquetBuilder(b.t)
+	pb.unsentMessages = b.unsentMessages
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
@@ -832,8 +834,9 @@ type parquetTable struct {
 
 // parquetBuilder creates a temp directory with Parquet test data files.
 type parquetBuilder struct {
-	t      testing.TB
-	tables []parquetTable
+	t              testing.TB
+	tables         []parquetTable
+	unsentMessages string
 }
 
 // newParquetBuilder creates a new builder for Parquet test fixtures.
@@ -891,6 +894,7 @@ func (b *parquetBuilder) build() (string, func()) {
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
 		OutputRoot:     tmpDir,
+		UnsentMessages: b.unsentMessages,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
 	fingerprint, err := CacheDatasetFingerprint(tmpDir)

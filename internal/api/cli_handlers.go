@@ -882,28 +882,29 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
-	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
-	ID                   int64                  `json:"id"`
-	SourceMessageID      string                 `json:"source_message_id"`
-	RFC822MessageID      string                 `json:"rfc822_message_id,omitempty"`
-	ConversationID       int64                  `json:"conversation_id"`
-	SourceConversationID string                 `json:"source_conversation_id"`
-	Subject              string                 `json:"subject"`
-	MessageType          string                 `json:"message_type,omitempty"`
-	Snippet              string                 `json:"snippet"`
-	SentAt               time.Time              `json:"sent_at"`
-	ReceivedAt           *time.Time             `json:"received_at"`
-	DeletedAt            *time.Time             `json:"deleted_at"`
-	SizeEstimate         int64                  `json:"size_estimate"`
-	HasAttachments       bool                   `json:"has_attachments"`
-	From                 []cliMessageAddress    `json:"from"`
-	To                   []cliMessageAddress    `json:"to"`
-	Cc                   []cliMessageAddress    `json:"cc"`
-	Bcc                  []cliMessageAddress    `json:"bcc"`
-	Labels               []string               `json:"labels"`
-	Attachments          []cliMessageAttachment `json:"attachments"`
-	BodyText             string                 `json:"body_text"`
-	BodyHTML             string                 `json:"body_html"`
+	RelatedMessageID     *int64                    `json:"related_message_id,omitempty"`
+	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
+	ID                   int64                     `json:"id"`
+	SourceMessageID      string                    `json:"source_message_id"`
+	RFC822MessageID      string                    `json:"rfc822_message_id,omitempty"`
+	ConversationID       int64                     `json:"conversation_id"`
+	SourceConversationID string                    `json:"source_conversation_id"`
+	Subject              string                    `json:"subject"`
+	MessageType          string                    `json:"message_type,omitempty"`
+	Snippet              string                    `json:"snippet"`
+	SentAt               time.Time                 `json:"sent_at"`
+	ReceivedAt           *time.Time                `json:"received_at"`
+	DeletedAt            *time.Time                `json:"deleted_at"`
+	SizeEstimate         int64                     `json:"size_estimate"`
+	HasAttachments       bool                      `json:"has_attachments"`
+	From                 []cliMessageAddress       `json:"from"`
+	To                   []cliMessageAddress       `json:"to"`
+	Cc                   []cliMessageAddress       `json:"cc"`
+	Bcc                  []cliMessageAddress       `json:"bcc"`
+	Labels               []string                  `json:"labels"`
+	Attachments          []cliMessageAttachment    `json:"attachments"`
+	BodyText             string                    `json:"body_text"`
+	BodyHTML             string                    `json:"body_html"`
 }
 
 type cliMessageAddress struct {
@@ -1445,6 +1446,9 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if name == clirun.EnvInlineOAuth {
+		return len(args) > 0 && args[0] == "add-inline"
+	}
 	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
@@ -1758,10 +1762,12 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-chatwoot",
 		"add-plaud",
 		"add-twenty",
+		"add-pocket",
 		"add-discord",
 		"add-granola",
 		"add-omi",
 		"add-imap",
+		"add-inline",
 		"add-muesli",
 		"add-notion-meetings",
 		"add-o365",
@@ -1771,6 +1777,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-twilio",
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-inline-media",
 		"backfill-slack-media",
 		"backfill-teams-media",
 		"build-embeddings",
@@ -1801,6 +1808,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"logs",
 		"pack-attachments",
 		"purge-excluded-media",
+		"policy",
 		"repair-dates",
 		"repair-identity",
 		"repair-labels",
@@ -1818,8 +1826,10 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-chatwoot",
 		"sync-plaud",
 		"sync-twenty",
+		"sync-pocket",
 		"sync-discord",
 		"sync-granola",
+		"sync-inline",
 		"sync-muesli",
 		"sync-omi",
 		"sync-notion-meetings",
@@ -3718,6 +3728,7 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 
 func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
+		Calendar:             msg.Calendar,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,
 		RFC822MessageID:      msg.RFC822MessageID,

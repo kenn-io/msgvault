@@ -4742,3 +4742,11 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_identity ON meeting_link_decisions(member_message_id, target_ical_uid, COALESCE(target_message_id, 0), occurrence_key);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_target ON meeting_link_decisions(target_message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_calendar_ical_uid ON messages(CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.ical_uid') END) WHERE message_type = 'calendar_event';
+
+-- Staged chat policy. Missing rows remain full for backwards compatibility.
+CREATE TABLE IF NOT EXISTS conversation_policy (
+ conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+ effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),
+ override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
+ last_activity_at DATETIME
+);

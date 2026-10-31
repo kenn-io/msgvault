@@ -1229,6 +1229,11 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		if listErr != nil {
 			return listErr
 		}
+		for _, folder := range c.folderFilterExclude {
+			if len(filterMailboxes(mailboxes, []string{folder}, nil)) == 0 {
+				c.logger.Warn("IMAP folder exclusion matches no selectable mailbox", "mailbox", folder)
+			}
+		}
 
 		allMailboxes = filterMailboxes(
 			mailboxes,

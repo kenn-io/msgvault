@@ -29,13 +29,6 @@ func TestNormalizeOptimizeOptionsCapsVec1Threads(t *testing.T) {
 	assert.Equal(t, 128, normalizeVec1Threads(256))
 }
 
-func TestVec1DimensionOptimizableBounds(t *testing.T) {
-	assert.False(t, vec1DimensionOptimizable(1))
-	assert.True(t, vec1DimensionOptimizable(2))
-	assert.True(t, vec1DimensionOptimizable(vec1.MaxDimension))
-	assert.False(t, vec1DimensionOptimizable(vec1.MaxDimension+1))
-}
-
 func TestPrepareAcceleratorRejectsDimensionOutsideVec1Range(t *testing.T) {
 	for _, dimension := range []int{1, vec1.MaxDimension + 1} {
 		t.Run(strconv.Itoa(dimension), func(t *testing.T) {

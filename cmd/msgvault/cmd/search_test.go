@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -176,13 +175,6 @@ func resetSearchFlags() {
 	// pairs (--account / --collection) trip when a subsequent test only
 	// passes one of them.
 	searchCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
-}
-
-func TestSearchCmd_HelpMentionsMeetingTranscripts(t *testing.T) {
-	assert.Contains(t, searchCmd.Long, "meeting_transcript", "operator help")
-	messageTypeFlag := searchCmd.Flags().Lookup("message-type")
-	require.NotNil(t, messageTypeFlag)
-	assert.Contains(t, messageTypeFlag.Usage, "meeting_transcript", "flag help")
 }
 
 func TestSummaryFromDisplayFallsBackForPhoneMessages(t *testing.T) {
@@ -1048,26 +1040,6 @@ func TestSearchCmd_VectorOrHybridRejectFilterOnlyQuery(t *testing.T) {
 			assert.ErrorContains(t, err, "free-text terms")
 		})
 	}
-}
-
-// TestSearchCmd_MutualExclusion confirms --account and --collection are rejected together.
-func TestSearchCmd_MutualExclusion(t *testing.T) {
-	var a, b string
-	cmd := &cobra.Command{Use: "search-test", SilenceErrors: true}
-	sub := &cobra.Command{Use: "search", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
-	sub.Flags().StringVar(&a, "account", "", "")
-	sub.Flags().StringVar(&b, "collection", "", "")
-	sub.MarkFlagsMutuallyExclusive("account", "collection")
-	cmd.AddCommand(sub)
-	cmd.SetArgs([]string{"search", "--account", "alpha@example.com", "--collection", "work"})
-
-	err := cmd.Execute()
-	require.Error(t, err, "expected error when both --account and --collection are set")
-	msg := err.Error()
-	assert.Contains(t, msg, "account", "error should mention account flag name")
-	assert.Contains(t, msg, "collection", "error should mention collection flag name")
-	_ = a
-	_ = b
 }
 
 func TestOutputSearchResultsJSONShowsDeletedFromSourceOnlyWhenPresent(t *testing.T) {

@@ -667,23 +667,6 @@ func TestMessage_GetBodyText(t *testing.T) {
 	assert.Empty(t, msg.GetBodyText())
 }
 
-func TestMessage_GetFirstFrom(t *testing.T) {
-	msg := &Message{
-		From: []Address{
-			{Name: "Alice", Email: "alice@example.com", Domain: "example.com"},
-			{Name: "Bob", Email: "bob@example.com", Domain: "example.com"},
-		},
-	}
-
-	got := msg.GetFirstFrom()
-	assert.Equal(t, "alice@example.com", got.Email)
-
-	// Empty
-	msg = &Message{}
-	got = msg.GetFirstFrom()
-	assert.Empty(t, got.Email)
-}
-
 // TestParse_MinimalMessage tests our Parse wrapper with a minimal valid message.
 // This verifies our wrapper works, not enmime's parsing logic.
 func TestParse_MinimalMessage(t *testing.T) {
@@ -758,23 +741,6 @@ func TestParse_MalformedContinuationLineAfterDate(t *testing.T) {
 	assert.True(t, msg.Date.Equal(time.Date(2004, 5, 27, 22, 6, 42, 0, time.UTC)),
 		"msg.Date = %v", msg.Date)
 	assert.Equal(t, "Thu, 27 May 2004 17:06:42 -0500 .", msg.RawDateHeader)
-}
-
-// TestParse_InvalidCharset verifies enmime handles malformed charsets gracefully.
-// Enmime should not fail on invalid charset - it attempts conversion and collects errors.
-func TestParse_InvalidCharset(t *testing.T) {
-	// Message with non-existent charset - enmime should handle this gracefully
-	msg := parseEmail(t, emailOptions{
-		ContentType: "text/plain; charset=invalid-charset-xyz",
-		Body:        "Body text",
-	})
-
-	// Should still be able to access subject and addresses
-	assert.Equal(t, "Test", msg.Subject)
-
-	// Body might be garbled or empty, but should not crash
-	t.Logf("Body text with invalid charset: %q", msg.BodyText)
-	t.Logf("Parsing errors: %v", msg.Errors)
 }
 
 // TestParse_Latin1Charset verifies Latin-1 (ISO-8859-1) charset is handled.

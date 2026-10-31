@@ -1133,7 +1133,7 @@
   .file-controls label {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--control-gap);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
   }
@@ -1267,7 +1267,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     color: var(--text-danger);
   }
   .progress {

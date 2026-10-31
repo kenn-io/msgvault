@@ -16,126 +16,154 @@ import (
 	"go.kenn.io/msgvault/internal/update"
 )
 
-var updateCmd = &cobra.Command{
-	Use:   "update",
-	Short: "Update msgvault to the latest version",
-	Long: `Check for and install msgvault updates.
+func newUpdateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update msgvault to the latest version",
+		Long: `Check for and install msgvault updates.
 
 Shows exactly what will be downloaded and where it will be installed.
 Requires confirmation before making changes (use --yes to skip).
 
 Dev builds are not replaced by default. Use --force to install the latest
-official release over a dev build.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		checkOnly, _ := cmd.Flags().GetBool("check")
-		yes, _ := cmd.Flags().GetBool("yes")
-		force, _ := cmd.Flags().GetBool("force")
+official release over a dev build.
 
-		fmt.Println("Checking for updates...")
-
-		info, err := update.CheckForUpdate(Version, true)
-		if err != nil {
-			return fmt.Errorf("check for updates: %w", err)
-		}
-
-		if info == nil {
-			fmt.Printf("Already running latest version (%s)\n", Version)
-			return nil
-		}
-
-		fmt.Printf("\n  Current version: %s\n", info.CurrentVersion)
-		fmt.Printf("  Latest version:  %s\n", info.LatestVersion)
-		if info.IsDevBuild {
-			fmt.Println("\nYou're running a dev build. Latest official release available.")
-		} else {
-			fmt.Println("\nUpdate available!")
-		}
-		fmt.Println("\nDownload:")
-		fmt.Printf("  URL:  %s\n", info.DownloadURL)
-		fmt.Printf("  Size: %s\n", update.FormatSize(info.Size))
-		if info.Checksum != "" {
-			fmt.Printf("  SHA256: %s\n", info.Checksum)
-		}
-
-		currentExe, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("find executable: %w", err)
-		}
-		currentExe, _ = filepath.EvalSymlinks(currentExe)
-		binDir := filepath.Dir(currentExe)
-		installExecutablePath := filepath.Join(binDir, updateExecutableName())
-
-		fmt.Println("\nInstall location:")
-		fmt.Printf("  %s\n", binDir)
-
-		if checkOnly {
-			if info.IsDevBuild {
-				fmt.Println("\nUse --force to install the latest official release.")
-			}
-			return nil
-		}
-
-		if info.IsDevBuild && !force {
-			fmt.Println("\nUse --force to install the latest official release.")
-			return nil
-		}
-
-		if !yes {
-			fmt.Print("\nProceed with update? [y/N] ")
-			var response string
-			_, _ = fmt.Scanln(&response)
-			if !isYesAnswer(strings.ToLower(response)) {
-				fmt.Println("Update cancelled")
-				return nil
-			}
-		}
-
-		fmt.Println()
-
-		var lastPercent int
-		progressFn := func(downloaded, total int64) {
-			if total > 0 {
-				percent := int(downloaded * 100 / total)
-				if percent != lastPercent {
-					fmt.Printf("\rDownloading... %d%% (%s / %s)",
-						percent, update.FormatSize(downloaded), update.FormatSize(total))
-					lastPercent = percent
-				}
-			}
-		}
-
-		if err := performUpdateWithDaemonLifecycle(
-			info,
-			progressFn,
-			func() (*config.Config, error) {
-				inv := invocationFromCommand(cmd)
-				if inv == nil {
-					return nil, errors.New("configuration is unavailable")
-				}
-				options := inv.options
-				return loadDaemonConfigForUpdate(options)
-			},
-			func(c *config.Config) (updateDaemonStopResult, error) {
-				return stopLocalDaemonsForUpdate(c, invocationFromCommand(cmd).logger)
-			},
-			update.PerformUpdate,
-			func(c *config.Config, result updateDaemonStopResult) error {
-				return restartDaemonAfterUpdate(c, result, installExecutablePath, invocationFromCommand(cmd))
-			},
-		); err != nil {
-			return err
-		}
-
-		fmt.Printf("\nUpdated to %s\n", info.LatestVersion)
-		return nil
-	},
+Package-managed installations, such as Homebrew, are upgraded through their
+package manager. For those, update only reports whether a newer release exists
+and refuses to install it.`,
+		RunE: runUpdate,
+	}
+	cmd.Flags().Bool("check", false, "only check for updates, don't install")
+	cmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().BoolP("force", "f", false, "replace dev build with latest official release")
+	return cmd
 }
 
 func init() {
-	updateCmd.Flags().Bool("check", false, "only check for updates, don't install")
-	updateCmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
-	updateCmd.Flags().BoolP("force", "f", false, "replace dev build with latest official release")
-	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(newUpdateCmd())
+}
+
+// checkForUpdate and performUpdate reach GitHub; tests replace them to keep
+// the command's own decisions offline.
+var (
+	checkForUpdate = update.CheckForUpdate
+	performUpdate  = update.PerformUpdate
+)
+
+func runUpdate(cmd *cobra.Command, args []string) error {
+	checkOnly, _ := cmd.Flags().GetBool("check")
+	yes, _ := cmd.Flags().GetBool("yes")
+	force, _ := cmd.Flags().GetBool("force")
+
+	// A package manager owns this binary, so replacing it would desynchronize
+	// the manager's records. Refuse before any network or daemon work.
+	if !checkOnly {
+		if err := update.ManagedInstallError(Distribution); err != nil {
+			return err
+		}
+	}
+
+	fmt.Println("Checking for updates...")
+
+	info, err := checkForUpdate(Version, true)
+	if err != nil {
+		return fmt.Errorf("check for updates: %w", err)
+	}
+
+	if info == nil {
+		fmt.Printf("Already running latest version (%s)\n", Version)
+		return nil
+	}
+
+	fmt.Printf("\n  Current version: %s\n", info.CurrentVersion)
+	fmt.Printf("  Latest version:  %s\n", info.LatestVersion)
+	if info.IsDevBuild {
+		fmt.Println("\nYou're running a dev build. Latest official release available.")
+	} else {
+		fmt.Println("\nUpdate available!")
+	}
+	if notice := update.ManagedUpdateNotice(Distribution); notice != "" {
+		fmt.Printf("\n%s\n", notice)
+		return nil
+	}
+	fmt.Println("\nDownload:")
+	fmt.Printf("  URL:  %s\n", info.DownloadURL)
+	fmt.Printf("  Size: %s\n", update.FormatSize(info.Size))
+	if info.Checksum != "" {
+		fmt.Printf("  SHA256: %s\n", info.Checksum)
+	}
+
+	currentExe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	currentExe, _ = filepath.EvalSymlinks(currentExe)
+	binDir := filepath.Dir(currentExe)
+	installExecutablePath := filepath.Join(binDir, updateExecutableName())
+
+	fmt.Println("\nInstall location:")
+	fmt.Printf("  %s\n", binDir)
+
+	if checkOnly {
+		if info.IsDevBuild {
+			fmt.Println("\nUse --force to install the latest official release.")
+		}
+		return nil
+	}
+
+	if info.IsDevBuild && !force {
+		fmt.Println("\nUse --force to install the latest official release.")
+		return nil
+	}
+
+	if !yes {
+		fmt.Print("\nProceed with update? [y/N] ")
+		var response string
+		_, _ = fmt.Scanln(&response)
+		if !isYesAnswer(strings.ToLower(response)) {
+			fmt.Println("Update cancelled")
+			return nil
+		}
+	}
+
+	fmt.Println()
+
+	var lastPercent int
+	progressFn := func(downloaded, total int64) {
+		if total > 0 {
+			percent := int(downloaded * 100 / total)
+			if percent != lastPercent {
+				fmt.Printf("\rDownloading... %d%% (%s / %s)",
+					percent, update.FormatSize(downloaded), update.FormatSize(total))
+				lastPercent = percent
+			}
+		}
+	}
+
+	if err := performUpdateWithDaemonLifecycle(
+		info,
+		progressFn,
+		func() (*config.Config, error) {
+			inv := invocationFromCommand(cmd)
+			if inv == nil {
+				return nil, errors.New("configuration is unavailable")
+			}
+			options := inv.options
+			return loadDaemonConfigForUpdate(options)
+		},
+		func(c *config.Config) (updateDaemonStopResult, error) {
+			return stopLocalDaemonsForUpdate(c, invocationFromCommand(cmd).logger)
+		},
+		performUpdate,
+		func(c *config.Config, result updateDaemonStopResult) error {
+			return restartDaemonAfterUpdate(c, result, installExecutablePath, invocationFromCommand(cmd))
+		},
+	); err != nil {
+		return err
+	}
+
+	fmt.Printf("\nUpdated to %s\n", info.LatestVersion)
+	return nil
 }
 
 type updateDaemonStopResult struct {

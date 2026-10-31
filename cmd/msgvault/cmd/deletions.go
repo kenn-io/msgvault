@@ -802,7 +802,7 @@ func resolveDeleteStagedTargetWithSourceID(
 
 // canDeleteAtSource reports whether delete-staged has a client for a source type.
 func canDeleteAtSource(sourceType string) bool {
-	return sourceType == sourceTypeGmail || sourceType == sourceTypeIMAP || sourceType == sourceTypeMSMail
+	return slices.Contains(sourceops.ExecutableDeletionSourceTypes(), sourceType)
 }
 
 type deleteStagedScopeEscalation struct {

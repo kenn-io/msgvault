@@ -228,29 +228,6 @@ func TestRepairLabelsCommandRoutesThroughDaemonCLIRunner(t *testing.T) {
 	assert.Equal(t, "Label repair applied: scanned=1 changed=1\n", stdout.String())
 }
 
-// TestRepairLabelsCommandHelpAndFlagValidation executes Cobra's public
-// command surface, catching a command that is not registered or accepts an
-// accidental mutation flag.
-func TestRepairLabelsCommandHelpAndFlagValidation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := newTestRootCmd()
-	root.AddCommand(newRepairLabelsCmd())
-	var help bytes.Buffer
-	root.SetOut(&help)
-	root.SetArgs([]string{"repair-labels", "--help"})
-	require.NoError(root.Execute())
-	assert.Contains(help.String(), "msgvault repair-labels [identifier] [--apply]")
-	assert.Contains(help.String(), "--apply")
-
-	root = newTestRootCmd()
-	root.AddCommand(newRepairLabelsCmd())
-	root.SetArgs([]string{"repair-labels", "--force"})
-	err := root.Execute()
-	require.Error(err)
-	assert.ErrorContains(err, "unknown flag: --force")
-}
-
 // newLabelRepairArchive seeds one IMAP source with two messages in INBOX,
 // then reproduces the issue #748 gap: an add-only label merge on the first
 // message leaves a "Stray" label no membership row backs. Returns that

@@ -206,7 +206,7 @@ func exerciseDailyViewRollover(t *testing.T, opts Options) {
 		transport := http.DefaultTransport
 		http.DefaultTransport = stub.server.Client().Transport
 		t.Cleanup(func() { http.DefaultTransport = transport })
-		reporter, err := buildReporter(opts, stub.server.URL, slog.New(slog.DiscardHandler))
+		reporter, err := buildReporter(opts, testAPIKey, stub.server.URL, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
 		t.Cleanup(func() { assert.NoError(t, reporter.Close()) })
 		h := CaptureHandler(reporter, opts.DataDir)

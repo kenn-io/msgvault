@@ -566,7 +566,7 @@ func TestAttachmentMirrorOutageRecovery(t *testing.T) {
 			assert := assert.New(t)
 			r := newMirrorRig(t)
 			if fault == docbanktest.FaultTimeout {
-				r.worker.uploadTimeout = 100 * time.Millisecond
+				r.worker.uploadTimeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the stalled upload must expire to exercise outage recovery
 			}
 			for i := range 3 {
 				hash := r.add("report.pdf", "application/pdf", fmt.Appendf(nil, "document %d", i))

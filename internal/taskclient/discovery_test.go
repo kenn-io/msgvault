@@ -183,7 +183,7 @@ func TestClientTransportBounds(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		client := newLoopbackClient(t, server.URL, "timeout-test-key", func(options *ClientOptions) {
-			options.Timeout = 20 * time.Millisecond
+			options.Timeout = 20 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked capabilities request must expire and report ErrUnreachable
 		})
 
 		_, err := client.Capabilities(context.Background())

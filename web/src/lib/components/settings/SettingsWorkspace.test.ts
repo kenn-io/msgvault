@@ -706,7 +706,7 @@ describe('SettingsWorkspace', () => {
     expect(screen.queryByLabelText('Discord maximum attachment size')).toBeNull();
     expect(screen.queryByText(/0 uses/)).toBeNull();
     const participants = screen.getByLabelText('Discord participant limit') as HTMLInputElement;
-    expect(participants.min).toBe('1');
+    expect(participants.getAttribute('aria-valuemin')).toBe('1');
     expect(participants.value).toBe('20');
     expect((screen.getByRole('switch', { name: 'Set Discord participant limit' }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole('combobox', { name: 'Discord attachment scope: All' })).toBeDefined();
@@ -735,7 +735,7 @@ describe('SettingsWorkspace', () => {
     await fireEvent.click(screen.getByRole('switch', { name: 'Set Discord maximum attachment size' }));
     const maximum = screen.getByLabelText('Discord maximum attachment size') as HTMLInputElement;
     expect(maximum.value).toBe('50');
-    expect(maximum.min).toBe('1');
+    expect(maximum.getAttribute('aria-valuemin')).toBe('1');
     await fireEvent.input(maximum, { target: { value: '75' } });
     await fireEvent.click(screen.getByRole('switch', { name: 'Set Discord participant limit' }));
     expect(screen.getByText('No limit')).toBeDefined();

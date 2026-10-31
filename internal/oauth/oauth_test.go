@@ -76,44 +76,8 @@ func assertNoSend[T any](t *testing.T, ch <-chan T, chanName string) {
 	select {
 	case v := <-ch:
 		assert.Failf(t, "unexpected value", "unexpected value on %s: %v", chanName, v)
-	case <-time.After(noSendTimeout): //nolint:kennlint // absence check: callers assert nothing sends on the channel
+	case <-time.After(noSendTimeout): //nolint:kennlint // deadlinetest: absence check: callers assert nothing sends on the channel
 		// expected: no value arrived
-	}
-}
-
-func TestScopesToString(t *testing.T) {
-	tests := []struct {
-		name   string
-		scopes []string
-		want   string
-	}{
-		{
-			name:   "empty scopes",
-			scopes: []string{},
-			want:   "",
-		},
-		{
-			name:   "single scope",
-			scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"},
-			want:   "https://www.googleapis.com/auth/gmail.readonly",
-		},
-		{
-			name:   "multiple scopes",
-			scopes: []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify"},
-			want:   "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
-		},
-		{
-			name:   "three scopes",
-			scopes: []string{"scope1", "scope2", "scope3"},
-			want:   "scope1 scope2 scope3",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := scopesToString(tt.scopes)
-			assert.Equal(t, tt.want, got, "scopesToString()")
-		})
 	}
 }
 
