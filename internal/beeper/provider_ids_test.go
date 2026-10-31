@@ -161,3 +161,21 @@ func TestBridgePrefixAndMatrixServerFromUserID(t *testing.T) {
 		})
 	}
 }
+
+func TestTelegramSharedKey(t *testing.T) {
+	for _, test := range []struct {
+		name, service, id, raw, want string
+	}{
+		{"native", "telegram", "@telegram_99:beeper.local", `{"providerID":"482111"}`, "provider:8:telegram:7:service:0::6:482111"},
+		{"localpart", "telegram", "@telegram_482111:beeper.local", "", "provider:8:telegram:7:service:0::6:482111"},
+		{"invalid native falls back", "telegram", "@telegram_482111:beeper.local", `{"providerID":"invalid"}`, "provider:8:telegram:7:service:0::6:482111"},
+		{"non numeric", "telegram", "@telegram_alice:beeper.local", `{"providerID":"channel-482111"}`, ""},
+		{"channel ghost", "telegram", "@telegram_channel-482111:beeper.local", "", ""},
+		{"bare localpart", "telegram", "@482111:beeper.local", "", ""},
+		{"other service", "discord", "@telegram_482111:beeper.local", `{"providerID":"482111"}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, telegramSharedKey(test.service, &User{ID: test.id, Raw: []byte(test.raw)}))
+		})
+	}
+}

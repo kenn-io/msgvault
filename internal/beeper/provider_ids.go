@@ -30,6 +30,26 @@ import (
 // two participants.
 const providerNativeKey = "providerID"
 
+// telegramSharedKey has no account scope: Telegram user IDs are global,
+// so two Beeper logins seeing the same user can link.
+func telegramSharedKey(serviceSlug string, u *User) string {
+	if serviceSlug != "telegram" {
+		return ""
+	}
+	native, _ := providerNativeUserID(u.Raw)
+	localpart, _, _ := splitMatrixUserID(u.ID)
+	localID, found := strings.CutPrefix(localpart, "telegram_")
+	if !found {
+		localID = ""
+	}
+	for _, digits := range []string{native, localID} {
+		if digits != "" && strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+			return providerIdentityKey("telegram", "service", "", digits)
+		}
+	}
+	return ""
+}
+
 // providerUserIDScoped returns the namespaced stable identity for u.
 // serviceSlug is the resolved communication-service slug, or "" when the
 // bridge could not be classified; an unclassified service falls back to the

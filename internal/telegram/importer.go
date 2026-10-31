@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -148,6 +149,11 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		pid, err := st.EnsureParticipantByIdentifierContext(ctx, SourceType, id, name)
 		if err != nil {
 			return 0, err
+		}
+		if _, seen := participants[id]; !seen && strings.HasPrefix(id, "user") {
+			if err := beeper.LinkTelegramUser(ctx, st, source.ID, pid, strings.TrimPrefix(id, "user")); err != nil {
+				return 0, err
+			}
 		}
 		participants[id] = pid
 		named[id] = name != ""

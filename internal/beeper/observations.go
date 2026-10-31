@@ -37,8 +37,9 @@ type captureContext struct {
 
 // observedAddress is one address kind and raw value seen on a Beeper user.
 type observedAddress struct {
-	Kind  store.ContactAddressKind
-	Value string
+	Kind       store.ContactAddressKind
+	Value      string
+	ProviderID string
 }
 
 // observationKey dedupes writes inside one run.
@@ -113,12 +114,20 @@ func (r *observationRecorder) capture(
 	observedAt := time.Now().UTC()
 	sourceRef := observationSourceRef(cc.AccountID, u.ID)
 	var results []*store.RecordContactObservationResult
-	for _, address := range observedAddresses(u, anchor) {
+	addresses := observedAddresses(u, anchor)
+	if key := telegramSharedKey(slug, u); key != "" {
+		addresses = append(addresses, observedAddress{Kind: store.ContactAddressProviderIdentity, Value: key, ProviderID: key})
+	}
+	for _, address := range addresses {
+		providerID := address.ProviderID
+		if providerID == "" {
+			providerID = anchor
+		}
 		key := observationKey{
 			participantID: participantID, sourceID: cc.SourceID,
 			userID: u.ID, addressKind: address.Kind, serviceSlug: slug,
 			scopeKind: derefString(scopeKind), scopeValue: derefString(scopeValue),
-			providerID: anchor, value: address.Value,
+			providerID: providerID, value: address.Value,
 		}
 		if _, seen := r.seen[key]; seen {
 			continue
@@ -126,7 +135,7 @@ func (r *observationRecorder) capture(
 		request := recordRequest{
 			SourceID: cc.SourceID, AddressKind: address.Kind,
 			ScopeKind: scopeKind, ScopeValue: scopeValue,
-			ProviderUserID: anchor, OriginalValue: address.Value,
+			ProviderUserID: providerID, OriginalValue: address.Value,
 			ObservedAt: observedAt, SourceRef: sourceRef, SourceUserID: u.ID,
 		}
 		if slug != "" {
