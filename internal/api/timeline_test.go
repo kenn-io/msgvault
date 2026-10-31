@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/timeline"
@@ -64,6 +65,50 @@ func TestTimelineOwnerFormatsAndErrors(t *testing.T) {
 		})
 	}
 }
+func TestTimelineLibrarySourceScopeDeniesOwnerNotes(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	srv, st, src := timelineRouteFixture(t)
+	const noteBody = "Synthetic owner-only timeline note"
+	_, err := st.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{
+		LocalDate: "2027-03-01", Body: noteBody, Author: "Synthetic Owner",
+	})
+	require.NoError(err)
+	handler := srv.Handler(func(_ http.ResponseWriter, _ *http.Request, op Operation) bool {
+		return op.ID == "getTimeline"
+	})
+	const path = "/api/v1/timeline?mode=day&date=2027-03-01"
+	owner := httptest.NewRecorder()
+	handler.ServeHTTP(owner, httptest.NewRequest(http.MethodGet, path, nil))
+	require.Equal(http.StatusOK, owner.Code, owner.Body.String())
+	require.Contains(owner.Body.String(), noteBody, "the unrestricted host request must exercise owner-only notes")
+
+	for _, tc := range []struct {
+		name string
+		ids  []int64
+	}{
+		{"source", []int64{src.ID}},
+		{"empty", []int64{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
+			ctx := sourcescope.WithSourceIDs(t.Context(), tc.ids)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+			assert.Equal(http.StatusForbidden, response.Code, response.Body.String())
+			assert.Contains(response.Body.String(), "unsupported_source_scope")
+			assert.NotContains(response.Body.String(), noteBody)
+		})
+	}
+
+	_, secret, _, err := srv.agentGrants.Issue("timeline note control", []agentgrant.Permission{agentgrant.PermissionMessageRead},
+		[]agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	require.NoError(err)
+	delegated := timelineGET(srv, "?mode=day&date=2027-03-01", secret)
+	require.Equal(http.StatusOK, delegated.Code, delegated.Body.String())
+	assert.NotContains(delegated.Body.String(), noteBody)
+}
+
 func TestTimelineDelegatedAdmission(t *testing.T) {
 	srv, _, src := timelineRouteFixture(t)
 	for _, tc := range []struct {

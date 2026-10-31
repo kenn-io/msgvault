@@ -104,6 +104,10 @@ tool. Numeric IDs above 9007199254740991 require CLI or HTTP detail reads; MCP
 numeric opener arguments stop at that safe integer limit. String `around`
 references preserve larger IDs exactly.
 
+For embedded `Server.Handler` integrations, timeline requests with a caller
+source restriction return 403 `unsupported_source_scope`. Host-admitted
+requests without a source restriction retain owner access.
+
 Bad input returns 400, including `cursor_expired` for invalid continuation.
 Ambiguous references return 409 `ambiguous_reference` with typed `candidates`.
 Owner requests share the open-loop mutation gate because loop reads can cache

@@ -1536,6 +1536,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			setCodegenGoType(values, "any")
 		}
 	}
+	// Budget omissions contain integer counts or the string sentinel "more".
+	if omitted := schemas["TimelineOmitted"]; omitted != nil && omitted.Properties["budget"] != nil {
+		if values, ok := omitted.Properties["budget"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
+	}
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {
 		if values, ok := telemetry.Properties["properties"].AdditionalProperties.(*huma.Schema); ok {
