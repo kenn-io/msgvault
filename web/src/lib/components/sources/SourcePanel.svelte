@@ -95,7 +95,7 @@
     {#if prefix}
       <section class="block" aria-label="Attachments">
         <h3>Attachment rules</h3>
-        <span class="muted">Applies to all {sourceTypeLabel(source.source_type)} accounts.</span>
+        <span class="muted">Defaults for {sourceTypeLabel(source.source_type)} accounts. Account settings can override these values.</span>
         {#if loading}<span class="muted">Loading…</span>{:else if error}<p class="failure" role="alert">{error}</p><Button label="Retry" onclick={() => void load()} />{:else}
           {#each attachments as { setting, label } (setting.key)}<div class="field"><span class="label">{label}</span><span>{setting.kind === 'boolean' ? persistedValue(setting) ? 'On' : 'Off' : readOnlyValue(setting)}</span></div>{/each}
         {/if}

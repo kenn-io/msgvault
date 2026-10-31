@@ -23,7 +23,7 @@ you do not need a separate web application process.
 | What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory and Reviews remain available through the command palette. **Staged deletions** appears whenever the list holds a batch. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory and Reviews remain available through the command palette. **Staged deletions** appears while a listed batch is pending, running, or failed. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
 The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
@@ -364,7 +364,7 @@ Sources lists Source, Status, Last good sync, and Sync now. Status shows Running
 
 Select a source to open its panel. Schedule, Next sync, and attachment rules show the current values. **Edit in Settings › Sources** opens the existing editor for settings shared by that source type. The panel also shows Runs, item errors, and **Sync now**. A latest run's error appears before a scheduler error. **Sync history** opens Past runs filtered to source sync.
 
-A contacts panel shows its repair reason and **Open Settings › Contacts** for sign-in recovery. That editor retains the selected OAuth app and provides commands for both shells. Mail sync instructions in the source panel also label POSIX and Command Prompt commands.
+A contacts panel shows its repair reason and **Open Settings › Contacts** for sign-in recovery. That editor retains the selected OAuth app and provides commands for both shells. Mail sync instructions in the source panel give `msgvault sync --source-id N`.
 
 **Sync now** is available only when that source reports the capability. When it
 is not, the Sync now column says why in words: "Imported file — nothing to sync",
@@ -414,7 +414,7 @@ Messages supports individual row selection and select-all-matching for the curre
 
 The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
 
-The Staged deletions workspace lists batches by creation date, message count, account, and status. Select a row to inspect its description, summary, execution counts, and failed message IDs. **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history; cancelled batches keep the sidebar entry visible only if the default list includes them. With no batches, the workspace says "Nothing staged". The sidebar entry remains visible whenever the default list holds a batch.
+The Staged deletions workspace lists batches by creation date, message count, and status. Select a row to see its account and inspect its description, summary, execution counts, and failed message IDs. If the account can't be read, the panel shows "Account unavailable". **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history. With no batches, the workspace says "Nothing staged". The sidebar entry appears while a listed batch is pending, running, or failed. **Go to Staged deletions** in the command palette always opens the history.
 
 ## Keyboard controls
 
