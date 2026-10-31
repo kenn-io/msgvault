@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SearchInput, TextInput } from '@kenn-io/kit-ui';
+  import { Button, DatePicker, NumberInput, SearchInput, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick } from 'svelte';
   import type { TimelineEntry } from '../../api/generated/models';
   import type { TimelineController, TimelineTab } from '../../timeline/controller.svelte';
@@ -72,7 +72,7 @@
   <div id={`${uid}-panel`} role="tabpanel" aria-labelledby={`${uid}-${controller.tab}`} tabindex="0">
     {#if controller.tab === 'day'}
       <form onsubmit={(event) => { event.preventDefault(); void controller.day(); }}>
-        <label>Date<input type="date" bind:value={controller.date} /></label>
+        <DatePicker value={controller.date || null} onchange={(date) => { controller.date = date; }} ariaLabel="Date" />
         <Button type="submit" label="Show day" disabled={controller.loading} />
       </form>
     {:else if controller.tab === 'person'}
@@ -89,8 +89,8 @@
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void controller.around(); }}>
         <label>Anchor<TextInput bind:value={controller.anchor} placeholder="Message, event, conversation, or date" /></label>
-        <label>Before<input type="number" min="0" max="50" step="1" required bind:value={controller.before} /></label>
-        <label>After<input type="number" min="0" max="50" step="1" required bind:value={controller.after} /></label>
+        <NumberInput ariaLabel="Before" min={0} max={50} step={1} required value={controller.before} oninput={(value) => { if (value !== null) controller.before = value; }} />
+        <NumberInput ariaLabel="After" min={0} max={50} step={1} required value={controller.after} oninput={(value) => { if (value !== null) controller.after = value; }} />
         <Button type="submit" label="Show around" disabled={!controller.anchor.trim() || controller.loading} />
       </form>
     {/if}
@@ -164,13 +164,6 @@
   .tabs button { padding: var(--space-2) var(--space-3); background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
   .tabs button[aria-selected='true'] { color: var(--text-primary); border-bottom: 2px solid currentColor; }
   label { display: flex; flex-direction: column; gap: var(--space-1); }
-  input[type='date'], input[type='number'] {
-    box-sizing: border-box; height: 28px; padding: 0 var(--space-3);
-    border: var(--border-width) solid var(--border-default); border-radius: var(--radius-md);
-    background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: var(--font-size-sm);
-  }
-  input[type='number'] { width: 6rem; }
-  input:focus-visible { outline: var(--focus-ring); outline-offset: 1px; border-color: var(--accent-blue); }
   h2, h3 { margin-top: var(--space-5); }
   .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
   .prose { white-space: pre-wrap; overflow-wrap: anywhere; }

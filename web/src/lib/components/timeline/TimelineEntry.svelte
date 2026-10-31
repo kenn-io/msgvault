@@ -33,7 +33,7 @@
   function personHref(id: number): string {
     return `/${serializeExploreURLState({ ...defaultExploreURLState, workspace: 'directory', directoryPersonID: id })}`;
   }
-  function conversationHref(id: number, messageID?: number): string {
+  function conversationHref(id: number, messageID: number | undefined = undefined): string {
     return `/${serializeExploreURLState({ ...defaultExploreURLState, workspace: 'everything', selectedRow: `conversation:${id}`, conversationAnchor: messageID ? String(messageID) : null })}`;
   }
   function timeLabel(value: string): string {
@@ -88,7 +88,7 @@
 
 <style>
   article { padding: var(--space-3); border-bottom: 1px solid var(--border-muted); }
-  article.anchor { border-left: 3px solid var(--text-primary); }
+  article.anchor { border-left: 3px solid var(--text-primary); border-start-start-radius: 0; border-end-start-radius: 0; }
   header, nav, .people, .people li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   header, .detail, .ref, .tier { color: var(--text-muted); font-size: var(--font-size-xs); }
   .kind { text-transform: capitalize; font-weight: 600; }

@@ -52,7 +52,7 @@ describe('TimelineWorkspace', () => {
       const request = input as Request;
       requests.push(request);
       const url = new URL(request.url);
-      if (url.pathname === '/api/v1/people') return Response.json({ people: [{
+      if (url.pathname === '/api/v1/people/directory') return Response.json({ people: [{
         id: 7, display_name: 'Alex Example', vcard_uid: 'example-7', revision: 1,
         carddav_bindings: [], categories: [], organizations: [], contact_state: 'active',
       }] });
@@ -69,7 +69,7 @@ describe('TimelineWorkspace', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Search people' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Search people' }));
     await screen.findByText('Alex Example');
-    expect(requests.some((r) => new URL(r.url).pathname === '/api/v1/people' && new URL(r.url).searchParams.get('q') === 'Alex')).toBe(true);
+    expect(requests.some((r) => new URL(r.url).pathname === '/api/v1/people/directory' && new URL(r.url).searchParams.get('q') === 'Alex')).toBe(true);
     await fireEvent.click(screen.getByRole('button', { name: 'Show person timeline' }));
     const candidate = await screen.findByRole('button', { name: /Alex Choice.*alex@example.test/ });
     await fireEvent.click(candidate);
