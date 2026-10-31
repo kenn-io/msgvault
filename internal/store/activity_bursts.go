@@ -248,11 +248,34 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 			}
 			audience[key] = true
 		}
+		// Match the projector's evidence-first, then role arbitration. Saved
+		// aliases share one person link; unsaved rows share a participant link.
+		type linkKey struct {
+			person bool
+			id     int64
+		}
+		keyFor := func(cp ActivityCounterpart) linkKey {
+			if cp.PersonID != nil {
+				return linkKey{person: true, id: *cp.PersonID}
+			}
+			return linkKey{id: cp.ParticipantID}
+		}
+		strongest := map[linkKey]ActivityEventPerson{}
+		for _, cp := range raw {
+			link := ActivityEventPerson{
+				Role:     classifiedActivityRole(cp.RecipientType, cp.RecipientType == meetingSenderRole, m.Meeting),
+				Evidence: classifiedActivityEvidence(m.Direction, cp.RecipientType == meetingSenderRole, len(audience) > maxDirect),
+			}
+			key := keyFor(cp)
+			if old, found := strongest[key]; !found || strongerClassifiedActivityLink(link, old) {
+				strongest[key] = link
+			}
+		}
 		byParticipant := map[int64]ActivityMessageCounterpart{}
 		for _, cp := range raw {
 			p := participants[cp.ParticipantID]
-			role := classifiedActivityRole(cp.RecipientType, cp.RecipientType == meetingSenderRole, m.Meeting)
-			evidence := classifiedActivityEvidence(m.Direction, cp.RecipientType == meetingSenderRole, len(audience) > maxDirect)
+			link := strongest[keyFor(cp)]
+			role, evidence := link.Role, link.Evidence
 			var excluded string
 			if owner(cp) {
 				excluded = "owner"
