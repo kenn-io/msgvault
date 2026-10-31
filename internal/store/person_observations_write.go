@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personobs"
+	"go.kenn.io/msgvault/internal/personscope"
 )
 
 type SuppressionCandidate struct {
@@ -330,37 +331,6 @@ func (s *Store) observationCitationMessageIDsLiveTx(ctx context.Context, tx *log
 	return true, nil
 }
 
-func (s *Store) observationBatchPremiseCitationMessageIDsTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) ([]int64, error) {
-	roots := make([]int64, 0)
-	for _, item := range batch.Items {
-		if item.Failure != nil {
-			continue
-		}
-		for _, edge := range item.Proposal.Premises {
-			premise, err := s.loadObservationTx(ctx, tx, edge.ID)
-			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
-				return nil, fmt.Errorf("read observation premise before source lock: %w", err)
-			}
-			if premise.PersonID == batch.PersonID {
-				roots = append(roots, premise.ID)
-			}
-		}
-		reinforcementRoots, err := s.observationReinforcementPremiseRootsTx(ctx, tx, batch.PersonID, item)
-		if err != nil {
-			return nil, fmt.Errorf("read observation reinforcement premises before source lock: %w", err)
-		}
-		roots = append(roots, reinforcementRoots...)
-	}
-	_, citationAncestors, err := s.observationPremiseAncestorsTx(ctx, tx, batch.PersonID, roots)
-	if err != nil {
-		return nil, err
-	}
-	return s.observationCitationMessageIDsTx(ctx, tx, citationAncestors)
-}
-
 func (s *Store) observationReinforcementPremiseRootsTx(ctx context.Context, tx *loggedTx, personID int64, item PreparedObservation) ([]int64, error) {
 	candidateID := int64(0)
 	autoLookup := item.Proposal.ReinforcesID == nil
@@ -551,8 +521,8 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			return result, err
 		}
 	}
-	// Lock direct and premise sources before the person row so apply-time
-	// alignment remains stable through the write transaction.
+	// Lock direct and transitive premise sources before the person row so
+	// apply-time alignment remains stable through the write transaction.
 	premiseIDs, err := s.lockObservationSupportSourcesTx(ctx, tx, b)
 	if err != nil {
 		return result, err
@@ -640,6 +610,13 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			return result, err
 		}
 		premiseRoots = append(premiseRoots, reinforcementRoots...)
+		reinforcementTargetID, err := s.observationBatchReinforcementTargetIDTx(ctx, tx, b.PersonID, item)
+		if err != nil {
+			return result, err
+		}
+		if reinforcementTargetID != 0 {
+			premiseRoots = append(premiseRoots, reinforcementTargetID)
+		}
 		premiseAncestors, citationAncestors, err := s.observationPremiseAncestorsTx(ctx, tx, b.PersonID, premiseRoots)
 		if err != nil {
 			return result, err
@@ -658,16 +635,6 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		}
 		if out.Failure != nil {
 			out.Outcome = "dropped-invalid"
-			result.Items = append(result.Items, out)
-			continue
-		}
-		premiseSourcesLive, err := s.observationCitationMessageIDsLiveTx(ctx, tx, premiseMessageIDs)
-		if err != nil {
-			return result, err
-		}
-		if !premiseSourcesLive {
-			out.Outcome = "dropped-invalid"
-			out.Failure = &personobs.ValidationError{Field: "support", Reason: "citation-source-missing"}
 			result.Items = append(result.Items, out)
 			continue
 		}
@@ -695,6 +662,30 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 					return result, err
 				}
 				premises[edge.ID] = premise
+			}
+		}
+		if out.Failure == nil {
+			for _, ancestorID := range premiseAncestors {
+				ancestor, err := s.loadObservationTx(ctx, tx, ancestorID)
+				if err != nil {
+					return result, err
+				}
+				if ancestor.Level != personobs.LevelExplicit || ancestor.Origin == personobs.OriginOwner {
+					continue
+				}
+				aligned, sourcesMissing, err := s.observationAlignedSupportedCitationsTx(ctx, tx, b.PersonID, ancestorID)
+				if err != nil {
+					return result, fmt.Errorf("revalidate observation premise evidence: %w", err)
+				}
+				if len(aligned) > 0 {
+					continue
+				}
+				reason := "premise-not-supported"
+				if sourcesMissing {
+					reason = "citation-source-missing"
+				}
+				out.Failure = &personobs.ValidationError{Field: "support", Reason: reason}
+				break
 			}
 		}
 		if out.Failure == nil {
@@ -941,6 +932,97 @@ func (s *Store) observationCitationSourcesLiveTx(ctx context.Context, tx *logged
 		}
 	}
 	return true, nil
+}
+
+func (s *Store) observationAlignedSupportedCitationsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	personID, observationID int64,
+) ([]personobs.Citation, bool, error) {
+	citations, _, err := s.refreshObservationCitationExclusionsTx(ctx, tx, observationID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(citations) == 0 {
+		return nil, false, nil
+	}
+	evidenceIDs := make([]int64, 0, len(citations))
+	for _, citation := range citations {
+		evidenceIDs = append(evidenceIDs, citation.EvidenceID)
+	}
+	supported, err := s.latestEvidenceSupportedTx(ctx, tx, evidenceIDs)
+	if err != nil {
+		return nil, false, err
+	}
+	allSourcesMissing := true
+	aligned := make([]personobs.Citation, 0, len(citations))
+	for _, citation := range citations {
+		live, err := s.observationCitationMessageIDsLiveTx(ctx, tx, []int64{citation.Leaf.MessageID})
+		if err != nil {
+			return nil, false, err
+		}
+		if live {
+			allSourcesMissing = false
+		}
+		if citation.Exclusion != personobs.ExclusionReasonNone || !citation.Leaf.AuthoredByPerson || !supported[citation.EvidenceID] {
+			continue
+		}
+		evidence, err := scanPersonFactEvidence(tx.QueryRowContext(ctx,
+			`SELECT `+personFactEvidenceColumns+` FROM person_fact_evidence e WHERE e.id=? AND e.person_id=?`,
+			citation.EvidenceID, personID))
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("load observation premise evidence %d: %w", citation.EvidenceID, err)
+		}
+		ref, err := peoplesweep.DecodePersonSweepEvidenceRef(evidence.Input.SourceRef)
+		if err != nil || ref.MessageID != citation.Leaf.MessageID || !citation.Leaf.EventTime.Equal(evidence.Input.EventTime) {
+			continue
+		}
+		alignment, err := (PersonSweepEvidenceAligner{Store: s}).alignTx(ctx, tx, evidence.Input)
+		if err != nil {
+			return nil, false, fmt.Errorf("align observation premise evidence %d: %w", citation.EvidenceID, err)
+		}
+		if !alignment.Accepted {
+			continue
+		}
+		current, err := s.currentPersonSweepEvidenceItemTx(ctx, tx, evidence.Input)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("read current observation premise evidence %d: %w", citation.EvidenceID, err)
+		}
+		if current.PersonID != personID || current.SubjectPersonID == nil || *current.SubjectPersonID != personID ||
+			current.Directness != personfacts.DirectSelf || !slices.Contains(current.Provenance.Roles, personscope.RoleFrom) {
+			continue
+		}
+		aligned = append(aligned, citation)
+	}
+	return aligned, allSourcesMissing, nil
+}
+
+func (s *Store) currentPersonSweepEvidenceItemTx(
+	ctx context.Context,
+	tx *loggedTx,
+	evidence personfacts.EvidenceInput,
+) (peoplesweep.EvidenceItem, error) {
+	ref, err := peoplesweep.DecodePersonSweepEvidenceRef(evidence.SourceRef)
+	if err != nil {
+		return peoplesweep.EvidenceItem{}, sql.ErrNoRows
+	}
+	if ref.SourceLane == peoplesweep.SourceDocumentText {
+		return s.alignDocumentItemTx(ctx, tx, evidence.PersonID, ref, evidence.Excerpt)
+	}
+	items, _, err := s.hydratePersonSweepMessageSetTx(ctx, tx, evidence.PersonID, ref.SourceLane, []int64{ref.MessageID})
+	if err != nil {
+		return peoplesweep.EvidenceItem{}, err
+	}
+	if len(items) != 1 {
+		return peoplesweep.EvidenceItem{}, sql.ErrNoRows
+	}
+	return items[0], nil
 }
 
 func (s *Store) writeObservationCitationsTx(ctx context.Context, tx *loggedTx, personID, id, generationID int64, item PreparedObservation) error {
@@ -1267,7 +1349,7 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 		}
 		seenObservations[currentID] = struct{}{}
 
-		citations, changed, err := s.refreshObservationCitationExclusionsTx(ctx, tx, currentID)
+		_, changed, err := s.refreshObservationCitationExclusionsTx(ctx, tx, currentID)
 		if err != nil {
 			return nil, err
 		}
@@ -1286,10 +1368,11 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 		if observation.PersonID != personID || !personobs.PremiseSupported(observation) {
 			continue
 		}
-		for _, citation := range citations {
-			if citation.Exclusion != personobs.ExclusionReasonNone || !citation.Leaf.AuthoredByPerson {
-				continue
-			}
+		alignedCitations, _, err := s.observationAlignedSupportedCitationsTx(ctx, tx, personID, currentID)
+		if err != nil {
+			return nil, err
+		}
+		for _, citation := range alignedCitations {
 			current, exists := citationsByEvidenceID[citation.EvidenceID]
 			if !exists || citation.Leaf.EventTime.After(current.Leaf.EventTime) {
 				citationsByEvidenceID[citation.EvidenceID] = citation
@@ -1326,18 +1409,9 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 		}
 	}
 
-	evidenceIDs := make([]int64, 0, len(citationsByEvidenceID))
-	for evidenceID := range citationsByEvidenceID {
-		evidenceIDs = append(evidenceIDs, evidenceID)
-	}
-	slices.Sort(evidenceIDs)
-	supported, err := s.latestEvidenceSupportedTx(ctx, tx, evidenceIDs)
-	if err != nil {
-		return nil, err
-	}
 	var latest *time.Time
-	for evidenceID, citation := range citationsByEvidenceID {
-		if !supported[evidenceID] || (latest != nil && !citation.Leaf.EventTime.After(*latest)) {
+	for _, citation := range citationsByEvidenceID {
+		if latest != nil && !citation.Leaf.EventTime.After(*latest) {
 			continue
 		}
 		value := citation.Leaf.EventTime
