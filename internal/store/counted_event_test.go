@@ -13,9 +13,9 @@ import (
 // Excluded lists and non-direct evidence never count.
 func TestCountedEventWhereMatchesTierRule(t *testing.T) {
 	accepted := map[string]bool{
-		"attendee/inbound/meeting/0": true, "attendee/inbound/meeting/1": true,
+		"attendee/inbound/meeting/0":  true,
 		"attendee/outbound/meeting/0": true, "attendee/outbound/meeting/1": true,
-		"organizer/inbound/meeting/0": true, "organizer/inbound/meeting/1": true,
+		"organizer/inbound/meeting/0":  true,
 		"organizer/outbound/meeting/0": true, "organizer/outbound/meeting/1": true,
 		"sender/inbound/message/0":     true,
 		"addressed/outbound/message/0": true, "addressed/outbound/message/1": true,
