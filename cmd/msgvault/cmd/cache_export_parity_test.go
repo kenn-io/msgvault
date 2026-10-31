@@ -140,6 +140,14 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 	return r.DB.ExecContext(ctx, query, args...)
 }
 
+func participantClusterTestMappings(count int) map[int64]int64 {
+	clusters := make(map[int64]int64, count)
+	for id := int64(1); id <= int64(count); id++ {
+		clusters[id] = id%17 + 1
+	}
+	return clusters
+}
+
 func TestStageParticipantClustersBatchesInsertsWithoutChangingRows(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
@@ -162,15 +170,9 @@ func TestStageParticipantClustersBatchesInsertsWithoutChangingRows(t *testing.T)
 			t.Cleanup(func() { require.NoError(db.Close()) })
 			recorder := &participantClusterInsertRecorder{DB: db}
 
-			clusters := make(map[int64]int64, tt.count)
-			for id := int64(1); id <= int64(tt.count); id++ {
-				clusters[id] = id%17 + 1
-			}
+			clusters := participantClusterTestMappings(tt.count)
 			require.NoError(stageParticipantClusters(t.Context(), recorder, clusters))
 			assert.Equal(tt.batchRows, recorder.batchRows)
-			for _, count := range recorder.batchRows {
-				assert.LessOrEqual(count, 1024)
-			}
 
 			dir := t.TempDir()
 			require.NoError(copyParquet(t.Context(), db, dir, "data.parquet", participantClustersSelectSQL))
@@ -201,10 +203,7 @@ func TestStageParticipantClustersStopsOnLaterInsertError(t *testing.T) {
 	insertErr := errors.New("insert failed")
 	recorder := &participantClusterInsertRecorder{DB: db, failAt: 2, insertErr: insertErr}
 
-	clusters := make(map[int64]int64, 2065)
-	for id := int64(1); id <= 2065; id++ {
-		clusters[id] = id%17 + 1
-	}
+	clusters := participantClusterTestMappings(2065)
 	err = stageParticipantClusters(t.Context(), recorder, clusters)
 	require.ErrorIs(err, insertErr)
 	require.ErrorContains(err, "populate participant clusters temp table")
