@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,16 +9,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExportReaderCancelled(t *testing.T) {
+	for _, root := range []string{"testdata/full", "testdata/single"} {
+		t.Run(root, func(t *testing.T) {
+			require := require.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err := OpenExport(ctx, root)
+			require.ErrorIs(err, context.Canceled)
+			reader, err := OpenExport(t.Context(), root)
+			require.NoError(err)
+			defer func() { require.NoError(reader.Close()) }()
+			visits := 0
+			err = reader.Chats(ctx, func(*Chat) error { visits++; return nil })
+			require.ErrorIs(err, context.Canceled)
+			assert.Zero(t, visits)
+		})
+	}
+}
+
 func TestExportReaderFull(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	reader, err := OpenExport("testdata/full")
+	reader, err := OpenExport(t.Context(), "testdata/full")
 	require.NoError(err)
 	defer func() { require.NoError(reader.Close()) }()
 	assert.EqualValues(7000000000000123456, reader.OwnerID())
 	assert.Equal("Test Owner", reader.OwnerName())
 	var chats []*Chat
-	require.NoError(reader.Chats(func(chat *Chat) error { chats = append(chats, chat); return nil }))
+	require.NoError(reader.Chats(t.Context(), func(chat *Chat) error { chats = append(chats, chat); return nil }))
 	require.Len(chats, 4)
 	assert.Equal("user7000000000000555555", chats[0].PeerKey())
 	assert.Equal("channel9999999999", chats[1].PeerKey())
@@ -30,11 +50,11 @@ func TestExportReaderFull(t *testing.T) {
 func TestExportReaderChatsBeforeLeftChats(t *testing.T) {
 	root := t.TempDir()
 	writeExport(t, root, `{"left_chats":{"list":[{"id":2,"type":"bot_chat"}]},"chats":{"about":"export","list":[{"id":1,"type":"saved_messages"}],"extra":true}}`)
-	reader, err := OpenExport(root)
+	reader, err := OpenExport(t.Context(), root)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	var peers []string
-	require.NoError(t, reader.Chats(func(chat *Chat) error { peers = append(peers, chat.PeerKey()); return nil }))
+	require.NoError(t, reader.Chats(t.Context(), func(chat *Chat) error { peers = append(peers, chat.PeerKey()); return nil }))
 	assert.Equal(t, []string{"user1", "user2"}, peers)
 }
 
@@ -54,10 +74,10 @@ func TestExportReaderMalformed(t *testing.T) {
 			require := require.New(t)
 			root := t.TempDir()
 			writeExport(t, root, `{"id":5,"name":"Example chat","type":"personal_chat","messages":[`+tc.data+`]}`)
-			reader, err := OpenExport(root)
+			reader, err := OpenExport(t.Context(), root)
 			require.NoError(err)
 			defer func() { require.NoError(reader.Close()) }()
-			err = reader.Chats(func(*Chat) error { return nil })
+			err = reader.Chats(t.Context(), func(*Chat) error { return nil })
 			require.ErrorContains(err, tc.want)
 			require.ErrorContains(err, "Example chat")
 			require.ErrorContains(err, "message ")
@@ -67,7 +87,7 @@ func TestExportReaderMalformed(t *testing.T) {
 		t.Run(data, func(t *testing.T) {
 			root := t.TempDir()
 			writeExport(t, root, data)
-			_, err := OpenExport(root)
+			_, err := OpenExport(t.Context(), root)
 			require.Error(t, err)
 		})
 	}

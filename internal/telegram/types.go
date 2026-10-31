@@ -4,6 +4,7 @@ package telegram
 import (
 	"encoding/json/jsontext"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,18 +42,22 @@ func (c *Chat) PeerKey() string {
 func (c *Chat) ConvType() string { return chatTypes[c.Type].conversation }
 
 type Message struct {
-	ID             int64          `json:"id"`
-	Type           string         `json:"type"`
-	DateUnixtime   string         `json:"date_unixtime"`
-	Edited         string         `json:"edited"`
-	EditedUnixtime string         `json:"edited_unixtime"`
-	ReplyTo        int64          `json:"reply_to_message_id"`
-	ReplyToPeerID  string         `json:"reply_to_peer_id"`
-	FromName       string         `json:"from"`
-	FromID         string         `json:"from_id"`
-	RawText        jsontext.Value `json:"text"`
-	RichMessage    jsontext.Value `json:"rich_message,omitempty"`
-	TextEntities   []struct {
+	ID                  int64          `json:"id"`
+	Type                string         `json:"type"`
+	DateUnixtime        string         `json:"date_unixtime"`
+	Edited              string         `json:"edited"`
+	EditedUnixtime      string         `json:"edited_unixtime"`
+	ReplyTo             int64          `json:"reply_to_message_id"`
+	ReplyToPeerID       string         `json:"reply_to_peer_id"`
+	FromName            string         `json:"from"`
+	FromID              string         `json:"from_id"`
+	RawText             jsontext.Value `json:"text"`
+	RichMessage         jsontext.Value `json:"rich_message,omitempty"`
+	Poll                jsontext.Value `json:"poll,omitempty"`
+	LocationInformation jsontext.Value `json:"location_information,omitempty"`
+	ContactInformation  jsontext.Value `json:"contact_information,omitempty"`
+	ForwardedFrom       string         `json:"forwarded_from"`
+	TextEntities        []struct {
 		Text string `json:"text"`
 	} `json:"text_entities"`
 	ContactVCard string    `json:"contact_vcard"`
@@ -66,4 +71,10 @@ type Message struct {
 	SentAt       time.Time `json:"-"`
 }
 
-func (m *Message) supported() bool { return m.Type == "message" && len(m.RichMessage) == 0 }
+func (m *Message) supported() bool {
+	if m.Type != "message" || len(m.RichMessage) != 0 {
+		return false
+	}
+	structured := len(m.Poll) != 0 || len(m.LocationInformation) != 0 || len(m.ContactInformation) != 0
+	return !structured || strings.TrimSpace(m.Text) != "" || m.Photo != "" || m.File != "" || m.Thumbnail != "" || m.ContactVCard != ""
+}

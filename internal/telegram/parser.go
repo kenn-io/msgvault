@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -28,13 +29,13 @@ type ExportReader struct {
 	containers map[string]int64
 }
 
-func OpenExport(root string) (*ExportReader, error) {
+func OpenExport(ctx context.Context, root string) (*ExportReader, error) {
 	f, err := os.Open(filepath.Join(root, resultFile))
 	if err != nil {
 		return nil, fmt.Errorf("telegram: open result.json: %w", err)
 	}
 	r := &ExportReader{file: f, containers: map[string]int64{}}
-	dec := jsontext.NewDecoder(f)
+	dec := jsontext.NewDecoder(&contextReader{ctx: ctx, r: f})
 	err = readObject(dec, func(key string, dec *jsontext.Decoder) error {
 		if key == "personal_information" {
 			var info struct {
@@ -83,12 +84,12 @@ func (r *ExportReader) OwnerID() int64    { return r.ownerID }
 func (r *ExportReader) OwnerName() string { return r.ownerName }
 
 // Chats visits chats.list, then left_chats.list, or the single-chat root.
-func (r *ExportReader) Chats(visit func(*Chat) error) error {
+func (r *ExportReader) Chats(ctx context.Context, visit func(*Chat) error) error {
 	if _, err := r.file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	if r.single {
-		return decodeChat(jsontext.NewDecoder(r.file), visit)
+		return decodeChat(ctx, jsontext.NewDecoder(&contextReader{ctx: ctx, r: r.file}), visit)
 	}
 	for _, key := range []string{"chats", "left_chats"} {
 		offset, ok := r.containers[key]
@@ -98,7 +99,7 @@ func (r *ExportReader) Chats(visit func(*Chat) error) error {
 		if _, err := r.file.Seek(offset, io.SeekStart); err != nil {
 			return err
 		}
-		err := readObject(jsontext.NewDecoder(r.file), func(name string, dec *jsontext.Decoder) error {
+		err := readObject(jsontext.NewDecoder(&contextReader{ctx: ctx, r: r.file}), func(name string, dec *jsontext.Decoder) error {
 			if name != "list" {
 				return dec.SkipValue()
 			}
@@ -110,7 +111,7 @@ func (r *ExportReader) Chats(visit func(*Chat) error) error {
 				return fmt.Errorf("%s.list must be an array", key)
 			}
 			for dec.PeekKind() != ']' {
-				if err := decodeChat(dec, visit); err != nil {
+				if err := decodeChat(ctx, dec, visit); err != nil {
 					return err
 				}
 			}
@@ -149,7 +150,7 @@ func readObjectContents(dec *jsontext.Decoder, field func(string, *jsontext.Deco
 	return err
 }
 
-func decodeChat(dec *jsontext.Decoder, visit func(*Chat) error) error {
+func decodeChat(ctx context.Context, dec *jsontext.Decoder, visit func(*Chat) error) error {
 	var chat Chat
 	if err := json.UnmarshalDecode(dec, &chat); err != nil {
 		return fmt.Errorf("telegram: decode chat: %w", err)
@@ -160,7 +161,10 @@ func decodeChat(dec *jsontext.Decoder, visit func(*Chat) error) error {
 	if chat.PeerKey() != "" {
 		for i := range chat.Messages {
 			m := &chat.Messages[i]
-			if !m.supported() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if m.Type != "message" || len(m.RichMessage) != 0 {
 				continue
 			}
 			if err := validateMessage(m); err != nil {
@@ -197,4 +201,17 @@ func validateMessage(m *Message) error {
 		return errors.New("text must be a string when text_entities is empty")
 	}
 	return nil
+}
+
+// contextReader lets long scans and chat decodes stop between file reads.
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }

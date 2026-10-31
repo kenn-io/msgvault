@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const syncType = "import-telegram"
@@ -66,7 +66,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	opts.RootDir = root
-	reader, err := OpenExport(root)
+	reader, err := OpenExport(ctx, root)
 	if err != nil {
 		return summary, err
 	}
@@ -163,7 +163,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	index := 0
-	err = reader.Chats(func(chat *Chat) error {
+	err = reader.Chats(ctx, func(chat *Chat) error {
 		current := index
 		index++
 		if err := ctx.Err(); err != nil {
@@ -277,7 +277,8 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		}
 		metadata := struct {
 			ReferencedMessageID string `json:"referenced_message_id,omitempty"`
-		}{}
+			ForwardedFrom       string `json:"forwarded_from,omitempty"`
+		}{ForwardedFrom: m.ForwardedFrom}
 		if m.ReplyTo != 0 {
 			parentPeer := m.ReplyToPeerID
 			if parentPeer == "" {
@@ -293,10 +294,7 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if err != nil {
 			return err
 		}
-		snippet := strings.TrimSpace(m.Text)
-		if utf8.RuneCountInString(snippet) > 200 {
-			snippet = string([]rune(snippet)[:200])
-		}
+		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
 		id, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Text))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: peer, ConversationType: chat.ConvType(), Title: chat.Name, Participants: members, PreserveExistingParticipants: true},

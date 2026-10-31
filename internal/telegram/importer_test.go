@@ -245,10 +245,10 @@ func TestImportFullAndAppendOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	reader, err := OpenExport("testdata/full")
+	reader, err := OpenExport(t.Context(), "testdata/full")
 	require.NoError(err)
 	var chats []*Chat
-	require.NoError(reader.Chats(func(c *Chat) error { chats = append(chats, c); return nil }))
+	require.NoError(reader.Chats(t.Context(), func(c *Chat) error { chats = append(chats, c); return nil }))
 	require.NoError(reader.Close())
 	chats[0].Messages[0].Edited = "2021-01-18T00:00:00"
 	for _, m := range []Message{
@@ -534,6 +534,32 @@ func TestImportContactVCard(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, path))
 	require.NoError(err)
 	assert.Equal(vcard, string(data))
+}
+
+func TestImportUnsupportedStructuredEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	writeExport(t, root, `{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"","poll":{"question":"Lunch?"}},{"id":2,"type":"message","date_unixtime":"1","text":"","location_information":{"latitude":0,"longitude":0}},{"id":3,"type":"message","date_unixtime":"1","text":"","contact_information":{"first_name":"Example","phone_number":""}},{"id":4,"type":"message","date_unixtime":"1","text":"forwarded text","forwarded_from":"Example Channel"},{"id":5,"type":"message","date_unixtime":"1","text":"caption","poll":{"question":"Lunch?"}},{"id":6,"type":"message","date_unixtime":"1","text":"","contact_information":{"first_name":"Example"},"contact_vcard":"contact.vcard"}]}`)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(err)
+	assert.EqualValues(3, summary.UnsupportedEntriesSkipped)
+	assert.EqualValues(3, summary.MessagesAdded)
+	rows, err := st.DB().Query("SELECT source_message_id FROM messages ORDER BY source_message_id")
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var keys []string
+	for rows.Next() {
+		var key string
+		require.NoError(rows.Scan(&key))
+		keys = append(keys, key)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"user2:4", "user2:5", "user2:6"}, keys)
+	var metadata string
+	require.NoError(st.DB().QueryRow("SELECT metadata FROM messages WHERE source_message_id = 'user2:4'").Scan(&metadata))
+	assert.JSONEq(`{"forwarded_from":"Example Channel"}`, metadata)
 }
 
 func TestImportParticipantNameBackfill(t *testing.T) {
