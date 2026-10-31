@@ -571,7 +571,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if !time.Now().Before(deadline) {
 				return true, errors.Join(failures.reported, failures.streak)
 			}
-			if d.JobID == "" && (d.Outcome == "" || d.Outcome == "requested") {
+			if d.JobID == "" && d.Outcome == "" {
 				d.Fingerprint = profile.Fingerprint
 				d.Outcome = ""
 				next := time.Now().UTC().Add(store.BeeperMediaPollDelay)
