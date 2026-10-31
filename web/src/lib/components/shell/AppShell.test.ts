@@ -3271,7 +3271,7 @@ it('reloads a failed source job when Sources is already open', async () => {
 it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace despite an old status authority', async category => {
   window.history.replaceState(null, '', category === 'search' ? '/?workspace=files' : '/?workspace=sources');
   const state = new ExploreState(window);
-  state.current.settingsAuthority = 'visual_attachments';
+  state.current.settingsAuthority = category === 'search' ? '' : 'visual_attachments';
   const client = createAPIClient(async input => {
     const path = new URL((input as Request).url).pathname;
     if (path.endsWith('/sources/status')) return Response.json({ sources: [sourceStatus({ source_type: 'beeper', identifier: 'beeper', display_name: 'Example chats' }), sourceStatus({ id: 2, source_type: 'slack', identifier: 'slack', display_name: 'Example Slack' })] });
@@ -3280,18 +3280,16 @@ it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace 
     if (path.endsWith('/settings')) return Response.json({ settings: [], groups: [], pending_restart: false });
     return Response.json({});
   });
-  const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((getRequest, getConsumed, ...args) => ({
+  const requests: unknown[] = [];
+  const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((getRequest) => ({
     render: () => '<div></div>',
-    setup: element => {
-      const component = mount(SettingsWorkspace, { target: element, props: { client, operationsController: args[6](), category: 'carddav', cardDAVRequest: getRequest(), onCardDAVRequestConsumed: getConsumed() } });
-      return () => { void unmount(component); };
-    }
+    setup: () => { requests.push(getRequest()); }
   }));
   const view = render(AppShell, { client, state, ...(category === 'carddav' ? { settings: settings as never } : {}) });
   if (category !== 'search') await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example Slack' : 'Details for contacts@example.com' }));
   await fireEvent.click(await screen.findByRole('button', { name: category === 'search' ? 'Set up' : category === 'sources' ? 'Edit in Settings › Sources' : 'Open Settings › Contacts' }));
   await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: category === 'search' ? 'visual_attachments' : '' }));
-  if (category === 'carddav') await waitFor(() => expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('contacts@example.com'));
+  if (category === 'carddav') await waitFor(() => expect(requests).toEqual([expect.objectContaining({ connection: 'work' })]));
   view.unmount(); state.destroy();
 });
 

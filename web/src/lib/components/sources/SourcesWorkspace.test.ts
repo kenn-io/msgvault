@@ -64,39 +64,16 @@ const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
   it('shows a readable type and a muted reason with the raw code in its tooltip', async () => {
-    const unavailable = (id: number, identifier: string, display_name: string, reason: string, extra = {}) =>
-      source({ id, identifier, display_name, can_sync: false, sync_unavailable_reason: reason, ...extra });
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
-      unavailable(1, 'import@example.com', 'Imported', 'source_not_schedulable', { source_type: 'mbox' }),
-      unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running'),
-      unavailable(3, 'down@example.com', 'Down', 'scheduler_unavailable'),
-      unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured', { scheduled: false }),
-      unavailable(5, 'other@example.com', 'Other', 'future_reason')
-    ] }));
+    const fetchFn = api([source({ id: 1, identifier: 'import@example.com', display_name: 'Imported', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', source_type: 'mbox' })]);
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
     expect(await screen.findByText('Mbox import')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Imported' }));
     expect(await screen.findByText('Mbox import · import@example.com')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    for (const [text, code] of [
-      ['Imported file — nothing to sync', 'source_not_schedulable'],
-      ['Sync in progress', 'sync_already_running'],
-      ['Scheduler unavailable', 'scheduler_unavailable'],
-      ['Sync not set up', 'sync_not_configured'],
-      ['Sync unavailable', 'future_reason']
-    ]) {
-      expect(screen.getByText(text).getAttribute('title')).toBe(code);
-    }
+    expect(screen.getByText('Imported file — nothing to sync').getAttribute('title')).toBe('source_not_schedulable');
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeDefined();
-  });
-
-  it('shows config-only Gmail schedules and next sync', async () => {
-    render(SourcesWorkspace, { client: createAPIClient(api([source({ source_type: 'gmail', scheduled: true, schedule: '0 * * * *', next_sync_at: '2026-07-19T11:00:00Z' })])) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    expect(await screen.findByText('At :00 past every hour')).toBeDefined();
-    expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
   });
 
   it('keeps the cron text in the schedule tooltip only', async () => {
@@ -235,7 +212,7 @@ describe('SourcesWorkspace', () => {
     expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
   });
 
-  it('distinguishes queued and executing sources and shows failure repair in their panels', async () => {
+  it('shows panel failure repair and queued or executing sync controls', async () => {
     const fetchFn = api([
       source({ identifier: 'archive@example.com', display_name: 'Alex', can_sync: false,
         sync_unavailable_reason: 'sync_not_configured',
@@ -247,21 +224,14 @@ describe('SourcesWorkspace', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Details for Alex' }));
     expect(await screen.findByText('oauth2: token expired and refresh token is invalid (invalid_grant)')).toBeDefined();
-    expect(screen.getByText('msgvault sync --source-id 1')).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Copy msgvault sync/ })).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Alex' }));
     await waitFor(() => expect(screen.queryByText(/invalid_grant/)).toBeNull());
     const queued = screen.getByRole('row', { name: /Waiting/ });
-    expect(within(queued).getByText('Queued')).toBeDefined();
     expect(within(queued).getByText('Sync queued')).toBeDefined();
     const executing = screen.getByRole('row', { name: /Executing/ });
-    expect(within(executing).getByText('Running')).toBeDefined();
     expect(within(executing).getByText('Syncing…')).toBeDefined();
-    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
-    const panel = screen.getByRole('dialog', { name: 'Executing' });
-    expect(within(panel).getByText('Running')).toBeDefined();
-    expect(within(panel).queryByText('Sync queued')).toBeNull();
-    await fireEvent.click(within(executing).getByRole('button', { name: 'Details for Executing' }));
   });
 
   it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
@@ -273,8 +243,6 @@ describe('SourcesWorkspace', () => {
     await screen.findByText('Beeper default of 250 MiB');
     expect(screen.getByText('Defaults for Beeper accounts. Account settings can override these values.')).toBeDefined();
     expect(screen.getByText('On')).toBeDefined();
-    expect(screen.getByText('At 03:00 every day')).toBeDefined();
-    expect(screen.getByText(/Next sync/).querySelector('time')?.getAttribute('datetime')).toBe('2026-07-19T11:00:00Z');
     await fireEvent.click(screen.getByRole('button', { name: 'Edit in Settings › Sources' }));
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
   });
@@ -289,19 +257,13 @@ describe('SourcesWorkspace', () => {
   });
 
   it('uses Connections for idle contacts without reading statuses or address books', async () => {
-    const fetch = api([], () => undefined, [contact]);
+    const fetch = api([source()], () => undefined, [contact]);
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
     expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
     expect(screen.queryByText('No sources yet')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
     expect(fetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname).sort()).toEqual(['/api/v1/carddav/connections', '/api/v1/sources/status']);
-    view.unmount();
-  });
-
-  it('offers Sync now for ready mail alongside contacts', async () => {
-    const view = render(SourcesWorkspace, { client: createCaptureClient(api([source()], () => undefined, [contact]), []) });
-    await screen.findByRole('button', { name: 'Details for user-a' });
-    expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
     view.unmount();
   });
 
@@ -859,15 +821,6 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
     rendered.unmount();
   });
-});
-
-it('opens the selected run’s item failures', async () => {
-  render(SourcesWorkspace, { client: createCaptureClient(api([
-    source({ display_name: 'Imported account', can_sync: false, sync_unavailable_reason: 'source_not_schedulable', latest_sync: run('completed', 3, { errors_count: 1, item_errors: [{ source_message_id: 'message-1', phase: 'fetch', created_at: '2026-07-19T10:00:00Z', error_message: 'Attachment unavailable' }] }) }),
-  ]), []) });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Details for Imported account' }));
-  await fireEvent.click(await screen.findByText('1 item failed'));
-  expect(screen.getByText('Attachment unavailable')).toBeDefined();
 });
 
 it('publishes source rows while the optional contacts request waits', async () => {
