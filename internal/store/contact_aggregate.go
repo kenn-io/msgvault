@@ -47,7 +47,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 		listExcluded = `CASE WHEN r.list_id IS NOT NULL THEN 1 ELSE 0 END`
 	}
 	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "r.direction", RefKind: "r.ref_kind", ListExcluded: listExcluded, LargeInbound: "r.large_inbound"})
-	args = append(args, q.Now)
+	args = append(args, q.Now.UTC())
 	args = append(args, subjectArgs...)
 	loc := q.Location
 	if loc == nil {
@@ -64,7 +64,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	args = append(args, monthStart, monthEnd, monthStart, monthEnd)
 	query := cte + activityBurstGroupsCTE + `, contact_messages AS (
  SELECT r.* FROM representatives r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=COALESCE(r.conversation_id,0) AND b.local_date=r.local_date
- WHERE b.noise=0 AND r.ref_kind='message' AND r.encrypted=0 AND r.occurred_at<=?
+ WHERE b.noise=0 AND r.ref_kind='message' AND r.contact_eligible=1 AND r.encrypted=0 AND r.occurred_at<=?
  AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND ` + subject + ` AND ` + counted + `)
  ), exchanges AS (
  SELECT *,LAG(occurred_at) OVER(PARTITION BY source_id,conversation_id ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
@@ -146,7 +146,7 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
 	if err != nil {
 		return nil, false, err
 	}
-	args = append(args, q.Now)
+	args = append(args, q.Now.UTC())
 	args = append(args, subjectArgs...)
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r WHERE r.message_type='meeting_transcript' AND r.occurred_at<=? AND r.list_id IS NULL

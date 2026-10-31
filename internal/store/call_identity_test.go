@@ -53,17 +53,21 @@ func (f *logicalCallFixture) query() store.LogicalCallQuery {
 }
 
 func TestLogicalCallsEmptyKeysStaySeparate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	a, b := f.put(t, "", nil), f.put(t, "", nil)
 	calls, next, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
-	require.NoError(t, err)
-	require.Len(t, calls, 2)
-	assert.Equal(t, fmt.Sprintf("m:%d", a), calls[0].IdentityKey)
-	assert.Equal(t, fmt.Sprintf("m:%d", b), calls[1].IdentityKey)
-	assert.Empty(t, next)
+	requirements.NoError(err)
+	requirements.Len(calls, 2)
+	assertions.Equal(fmt.Sprintf("m:%d", a), calls[0].IdentityKey)
+	assertions.Equal(fmt.Sprintf("m:%d", b), calls[1].IdentityKey)
+	assertions.Empty(next)
 }
 
 func TestLogicalCallsTimestampIsEarliestObservation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	first := f.put(t, "one", nil)
 	f.put(t, "one", func(o *callhistory.Observation) {
@@ -74,67 +78,75 @@ func TestLogicalCallsTimestampIsEarliestObservation(t *testing.T) {
 	q := f.query()
 	q.After, q.Before = f.at.Add(time.Hour), f.at.Add(24*time.Hour)
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Empty(t, calls, "later evidence must not move the logical call into day two")
+	requirements.NoError(err)
+	assertions.Empty(calls, "later evidence must not move the logical call into day two")
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
-	require.NoError(t, err)
-	require.Len(t, calls, 1)
-	assert.True(t, f.at.Equal(calls[0].OccurredAt))
-	assert.Equal(t, first, calls[0].MessageID)
-	assert.Equal(t, "conflicting", calls[0].Outcome, "classification must include evidence outside the window")
-	assert.False(t, calls[0].Participants[0].Credited)
+	requirements.NoError(err)
+	requirements.Len(calls, 1)
+	assertions.True(f.at.Equal(calls[0].OccurredAt))
+	assertions.Equal(first, calls[0].MessageID)
+	assertions.Equal("conflicting", calls[0].Outcome, "classification must include evidence outside the window")
+	assertions.False(calls[0].Participants[0].Credited)
 }
 
 func TestLogicalCallsPerParticipantCredit(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	bob, err := f.st.EnsureParticipantByPhone("+12025550102", "Bob", "signal")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.put(t, "one", func(o *callhistory.Observation) {
 		o.Participants = append(o.Participants, callhistory.Participant{ID: bob, Participation: "invited"})
 	})
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
-	require.NoError(t, err)
-	require.Len(t, calls, 1)
-	assert.Equal(t, "answered", calls[0].Outcome)
-	assert.Equal(t, []store.CallParticipant{{ParticipantID: f.peer, PersonID: person.ID, Participation: "joined", Credited: true}, {ParticipantID: bob, Participation: "invited"}}, calls[0].Participants)
+	requirements.NoError(err)
+	requirements.Len(calls, 1)
+	assertions.Equal("answered", calls[0].Outcome)
+	assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, PersonID: person.ID, Participation: "joined", Credited: true}, {ParticipantID: bob, Participation: "invited"}}, calls[0].Participants)
 }
 
 func TestLogicalCallsDurationIsMax(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	f.put(t, "one", func(o *callhistory.Observation) { v := 60.; o.DurationSeconds = &v })
 	f.put(t, "one", func(o *callhistory.Observation) { v := 75.; o.DurationSeconds = &v })
 	f.put(t, "two", nil)
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
-	require.NoError(t, err)
-	require.Len(t, calls, 2)
+	requirements.NoError(err)
+	requirements.Len(calls, 2)
 	for _, c := range calls {
 		if c.DurationSeconds != nil {
-			assert.InDelta(t, 75., *c.DurationSeconds, 1e-9)
+			assertions.InDelta(75., *c.DurationSeconds, 1e-9)
 		} else {
-			assert.Equal(t, []store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, c.Participants)
+			assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, c.Participants)
 		}
 	}
-	require.NotEqual(t, calls[0].DurationSeconds == nil, calls[1].DurationSeconds == nil)
+	requirements.NotEqual(calls[0].DurationSeconds == nil, calls[1].DurationSeconds == nil)
 }
 
 func TestLogicalCallsCreditUnsavedParticipant(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	f.put(t, "one", nil)
 	q := f.query()
 	q.ParticipantIDs = []int64{f.peer}
 	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), q)
-	require.NoError(t, err)
-	require.Len(t, calls, 1)
-	assert.Equal(t, []store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, calls[0].Participants)
+	requirements.NoError(err)
+	requirements.Len(calls, 1)
+	assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, Participation: "joined", Credited: true}}, calls[0].Participants)
 	q.ParticipantIDs = []int64{f.peer + 1}
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Empty(t, calls)
+	requirements.NoError(err)
+	assertions.Empty(calls)
 }
 
 func TestLogicalCallsScopeAndLifecycle(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	first := f.put(t, "one", nil)
 	hidden := f.put(t, "one", func(o *callhistory.Observation) {
@@ -144,25 +156,27 @@ func TestLogicalCallsScopeAndLifecycle(t *testing.T) {
 	})
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.source})
 	calls, _, err := f.st.ListLogicalCallsContext(ctx, f.query())
-	require.NoError(t, err)
-	require.Len(t, calls, 1)
-	assert.Equal(t, "answered", calls[0].Outcome)
+	requirements.NoError(err)
+	requirements.Len(calls, 1)
+	assertions.Equal("answered", calls[0].Outcome)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), f.at, hidden)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	again, _, err := f.st.ListLogicalCallsContext(ctx, f.query())
-	require.NoError(t, err)
-	assert.Equal(t, calls, again)
+	requirements.NoError(err)
+	assertions.Equal(calls, again)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.at, first)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	calls, _, err = f.st.ListLogicalCallsContext(t.Context(), f.query())
-	require.NoError(t, err)
-	assert.Empty(t, calls)
+	requirements.NoError(err)
+	assertions.Empty(calls)
 	calls, _, err = f.st.ListLogicalCallsContext(sourcescope.WithSourceIDs(t.Context(), nil), f.query())
-	require.NoError(t, err)
-	assert.Empty(t, calls)
+	requirements.NoError(err)
+	assertions.Empty(calls)
 }
 
 func TestLogicalCallsPaginationAndValidation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	for range 3 {
 		f.put(t, "", nil)
@@ -172,13 +186,13 @@ func TestLogicalCallsPaginationAndValidation(t *testing.T) {
 	var keys []string
 	for range 3 {
 		calls, next, err := f.st.ListLogicalCallsContext(t.Context(), q)
-		require.NoError(t, err)
-		require.Len(t, calls, 1)
+		requirements.NoError(err)
+		requirements.Len(calls, 1)
 		keys = append(keys, calls[0].IdentityKey)
 		q.AfterKey = next
 	}
-	assert.Empty(t, q.AfterKey)
-	assert.Len(t, map[string]bool{keys[0]: true, keys[1]: true, keys[2]: true}, 3)
+	assertions.Empty(q.AfterKey)
+	assertions.Len(map[string]bool{keys[0]: true, keys[1]: true, keys[2]: true}, 3)
 	for _, change := range []func(*store.LogicalCallQuery){
 		func(q *store.LogicalCallQuery) { q.Limit = 501 }, func(q *store.LogicalCallQuery) { q.Limit = 0 },
 		func(q *store.LogicalCallQuery) { q.Before = q.After }, func(q *store.LogicalCallQuery) { q.AfterKey = "invalid" },
@@ -187,18 +201,20 @@ func TestLogicalCallsPaginationAndValidation(t *testing.T) {
 		q := f.query()
 		change(&q)
 		_, _, err := f.st.ListLogicalCallsContext(t.Context(), q)
-		assert.ErrorIs(t, err, callhistory.ErrInvalid)
+		assertions.ErrorIs(err, callhistory.ErrInvalid)
 	}
 }
 
 func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	alias, err := f.st.EnsureParticipantByPhone("+12025550102", "Alice", "signal")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = f.st.LinkParticipants(f.peer, alias)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	old := time.Date(2019, 3, 4, 12, 0, 0, 0, time.UTC)
 	monthEdge := time.Date(2026, 1, 1, 0, 30, 0, 0, time.UTC)
 	outbound := f.at.Add(4 * 24 * time.Hour)
@@ -217,27 +233,29 @@ func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {
 	f.put(t, "withdrawn", func(o *callhistory.Observation) { o.Withdrawn = true })
 	q := store.ContactQuery{Subject: store.ActivitySubject{PersonID: person.ID}, Now: f.at.Add(20 * 24 * time.Hour), Location: time.FixedZone("archive", -7*60*60)}
 	got, err := f.st.CallContactAggregateContext(t.Context(), q)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	expectedMonthly := [12]int{}
 	expectedMonthly[1] = 1
 	expectedMonthly[11] = 2
 	want := store.ContactAggregate{FirstAt: &old, LastAt: &outbound, LastInboundAt: &f.at, LastOutboundAt: &outbound,
 		Count: 4, Channels: []store.ActivityChannel{store.ChannelOther}, Monthly: expectedMonthly}
-	assert.Equal(t, want, got, "copies, aliases and partial attendance must not inflate counts")
+	assertions.Equal(want, got, "copies, aliases and partial attendance must not inflate counts")
 	q.Subject = store.ActivitySubject{ParticipantIDs: []int64{f.peer, alias}}
 	unsaved, err := f.st.CallContactAggregateContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Equal(t, got, unsaved)
+	requirements.NoError(err)
+	assertions.Equal(got, unsaved)
 	q.Filters.IncludeNoise = true
 	again, err := f.st.CallContactAggregateContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Equal(t, got, again, "header semantics do not depend on display noise toggles")
+	requirements.NoError(err)
+	assertions.Equal(got, again, "header semantics do not depend on display noise toggles")
 }
 
 func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	now := f.at
 	before := now.Add(-24 * time.Hour)
 	earliest := before.Add(-time.Hour)
@@ -269,16 +287,18 @@ func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) 
 	for _, subject := range []store.ActivitySubject{{PersonID: person.ID}, {ParticipantIDs: []int64{f.peer}}} {
 		q := store.ContactQuery{Subject: subject, Now: now, Location: time.FixedZone("archive", -7*60*60)}
 		got, err := f.st.CallContactAggregateContext(t.Context(), q)
-		require.NoError(t, err)
-		assert.Equal(t, want, got, "bound resolved identities inclusively, without hiding later evidence")
+		requirements.NoError(err)
+		assertions.Equal(want, got, "bound resolved identities inclusively, without hiding later evidence")
 		q.Now = earliest.Add(-24 * time.Hour)
 		got, err = f.st.CallContactAggregateContext(t.Context(), q)
-		require.NoError(t, err)
-		assert.Equal(t, store.ContactAggregate{}, got, "future-only identities must leave all extrema and buckets empty")
+		requirements.NoError(err)
+		assertions.Equal(store.ContactAggregate{}, got, "future-only identities must leave all extrema and buckets empty")
 	}
 }
 
 func TestCallContactAggregateScope(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newLogicalCallFixture(t)
 	f.put(t, "one", nil)
 	hidden := f.put(t, "two", func(o *callhistory.Observation) {
@@ -289,21 +309,21 @@ func TestCallContactAggregateScope(t *testing.T) {
 	q := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Now: f.at.Add(24 * time.Hour)}
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.source})
 	got, err := f.st.CallContactAggregateContext(ctx, q)
-	require.NoError(t, err)
-	assert.Equal(t, 1, got.Count)
-	assert.Nil(t, got.LastOutboundAt)
+	requirements.NoError(err)
+	assertions.Equal(1, got.Count)
+	assertions.Nil(got.LastOutboundAt)
 	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.at, hidden)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	again, err := f.st.CallContactAggregateContext(ctx, q)
-	require.NoError(t, err)
-	assert.Equal(t, got, again)
+	requirements.NoError(err)
+	assertions.Equal(got, again)
 	empty, err := f.st.CallContactAggregateContext(sourcescope.WithSourceIDs(t.Context(), nil), q)
-	require.NoError(t, err)
-	assert.Equal(t, store.ContactAggregate{}, empty)
+	requirements.NoError(err)
+	assertions.Equal(store.ContactAggregate{}, empty)
 	q.Subject = store.ActivitySubject{ParticipantIDs: []int64{f.peer + 1}}
 	empty, err = f.st.CallContactAggregateContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Equal(t, store.ContactAggregate{}, empty)
+	requirements.NoError(err)
+	assertions.Equal(store.ContactAggregate{}, empty)
 }
 
 func TestCallContactAggregateRejectsInvalidSubject(t *testing.T) {

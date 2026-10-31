@@ -44,7 +44,7 @@ type MeetingLinksResponse struct {
 func (s *Server) registerMeetingLinkRoutes(api huma.API) {
 	links := rawAPIV1Operation("getMeetingLinks", http.MethodGet, "/meetings/links", "List a note's linked calendar occurrences")
 	links.Tags = []string{"Meetings"}
-	links.Parameters = []*huma.Param{{Name: "message_id", In: "query", Required: true, Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(9007199254740991))}}}
+	links.Parameters = []*huma.Param{{Name: "message_id", In: queryParamLocation, Required: true, Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(9007199254740991))}}}
 	links.Responses = jsonResponsesFor[MeetingLinksResponse](api)
 	links.Errors = []int{400, 401, 403, 404, 500, 503}
 	addErrorResponses(api, links.Responses, links.Errors...)
@@ -53,7 +53,7 @@ func (s *Server) registerMeetingLinkRoutes(api huma.API) {
 	registerMeetingRoute[MeetingLinkDecisionRequest, MeetingLinkDecisionResponse](api, "decideMeetingLink", "/meetings/links/decisions", "Link or unlink an archived meeting", s.handleMeetingLinkDecision)
 	op := rawAPIV1Operation("suggestMeetingLinks", http.MethodGet, "/meetings/suggestions", "Suggest archived meeting links")
 	op.Tags = []string{"Meetings"}
-	op.Parameters = []*huma.Param{{Name: "ref", In: "query", Required: true, Schema: &huma.Schema{Type: "string"}}}
+	op.Parameters = []*huma.Param{{Name: "ref", In: queryParamLocation, Required: true, Schema: &huma.Schema{Type: "string"}}}
 	op.Responses = jsonResponsesFor[MeetingSuggestionsResponse](api)
 	op.Errors = []int{400, 401, 403, 404, 500, 503}
 	addErrorResponses(api, op.Responses, op.Errors...)

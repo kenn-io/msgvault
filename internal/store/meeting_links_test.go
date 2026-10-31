@@ -759,3 +759,45 @@ func TestMeetingLinksDecisionLifetime(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingLinksRetainICSRecurrenceDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, duration, key, end string
+		unsupported                     bool
+	}{
+		{"nominal day across DST", "DTSTART;TZID=America/New_York:20270313T090000", "P1D", "20270314T130000Z", "", true},
+		{"elapsed day across DST", "DTSTART;TZID=America/New_York:20270313T090000", "PT24H", "20270314T130000Z", "2027-03-15T13:00:00Z", false},
+		{"nominal day UTC", "DTSTART:20270313T090000Z", "P1D", "20270314T090000Z", "2027-03-15T09:00:00Z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			imported, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), calendarDocument("REQUEST", tc.start+"\r\nDURATION:"+tc.duration+"\r\nRRULE:FREQ=DAILY;COUNT=2"))
+			requirements.NoError(err)
+			requirements.Len(imported.MessageIDs, 1)
+			master := imported.MessageIDs[0]
+			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+			requirements.NoError(err)
+			if tc.unsupported {
+				assertions.Empty(page.Occurrences)
+				requirements.Len(page.Unexpandable, 1)
+				assertions.Contains(page.Unexpandable[0].Reason, "unsupported recurrence")
+			} else {
+				assertions.Empty(page.Unexpandable)
+				assertions.NotEmpty(page.Occurrences)
+			}
+			ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+			requirements.NoError(err)
+			defer release()
+			budget := calrecur.RequestReadBudget
+			resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: master, Key: tc.key}, &budget)
+			if tc.unsupported {
+				requirements.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
+				return
+			}
+			requirements.NoError(err)
+			assertions.Equal(tc.end, resolved.End.UTC().Format(time.RFC3339))
+		})
+	}
+}

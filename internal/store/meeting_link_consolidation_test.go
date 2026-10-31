@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,5 +205,66 @@ func TestMeetingLinksSubsetCopy(t *testing.T) {
 			assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, dst, note)[note])
 		}
 		requirements.NoError(dst.Close())
+	}
+}
+
+func TestMeetingLinksSubsetPreservesICSDecisions(t *testing.T) {
+	for _, tc := range []struct{ name, props string }{
+		{"single", "DTSTART:20270314T100000Z\r\nDURATION:PT1H"},
+		{"series", "DTSTART:20270314T100000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=WEEKLY;COUNT=2"},
+		{"orphan", "RECURRENCE-ID:20270314T100000Z\r\nDTSTART:20270314T100000Z\r\nDURATION:PT1H"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			props := tc.props
+			assertions, requirements := assert.New(t), require.New(t)
+			path := filepath.Join(t.TempDir(), "source.db")
+			st, err := OpenForTest(path)
+			requirements.NoError(err)
+			t.Cleanup(func() { requirements.NoError(st.Close()) })
+			requirements.NoError(st.InitSchemaContext(t.Context()))
+			source := icsSource(t, st)
+			imported, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", props))
+			requirements.NoError(err)
+			requirements.Len(imported.MessageIDs, 1)
+			event := imported.MessageIDs[0]
+			excluded, err := st.PersistICalendarContext(t.Context(), source, []byte(strings.ReplaceAll(string(calendarDocument("REQUEST", "DTSTART:20270314T100000Z\r\nDURATION:PT1H")), "family@example.com", "excluded@example.com")))
+			requirements.NoError(err)
+			requirements.Len(excluded.MessageIDs, 1)
+			_, linked := identityNote(t, st, "linked", "")
+			_, split := identityNote(t, st, "split", "family@example.com")
+			_, omitted := identityNote(t, st, "omitted", "")
+			target := OccurrenceRef{MessageID: event}
+			if strings.Contains(props, "RRULE:") {
+				target.Key = "20270314T100000Z"
+			}
+			requirements.NoError(st.LinkMeetingContext(t.Context(), linked, target))
+			requirements.NotEmpty(linkedMeetingRefs(t, st, split)[split])
+			requirements.NoError(st.UnlinkMeetingContext(t.Context(), split, target))
+			requirements.NoError(st.LinkMeetingContext(t.Context(), omitted, OccurrenceRef{MessageID: excluded.MessageIDs[0]}))
+			for i, id := range []int64{excluded.MessageIDs[0], event, linked, split, omitted} {
+				_, err := st.db.Exec(`UPDATE messages SET sent_at=? WHERE id=?`, time.Date(2027, 3, 1+i, 0, 0, 0, 0, time.UTC), id)
+				requirements.NoError(err)
+			}
+			for _, limit := range []int{3, 4} {
+				dir := t.TempDir()
+				_, err := CopySubset(path, dir, limit, false)
+				requirements.NoError(err)
+				dst, err := OpenForTest(filepath.Join(dir, "msgvault.db"))
+				requirements.NoError(err)
+				var decisions int
+				requirements.NoError(dst.db.QueryRow(`SELECT count(*) FROM meeting_link_decisions`).Scan(&decisions))
+				want := 0
+				if limit == 4 {
+					want = 3 // One link, the occurrence split, and its evidence split.
+				}
+				assertions.Equal(want, decisions)
+				if limit == 4 {
+					assertions.Equal(formatMeetingOccurrence(target), linkedMeetingRefs(t, dst, linked)[linked])
+					assertions.Empty(linkedMeetingRefs(t, dst, split)[split], "the saved split must suppress automatic relinking")
+				}
+				assertions.Empty(linkedMeetingRefs(t, dst, omitted)[omitted])
+				requirements.NoError(dst.Close())
+			}
+		})
 	}
 }

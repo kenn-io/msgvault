@@ -14,6 +14,8 @@ import (
 func TestProjectorNativeCallObservation(t *testing.T) {
 	for _, mode := range []string{"incremental", "backstop", "exact"} {
 		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			st := storetest.New(t).Store
 			observation := callhistory.Observation{
 				RecordID: "native-call", Version: 1, Provider: "signal", Account: "example",
@@ -23,18 +25,18 @@ func TestProjectorNativeCallObservation(t *testing.T) {
 				Raw:        []byte(`{"status":"Accepted"}`),
 			}
 			source, err := st.GetOrCreateSource(callhistory.SourceType, observation.SourceIdentifier())
-			require.NoError(t, err)
+			requirements.NoError(err)
 			peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
-			require.NoError(t, err)
+			requirements.NoError(err)
 			person, _, err := st.CreatePersonFromParticipant(peer)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			observation.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
 			projector, err := NewProjector(st, Options{Timezone: "UTC", BatchSize: 1})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = projector.RunBackstop(t.Context())
-			require.NoError(t, err)
+			requirements.NoError(err)
 			messageID, err := st.PutCallObservationContext(t.Context(), source.ID, observation)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			switch mode {
 			case "incremental":
 				_, err = projector.RunOnce(t.Context())
@@ -43,28 +45,28 @@ func TestProjectorNativeCallObservation(t *testing.T) {
 			case "exact":
 				_, err = projector.ProjectMessages(t.Context(), []int64{messageID})
 			}
-			require.NoError(t, err)
+			requirements.NoError(err)
 			var channel, direction string
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT channel, direction FROM activity_events WHERE message_id = ?`), messageID).Scan(&channel, &direction))
-			assert.Equal(t, string(store.ChannelOther), channel)
-			assert.Equal(t, string(store.DirectionObserved), direction)
+			assertions.Equal(string(store.ChannelOther), channel)
+			assertions.Equal(string(store.DirectionObserved), direction)
 			var links int
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COUNT(*) FROM activity_event_persons WHERE message_id = ?`), messageID).Scan(&links))
-			assert.Zero(t, links)
+			assertions.Zero(links)
 			state, err := st.ContactStateContext(t.Context(), person.ID, observation.OccurredAt.Add(time.Hour))
-			require.NoError(t, err)
-			assert.Zero(t, state.InteractionCount)
-			assert.Empty(t, state.LastContactRef)
+			requirements.NoError(err)
+			assertions.Zero(state.InteractionCount)
+			assertions.Empty(state.LastContactRef)
 			calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-			require.NoError(t, err)
-			require.Len(t, calls, 1)
-			assert.Equal(t, messageID, calls[0].MessageID)
+			requirements.NoError(err)
+			requirements.Len(calls, 1)
+			assertions.Equal(messageID, calls[0].MessageID)
 			if mode != "exact" {
 				queue, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
-				require.NoError(t, err)
-				assert.Empty(t, queue)
+				requirements.NoError(err)
+				assertions.Empty(queue)
 			}
 		})
 	}

@@ -1110,6 +1110,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	if observation := schemas["CallObservationView"]; observation != nil {
+		if duration := observation.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(observation, "duration_seconds")
+	}
 	for schemaName, property := range map[string]string{
 		"MeetingPerson": emailProperty,
 		"Source":        "account_email",
@@ -1504,6 +1510,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// Empty-schema map values otherwise generate struct{} and reject those values.
 	if open := schemas["TimelineOpen"]; open != nil && open.Properties["args"] != nil {
 		if values, ok := open.Properties["args"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
+	}
+	// Budget omissions contain integer counts or the string sentinel "more".
+	if omitted := schemas["TimelineOmitted"]; omitted != nil && omitted.Properties["budget"] != nil {
+		if values, ok := omitted.Properties["budget"].AdditionalProperties.(*huma.Schema); ok {
 			setCodegenGoType(values, "any")
 		}
 	}
