@@ -68,6 +68,32 @@ describe('DeletionsWorkspace', () => {
     expect(seen).toEqual([{ method: 'GET', path: '/api/v1/deletions' }]);
   });
 
+  it('shows a detail error in the panel and retries to show the account and counts', async () => {
+    let reads = 0;
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.endsWith('/deletions')) return Response.json({ manifests: [batch('b1', 'failed', 2)] });
+      if (request.url.endsWith('/deletions/b1')) return ++reads === 1
+        ? Response.json({}, { status: 503 })
+        : Response.json(detail('b1', 'failed', { execution: { succeeded: 1, failed: 1, failed_ids: ['message-a'] } }));
+      throw new Error(`Unexpected request: ${request.url}`);
+    });
+    const controller = new DeletionsController(client);
+    const view = render(DeletionsWorkspace, { client, controller });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
+      const panel = screen.getByRole('dialog', { name: /^Staged / });
+      const alert = await within(panel).findByRole('alert');
+      expect(within(alert).getByText("Can't load batch details.")).toBeDefined();
+      await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+      expect(await within(panel).findByText('archive@example.com')).toBeDefined();
+      expect(within(panel).getByText('1 deleted · 1 failed')).toBeDefined();
+      expect(within(panel).getByText('message-a')).toBeDefined();
+      expect(within(panel).queryByRole('alert')).toBeNull();
+      expect(reads).toBe(2);
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it.each(['success', 'failure', 'empty'])('shows the account in an opened batch panel: %s', async result => {
     const seen: Seen[] = [];
     const client = createAPIClient(async input => {
