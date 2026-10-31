@@ -48,7 +48,7 @@ func TestICalendarBulkCancellationPreservesTypedProjections(t *testing.T) {
 			assertions.Equal(want, row.Event, "%s: event %d", phase, i)
 		}
 		from := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 		requirements.NoError(err, phase)
 		assertions.Empty(page.Unexpandable, phase)
 		var listed []int64
@@ -100,7 +100,7 @@ func TestEmailCalendarRevivalAfterVerificationBudgetExhaustion(t *testing.T) {
 		requirements.Len(rows, 1, phase)
 		assertions.Equal(before[0].Event, rows[0].Event, phase)
 		from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 		requirements.NoError(err, phase)
 		assertions.Empty(page.Unexpandable, phase)
 		var revived []CalendarOccurrence

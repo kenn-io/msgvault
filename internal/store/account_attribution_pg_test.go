@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -95,6 +96,64 @@ func scopedSync(t *testing.T, st *store.Store, sourceID int64) *store.Store {
 	runID, err := st.StartSync(sourceID, "full")
 	require.NoError(t, err)
 	return st.ScopedToSync(sourceID, runID)
+}
+
+func TestCalendarResourceTransactionLocksParticipantDirectoryBeforeCallbackPG(t *testing.T) {
+	require := require.New(t)
+	st := requirePostgreSQLStore(t)
+	f := newAttrFixtureOn(t, st, "caldav", "calendar-resource-lock@example.test")
+	const participantEmail = "resource-owner@example.test"
+	f.participant(participantEmail)
+
+	callbackStarted := make(chan struct{})
+	continueResource := make(chan struct{})
+	var continueOnce sync.Once
+	continueCallback := func() { continueOnce.Do(func() { close(continueResource) }) }
+	t.Cleanup(continueCallback)
+	resourceDone := make(chan error, 1)
+	go func() {
+		resourceDone <- st.WithCalendarResourceTransactionContext(t.Context(), func(ctx context.Context) error {
+			_, err := st.PersistMessageWithParticipantsContext(
+				ctx,
+				[]store.ParticipantPersistData{{EmailAddress: participantEmail, Domain: "example.test"}},
+				func(ids []int64) *store.MessagePersistData {
+					return &store.MessagePersistData{Message: &store.Message{
+						SourceID: f.source.ID, ConversationID: f.conv,
+						SourceMessageID: "calendar-resource-lock", MessageType: "calendar_event",
+						SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+					}}
+				},
+			)
+			if err != nil {
+				return err
+			}
+			close(callbackStarted)
+			<-continueResource
+			return nil
+		})
+	}()
+	select {
+	case <-callbackStarted:
+	case err := <-resourceDone:
+		require.NoError(err)
+		require.FailNow("resource callback returned before participant lock barrier")
+	case <-time.After(pgWaitBudget):
+		require.FailNow("resource callback did not reach participant lock barrier")
+	}
+
+	batchDone := make(chan error, 1)
+	go func() {
+		_, err := st.EnsureParticipantsBatch([]mime.Address{{
+			Email: participantEmail, Name: "Resource Owner", Domain: "example.test",
+		}})
+		batchDone <- err
+	}()
+	waitForLockWait(t, st, "pg_advisory_xact_lock",
+		"participant batch must wait on the resource transaction's directory lock")
+
+	continueCallback()
+	require.NoError(waitResult(t, resourceDone, "calendar resource transaction"))
+	require.NoError(waitResult(t, batchDone, "participant batch"))
 }
 
 func TestAccountAttributionConcurrentSourceSyncsPG(t *testing.T) {

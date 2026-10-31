@@ -46,7 +46,7 @@ func TestICalendarCancellationArrivalOrdersKeepDetails(t *testing.T) {
 			assertions.Equal(int64(2), meta.Sequence)
 			assertions.Equal("2027-03-01T13:00:00Z", meta.Stamp.Format(time.RFC3339))
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			assertions.Len(page.Occurrences, 1)
 		})
@@ -81,7 +81,7 @@ func TestICalendarSnapshotRevivesUnchangedException(t *testing.T) {
 	_, err = st.PersistICalendarContext(t.Context(), source, []byte(snapshot))
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 	requirements.NoError(err)
 	assertions.Len(page.Occurrences, 3)
 }
@@ -105,7 +105,7 @@ func TestICalendarArchiveOnlyCancelledMasterDoesNotSuppressException(t *testing.
 	assertions.True(candidates[0].Eligible)
 
 	from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal("confirmed", page.Occurrences[0].Status)
@@ -123,7 +123,7 @@ func TestICalendarSparseSeriesCancellationTombstoneCancelsMasterlessException(t 
 	requirements.Len(exception.MessageIDs, 1)
 
 	from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal("cancelled", page.Occurrences[0].Status)
@@ -154,7 +154,7 @@ func TestICalendarRecoveredMasterSupersedesExceptionByActiveRevision(t *testing.
 	assertions.True(meta.Superseded)
 
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 2)
 	assertions.Equal([]time.Time{
@@ -182,7 +182,7 @@ func TestICalendarStartOnlyCancellationRecoversOlderRecurrence(t *testing.T) {
 	assertions.Equal("cancelled", row.Event.Status)
 	assertions.Len(row.Event.Recurrence, 1)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 2)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 2)
 	assertions.Equal([]string{"cancelled", "cancelled"}, []string{page.Occurrences[0].Status, page.Occurrences[1].Status})

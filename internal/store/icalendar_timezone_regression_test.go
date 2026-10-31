@@ -34,7 +34,7 @@ func TestICalendarUnsupportedZonedRecurrenceKeepsSibling(t *testing.T) {
 				assertions.Contains(string(stored), "RRULE:"+rule)
 				assertions.NotContains(string(stored), "UID:sibling@example.com")
 				from := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 				requirements.NoError(err, phase)
 				requirements.Len(page.Unexpandable, 1, phase)
 				assertions.Equal(summary.MessageIDs[0], page.Unexpandable[0].MessageID, phase)

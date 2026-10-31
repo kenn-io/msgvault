@@ -55,7 +55,7 @@ func TestCalendarSeenCancellationRebuild(t *testing.T) {
 			check := func(st *store.Store) {
 				t.Helper()
 				from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 				requirements.NoError(err)
 				requirements.Len(page.Occurrences, 1)
 				got := page.Occurrences[0]

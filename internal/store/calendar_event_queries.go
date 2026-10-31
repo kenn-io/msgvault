@@ -26,11 +26,13 @@ type CalendarEventRow struct {
 	ProviderObservationOrder  int64
 	ProviderUpdatedAtUnixNano sql.NullInt64
 	ProviderSequence          sql.NullInt64
+	SourceType                string
 	Subject                   string
 	ICalUID                   string
 	rawFormat                 string
 	evidenceError             string
 	DeletedFromSource         bool
+	OverrideRemoved           bool
 	Event                     calevent.Event
 }
 
@@ -43,14 +45,14 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''), e.provider_observation_order, %s, %s, %s,
+var calendarEventSelect = `SELECT e.message_id, m.source_id, s.source_type, COALESCE(m.subject, ''), e.provider_observation_order, %s, %s, %s,
 	m.deleted_from_source_at IS NOT NULL, COALESCE(r.raw_format,''), COALESCE(CAST(m.metadata AS TEXT),''),
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.start_wall
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.start_wall, e.recurrence_duration_days
  ` + calendarEventFrom
 
-var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
+var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN sources s ON s.id = m.source_id
  LEFT JOIN message_raw r ON r.message_id = m.id
  WHERE m.deleted_at IS NULL
  AND ` + calendarEventVisibility("e", "m") + `
@@ -147,11 +149,11 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 		var originalDate, recurrence, startWall, messageMetadata string
 		var providerUpdatedAtUnixNano, providerSequence sql.NullInt64
 		var uid sql.NullString
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.ProviderObservationOrder,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.SourceType, &row.Subject, &row.ProviderObservationOrder,
 			&providerUpdatedAtUnixNano, &providerSequence, &uid, &row.DeletedFromSource, &row.rawFormat,
 			&messageMetadata,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &startWall)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &startWall, &e.RecurrenceDurationDays)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
@@ -159,6 +161,14 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 		row.ProviderUpdatedAtUnixNano = providerUpdatedAtUnixNano
 		row.ProviderSequence = providerSequence
 		row.ICalUID = uid.String
+		if row.SourceType == calevent.CalDAVSourceType && messageMetadata != "" {
+			var calDAVMetadata calevent.CalDAVMetadata
+			if err := json.Unmarshal([]byte(messageMetadata), &calDAVMetadata); err != nil {
+				_ = result.Close()
+				return nil, fmt.Errorf("decode CalDAV event metadata %d: %w", row.MessageID, err)
+			}
+			row.OverrideRemoved = calDAVMetadata.OverrideRemoved
+		}
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}
 		} else if original.Valid {
@@ -586,11 +596,8 @@ type calendarCancellationEvidence struct {
 
 func readCalendarCancellationEvidence(ctx context.Context, r calendarRowQueryer, messageID int64) (*calendarCancellationEvidence, error) {
 	raw, format, err := readCalendarRaw(ctx, r, messageID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return &calendarCancellationEvidence{sparse: true}, nil
-	}
 	if err != nil {
-		if errors.Is(err, errMeetingRawTooLarge) {
+		if errors.Is(err, errMeetingRawTooLarge) || errors.Is(err, ErrInvalidMessageRaw) {
 			return &calendarCancellationEvidence{diagnostic: fmt.Sprintf("decode cancellation evidence: %s", err)}, nil
 		}
 		return nil, err

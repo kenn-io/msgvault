@@ -3,11 +3,13 @@ package carddav
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"time"
 )
 
@@ -24,6 +26,7 @@ var (
 
 const (
 	davNamespace     = "DAV:"
+	calDAVNamespace  = "urn:ietf:params:xml:ns:caldav"
 	cardDAVNamespace = "urn:ietf:params:xml:ns:carddav"
 )
 
@@ -88,6 +91,9 @@ type Response struct {
 type Budget struct {
 	remaining int64
 }
+
+// NewBudget creates a byte budget shared across a DAV operation.
+func NewBudget(bytes int64) *Budget { return &Budget{remaining: bytes} }
 
 // Consume charges bytes to the budget, and returns ErrOperationLimit when the
 // budget is spent.
@@ -155,20 +161,25 @@ type PropStat struct {
 // Properties preserves the DAV/CardDAV properties needed by discovery and
 // synchronization without retaining unbounded arbitrary XML.
 type Properties struct {
-	GetETag              string
-	AddressData          string
-	SyncToken            string
-	DisplayName          string
-	CurrentUserPrincipal string
-	AddressbookHomeSet   []string
-	ResourceTypePresent  bool
-	IsCollection         bool
-	IsAddressBook        bool
-	PrivilegesPresent    bool
-	Privileges           []string
-	SupportsSync         bool
-	SupportsMultiget     bool
-	SupportedVCard       []string
+	GetETag                   string
+	AddressData               string
+	CalendarData              string
+	CalendarHomeSet           []string
+	CalendarComponentsPresent bool
+	CalendarComponents        []string
+	IsCalendar                bool
+	SyncToken                 string
+	DisplayName               string
+	CurrentUserPrincipal      string
+	AddressbookHomeSet        []string
+	ResourceTypePresent       bool
+	IsCollection              bool
+	IsAddressBook             bool
+	PrivilegesPresent         bool
+	Privileges                []string
+	SupportsSync              bool
+	SupportsMultiget          bool
+	SupportedVCard            []string
 }
 
 // PropertyName identifies a DAV XML property.
@@ -178,14 +189,82 @@ type PropertyName struct {
 }
 
 var (
-	CurrentUserPrincipalProperty  = PropertyName{Namespace: davNamespace, Local: "current-user-principal"}
-	AddressbookHomeSetProperty    = PropertyName{Namespace: cardDAVNamespace, Local: "addressbook-home-set"}
-	GetETagProperty               = PropertyName{Namespace: davNamespace, Local: "getetag"}
-	AddressDataProperty           = PropertyName{Namespace: cardDAVNamespace, Local: "address-data"}
-	DisplayNameProperty           = PropertyName{Namespace: davNamespace, Local: "displayname"}
-	SyncTokenProperty             = PropertyName{Namespace: davNamespace, Local: "sync-token"}
-	ResourceTypeProperty          = PropertyName{Namespace: davNamespace, Local: "resourcetype"}
-	SupportedReportSetProperty    = PropertyName{Namespace: davNamespace, Local: "supported-report-set"}
-	CurrentUserPrivilegesProperty = PropertyName{Namespace: davNamespace, Local: "current-user-privilege-set"}
-	SupportedAddressDataProperty  = PropertyName{Namespace: cardDAVNamespace, Local: "supported-address-data"}
+	SupportedCalendarComponentsProperty = PropertyName{Namespace: calDAVNamespace, Local: "supported-calendar-component-set"}
+	CalendarHomeSetProperty             = PropertyName{Namespace: calDAVNamespace, Local: "calendar-home-set"}
+	CalendarDataProperty                = PropertyName{Namespace: calDAVNamespace, Local: "calendar-data"}
+	CurrentUserPrincipalProperty        = PropertyName{Namespace: davNamespace, Local: "current-user-principal"}
+	AddressbookHomeSetProperty          = PropertyName{Namespace: cardDAVNamespace, Local: "addressbook-home-set"}
+	GetETagProperty                     = PropertyName{Namespace: davNamespace, Local: "getetag"}
+	AddressDataProperty                 = PropertyName{Namespace: cardDAVNamespace, Local: "address-data"}
+	DisplayNameProperty                 = PropertyName{Namespace: davNamespace, Local: "displayname"}
+	SyncTokenProperty                   = PropertyName{Namespace: davNamespace, Local: "sync-token"}
+	ResourceTypeProperty                = PropertyName{Namespace: davNamespace, Local: "resourcetype"}
+	SupportedReportSetProperty          = PropertyName{Namespace: davNamespace, Local: "supported-report-set"}
+	CurrentUserPrivilegesProperty       = PropertyName{Namespace: davNamespace, Local: "current-user-privilege-set"}
+	SupportedAddressDataProperty        = PropertyName{Namespace: cardDAVNamespace, Local: "supported-address-data"}
 )
+
+// Kind selects the collection type that discovery and member reads handle.
+type Kind struct {
+	name        string
+	wellKnown   string
+	homeSet     PropertyName
+	discovery   []PropertyName
+	isMember    func(Properties) bool
+	multiget    xml.Name
+	data        PropertyName
+	dataOf      func(Properties) string
+	query       func([]PropertyName) ([]byte, error)
+	defaultName string
+}
+
+var (
+	// AddressBookKind reads CardDAV address books.
+	AddressBookKind = Kind{
+		name:        "CardDAV",
+		wellKnown:   "carddav",
+		homeSet:     AddressbookHomeSetProperty,
+		discovery:   []PropertyName{CurrentUserPrivilegesProperty, SupportedAddressDataProperty},
+		isMember:    func(p Properties) bool { return p.IsAddressBook },
+		multiget:    xml.Name{Space: cardDAVNamespace, Local: "addressbook-multiget"},
+		data:        AddressDataProperty,
+		dataOf:      func(p Properties) string { return p.AddressData },
+		query:       AddressbookQueryBody,
+		defaultName: "Contacts",
+	}
+	// CalendarKind reads CalDAV calendars.
+	CalendarKind = Kind{
+		name:      "CalDAV",
+		wellKnown: "caldav",
+		homeSet:   CalendarHomeSetProperty,
+		discovery: []PropertyName{SupportedCalendarComponentsProperty},
+		isMember: func(p Properties) bool {
+			return p.IsCalendar && (!p.CalendarComponentsPresent || slices.Contains(p.CalendarComponents, "VEVENT"))
+		},
+		multiget:    xml.Name{Space: calDAVNamespace, Local: "calendar-multiget"},
+		data:        CalendarDataProperty,
+		dataOf:      func(p Properties) string { return p.CalendarData },
+		defaultName: "Calendar",
+	}
+)
+
+// Collection identifies one collection whose members are read.
+type Collection struct {
+	URL                            string
+	SupportsSync, SupportsMultiget bool
+}
+
+// Member is one fetched collection member with its unparsed body.
+type Member struct {
+	Href, ETag string
+	Body       []byte
+}
+
+// MemberPlan is the result of one collection read. ReplaceAll means Members
+// is the complete collection; otherwise it holds only changed members.
+type MemberPlan struct {
+	ReplaceAll    bool
+	NextSyncToken string
+	Members       []Member
+	RemovedHrefs  []string
+}

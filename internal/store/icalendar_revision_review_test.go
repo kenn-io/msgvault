@@ -95,7 +95,7 @@ func TestICalendarExceptionSupersessionUsesStamp(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(mode != "included", meta.Superseded)
 			from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			wantHour := 12

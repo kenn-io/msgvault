@@ -163,7 +163,7 @@ func TestMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	require.NoError(err)
 	require.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
@@ -180,14 +180,14 @@ func TestMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 		require.NoError(err)
 		if assert.Len(suggestions.Suggestions, 1) {
 			assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
-			assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+			assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
 			assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		}
 	}
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
 	if assert.Len(suggestions.Suggestions, 1) {
-		assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+		assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
 		assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 	}
 }
@@ -203,11 +203,11 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(raw, "RRULE:FREQ=WEEKLY;COUNT=3", "RRULE:FREQ=HOURLY", 1)), "gcal_json"))
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
-	assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), listed.Ref)
+	assertions.Equal(fmt.Sprintf("evt:%d", edit), listed.Ref)
 	assertions.Equal(edit, listed.MessageID)
 	assertions.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
 	assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
@@ -218,7 +218,7 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 		links, err := st.MeetingLinksContext(t.Context(), note)
 		require.NoError(err)
 		require.Len(links, 1)
-		assert.Equal(listed.Ref, links[0].Ref)
+		assert.Equal(formatMeetingOccurrence(ref), links[0].Ref)
 		assert.True(listed.Start.Equal(links[0].Start))
 		assert.True(listed.End.Equal(links[0].End))
 	})
@@ -228,7 +228,7 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 			require.NoError(err)
 			require.Len(suggestions.Suggestions, 1)
-			assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+			assert.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
 			assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 			assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		})
@@ -240,7 +240,7 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 			links, err := st.MeetingLinksContext(t.Context(), note)
 			require.NoError(err)
 			require.Len(links, 1)
-			assert.Equal(listed.Ref, links[0].Ref)
+			assert.Equal(formatMeetingOccurrence(ref), links[0].Ref)
 			assert.True(listed.Start.Equal(links[0].Start))
 			assert.True(listed.End.Equal(links[0].End))
 		})

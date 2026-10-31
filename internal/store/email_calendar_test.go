@@ -153,7 +153,7 @@ func TestEmailCalendarMaterialization(t *testing.T) {
 			var emails int
 			requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
 			assertions.Equal(3, emails)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), To: time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal("cancelled", page.Occurrences[0].Status)

@@ -29,7 +29,7 @@ func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","status":"cancelled"}`), "gcal_json"))
 
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), start, end)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: start, To: end})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
@@ -66,7 +66,7 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","iCalUID":"weekly@example.org","recurringEventId":"series",`+original+`,"status":"cancelled"}`)
 
 	from := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.Add(time.Hour)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(cancelled, page.Occurrences[0].MessageID)
@@ -101,11 +101,11 @@ func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"weekly","status":"cancelled"}`), "gcal_json"))
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
-	assertions.Equal(formatMeetingOccurrence(ref), listed.Ref)
+	assertions.Equal(fmt.Sprintf("evt:%d", edit), listed.Ref)
 	assertions.Equal("cancelled", listed.Status)
 	assertions.True(from.Equal(listed.Start))
 	assertions.True(from.AddDate(0, 0, 1).Equal(listed.End))
@@ -114,7 +114,7 @@ func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 		links, err := st.MeetingLinksContext(t.Context(), note)
 		requirements.NoError(err)
 		requirements.Len(links, 1)
-		assertions.Equal(listed.Ref, links[0].Ref)
+		assertions.Equal(formatMeetingOccurrence(ref), links[0].Ref)
 		assertions.True(listed.Start.Equal(links[0].Start))
 		assertions.True(listed.End.Equal(links[0].End))
 	})
@@ -133,7 +133,7 @@ func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 			links, err := st.MeetingLinksContext(t.Context(), note)
 			requirements.NoError(err)
 			requirements.Len(links, 1)
-			assertions.Equal(listed.Ref, links[0].Ref)
+			assertions.Equal(formatMeetingOccurrence(ref), links[0].Ref)
 			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
 			links, err = st.MeetingLinksContext(t.Context(), note)
 			requirements.NoError(err)
@@ -149,7 +149,7 @@ func TestMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.
 	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"daily@example.org","recurringEventId":"daily","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
@@ -168,7 +168,7 @@ func TestMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 		requirements.NoError(err)
 		if assertions.Len(suggestions.Suggestions, 1) {
-			assertions.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+			assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), suggestions.Suggestions[0].Ref)
 			assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 			assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		}

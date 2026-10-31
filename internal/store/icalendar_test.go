@@ -547,7 +547,7 @@ func TestICalendarRecurrenceErrorsFromRaw(t *testing.T) {
 			assertions.Equal(1, again.Unchanged)
 			assertions.Equal(1, again.Unexpandable)
 			from := time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 			requirements.NoError(err)
 			requirements.Len(page.Unexpandable, 1)
 			assertions.Equal(first.MessageIDs[0], page.Unexpandable[0].MessageID)
@@ -566,7 +566,7 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nRECURRENCE-ID:20270303T120000Z"))
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 2)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 2)
 	assertions.Equal("cancelled", page.Occurrences[1].Status)
@@ -585,7 +585,7 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "STATUS:CANCELLED\r\nRECURRENCE-ID:20270303T120000Z"))
 		requirements.NoError(err)
 		from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 		requirements.NoError(err)
 		requirements.Len(page.Occurrences, 1)
 		assertions.Equal("Team meeting", page.Occurrences[0].Subject)
@@ -604,7 +604,7 @@ func TestICalendarZeroDurationAtWindowStart(t *testing.T) {
 			_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"+recurrence))
 			requirements.NoError(err)
 			from := time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.Add(time.Hour)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal(from, page.Occurrences[0].Start)
@@ -644,7 +644,7 @@ func TestICalendarNominalDurationZoneRefresh(t *testing.T) {
 		unexpandable int
 	}{{"America/New_York", 1}, {"UTC", 0}} {
 		requirements.NoError(st.UpdateSourceSyncConfig(source, `{"time_zone":"`+tc.zone+`"}`))
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 10))
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 10)})
 		requirements.NoError(err)
 		assertions.Len(page.Unexpandable, tc.unexpandable)
 		result, err := st.PersistICalendarContext(t.Context(), source, raw)
@@ -722,7 +722,7 @@ func TestICalendarProjectionUpgradeAddsStartWallAndRebuilds(t *testing.T) {
 	requirements.NotNil(rows[0].Event.StartWall)
 	assertions.Equal("2027-03-14T02:30:00Z", rows[0].Event.StartWall.Format(time.RFC3339))
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 2)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 2)
 	assertions.Equal([]string{"2027-03-14T07:30:00Z", "2027-03-15T06:30:00Z"}, []string{
@@ -748,7 +748,7 @@ func TestICalendarRecurrencePreservesWallTimeAcrossDSTGap(t *testing.T) {
 	requirements.NotNil(row.Event.StartWall)
 	assertions.Equal("2027-03-14T02:30:00Z", row.Event.StartWall.Format(time.RFC3339))
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 3)
 	assertions.Equal([]string{
@@ -808,7 +808,7 @@ func TestICalendarMasterSupersedesOmittedExceptions(t *testing.T) {
 			}
 			persistInviteEmail(t, st, "reschedule", inviteEmail(reschedule))
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 			requirements.NoError(err)
 			want := 3
 			if sequence == 0 && !tc.included {
@@ -827,12 +827,12 @@ func TestICalendarMasterSupersedesOmittedExceptions(t *testing.T) {
 			_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[1])
 			requirements.NoError(err)
 			requirements.NoError(st.UpsertMessageRawWithFormat(ids[1], raw, "ics"))
-			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 			requirements.NoError(err)
 			assertions.Len(page.Occurrences, want)
 			if sequence == 0 {
 				persistInviteEmail(t, st, "revival", inviteEmail(calendarDocument("REQUEST", strings.Replace(exception, "SEQUENCE:0", "SEQUENCE:3", 1))))
-				page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+				page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 				requirements.NoError(err)
 				assertions.Len(page.Occurrences, 3)
 			}
@@ -851,7 +851,7 @@ func TestICalendarCorruptSeriesDegradesPerRow(t *testing.T) {
 	_, err = st.db.Exec(`UPDATE message_raw SET raw_data=?,compression=NULL WHERE message_id=?`, []byte("invalid retained calendar"), bad.MessageIDs[0])
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal("Readable", page.Occurrences[0].Subject)
@@ -876,7 +876,7 @@ func TestICalendarExceptionArrivalOrder(t *testing.T) {
 				require.NoError(t, err)
 			}
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 3)})
 			require.NoError(t, err)
 			assert.Len(t, page.Occurrences, 2)
 		})

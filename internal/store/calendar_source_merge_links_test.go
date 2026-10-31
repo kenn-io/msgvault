@@ -24,7 +24,7 @@ func TestMeetingLinksCalendarSourceMergeUniqueHistoricalEvent(t *testing.T) {
 	requirements.NoError(err)
 
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	assertions.Equal(want, linkedMeetingRefs(t, st, note)[note])
 	requirements.Len(page.Occurrences, 1)
@@ -58,7 +58,7 @@ func TestCalendarSyncAfterMergeIntoEmptyRemapsUIDLessLink(t *testing.T) {
 	requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE target_message_id = ?`, incoming).Scan(&staleDecisions))
 	assertions.Zero(staleDecisions)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(visible, page.Occurrences[0].MessageID)
@@ -112,7 +112,7 @@ func TestMeetingLinksUIDLessCalendarSourceMergeRemapsDecisions(t *testing.T) {
 			} else {
 				assertions.Empty(linked)
 			}
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), To: time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal(visible, page.Occurrences[0].MessageID)
@@ -162,7 +162,7 @@ func TestMeetingLinksUIDLessCalendarSourceMergeRemapsPreviouslyMergedDecisions(t
 			requirements.NoError(st.db.QueryRow(`SELECT target_message_id FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&target))
 			assertions.Equal(visible, target)
 			assertions.Equal(fmt.Sprintf("evt:%d", visible), linkedMeetingRefs(t, st, note)[note])
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), To: time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal(visible, page.Occurrences[0].MessageID)

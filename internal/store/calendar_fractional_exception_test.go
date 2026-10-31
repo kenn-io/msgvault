@@ -16,7 +16,7 @@ func TestCalendarFractionalExceptionPreservesGeneratedOccurrences(t *testing.T) 
 	_, single := calendarFixture(t, st, "unrelated", `{"id":"unrelated","start":{"dateTime":"2027-03-10T12:00:00Z"},"end":{"dateTime":"2027-03-10T13:00:00Z"}}`)
 
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	requirements.NoError(err)
 	var ids []int64
 	var starts []string

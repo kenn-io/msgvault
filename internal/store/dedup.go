@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
@@ -631,8 +632,9 @@ func (s *Store) GetAllRawMIMECandidates(
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE ` + LiveMessagesWhere("m", true) + ` AND COALESCE(mr.raw_format, 'mime') <> 'ics'`
-	var args []any
+		WHERE ` + LiveMessagesWhere("m", true) + `
+		  AND COALESCE(mr.raw_format, 'mime') <> 'ics' AND COALESCE(mr.raw_format, 'mime') <> ?`
+	args := []any{calevent.CalDAVRawFormat}
 	if len(sourceIDs) > 0 {
 		placeholders := make([]string, len(sourceIDs))
 		for i, id := range sourceIDs {

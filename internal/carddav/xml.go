@@ -16,6 +16,10 @@ import (
 // ParseMultiStatus parses a bounded DAV multistatus document. Directives are
 // forbidden so entities and external subsets cannot alter parser behavior.
 func ParseMultiStatus(body []byte, limits XMLLimits) (MultiStatus, error) {
+	return AddressBookKind.parseMultiStatus(body, limits)
+}
+
+func (kind Kind) parseMultiStatus(body []byte, limits XMLLimits) (MultiStatus, error) {
 	defaults := DefaultXMLLimits()
 	if limits.MaxBytes <= 0 {
 		limits.MaxBytes = defaults.MaxBytes
@@ -48,7 +52,7 @@ func ParseMultiStatus(body []byte, limits XMLLimits) (MultiStatus, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return MultiStatus{}, fmt.Errorf("parsing CardDAV XML: %w", err)
+			return MultiStatus{}, fmt.Errorf("parsing %s XML: %w", kind.name, err)
 		}
 		switch typed := token.(type) {
 		case xml.Directive:
@@ -79,7 +83,7 @@ func ParseMultiStatus(body []byte, limits XMLLimits) (MultiStatus, error) {
 	}
 	var raw rawMultiStatus
 	if err := xml.Unmarshal(body, &raw); err != nil {
-		return MultiStatus{}, fmt.Errorf("unmarshaling CardDAV XML: %w", err)
+		return MultiStatus{}, fmt.Errorf("unmarshaling %s XML: %w", kind.name, err)
 	}
 	if raw.XMLName.Space != davNamespace || raw.XMLName.Local != "multistatus" {
 		return MultiStatus{}, fmt.Errorf("multistatus root: %w", ErrUnsafeXML)
@@ -109,9 +113,21 @@ func ParseMultiStatus(body []byte, limits XMLLimits) (MultiStatus, error) {
 				CurrentUserPrincipal: strings.TrimSpace(propStat.Prop.CurrentUserPrincipal.Href),
 				AddressbookHomeSet:   trimmedNonempty(propStat.Prop.AddressbookHomeSet.Hrefs),
 			}
+			if components := propStat.Prop.CalendarComponents; components != nil {
+				properties.CalendarComponentsPresent = true
+				for _, comp := range components.Components {
+					properties.CalendarComponents = append(properties.CalendarComponents, comp.Name)
+				}
+			}
+			properties.CalendarHomeSet = trimmedNonempty(propStat.Prop.CalendarHomeSet.Hrefs)
+			properties.CalendarData, err = decodeXMLText(propStat.Prop.CalendarData.InnerXML)
+			if err != nil {
+				return MultiStatus{}, fmt.Errorf("decode calendar-data: %w", err)
+			}
 			if propStat.Prop.ResourceType != nil {
 				properties.ResourceTypePresent = true
 				properties.IsCollection = propStat.Prop.ResourceType.Collection != nil
+				properties.IsCalendar = propStat.Prop.ResourceType.Calendar != nil
 				properties.IsAddressBook = propStat.Prop.ResourceType.AddressBook != nil
 			}
 			if propStat.Prop.Privileges != nil {
@@ -127,7 +143,8 @@ func ParseMultiStatus(body []byte, limits XMLLimits) (MultiStatus, error) {
 					switch supported.Report.Name {
 					case (xml.Name{Space: davNamespace, Local: "sync-collection"}):
 						properties.SupportsSync = true
-					case (xml.Name{Space: cardDAVNamespace, Local: "addressbook-multiget"}):
+					case (xml.Name{Space: calDAVNamespace, Local: "calendar-multiget"}),
+						(xml.Name{Space: cardDAVNamespace, Local: "addressbook-multiget"}):
 						properties.SupportsMultiget = true
 					}
 				}
@@ -165,35 +182,41 @@ func validateDAVElement(name xml.Name, root bool) error {
 		return ErrUnsafeXML
 	}
 	expectedNamespaces := map[string]string{
-		"multistatus":                davNamespace,
-		"response":                   davNamespace,
-		"href":                       davNamespace,
-		"status":                     davNamespace,
-		"propstat":                   davNamespace,
-		"prop":                       davNamespace,
-		"getetag":                    davNamespace,
-		"sync-token":                 davNamespace,
-		"displayname":                davNamespace,
-		"current-user-principal":     davNamespace,
-		"address-data":               cardDAVNamespace,
-		"addressbook-home-set":       cardDAVNamespace,
-		"resourcetype":               davNamespace,
-		"collection":                 davNamespace,
-		"addressbook":                cardDAVNamespace,
-		"supported-report-set":       davNamespace,
-		"supported-report":           davNamespace,
-		"report":                     davNamespace,
-		"sync-collection":            davNamespace,
-		"addressbook-multiget":       cardDAVNamespace,
-		"current-user-privilege-set": davNamespace,
-		"privilege":                  davNamespace,
-		"all":                        davNamespace,
-		"write":                      davNamespace,
-		"bind":                       davNamespace,
-		"write-content":              davNamespace,
-		"unbind":                     davNamespace,
-		"supported-address-data":     cardDAVNamespace,
-		"address-data-type":          cardDAVNamespace,
+		"multistatus":                      davNamespace,
+		"response":                         davNamespace,
+		"href":                             davNamespace,
+		"status":                           davNamespace,
+		"propstat":                         davNamespace,
+		"prop":                             davNamespace,
+		"getetag":                          davNamespace,
+		"sync-token":                       davNamespace,
+		"displayname":                      davNamespace,
+		"current-user-principal":           davNamespace,
+		"calendar-data":                    calDAVNamespace,
+		"supported-calendar-component-set": calDAVNamespace,
+		"comp":                             calDAVNamespace,
+		"calendar-home-set":                calDAVNamespace,
+		"calendar":                         calDAVNamespace,
+		"calendar-multiget":                calDAVNamespace,
+		"address-data":                     cardDAVNamespace,
+		"addressbook-home-set":             cardDAVNamespace,
+		"resourcetype":                     davNamespace,
+		"collection":                       davNamespace,
+		"addressbook":                      cardDAVNamespace,
+		"supported-report-set":             davNamespace,
+		"supported-report":                 davNamespace,
+		"report":                           davNamespace,
+		"sync-collection":                  davNamespace,
+		"addressbook-multiget":             cardDAVNamespace,
+		"current-user-privilege-set":       davNamespace,
+		"privilege":                        davNamespace,
+		"all":                              davNamespace,
+		"write":                            davNamespace,
+		"bind":                             davNamespace,
+		"write-content":                    davNamespace,
+		"unbind":                           davNamespace,
+		"supported-address-data":           cardDAVNamespace,
+		"address-data-type":                cardDAVNamespace,
 	}
 	if expected, known := expectedNamespaces[name.Local]; known && name.Space != expected {
 		return ErrUnsafeXML
@@ -218,8 +241,17 @@ type rawPropStat struct {
 	Status string        `xml:"status"`
 }
 
+type rawCalendarComponents struct {
+	Components []struct {
+		Name string `xml:"name,attr"`
+	} `xml:"urn:ietf:params:xml:ns:caldav comp"`
+}
+
 type rawProperties struct {
+	CalendarComponents   *rawCalendarComponents   `xml:"urn:ietf:params:xml:ns:caldav supported-calendar-component-set"`
 	GetETag              string                   `xml:"getetag"`
+	CalendarData         rawAddressData           `xml:"calendar-data"`
+	CalendarHomeSet      rawHrefs                 `xml:"calendar-home-set"`
 	AddressData          rawAddressData           `xml:"address-data"`
 	SyncToken            string                   `xml:"sync-token"`
 	DisplayName          string                   `xml:"displayname"`
@@ -329,6 +361,7 @@ func validXMLRune(value rune) bool {
 }
 
 type rawResourceType struct {
+	Calendar    *struct{} `xml:"calendar"`
 	Collection  *struct{} `xml:"collection"`
 	AddressBook *struct{} `xml:"addressbook"`
 }
@@ -398,7 +431,11 @@ func AddressbookQueryBody(properties []PropertyName) ([]byte, error) {
 
 // AddressbookMultigetBody builds an addressbook-multiget REPORT body.
 func AddressbookMultigetBody(properties []PropertyName, hrefs []string) ([]byte, error) {
-	return propertyBody(xml.Name{Space: cardDAVNamespace, Local: "addressbook-multiget"}, properties, func(encoder *xml.Encoder) error {
+	return multigetBody(xml.Name{Space: cardDAVNamespace, Local: "addressbook-multiget"}, properties, hrefs)
+}
+
+func multigetBody(root xml.Name, properties []PropertyName, hrefs []string) ([]byte, error) {
+	return propertyBody(root, properties, func(encoder *xml.Encoder) error {
 		for _, href := range hrefs {
 			start := xml.StartElement{Name: xml.Name{Space: davNamespace, Local: "href"}}
 			if err := encoder.EncodeToken(start); err != nil {
@@ -462,7 +499,7 @@ func encodeEmptyElement(encoder *xml.Encoder, name xml.Name) error {
 }
 
 func validatePropertyName(property PropertyName) error {
-	if property.Namespace != davNamespace && property.Namespace != cardDAVNamespace {
+	if property.Namespace != davNamespace && property.Namespace != cardDAVNamespace && property.Namespace != calDAVNamespace {
 		return ErrInvalidProperty
 	}
 	if property.Local == "" {

@@ -107,13 +107,24 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 		if row.Event.ProviderEventID != "" && (row.Event.Kind == "series" || row.Event.Kind == "single") {
 			masters[calendarSeriesKey{row.SourceID, row.Event.ProviderEventID}] = newCalendarSeries(row)
 		}
-		if row.Event.Kind == "exception" && row.Event.Original != nil {
-			key := calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}
-			if exceptions[key] == nil {
-				exceptions[key] = map[calrecur.Identity]bool{}
-			}
-			exceptions[key][*row.Event.Original] = true
+	}
+	for _, row := range rows {
+		// A removed CalDAV override restores the original occurrence. Overrides
+		// deleted with their resource remain part of its final archived snapshot.
+		if row.Event.Kind != "exception" || row.Event.Original == nil {
+			continue
 		}
+		if row.SourceType == calevent.CalDAVSourceType {
+			master := masters[calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}]
+			if row.OverrideRemoved || master != nil && row.DeletedFromSource && !master.row.DeletedFromSource {
+				continue
+			}
+		}
+		key := calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}
+		if exceptions[key] == nil {
+			exceptions[key] = map[calrecur.Identity]bool{}
+		}
+		exceptions[key][*row.Event.Original] = true
 	}
 	tombstones, err := queryICSSparseCancellationTombstones(ctx, s.db, rows)
 	if err != nil {
@@ -197,6 +208,10 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 		}
 		e := row.Event
 		if e.Kind == "series" {
+			continue
+		}
+		if row.SourceType == calevent.CalDAVSourceType && row.OverrideRemoved {
+			// A removed CalDAV override is represented by the master's generated instance.
 			continue
 		}
 		report(row.MessageID, row.evidenceError)
@@ -349,6 +364,13 @@ func (series *calendarSeries) expand(ctx context.Context, from, to time.Time, re
 
 // Resolve archived exceptions once, then suppress their original generated instances.
 func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+	// A removed CalDAV override restores the original occurrence. Overrides
+	// deleted with their resource remain part of its final archived snapshot.
+	if row.SourceType == calevent.CalDAVSourceType {
+		exceptionRows = slices.DeleteFunc(slices.Clone(exceptionRows), func(x CalendarEventRow) bool {
+			return x.OverrideRemoved || x.DeletedFromSource && !row.DeletedFromSource
+		})
+	}
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -550,14 +572,26 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 	if err != nil {
 		return set, 0, 0, err
 	}
-	days := 0
+	duration, days := e.End.Sub(*e.Start), e.RecurrenceDurationDays
 	if e.AllDay {
 		days, err = calendarAllDayDurationDays(e.StartDate, e.EndDate)
 		if err != nil {
 			return set, 0, 0, err
 		}
+	} else if days > 0 {
+		// Timed civil days are measured in the series zone; the rest is elapsed.
+		start := e.Start.In(zone)
+		end, err := calrecur.AddCivilDays(start, days)
+		if err != nil {
+			return set, 0, 0, err
+		}
+		civil := end.Sub(start)
+		if civil > duration {
+			return set, 0, 0, errors.New("calendar civil duration exceeds event bounds")
+		}
+		duration -= civil
 	}
-	return set, e.End.Sub(*e.Start), days, nil
+	return set, duration, days, nil
 }
 
 func prepareCalendarBounds(e calevent.Event) (calrecur.Set, time.Duration, int, error) {
@@ -578,6 +612,15 @@ func prepareCalendarBounds(e calevent.Event) (calrecur.Set, time.Duration, int, 
 		if err != nil {
 			return set, 0, 0, err
 		}
+	} else if e.RecurrenceDurationDays > 0 {
+		// Timed civil days are measured in the series zone; the rest is elapsed.
+		start := e.Start.In(zone)
+		end, err := calrecur.AddCivilDays(start, e.RecurrenceDurationDays)
+		if err != nil {
+			return set, 0, 0, err
+		}
+		duration := e.End.Sub(*e.Start) - end.Sub(start)
+		return set, duration, e.RecurrenceDurationDays, nil
 	}
 	return set, e.End.Sub(*e.Start), days, nil
 }
@@ -682,6 +725,9 @@ func readCalendarRaw(ctx context.Context, r calendarRowQueryer, messageID int64)
 		return nil, "", fmt.Errorf("read calendar content: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		err = fmt.Errorf("%w: %w", ErrInvalidMessageRaw, err)
+	}
 	return raw, format.String, err
 }
 

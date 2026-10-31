@@ -17,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDiscoveryCollectionComparisonNormalizesOriginAndPath(t *testing.T) {
@@ -26,7 +28,7 @@ func TestDiscoveryCollectionComparisonNormalizesOriginAndPath(t *testing.T) {
 	right, err := url.Parse("HTTPS://CONTACTS.example:443/book")
 	require.NoError(t, err)
 
-	assert.True(t, sameCollectionURL(left, right))
+	assert.True(t, SameCollectionURL(left, right))
 }
 
 func TestDAVWritePrivilegeDoesNotGrantCollectionMembershipChanges(t *testing.T) {
@@ -514,6 +516,6 @@ func TestDiscoverRejectsCrossOriginDiscoveryResponseHrefWithoutFallback(t *testi
 func writeMultiStatus(t *testing.T, w http.ResponseWriter, responses string) {
 	t.Helper()
 	w.WriteHeader(http.StatusMultiStatus)
-	_, err := fmt.Fprintf(w, `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">%s</D:multistatus>`, strings.TrimSpace(responses))
+	_, err := fmt.Fprint(w, testutil.DAVMultiStatus(strings.TrimSpace(responses), cardDAVNamespace))
 	require.NoError(t, err)
 }

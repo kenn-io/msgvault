@@ -21,7 +21,7 @@ func TestListCalendarOccurrencesICSEvidenceReadFailure(t *testing.T) {
 	_, err = st.db.Exec(`ALTER TABLE sources RENAME COLUMN sync_config TO unavailable_sync_config`)
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.ErrorContains(err, "read ICS recurrence evidence")
 	assert.Empty(t, page.Unexpandable)
 }
@@ -53,7 +53,7 @@ func TestICalendarDamagedExceptionMetadataKeepsTypedState(t *testing.T) {
 					}
 					assertions.Equal(before, calendarRows(t, st, id)[0].Event)
 					from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 					requirements.NoError(err)
 					if assertions.Len(page.Occurrences, 1) {
 						assertions.Equal(id, page.Occurrences[0].MessageID)
@@ -89,7 +89,7 @@ func TestListCalendarOccurrencesMalformedICSMetadata(t *testing.T) {
 		return st.refreshCalendarEventProjectionWith(t.Context(), tx, bad.MessageIDs[0])
 	}))
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 2)
 	assertions.Equal(bad.MessageIDs[0], page.Occurrences[0].MessageID)
@@ -120,7 +120,7 @@ func TestListCalendarOccurrencesICSVerificationRequestBudget(t *testing.T) {
 				requirements.Len(summary.MessageIDs, 1)
 			}
 			from := time.Date(tc.year, 1, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			if tc.wantError {
 				assertions.ErrorIs(err, ErrQueryTooBroad)
 				return

@@ -40,7 +40,7 @@ func TestMeetingLinksSuccessiveExceptionTimestampForms(t *testing.T) {
 			}
 			requirements.NotEqual(aliases[0], aliases[1], "successive imports retain both archive keys")
 			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			listed := page.Occurrences[0]

@@ -15,7 +15,7 @@ const GoogleDiscoveryURL = "https://www.googleapis.com/.well-known/carddav"
 // NewGoogleService uses Google's discovery entry point with the shared sync
 // engine. Google can redirect directly to its single contacts collection.
 func NewGoogleService(st *store.Store, client *Client) *Service {
-	return NewRemoteService(st, &davRemote{client: client, google: true})
+	return NewRemoteService(st, &davRemote{client: client, google: true, kind: AddressBookKind})
 }
 
 func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discovery, error) {
@@ -41,7 +41,7 @@ func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discov
 		}
 		properties := mergeSuccessfulProperties(entry.PropStats)
 		if len(properties.CurrentUserPrincipal) != 0 {
-			discovery, err := discoverWithBudget(ctx, client, baseURL, budget)
+			discovery, err := discoverWithBudget(ctx, client, AddressBookKind, baseURL, budget)
 			if err != nil {
 				return Discovery{}, err
 			}
@@ -70,7 +70,7 @@ func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discov
 		if err != nil {
 			return Discovery{}, err
 		}
-		if !sameCollectionURL(book, target) {
+		if !SameCollectionURL(book, target) {
 			continue
 		}
 		name := properties.DisplayName

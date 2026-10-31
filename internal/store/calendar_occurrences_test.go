@@ -14,6 +14,23 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestCalendarOccurrenceOverlapsZeroDuration(t *testing.T) {
+	start := time.Date(2027, 3, 14, 13, 0, 0, 0, time.UTC)
+	o := CalendarOccurrence{Start: start, End: start}
+	for _, tc := range []struct {
+		name     string
+		from, to time.Time
+		want     bool
+	}{
+		{"at start", start, start.Add(time.Second), true},
+		{"at end", start.Add(-time.Second), start, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, calendarOccurrenceOverlaps(o, tc.from, tc.to))
+		})
+	}
+}
+
 func TestListCalendarOccurrences(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -63,7 +80,7 @@ func TestCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
 	requirements.Equal(first, updatedFirst)
 
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(first, page.Occurrences[0].MessageID)
@@ -83,11 +100,11 @@ func TestCalendarOccurrenceWindowIgnoresStaleAliasWhenLatestMovedOut(t *testing.
 	_, latest := calendarFixture(t, st, "instance", alias("2027-03-03T00:00:00Z", "2027-04-02T10:00:00Z", "2027-04-02T11:00:00Z"))
 
 	from := time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Empty(page.Occurrences)
 	latestWindow := time.Date(2027, 4, 2, 0, 0, 0, 0, time.UTC)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), latestWindow, latestWindow.AddDate(0, 0, 1))
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: latestWindow, To: latestWindow.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(latest, page.Occurrences[0].MessageID)
@@ -105,7 +122,7 @@ func TestCalendarUnsupportedRecurrenceShowsOnlyLatestExceptionAlias(t *testing.T
 	_, _ = calendarFixture(t, st, "weekly|2027-03-14T10:00:00Z", alias("2027-03-02T00:00:00Z", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z"))
 
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(latest, page.Occurrences[0].MessageID)
@@ -142,7 +159,7 @@ func TestListCalendarOccurrencesUsesFreshestExceptionAliasAfterMaintenance(t *te
 	assertions.Equal(orderB, orderBAfter, "message maintenance must not change provider observation order")
 
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC)})
 	requirements.NoError(err)
 	assertions.Empty(page.Unexpandable)
 	requirements.Len(page.Occurrences, 3)

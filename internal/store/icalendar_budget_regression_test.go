@@ -42,7 +42,7 @@ func TestEmailCalendarRejectsSharedVerificationWork(t *testing.T) {
 			}
 			from := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 			for _, phase := range []string{"after ingestion", "after unchanged replay"} {
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 				requirements.NoError(err, phase)
 				assertions.Empty(page.Unexpandable, phase)
 				var listed []int64
@@ -96,7 +96,7 @@ func TestEmailCalendarRecurrenceEndsShareIngestionBudget(t *testing.T) {
 				assertions.Equal(i < tc.knownEnds, end.Valid, "event %d", i)
 			}
 			from := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			assertions.Empty(page.Unexpandable)
 			assertions.Len(page.Occurrences, 12, "unknown recurrence ends must remain available for listing")

@@ -181,7 +181,8 @@ func CivilDateBoundary(date string, loc *time.Location) (time.Time, bool, error)
 	return boundary.In(loc), exists, nil
 }
 
-func addCivilDays(date string, days int) (string, error) {
+// AddCivilDateDays shifts a civil date by calendar days.
+func AddCivilDateDays(date string, days int) (string, error) {
 	civil, err := time.Parse(dateLayout, date)
 	if err != nil {
 		return "", fmt.Errorf("parse civil date for arithmetic: %w", err)
@@ -474,7 +475,25 @@ func ParseSetWithCivilStart(dtstart, civilStart time.Time, allDay bool, startDat
 	if _, err := s.start(); err != nil {
 		return Set{}, unsupported("DTSTART", err)
 	}
+	// A declared local DTSTART preserves the civil clock when its instant falls
+	// in a gap. The archive stores this alongside the recurrence properties.
 	for _, line := range lines {
+		if value, ok := strings.CutPrefix(line, "DTSTART:"); ok {
+			anchor, err := time.Parse("20060102T150405", value)
+			if err != nil || allDay || !s.CivilStart.IsZero() {
+				return Set{}, unsupported(line, errors.New("invalid declared DTSTART"))
+			}
+			instant, err := resolveLocalWallTime(anchor, s.location())
+			if err != nil || !instant.Equal(dtstart) {
+				return Set{}, unsupported(line, errors.New("declared DTSTART differs from event start"))
+			}
+			s.CivilStart = anchor
+		}
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "DTSTART:") {
+			continue
+		}
 		if strings.HasPrefix(line, "RRULE:") {
 			opt, err := s.parseRule(line)
 			if err != nil {
@@ -583,6 +602,18 @@ func ParseLocalDateTime(layout, value string, loc *time.Location) (time.Time, er
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse local recurrence time: %w", err)
 	}
+	return resolveLocalWallTime(anchor, loc)
+}
+
+// AddCivilDays keeps the local clock, resolving gaps and folds like explicit dates.
+func AddCivilDays(start time.Time, days int) (time.Time, error) {
+	if days == 0 {
+		return start, nil
+	}
+	return resolveLocalWallTime(civilTime(start).AddDate(0, 0, days), start.Location())
+}
+
+func resolveLocalWallTime(anchor time.Time, loc *time.Location) (time.Time, error) {
 	if instant, exists := firstLocalWallTime(anchor, loc); exists {
 		return instant, nil
 	}

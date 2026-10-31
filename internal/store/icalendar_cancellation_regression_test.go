@@ -30,7 +30,7 @@ func TestICalendarDamagedSparseCancellationKeepsReadableOccurrences(t *testing.T
 				requirements.NoError(err)
 
 				from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 				requirements.NoError(err)
 				requirements.Len(page.Occurrences, 2)
 				assertions.Equal(exception.MessageIDs[0], page.Occurrences[0].MessageID)
@@ -96,7 +96,7 @@ func TestICalendarHistoricalMasterDoesNotCancelActivity(t *testing.T) {
 			requirements.Len(candidates, 1)
 			assertions.True(candidates[0].Eligible)
 			from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal("confirmed", page.Occurrences[0].Status)
@@ -126,7 +126,7 @@ func TestICalendarSparseMasterCancellationOfDetachedException(t *testing.T) {
 					}
 				}
 				from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 				requirements.NoError(err)
 				requirements.Len(page.Occurrences, 1)
 				assertions.Equal(exceptionID, page.Occurrences[0].MessageID)
@@ -156,7 +156,7 @@ func TestICalendarRecoveredMasterSupersedesStaleException(t *testing.T) {
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal("2027-03-03T12:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))

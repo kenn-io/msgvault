@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
@@ -24,6 +25,7 @@ const (
 	sourceScheduleNonSchedulable sourceScheduleKind = iota
 	sourceScheduleAccount
 	sourceScheduleGeneric
+	sourceScheduleManualOnly
 )
 
 type sourceScheduleClassification struct {
@@ -74,6 +76,8 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 		return sourceScheduleClassification{kind: sourceScheduleAccount}
 	case meetingimport.SourceType:
 		return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+	case calevent.CalDAVSourceType:
+		return sourceScheduleClassification{kind: sourceScheduleManualOnly}
 	default:
 		jobName, ok := SchedulerJobNameForSource(sourceType, identifier)
 		if !ok {

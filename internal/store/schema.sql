@@ -4695,6 +4695,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
     recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_duration_days INTEGER NOT NULL DEFAULT 0,
     recurrence_end_at DATETIME,
     provider_observation_order BIGINT NOT NULL DEFAULT 0
 );

@@ -35,7 +35,10 @@ type Event struct {
 	Start, End                              *time.Time
 	// StartWall stores the supplied local DTSTART fields as a UTC timestamp.
 	// It preserves wall times that resolve through a daylight-saving gap.
-	StartWall                       *time.Time `json:"start_wall,omitempty"`
+	StartWall *time.Time `json:"start_wall,omitempty"`
+	// RecurrenceDurationDays is the civil-day part of a timed series' nominal
+	// duration; End minus Start minus those days is the elapsed remainder.
+	RecurrenceDurationDays          int
 	StartDate, EndDate              string
 	EventTimeZone, CalendarTimeZone string
 	Recurrence                      []string
@@ -48,6 +51,8 @@ func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event,
 	switch rawFormat {
 	case "ics":
 		return DecodeICS(context.Background(), raw, metadata, calendarZone, NewICSParseBudget())
+	case CalDAVRawFormat:
+		return decodeCalDAV(raw, metadata, calendarZone)
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
 	default:
