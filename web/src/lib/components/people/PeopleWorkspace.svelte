@@ -80,6 +80,9 @@
   const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
   const activeKey = $derived(soloPerson !== null ? `person:${soloPerson}` : page.target);
   const hasPerson = $derived(page.target !== null || soloPerson !== null);
+  $effect(() => {
+    if (narrow && hasPerson) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
+  });
   let openGeneration = 0;
   const navigationKey = $derived(JSON.stringify(urlState));
   $effect(() => { void navigationKey; untrack(() => { openGeneration += 1; opening = false; }); });
@@ -127,9 +130,11 @@
     close();
     event.preventDefault();
     event.stopPropagation();
+  }
+  function close(): void {
+    openGeneration += 1; opening = false; onNavigate({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false });
     void tick().then(() => root?.querySelector<HTMLElement>('[aria-label="People results"]')?.focus());
   }
-  function close(): void { openGeneration += 1; opening = false; onNavigate({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false }); }
   function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
   const filterSections = $derived<FilterDropdownSection[]>([{ items: [
     { id: 'saved', label: 'Saved', active: saved, closeOnSelect: false, onSelect: () => onNavigate({ relationshipSaved: !saved }) },
@@ -224,7 +229,7 @@
   <div class="heading"><PageHeader title="People">{#snippet actions()}<Button label="Directory" onclick={() => onNavigate({ workspace: 'directory' })} /><Button label="Reviews" onclick={() => onNavigate({ workspace: 'directory_review' })} />{/snippet}</PageHeader></div>
   {#if openingError}<p role="alert">{openingError}</p>{/if}
   <div class="body">
-    {#if narrow}{#if hasPerson}{@render person()}{:else}{@render list()}{/if}
+    {#if narrow}{#if hasPerson}<div class="solo-page" tabindex="-1">{@render person()}</div>{:else}{@render list()}{/if}
     {:else}<SplitPane ariaLabel="Resize people list" storageKey="msgvault.people.list-pane.size" initialSize={380} minPrimary={300} maxPrimary={480}>
       {#snippet primary()}{@render list()}{/snippet}{#snippet secondary()}{@render person()}{/snippet}
     </SplitPane>{/if}
