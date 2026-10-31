@@ -507,6 +507,17 @@ test('typing in the top bar narrows People without pressing Search', async ({ pa
 for (const close of ['Escape', 'Back to People']) {
   test(`narrow People moves focus into the person page and restores the grid with ${close}`, async ({ page }) => {
     await prepare(page);
+    await page.route('**/api/v1/conversations/70**', route => route.fulfill({ json: {
+      id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
+      messages: [{
+        id: 500, conversation_id: 70, subject: 'Team Chat', message_type: 'chat',
+        from: 'Bob Example', from_participant_id: 2, to: [], sent_at: '2026-07-18T20:00:00Z',
+        snippet: 'Latest chat message', body: 'Latest chat message', body_html: '', attachments: []
+      }]
+    } }));
+    await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
+      ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
+    } }));
     await page.setViewportSize({ width: 640, height: 900 });
     await page.goto('/?workspace=relationships');
     const list = page.getByRole('grid', { name: 'People results' });
@@ -518,6 +529,19 @@ for (const close of ['Escape', 'Back to People']) {
     await expect(list).toBeHidden();
     const back = page.getByRole('button', { name: 'Back to People', exact: true });
     await expect.configure({ soft: true }).poll(() => page.locator('.body').evaluate(element => element.contains(document.activeElement))).toBe(true);
+
+    const messages = page.getByRole('grid', { name: 'Messages results' });
+    await expect(messages.getByText('Team Chat')).toBeVisible();
+    await messages.focus();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
+    const person = reading.getByRole('button', { name: 'Bob Example', exact: true });
+    await person.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+    await expect(reading).toBeHidden();
 
     if (close === 'Escape') await page.keyboard.press('Escape');
     else await back.click();
