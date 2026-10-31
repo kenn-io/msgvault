@@ -103,7 +103,7 @@
     if (id === null || showsProfile(soloProfile, id, page.target)) return;
     const abort = new AbortController();
     const generation = ++openGeneration;
-    opening = page.target === null; openingError = '';
+    opening = true; openingError = '';
     void getPersonProfile({ id }, { ...page.client, signal: abort.signal }).then((response) => {
       if (abort.signal.aborted || generation !== openGeneration) return;
       if (!response.data) throw new Error('Saved person not found.');
@@ -230,7 +230,7 @@
 {/snippet}
 {#snippet person()}
   {#if opening}<section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
-  {:else if soloPerson !== null && (page.target === null || controller.detailMissing || (soloProfile !== null && soloProfile.id !== soloPerson))}
+  {:else if soloPerson !== null && (page.target === null || controller.detailMissing || soloProfile?.id !== soloPerson)}
     {#if soloProfile?.id === soloPerson}<div class="solo-page"><section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{#if page.target !== null}<PersonPage {...page} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} />{/if}</div>{:else if openingError}<section class="solo"><Button label="Back to People" onclick={close} /><Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} /></section>{/if}
   {:else}<PersonPage {...page} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
 {/snippet}
