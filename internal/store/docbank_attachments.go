@@ -461,7 +461,7 @@ func (s *Store) RecordDocbankAttachment(
 }
 
 // DocbankRequeueOutcomes are cleared by backfill so processing can be requested again.
-var DocbankRequeueOutcomes = []string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "invalid_receipt"}
+var DocbankRequeueOutcomes = []string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required", "invalid_receipt"}
 
 // DocbankRequeueOutcome reports whether backfill can retry a processing failure.
 func DocbankRequeueOutcome(code string) bool {
