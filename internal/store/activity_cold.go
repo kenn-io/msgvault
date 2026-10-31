@@ -20,7 +20,6 @@ type coldActivityMessage struct {
 	copyKey   string
 	copies    int
 	audience  int
-	persons   []ActivityEventPerson
 }
 
 type coldActivityGroup struct {
@@ -200,7 +199,6 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		m.candidate = c
 		m.dating = dating
 		m.channel = classified.Channel
-		m.persons = classified.Persons
 		m.Direction = classified.Direction
 		m.Meeting = IsMeetingMessageType(c.MessageType)
 		m.ContactEligible = m.Meeting || countedMessageType(c.MessageType, c.ConversationType)
@@ -223,7 +221,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		m.activityReadMessage = facts[i]
 		copies[m.copyKey]++
 		if index, found := representativeIndex[m.copyKey]; found {
-			if coldActivityCounted(m, filters) && !coldActivityCounted(representatives[index], filters) {
+			if coldActivityCounted(m, q.Subject) && !coldActivityCounted(representatives[index], q.Subject) {
 				representatives[index] = m
 			}
 			continue
@@ -253,7 +251,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		if m.channel < g.burst.Channel {
 			g.burst.Channel = m.channel
 		}
-		counted, nonNoise := coldActivityCounted(m, filters), !m.List
+		counted, nonNoise := coldActivityCounted(m, q.Subject), !m.List || !filters.Exclusions.ExcludeListMessages
 		for _, cp := range m.Counterparts {
 			if (cp.Role == RoleSender || cp.Role == RoleOrganizer) && cp.Excluded != "" && cp.Excluded != "owner" {
 				nonNoise = false
@@ -276,34 +274,20 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	return groups, filters, nil
 }
 
-// Match activityReadCTE: default limits use the strongest projected person links;
-// explicit limits reclassify raw counterpart roles and evidence. Display
-// annotations use the shared raw-population loader in both cases.
-func coldActivityCounted(m coldActivityMessage, filters ActivityFilters) bool {
-	if m.Encrypted {
-		return false
-	}
-	persons := map[int64]ActivityEventPerson{}
-	if filters.MaxDirect == 0 {
-		for _, p := range m.persons {
-			persons[p.PersonID] = p
-		}
-	}
-	refKind := "message"
-	if m.Meeting {
-		refKind = "meeting"
-	}
+// Hydrated counterparts already apply strongest-link arbitration and live
+// counting policy. Match the spine's counted fact for the requested subject.
+func coldActivityCounted(m coldActivityMessage, subject ActivitySubject) bool {
 	for _, cp := range m.Counterparts {
-		if cp.Excluded != "" {
+		if !cp.Counted {
 			continue
 		}
-		role, evidence := cp.Role, cp.Evidence
-		if person, found := persons[cp.PersonID]; found {
-			role, evidence = person.Role, person.Evidence
+		if subject.PersonID > 0 && cp.PersonID != subject.PersonID {
+			continue
 		}
-		if CountedEvent(evidence, role, m.Direction, refKind, m.List && filters.Exclusions.ExcludeListMessages, m.LargeInbound) {
-			return true
+		if len(subject.ParticipantIDs) > 0 && !slices.Contains(subject.ParticipantIDs, cp.ParticipantID) {
+			continue
 		}
+		return true
 	}
 	return false
 }
