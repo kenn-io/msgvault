@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-21"
+last_edited: "2026-10-22"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -18,6 +18,7 @@ All notable changes to msgvault, grouped by release.
   local storage. Incremental sync does not backfill old omissions by itself.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Drafts and unsent messages no longer count as contact in relationship temperature, the relationship calendar, the relationships list, person and domain timelines, or chat inbox summaries. Full cache checks at startup, after syncs, and during explicit cache builds detect sent-state changes; automatic refreshes respect the configured minimum rebuild interval. Analytics cache schema 33 triggers a one-time rebuild on upgrade without re-importing messages.
+- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`. Requires archive schema version 16 and HTTP API schema 3.29.0.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.

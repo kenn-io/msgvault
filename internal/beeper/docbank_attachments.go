@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"mime"
@@ -49,9 +50,10 @@ type AttachmentMirror struct {
 // AttachmentMirrorOptions is the part of the Docbank config the mirror needs.
 // The config package imports this one through recordingref, so it cannot be named here.
 type AttachmentMirrorOptions struct {
-	URL            string
-	Folder         string
-	AttachmentsDir string
+	URL             string
+	Folder          string
+	AttachmentsDir  string
+	DocumentProfile string
 }
 
 func NewAttachmentMirror(
@@ -95,11 +97,9 @@ func (w *AttachmentMirror) runPass(ctx context.Context, deadline time.Time) (boo
 	if err != nil {
 		return false, endMediaPass(err)
 	}
+	processMore, processErr := w.processDocuments(ctx, queueDeadline)
 	uploadMore, err := w.drain(ctx, deadline)
-	if errors.Is(err, errBeeperMediaGateBusy) {
-		return false, nil
-	}
-	return discoverMore || replayMore || uploadMore, err
+	return discoverMore || replayMore || processMore || uploadMore, errors.Join(processErr, endMediaPass(err))
 }
 
 // gated runs one Store step under the operation gate so backup freeze sees no writer.
@@ -152,13 +152,17 @@ func (w *AttachmentMirror) drain(ctx context.Context, deadline time.Time) (bool,
 
 // attachmentUploader holds one pass of uploads and its destination failure streak.
 type attachmentUploader struct {
+	attachmentRetryStreak
+
 	mirror  *AttachmentMirror
 	packed  *attachmentstore.Store
 	parent  int64
 	handled map[string]bool
-	// streak is the latest destination failure; a second one in a row ends the pass.
-	streak error
-	// reported keeps earlier destination failures visible after a later file succeeds.
+}
+
+// attachmentRetryStreak keeps failures visible and stops after two consecutive retries.
+type attachmentRetryStreak struct {
+	streak   error
 	reported error
 }
 
@@ -219,7 +223,7 @@ func (u *attachmentUploader) send(ctx context.Context, d store.DocbankAttachment
 	if uploadErr != nil && reason == "" {
 		return u.retryLater(ctx, d, uploadErr)
 	}
-	u.endStreak()
+	u.endStreak(nil)
 	ref.Endpoint, ref.Folder = strings.TrimRight(strings.TrimSpace(w.options.URL), "/"), w.options.Folder
 	return w.gated(ctx, func() error {
 		return w.store.RecordDocbankAttachment(ctx, w.destination, d, ref, reason)
@@ -233,20 +237,24 @@ func (u *attachmentUploader) retryLater(ctx context.Context, d store.DocbankAtta
 		return w.store.RecordDocbankAttachmentRetry(ctx, w.destination, d, docbankmedia.ErrorCode(uploadErr))
 	})
 	if !isDestinationFault(uploadErr) {
-		u.endStreak()
+		u.endStreak(nil)
 		return err
 	}
+	return errors.Join(err, u.retry(errors.Join(uploadErr, err)))
+}
+
+func (u *attachmentRetryStreak) retry(err error) error {
 	if u.streak != nil {
-		joined := errors.Join(u.streak, uploadErr, err)
+		joined := errors.Join(u.streak, err)
 		u.streak = nil
 		return joined
 	}
-	u.streak = errors.Join(uploadErr, err)
-	return err
+	u.streak = err
+	return nil
 }
 
-func (u *attachmentUploader) endStreak() {
-	u.reported = errors.Join(u.reported, u.streak)
+func (u *attachmentRetryStreak) endStreak(report error) {
+	u.reported = errors.Join(u.reported, u.streak, report)
 	u.streak = nil
 }
 
@@ -506,4 +514,200 @@ func (w *AttachmentMirror) replayChange(ctx context.Context, change store.Attach
 		}
 		return w.store.QueueDocbankAttachmentIntents(ctx, w.destination, attachmentUploadMetadata(d))
 	})
+}
+
+// processDocuments visits due files until every request has an outcome or a next look.
+func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.Time) (bool, error) {
+	if w.options.DocumentProfile == "" {
+		return false, nil
+	}
+	if !time.Now().Before(deadline) {
+		return true, nil
+	}
+	actionCtx, cancel := context.WithDeadline(ctx, deadline)
+	profile, err := w.client.Profile(actionCtx, w.options.DocumentProfile)
+	cancel()
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if !time.Now().Before(deadline) {
+		return true, nil
+	}
+	if err == nil && !profile.Rendition {
+		err = errors.New("profile has no rendition stage")
+	}
+	if err != nil {
+		if processingAnswer(docbankmedia.JobStatus{}, err).blocked {
+			return false, w.processingBlocked(err)
+		}
+		return false, fmt.Errorf("document_profile %q: %w", w.options.DocumentProfile, err)
+	}
+	if err := w.gated(ctx, func() error {
+		return w.store.SaveDocbankAttachmentProcessingFingerprint(ctx, w.destination, w.options.DocumentProfile, profile.Fingerprint)
+	}); err != nil {
+		return false, endMediaPass(err)
+	}
+	var failures attachmentRetryStreak
+	var cursor store.DocbankAttachmentProcessingCursor
+	for {
+		if !time.Now().Before(deadline) {
+			return true, errors.Join(failures.reported, failures.streak)
+		}
+		var files []store.DocbankAttachmentProcessing
+		err := w.gated(ctx, func() (err error) {
+			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, &cursor, 20)
+			return err
+		})
+		if err != nil {
+			return false, errors.Join(failures.reported, failures.streak, endMediaPass(err))
+		}
+		if len(files) == 0 {
+			return false, errors.Join(failures.reported, failures.streak)
+		}
+		for _, d := range files {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if !time.Now().Before(deadline) {
+				return true, errors.Join(failures.reported, failures.streak)
+			}
+			if d.JobID == "" && (d.Outcome == "" || d.Outcome == "requested") {
+				d.Fingerprint = profile.Fingerprint
+				d.Outcome = ""
+				next := time.Now().UTC().Add(store.BeeperMediaPollDelay)
+				if saveErr := w.gated(ctx, func() error {
+					return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
+				}); saveErr != nil {
+					return false, errors.Join(failures.reported, failures.streak, endMediaPass(saveErr))
+				}
+			}
+			job, jobID, err := w.askProcessing(ctx, d, deadline)
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			budgetExpired := !time.Now().Before(deadline)
+			answer := processingAnswer(job, err)
+			if d.JobID != "" && jobID == d.JobID && errors.Is(err, docbankmedia.ErrInvalidReceipt) {
+				answer = documentProcessingAnswer{delay: store.BeeperMediaRetryDelay, retry: true}
+			}
+			if answer.blocked {
+				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
+			}
+			if !answer.retry {
+				d.Outcome = answer.outcome
+			}
+			d.Fingerprint = profile.Fingerprint
+			d.JobID = jobID
+			var next time.Time
+			if answer.delay != 0 {
+				next = time.Now().UTC().Add(answer.delay)
+			}
+			if saveErr := w.gated(ctx, func() error {
+				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
+			}); saveErr != nil {
+				return false, errors.Join(failures.reported, failures.streak, err, endMediaPass(saveErr))
+			}
+			if answer.retry && isDestinationFault(err) && !budgetExpired {
+				if stopErr := failures.retry(err); stopErr != nil {
+					return false, errors.Join(failures.reported, stopErr)
+				}
+			} else {
+				failures.endStreak(answer.report)
+			}
+			if budgetExpired {
+				return true, failures.reported
+			}
+		}
+	}
+}
+
+// askProcessing polls a saved job, or plans and starts one when there is none
+// or Docbank lost it, as restoring an older backup does.
+func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing, deadline time.Time) (docbankmedia.JobStatus, string, error) {
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	if d.JobID != "" {
+		job, err := w.client.JobStatus(ctx, d.JobID)
+		restart := err == nil && d.Outcome == store.DocbankProcessingRetryRequested &&
+			job.State == "failed" && store.DocbankRequeueOutcome(job.FailureCode)
+		if !docbankmedia.IsNotFound(err) && !restart {
+			return job, d.JobID, err
+		}
+	}
+	return w.startProcessing(ctx, d)
+}
+
+// startProcessing plans the file's processing and starts a job.
+func (w *AttachmentMirror) startProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
+	selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
+	plan, err := w.client.PlanProcessing(ctx, selector)
+	if err != nil || plan.RenditionIneligibleReason != "" {
+		return docbankmedia.JobStatus{State: "failed", FailureCode: plan.RenditionIneligibleReason}, "", err
+	}
+	jobID, err := w.client.StartProcessing(ctx, selector, plan.Fingerprint)
+	return docbankmedia.JobStatus{State: "queued"}, jobID, err
+}
+
+func (w *AttachmentMirror) processingBlocked(err error) error {
+	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && httpErr.Reason != "" {
+		err = fmt.Errorf("%s: %w", httpErr.Reason, err)
+	}
+	return fmt.Errorf("document_profile %q: %w", w.options.DocumentProfile, err)
+}
+
+type documentProcessingAnswer struct {
+	outcome string
+	delay   time.Duration
+	report  error
+	retry   bool
+	blocked bool
+}
+
+// processingAnswer is the single classification of Docbank answers into saved steps.
+func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingAnswer {
+	if err == nil {
+		return processingJobAnswer(job)
+	}
+	httpErr, isHTTP := errors.AsType[*docbankmedia.HTTPError](err)
+	if errors.Is(err, docbankmedia.ErrCredentialUnavailable) || isHTTP && (httpErr.Status == http.StatusUnauthorized || httpErr.Status == http.StatusForbidden ||
+		strings.HasPrefix(httpErr.Reason, "processing_consent_") || strings.HasPrefix(httpErr.Reason, "processing_profile_")) {
+		return documentProcessingAnswer{blocked: true}
+	}
+	if errors.Is(err, docbankmedia.ErrInvalidReceipt) {
+		return documentProcessingAnswer{outcome: docbankmedia.ErrorCode(err)}
+	}
+	if docbankmedia.Retryable(err) || isHTTP && httpErr.Status == http.StatusConflict && httpErr.Reason == "processing_plan_changed" {
+		return documentProcessingAnswer{delay: store.BeeperMediaRetryDelay, retry: true}
+	}
+	code := docbankmedia.ErrorCode(err)
+	if isHTTP && httpErr.Reason != "" {
+		code = httpErr.Reason
+	}
+	return documentProcessingAnswer{outcome: code}
+}
+
+func processingJobAnswer(job docbankmedia.JobStatus) documentProcessingAnswer {
+	switch {
+	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding":
+		// Docbank publishes rendition text before starting embeddings, even if embeddings fail.
+		return documentProcessingAnswer{outcome: "extracted"}
+	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":
+		return documentProcessingAnswer{outcome: "requested", delay: store.BeeperMediaPollDelay}
+	case job.State == "operator_required":
+		return documentProcessingAnswer{outcome: job.State}
+	case job.State == "failed" || job.State == "abandoned":
+		return documentProcessingAnswer{outcome: processingCode(job.FailureCode, job.State)}
+	default:
+		// A newer Docbank may add states; keep the job and look again later instead of guessing.
+		report := fmt.Errorf("document processing job %s has unrecognized state %q", job.JobID, job.State)
+		return documentProcessingAnswer{outcome: "requested", delay: store.BeeperMediaRetryDelay, report: report}
+	}
+}
+
+// processingCode returns code when it is a short snake_case outcome, otherwise fallback.
+func processingCode(code, fallback string) string {
+	if docbankmedia.ValidErrorCode(code) {
+		return code
+	}
+	return fallback
 }

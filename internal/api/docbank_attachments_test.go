@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/docbanktest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -148,6 +149,22 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	require.NotNil(running.Counts)
 	assert.Equal(int64(1), running.Counts.Failed)
 	assert.Zero(running.Counts.Remaining)
+	const lastError = "docbank request failed: server_error"
+	sched.jobStatuses = []JobStatus{{Name: DocbankAttachmentMirrorJob, LastError: lastError}}
+	var withoutProfile DocbankAttachmentStatus
+	require.NoError(json.Unmarshal(get().Body.Bytes(), &withoutProfile))
+	assert.Equal(lastError, withoutProfile.LastError)
+	assert.Nil(withoutProfile.Processing)
+
+	cfg.Integrations.Docbank.DocumentProfile = "documents"
+	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "destination", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(t.Context(), "destination", "documents", "fp"))
+	require.NoError(f.Store.RecordDocbankAttachmentProcessing(t.Context(), "destination", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: "a", Fingerprint: "fp", Outcome: "requested", JobID: docbanktest.ProcessingJobID("a", "fp")}, time.Now().UTC().Add(time.Minute)))
+	var processing DocbankAttachmentStatus
+	require.NoError(json.Unmarshal(get().Body.Bytes(), &processing))
+	require.NotNil(processing.Processing)
+	assert.Equal("documents", processing.Processing.Profile)
+	assert.Equal(int64(1), processing.Processing.Requested)
 	sched.scheduledJobs[DocbankAttachmentMirrorJob] = false
 	var down DocbankAttachmentStatus
 	require.NoError(json.Unmarshal(get().Body.Bytes(), &down))

@@ -3828,6 +3828,32 @@ components:
       required:
         - status
       type: object
+    DocbankAttachmentProcessingSummary:
+      additionalProperties: true
+      properties:
+        extracted:
+          format: int64
+          type: integer
+        outcomes:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        profile:
+          type: string
+        requested:
+          format: int64
+          type: integer
+        waiting:
+          format: int64
+          type: integer
+      required:
+        - profile
+        - waiting
+        - requested
+        - extracted
+        - outcomes
+      type: object
     DocbankAttachmentRef:
       additionalProperties: true
       properties:
@@ -3856,6 +3882,10 @@ components:
           $ref: "#/components/schemas/DocbankAttachmentSummary"
         folder:
           type: string
+        last_error:
+          type: string
+        processing:
+          $ref: "#/components/schemas/DocbankAttachmentProcessingSummary"
         state:
           enum:
             - running
@@ -16690,7 +16720,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.28.0
+  version: 3.29.0
 openapi: 3.1.0
 paths:
   /api/ping:

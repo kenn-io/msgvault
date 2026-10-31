@@ -51,10 +51,15 @@ func newHTTPError(status int, body []byte) *HTTPError {
 	if json.Unmarshal(body, &problem) == nil && problem.Code == "capability_unavailable" {
 		code = problem.Code
 	}
-	if len(problem.Code) > 64 || strings.Trim(problem.Code, "abcdefghijklmnopqrstuvwxyz_") != "" {
+	if !ValidErrorCode(problem.Code) {
 		problem.Code = ""
 	}
 	return &HTTPError{Status: status, Code: code, Reason: problem.Code}
+}
+
+// ValidErrorCode reports whether value matches Docbank's bounded error token.
+func ValidErrorCode(value string) bool {
+	return value != "" && len(value) <= 64 && strings.Trim(value, "abcdefghijklmnopqrstuvwxyz_") == ""
 }
 
 func (e *HTTPError) Error() string {

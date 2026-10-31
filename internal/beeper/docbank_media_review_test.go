@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/docbanktest"
 )
 
 type processDeliveryIdentity struct {
@@ -1471,8 +1472,7 @@ func TestBeeperMediaOperatorRequired(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v1/processing/jobs/") {
 			jobReads++
-			writeDocbankJSON(w, map[string]any{"job_id": strings.TrimPrefix(r.URL.Path, "/api/v1/processing/jobs/"),
-				"state": "operator_required", "phase": "failed", "failure_code": "operator_required"})
+			docbanktest.WriteJobStatus(w, strings.TrimPrefix(r.URL.Path, "/api/v1/processing/jobs/"), "operator_required", "failed", "operator_required")
 			return
 		}
 		docbank.ServeHTTP(w, r)
