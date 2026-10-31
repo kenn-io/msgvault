@@ -607,3 +607,26 @@ func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
 	assert.Equal(t, "participant_not_found", body.Error)
 }
+
+func TestPeopleSearchUsesRelevanceForDefaultSort(t *testing.T) {
+	t.Parallel()
+	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t,
+		time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)))
+	for _, test := range []struct {
+		name string
+		sort string
+	}{
+		{name: "omitted"},
+		{name: "closest", sort: `,"sort":{"field":"activity_count","direction":"desc"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := postExploreJSON(t, srv, "/api/v1/participants/search",
+				`{"identity_query":"example","limit":1`+test.sort+`}`)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var body ParticipantSearchHTTPResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Len(t, body.Rows, 1)
+			assert.Equal(t, relAliceID, body.Rows[0].ID)
+		})
+	}
+}
