@@ -77,11 +77,11 @@
   function escape(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !exploreState.current.selectedRow || appShortcuts.activeScope() !== ROOT_SCOPE) return;
     if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]') || document.querySelector('.kit-popover-card')) return;
-    navigate({ selectedRow: null });
-    focusGrid();
+    closeReadingPane();
     event.preventDefault();
     event.stopPropagation();
   }
+  function closeReadingPane(): void { navigate({ selectedRow: null }); focusGrid(); }
   function focusGrid(): void { root?.querySelector<HTMLElement>('[role="grid"]')?.focus(); }
   function navigate(patch: Partial<ExploreURLState>): void {
     if (patch.workspace === 'settings') { onOpenSettings?.(); return; }
@@ -109,7 +109,7 @@
     commitSearch={(query, mode) => exploreState.commitSearch(query, mode)} commitWorkspace={() => onOpenSettings?.()}
     commitGrouping={() => undefined} fixedSortNotice={() => notice = 'Messages are ordered newest first.'} {focusGrid}
     openRow={(row) => navigate({ selectedRow: row.key })} onOpenRecording={(id) => navigate({ selectedRow: `recording:${id}` })}
-    drillGroup={() => undefined} closeReadingPane={() => navigate({ selectedRow: null })}
+    drillGroup={() => undefined} {closeReadingPane}
     openRelationship={(id) => onOpenPerson?.(id)} changeConversationAnchor={(id) => exploreState.replaceTransient({ conversationAnchor: String(id) })}
     {onOpenMeeting} onSaveView={() => undefined} />
 </div>
