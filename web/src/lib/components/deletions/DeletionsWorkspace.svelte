@@ -41,6 +41,7 @@
   const loading = $derived(controller.loading);
   let selectedID = $state<string>();
   let panelDetail = $state<DeletionManifestDetail>();
+  let detailError = $state('');
   let showCancelled = $state(false);
   let error = $state('');
   let confirmCancel = $state<Batch>();
@@ -71,14 +72,17 @@
     const generation = ++detailGeneration;
     detailRequest?.abort();
     panelDetail = undefined;
+    detailError = '';
     const request = detailRequest = new AbortController();
     try {
       const { data } = await getDeletion({ id }, { ...client, signal: request.signal });
       if (generation !== detailGeneration || request.signal.aborted) return;
       panelDetail = data;
+      if (!data) detailError = "Can't load batch details.";
     } catch {
       if (generation !== detailGeneration || request.signal.aborted) return;
       panelDetail = undefined;
+      detailError = "Can't load batch details.";
     }
   }
   function close(): void { detailGeneration++; detailRequest?.abort(); selectedID = undefined; }
@@ -168,6 +172,7 @@
     footer={cancellable(status) ? cancelAction : undefined}
   >
     <div class="panel">
+      {#if detailError}<div class="notice" role="alert"><span>{detailError}</span><Button label="Retry" onclick={() => void readDetail(selectedID!)} /></div>{/if}
       <div class="line">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{panelDetail?.account || 'Account unavailable'}</span>
