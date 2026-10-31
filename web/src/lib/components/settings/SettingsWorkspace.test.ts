@@ -238,7 +238,7 @@ it('cancels a pending leave when the category changes, keeping drafts', async ()
   let cancel: (() => void) | undefined;
   const { rerender } = render(SettingsWorkspace, {
     props: { client, operationsController, onStatusChange, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; return () => { if (hold === next) { hold = undefined; cancel = undefined; } }; }]])
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
   await fireEvent.input(field, { target: { value: '15m' } });
@@ -491,7 +491,7 @@ it('locks fields and newly mounted category controls without holding leave while
   let hold: ((leave: () => void) => boolean) | undefined;
   render(SettingsWorkspace, {
     props: { client, operationsController, onStatusChange, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; return () => { if (hold === next) hold = undefined; }; }]])
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
   });
   await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
