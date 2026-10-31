@@ -234,7 +234,7 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 			_, err = st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, note)
 			requirements.NoError(err)
 			_, err = meetingLinksForTest(t, st, note)
-			assertions.ErrorIs(err, sql.ErrNoRows)
+			requirements.ErrorIs(err, sql.ErrNoRows)
 			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
 			requirements.NoError(err)
 			assertions.Empty(got.ByTranscript)
