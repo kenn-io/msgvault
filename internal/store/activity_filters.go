@@ -69,13 +69,16 @@ func activitySubjectClause(subject ActivitySubject, message string) (string, []a
 	return "", nil, nil
 }
 
-// exclusionPatternsSQL implements Config's exact and trailing-star patterns,
-// without turning SQL wildcard characters in a configured pattern into rules.
+// exclusionPatternsSQL implements Config's exact, prefix and subdomain patterns
+// without treating SQL wildcard characters in a configured pattern as rules.
 func exclusionPatternsSQL(expr string, patterns []string) (string, []any) {
 	terms := []string{}
 	args := []any{}
 	for _, pattern := range patterns {
-		if prefix, wildcard := strings.CutSuffix(pattern, "*"); wildcard {
+		if suffix, subdomains := strings.CutPrefix(pattern, "*"); subdomains && strings.HasPrefix(suffix, ".") {
+			terms = append(terms, `SUBSTR(`+expr+`,LENGTH(`+expr+`)-?+1)=?`)
+			args = append(args, len([]rune(suffix)), suffix)
+		} else if prefix, wildcard := strings.CutSuffix(pattern, "*"); wildcard {
 			terms = append(terms, `SUBSTR(`+expr+`,1,?)=?`)
 			args = append(args, len([]rune(prefix)), prefix)
 		} else {
