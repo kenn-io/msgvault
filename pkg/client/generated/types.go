@@ -7186,6 +7186,115 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type LoopCounterparty struct {
+	Address       string `json:"address" validate:"required"`
+	DisplayName   string `json:"display_name" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitempty"`
+}
+
+func (l LoopCounterparty) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type LoopDecisionResponse struct {
+	AnchorMessageID int64                     `json:"anchor_message_id"`
+	SnoozedUntil    *time.Time                `json:"snoozed_until,omitempty"`
+	State           LoopDecisionResponseState `json:"state" validate:"required"`
+}
+
+func (l LoopDecisionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopItem struct {
+	// AnchorMessageID The message that started the wait. Done and snooze use it as the loop ID.
+	AnchorMessageID int64            `json:"anchor_message_id"`
+	Channel         LoopItemChannel  `json:"channel" validate:"required"`
+	ConversationID  int64            `json:"conversation_id"`
+	Counterparty    LoopCounterparty `json:"counterparty"`
+
+	// Kind reply_owed waits on you; awaiting_reply waits on them
+	Kind           LoopItemKind `json:"kind" validate:"required"`
+	LastActivityAt time.Time    `json:"last_activity_at" validate:"required"`
+	OwedSinceAt    time.Time    `json:"owed_since_at" validate:"required"`
+	SourceID       int64        `json:"source_id"`
+
+	// Summary The email subject, or the chat message text
+	Summary string `json:"summary" validate:"required"`
+}
+
+func (l LoopItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Channel).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Channel", err)
+		}
+	}
+	if v, ok := any(l.Counterparty).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Counterparty", err)
+		}
+	}
+	if v, ok := any(l.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if err := typesValidator.Var(l.LastActivityAt, "required"); err != nil {
+		errors = errors.Append("LastActivityAt", err)
+	}
+	if err := typesValidator.Var(l.OwedSinceAt, "required"); err != nil {
+		errors = errors.Append("OwedSinceAt", err)
+	}
+	if err := typesValidator.Var(l.Summary, "required"); err != nil {
+		errors = errors.Append("Summary", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopListResponse struct {
+	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
+	CoverageIncomplete bool       `json:"coverage_incomplete"`
+	Items              []LoopItem `json:"items" validate:"required"`
+
+	// SkippedUnparseable Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop
+	SkippedUnparseable int64 `json:"skipped_unparseable"`
+
+	// Truncated True when more loops are open than limit returned
+	Truncated bool `json:"truncated"`
+}
+
+func (l LoopListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range l.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MCPCapabilities struct {
 	Routes  []MCPRouteDescriptor `json:"routes" validate:"required"`
 	Version int64                `json:"version"`
@@ -15082,6 +15191,14 @@ func (s SimilarSearchResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SnoozeLoopRequest struct {
+	Until time.Time `json:"until" validate:"required"`
+}
+
+func (s SnoozeLoopRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type Source struct {
