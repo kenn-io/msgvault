@@ -116,7 +116,7 @@
   {#if loading}
     <p class="muted" role="status">Loading…</p>
   {:else if rows.length === 0}
-    <EmptyState title="Nothing staged" />
+    {#if !controller.error}<EmptyState title="Nothing staged" />{/if}
   {:else}
     <Table ariaLabel="Staged deletions" zebra={false} class="batch-table" unsorted>
       {#snippet header()}

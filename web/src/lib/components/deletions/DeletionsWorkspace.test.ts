@@ -38,6 +38,18 @@ afterEach(() => {
 });
 
 describe('DeletionsWorkspace', () => {
+  it('shows an alert and retry without an empty state when the first list load fails', async () => {
+    const client = createAPIClient(async () => Response.json({ message: 'Offline' }, { status: 500 }));
+    const controller = new DeletionsController(client);
+    const view = render(DeletionsWorkspace, { client, controller });
+    try {
+      const alert = await screen.findByRole('alert');
+      expect(within(alert).getByText("Can't load staged deletions.")).toBeDefined();
+      expect(within(alert).getByRole('button', { name: 'Retry' })).toBeDefined();
+      expect(screen.queryByText('Nothing staged')).toBeNull();
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it('lists staged batches and shows cancelled history without detail reads', async () => {
     const seen: Seen[] = [];
     const client = api([batch('b1', 'pending', 2), batch('hidden', 'cancelled', 3)], seen);
