@@ -402,3 +402,216 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 		})
 	}
 }
+
+// Cold reconstruction must keep the same sender/alias/envelope audience and
+// configured default limit as warm activity, even after spine rows are gone.
+func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
+	for _, tc := range []struct {
+		name                                               string
+		outgoing, saved, aliases, chat, envelope, explicit bool
+		want                                               int
+	}{
+		{name: "sender-plus-recipient", explicit: true},
+		{name: "saved-aliases", aliases: true, explicit: true, want: 1},
+		{name: "default-unsaved", outgoing: true},
+		{name: "default-saved", outgoing: true, saved: true},
+		{name: "chat-envelope", chat: true, envelope: true, explicit: true, want: 1},
+		{name: "chat-roster", chat: true, explicit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+			if tc.aliases {
+				_, err := f.Store.LinkParticipants(f.peer, other)
+				requirements.NoError(err)
+				_, _, err = f.Store.CreatePersonFromParticipant(f.peer)
+				requirements.NoError(err)
+			} else if tc.saved {
+				_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+				requirements.NoError(err)
+			}
+			if tc.chat {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), f.ConvID)
+				requirements.NoError(err)
+				for _, participant := range []int64{f.owner, f.peer, other} {
+					requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, participant, "member"))
+				}
+			}
+			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			id := f.add(t, f.ConvID, f.Source.ID, at, tc.outgoing, "")
+			switch {
+			case tc.outgoing:
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, other}, []string{"Alice", "Bob"}))
+			case tc.aliases:
+				third := f.EnsureParticipant("alice-alt@example.com", "Alice", "example.com")
+				_, err := f.Store.LinkParticipants(f.peer, third)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other, third}, []string{"Owner", "Bob", "Alice"}))
+			case tc.chat && !tc.envelope:
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
+			case !tc.chat:
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Bob"}))
+			}
+			p, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
+			requirements.NoError(err)
+			_, err = p.RunOnce(t.Context())
+			requirements.NoError(err)
+			q := timelineBurstQuery()
+			q.Filters.IncludeNoise = true
+			if tc.explicit {
+				q.Filters.MaxDirect = 1
+			}
+			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(warm.Bursts, 1)
+			assertions.Equal(tc.want, warm.Bursts[0].Inbound+warm.Bursts[0].Outbound, "warm counted contact")
+			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
+			retractTimelineActivity(t, f, id)
+			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(cold.Bursts, 1)
+			assertions.Equal(tc.want, cold.Bursts[0].Inbound+cold.Bursts[0].Outbound, "cold counted contact")
+			for _, cp := range cold.Bursts[0].Counterparts {
+				if cp.ParticipantID == f.peer {
+					assertions.Equal(tc.want == 1, cp.Counted)
+				}
+			}
+			q.Filters.IncludeNoise = false
+			filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Len(filtered.Bursts, tc.want)
+			assertions.Equal(1-tc.want, filtered.NoiseOmitted)
+		})
+	}
+}
+
+// Retraction must preserve both contact totals and each peer's contact annotation.
+func TestColdAdapterPreservesContactEligibilityAcrossRetraction(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, conversation string
+		outbound                 bool
+		want                     int
+	}{
+		{"legacy email", "", "email_thread", false, 1},
+		{"email", "email", "email_thread", false, 1},
+		{"SMS", "sms", "direct_chat", false, 1},
+		{"meeting", "meeting_transcript", "meeting", true, 1},
+		{"missed Synctech call", "synctech_sms_call", "direct_chat", false, 0},
+		{"rejected Synctech call", "synctech_sms_call", "direct_chat", false, 0},
+		{"missed Google Voice call", "google_voice_call", "direct_chat", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			room := coldTimelineRoom(t, f, f.Source.ID, "contact-parity")
+			setTimelineConversationTier(t, f, f.Source.ID, "contact-parity", conversationpolicy.Full)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type=? WHERE id=?`), tc.conversation, room)
+			requirements.NoError(err)
+			id := f.add(t, room, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), tc.outbound, "")
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type=?,subject=? WHERE id=?`), tc.kind, tc.name, id)
+			requirements.NoError(err)
+			projectColdTimeline(t, f, "UTC")
+			q := timelineBurstQuery()
+			q.Filters.IncludeNoise = true
+			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(warm.Bursts, 1)
+			assertions.Equal(tc.want, warm.Bursts[0].Inbound+warm.Bursts[0].Outbound)
+			setTimelineConversationTier(t, f, f.Source.ID, "contact-parity", conversationpolicy.Cold)
+			projectColdTimeline(t, f, "UTC")
+			retractTimelineActivity(t, f, id)
+			var remaining int
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&remaining))
+			assertions.Zero(remaining)
+			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(cold.Bursts, 1)
+			assertions.Equal(tc.want, cold.Bursts[0].Inbound+cold.Bursts[0].Outbound)
+			for _, burst := range []store.ActivityBurst{warm.Bursts[0], cold.Bursts[0]} {
+				foundPeer := false
+				for _, cp := range burst.Counterparts {
+					if cp.ParticipantID == f.peer {
+						foundPeer = true
+						assertions.Equal(tc.want == 1, cp.Counted, "cold=%v", burst.Cold)
+					}
+				}
+				assertions.True(foundPeer, "peer must remain visible, cold=%v", burst.Cold)
+			}
+		})
+	}
+}
+
+func TestColdAdapterHonorsListExclusionOptOut(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "list-parity")
+	setTimelineConversationTier(t, f, f.Source.ID, "list-parity", conversationpolicy.Full)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='email_thread' WHERE id=?`), room)
+	requirements.NoError(err)
+	id := f.add(t, room, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='email',list_id='list.example.com' WHERE id=?`), id)
+	requirements.NoError(err)
+	projectColdTimeline(t, f, "UTC")
+	for _, cold := range []bool{false, true} {
+		if cold {
+			setTimelineConversationTier(t, f, f.Source.ID, "list-parity", conversationpolicy.Cold)
+			projectColdTimeline(t, f, "UTC")
+			retractTimelineActivity(t, f, id)
+		}
+		for _, exclude := range []bool{false, true} {
+			q := timelineBurstQuery()
+			q.Filters.Exclusions = persontiers.DefaultConfig()
+			q.Filters.Exclusions.ExcludeListMessages = exclude
+			var page store.BurstPage
+			if cold {
+				page, err = f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			} else {
+				page, err = f.Store.ListActivityBurstsContext(t.Context(), q)
+			}
+			requirements.NoError(err)
+			if exclude {
+				assertions.Empty(page.Bursts, "cold=%v", cold)
+				continue
+			}
+			requirements.Len(page.Bursts, 1, "cold=%v", cold)
+			assertions.Equal(1, page.Bursts[0].Inbound)
+			assertions.Zero(page.NoiseOmitted)
+		}
+	}
+}
+
+func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		offset int
+	}{
+		{"UTC", 0},
+		{"west", -7 * 60 * 60},
+		{"east", 9 * 60 * 60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			room := coldTimelineRoom(t, f, f.Source.ID, "offset-window")
+			start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			f.add(t, room, f.Source.ID, start.Add(-time.Second), false, "")
+			atStart := f.add(t, room, f.Source.ID, start, false, "")
+			inside := f.add(t, room, f.Source.ID, start.Add(30*time.Minute), false, "")
+			f.add(t, room, f.Source.ID, start.Add(time.Hour), false, "")
+			zone := time.FixedZone(tc.name, tc.offset)
+			after, before := start.In(zone), start.Add(time.Hour).In(zone)
+			q := timelineBurstQuery()
+			q.After, q.Before = &after, &before
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal([]int64{inside, atStart}, page.Bursts[0].LatestMessageIDs)
+			assertions.Equal(2, page.Bursts[0].Inbound)
+			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Equal(2, count)
+		})
+	}
+}
