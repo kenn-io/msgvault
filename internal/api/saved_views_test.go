@@ -164,7 +164,7 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 	session := loginSavedViewSession(t, srv)
 
 	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["sender"]},"schema_version":1}`),
+		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["day"]},"schema_version":1}`),
 		session.mutationHeaders())
 	assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
 

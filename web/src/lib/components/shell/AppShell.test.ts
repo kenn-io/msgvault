@@ -16,7 +16,7 @@ import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
 import type { CardDAVSettingsRequest } from '../../carddav/navigation';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
-import { SIDEBAR_COLLAPSED_KEY } from './navigation';
+import { relationshipDestination, SIDEBAR_COLLAPSED_KEY } from './navigation';
 import { view } from './fixtures.test-support';
 import canonical from '../../../../tests/e2e/fixtures/operations-public.json';
 import { jobRun, jobLane, sourceStatus } from '../../jobs/fixtures.test-support';
@@ -2098,14 +2098,14 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     expect(await screen.findByRole('heading', { name: 'Prior Directory Person' })).toBeDefined();
-    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:11' });
+    state.commitNavigation(relationshipDestination(11));
     expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
     expect((await screen.findByRole('alert')).textContent).toContain('already bound to another person');
 
-    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:12' });
+    state.commitNavigation(relationshipDestination(12));
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
