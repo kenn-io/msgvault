@@ -105,7 +105,7 @@
   <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={conversationBounds?.start} conversationEnd={conversationBounds?.end} {exploreState} {loader} {session} {selection} enabled
     readingTargetKey={exploreState.current.selectedRow} conversationAnchorId={exploreState.current.conversationAnchor ? Number(exploreState.current.conversationAnchor) : undefined}
     sortNotice={notice} searchInput={undefined} selectionPreflight={undefined} meetingSelection={undefined}
-    exportSelection={() => undefined} onReviewDeletion={() => undefined} commitNavigation={navigate}
+    exportSelection={() => undefined} commitNavigation={navigate}
     commitSearch={(query, mode) => exploreState.commitSearch(query, mode)} commitWorkspace={() => onOpenSettings?.()}
     commitGrouping={() => undefined} fixedSortNotice={() => notice = 'Messages are ordered newest first.'} {focusGrid}
     openRow={(row) => navigate({ selectedRow: row.key })} onOpenRecording={(id) => navigate({ selectedRow: `recording:${id}` })}
