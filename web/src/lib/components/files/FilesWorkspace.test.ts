@@ -18,6 +18,20 @@ function renderReady(props: ComponentProps<typeof FilesWorkspace>) {
   return view;
 }
 
+it('offers setup with the visual search toggle hidden while visual search is not ready', async () => {
+  const onConfigureVisualSearch = vi.fn();
+  render(FilesWorkspace, {
+    client: createAPIClient(async () => Response.json(response())),
+    predicate: { filters: [], presentation: 'table' },
+    sort: { field: 'occurred_at', direction: 'desc' },
+    onConfigureVisualSearch
+  });
+  await screen.findByText('fixture.pdf');
+  expect(screen.queryByRole('switch', { name: 'Visual search' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Set up' }));
+  expect(onConfigureVisualSearch).toHaveBeenCalledOnce();
+});
+
 function response() {
   return {
     files: [{
@@ -222,11 +236,13 @@ describe('FilesWorkspace', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('owns headers and virtual rows in one focusable grid', async () => {
+  it('keeps source labels, headers, and virtual rows in one focusable grid', async () => {
     const result = response();
     const first = result.files[0]!;
     first.source_type = 'imap';
     first.source_identifier = 'imaps://work%40example.com@imap.example.com';
+    result.files.push({ ...first, id: 8, key: 'file:8', source_type: 'slack', source_identifier: 'https://chat.example.com/archive' });
+    result.total_count = 2;
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(result));
     render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
@@ -236,8 +252,9 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(await within(grid).findByRole('gridcell', { name: 'work@example.com' })).toBeDefined();
+    expect(await within(grid).findByRole('gridcell', { name: 'Slack' })).toBeDefined();
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Filename' }))).toBe(true);
-    expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
+    expect((await screen.findAllByRole('row', { name: /fixture.pdf/ })).every(row => grid.contains(row))).toBe(true);
   });
 
   it('retries a building analytical cache and renders files when it becomes ready', async () => {

@@ -342,7 +342,7 @@ describe('RelationshipsWorkspace', () => {
     expect(screen.queryByRole('grid', { name: 'Relationship activity' })).toBeNull();
   });
 
-  it('opens visual search setup from files for a person when visual search is not ready', async () => {
+  it('forwards visual search setup from files for a person', async () => {
     const { fetchFn } = fetchHandler({
       '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
       '/api/v1/relationships/1/timeline': async () => Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 }),
