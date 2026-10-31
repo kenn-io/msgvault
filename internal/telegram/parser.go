@@ -231,6 +231,7 @@ func decodeText(raw jsontext.Value) (string, error) {
 			}
 		}
 		return joinEntities(entities), nil
+	default:
+		return "", errText
 	}
-	return "", errText
 }
