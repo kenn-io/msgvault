@@ -93,7 +93,7 @@ func (s *Store) AddOwnerObservation(ctx context.Context, in personobs.OwnerInput
 			if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_evidence WHERE observation_id=?`, id); err != nil {
 				return err
 			}
-			if err := s.appendObservationEventTx(ctx, tx, in.PersonID, id, "owner-assertion-confirmed", in.Actor, "add-owner-observation", nil); err != nil {
+			if err := s.appendObservationEventTx(ctx, tx, in.PersonID, id, "confirmed", in.Actor, "add-owner-observation", nil); err != nil {
 				return err
 			}
 			if lifted > 0 {

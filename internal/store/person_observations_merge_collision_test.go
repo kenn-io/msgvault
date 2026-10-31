@@ -39,9 +39,15 @@ func insertMachineObservationForMerge(
 	require := require.New(t)
 
 	id := insertObservationRow(t, st, personID, 1, personobs.LevelExplicit, "[PERSON] remembers")
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
+		INSERT INTO person_observation_clocks(person_id,last_sequence) VALUES(?,1)
+		ON CONFLICT(person_id) DO UPDATE SET last_sequence=CASE
+			WHEN person_observation_clocks.last_sequence < excluded.last_sequence THEN excluded.last_sequence
+			ELSE person_observation_clocks.last_sequence END`), personID)
+	require.NoError(err)
 	generationID := insertPersonFactSchemaGeneration(t, st, personID, generationKey)
 	evidenceID := insertPersonFactSchemaEvidence(t, st, personID, evidenceKey)
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_observations
 		SET origin='extraction', generation_id=?, program_fingerprint=?, directness='direct-self', confidence_bp=800
 		WHERE id=?`), generationID, strings.Repeat("a", 64), id)
@@ -173,6 +179,34 @@ func TestObservationSplitPreservesPostMergeOwnerAssertionOfCollision(t *testing.
 	assert.Contains(restored.Categories, personobs.CategoryHealth)
 	assert.True(restored.Sensitive)
 	assert.NotEqual(newPersonID, restored.PersonID)
+}
+
+func TestObservationSplitPreservesReaffirmedSensitivityWithoutCategories(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, _ := observationBatchFixture(t, "I run")
+	content := "[PERSON] runs"
+	kept := observationOwnerRow(t, f.store, f.bobPersonID, content)
+	incoming := observationOwnerRow(t, f.store, in.PersonID, content)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE person_observations SET sensitive=TRUE WHERE id=?`), incoming)
+	require.NoError(err)
+
+	merge := observationMerge(t, f.store, f.bobPersonID, in.PersonID)
+	merged := observationGet(t, f.store, kept)
+	require.True(merged.Sensitive)
+	require.Empty(merged.Categories)
+
+	reaffirmed, err := f.store.AddOwnerObservation(t.Context(), personobs.OwnerInput{
+		PersonID: f.bobPersonID, Content: content, Actor: "api",
+	})
+	require.NoError(err)
+	require.Equal(kept, reaffirmed.ID)
+
+	_ = observationSplit(t, f.store, merge, f.aliceID)
+	restored := observationGet(t, f.store, kept)
+	assert.True(restored.Sensitive)
+	assert.Empty(restored.Categories)
 }
 
 func TestObservationSplitRestoresAPIDecisionRejectionToAbsorbedPerson(t *testing.T) {

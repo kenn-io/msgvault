@@ -727,7 +727,7 @@ func (s *Store) postMergeOwnerAssertionObservationIDsTx(
 		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,observation_id FROM person_observation_events
-		WHERE person_id=? AND event='owner-assertion-confirmed' ORDER BY id`, sourceID)
+		WHERE person_id=? AND event='confirmed' AND detail='add-owner-observation' ORDER BY id`, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("read post-merge owner assertion events: %w", err)
 	}
