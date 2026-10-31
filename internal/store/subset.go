@@ -236,6 +236,14 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
 	}
+	// The empty destination applied this before any source rows were copied.
+	// Re-run it after copy so transferred Synctech records from older archives
+	// receive the same send-state repair as rows already in the source.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationSynctechUnsentMessages); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied Synctech send-state migration: %w", err)
+	}
 
 	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
 		_ = tx.Rollback()
@@ -1058,6 +1066,13 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("preserve subset draft evidence: %w", err)
 	}
 	result.Labels += preservedLabels
+	if present, err := sourceTableExists(tx, "loop_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := copyByName(tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
+	}
 
 	if present, err := sourceTableExists(tx, "meeting_link_decisions"); err != nil {
 		return nil, err

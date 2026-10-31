@@ -59,30 +59,7 @@ func ClassifyActivityCandidate(
 		result.OwnerSourceID = &sourceID
 	}
 
-	ownerParticipants := make(map[int64]struct{}, len(counterparts))
-	ownerPersons := make(map[int64]struct{}, len(counterparts))
-	for _, counterpart := range counterparts {
-		if !counterpart.IsOwner {
-			continue
-		}
-		ownerParticipants[counterpart.ParticipantID] = struct{}{}
-		if counterpart.PersonID != nil {
-			ownerPersons[*counterpart.PersonID] = struct{}{}
-		}
-	}
-	ownerLinked := func(counterpart ActivityCounterpart) bool {
-		if counterpart.IsOwner {
-			return true
-		}
-		if _, owned := ownerParticipants[counterpart.ParticipantID]; owned {
-			return true
-		}
-		if counterpart.PersonID == nil {
-			return false
-		}
-		_, owned := ownerPersons[*counterpart.PersonID]
-		return owned
-	}
+	ownerLinked := activityOwnerLinked(counterparts)
 
 	type audienceKey struct {
 		person bool
@@ -113,6 +90,36 @@ func ClassifyActivityCandidate(
 	}
 	result.Persons = strongestClassifiedActivityLinks(result.Persons)
 	return result
+}
+
+// activityOwnerLinked reports whether a counterpart of the message is the
+// owner, or shares a participant or person with one of its owner
+// counterparts, such as an alias linked to the owner's person.
+func activityOwnerLinked(counterparts []ActivityCounterpart) func(ActivityCounterpart) bool {
+	ownerParticipants := make(map[int64]struct{}, len(counterparts))
+	ownerPersons := make(map[int64]struct{}, len(counterparts))
+	for _, counterpart := range counterparts {
+		if !counterpart.IsOwner {
+			continue
+		}
+		ownerParticipants[counterpart.ParticipantID] = struct{}{}
+		if counterpart.PersonID != nil {
+			ownerPersons[*counterpart.PersonID] = struct{}{}
+		}
+	}
+	return func(counterpart ActivityCounterpart) bool {
+		if counterpart.IsOwner {
+			return true
+		}
+		if _, owned := ownerParticipants[counterpart.ParticipantID]; owned {
+			return true
+		}
+		if counterpart.PersonID == nil {
+			return false
+		}
+		_, owned := ownerPersons[*counterpart.PersonID]
+		return owned
+	}
 }
 
 func collapseActivityCounterparts(counterparts []ActivityCounterpart) []ActivityCounterpart {

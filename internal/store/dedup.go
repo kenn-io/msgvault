@@ -573,6 +573,11 @@ func (s *Store) MergeDuplicates(
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
 		}
+		for _, dupID := range duplicateIDs {
+			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
+		}
 		if result.RawMIMEBackfilled > 0 {
 			if err := s.lockMeetingEvidenceWith(ctx, tx, survivorID); err != nil {
 				return err
