@@ -17,8 +17,8 @@ import (
 const timelineMinAPISchemaVersion = "3.44.0"
 
 type timelineClient interface {
-	APISchemaVersion(context.Context) (string, error)
-	Timeline(context.Context, timeline.Request) (*timeline.Timeline, string, error)
+	APISchemaVersion(ctx context.Context) (string, error)
+	Timeline(ctx context.Context, req timeline.Request) (*timeline.Timeline, string, error)
 }
 
 var timelineOpen = func(ctx context.Context) (timelineClient, func(), error) {
@@ -62,10 +62,10 @@ func newTimelineCommand() *cobra.Command {
 	flags.BoolVar(&jsonOutput, flagJSON, false, "Output compact JSON instead of Markdown")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		if cmd.Flags().Changed("days") && req.Days == 0 {
-			return fmt.Errorf("--days must be between 1 and 31")
+			return errors.New("--days must be between 1 and 31")
 		}
 		if cmd.Flags().Changed("budget") && req.Budget == 0 {
-			return fmt.Errorf("--budget must be between 2048 and 65536")
+			return errors.New("--budget must be between 2048 and 65536")
 		}
 		req.BeforeSet = cmd.Flags().Changed("before")
 		req.AfterSet = cmd.Flags().Changed("after")
@@ -87,8 +87,7 @@ func newTimelineCommand() *cobra.Command {
 		}
 		result, markdown, err := client.Timeline(cmd.Context(), req)
 		if err != nil {
-			var ambiguous *timeline.ErrAmbiguousReference
-			if errors.As(err, &ambiguous) {
+			if ambiguous, ok := errors.AsType[*timeline.ErrAmbiguousReference](err); ok {
 				for _, candidate := range ambiguous.Candidates {
 					if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "person:%d\t%s\t%s\n", candidate.PersonID, textutil.SanitizeTerminal(candidate.DisplayName), textutil.SanitizeTerminal(candidate.Address)); writeErr != nil {
 						return fmt.Errorf("write timeline candidates: %w", writeErr)
