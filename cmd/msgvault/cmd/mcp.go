@@ -222,6 +222,9 @@ const messageTagsMinAPISchemaVersion = "3.15.0"
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
+// personTierMinAPISchemaVersion adds read-only person tier previews.
+const personTierMinAPISchemaVersion = "3.29.0"
+
 const contactRoutesMinAPISchemaVersion = "3.20.0"
 
 // archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
@@ -332,6 +335,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personTierMinAPISchemaVersion) {
+		opts.PersonTierBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, kataIssuesMinAPISchemaVersion) {
 		opts.Kata = st

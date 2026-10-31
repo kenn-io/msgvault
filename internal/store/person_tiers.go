@@ -62,7 +62,7 @@ type PersonTierExplanation struct {
 	DisplayName     *string                      `json:"display_name"`
 	Tier            int                          `json:"tier"`
 	Rule            string                       `json:"rule"`
-	Exclusion       string                       `json:"exclusion"`
+	Exclusion       *string                      `json:"exclusion"`
 	Tracked         bool                         `json:"tracked"`
 	LastContactDate *string                      `json:"last_contact_date"`
 	AsOf            string                       `json:"as_of"`
@@ -191,7 +191,7 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 			return err
 		}
 		d := persontiers.Evaluate(signals[personID], options.Config)
-		explanation.Tier, explanation.Rule, explanation.Exclusion = d.Tier, d.Rule, d.Exclusion
+		explanation.Tier, explanation.Rule, explanation.Exclusion = d.Tier, d.Rule, stringPtrOrNil(d.Exclusion)
 		explanation.Thresholds = d.Thresholds
 		explanation.Signals = signals[personID]
 		explanation.Tracked = tracked[personID]

@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.28.0**.
+it is separate from the binary release version. The current schema is **3.29.0**.
 
 Schema 3.28.0 adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
 
@@ -707,6 +707,50 @@ when it has no qualifying connections.
 
 Invalid depths return `400`; an unknown durable person returns `404`. The
 projection has no ETag because it is not a mutation resource.
+
+---
+
+### Person tier preview {#get-apiv1peopletiers}
+
+**Endpoint:** `GET /api/v1/people/tiers`
+
+List saved people in tier 1 or 2, tier 1 first and the most recent contact
+first within a tier. The rules, windows, and thresholds are
+[`[people.tiers]`](/docs/configuration/#people-tiers), read from the config
+file at request time, so this answers the same as `msgvault person tiers
+preview --json`. The route only reads; track the people you choose with
+`PUT /api/v1/people/{id}/tracking`.
+
+```json
+{
+  "people": [
+    {"person_id": 7, "display_name": "Ana Example", "tier": 1, "rule": "tier1_intensity", "tracked": false, "last_contact_date": "2026-10-28"}
+  ],
+  "as_of": "2026-10-29",
+  "readiness": {"ready": true, "reasons": []},
+  "projection": {"timezone": "UTC", "max_direct": 25}
+}
+```
+
+`readiness.ready` is `false` while the activity projection is behind or was
+built under other `[activity]` settings; counts can then be too low. While the
+projection rebuilds after a change to `[activity] timezone` or
+`max_direct_counterparts`, the route returns `409` /
+`activity_projection_rebuilding`. Invalid `[people.tiers]` settings return
+`503` / `person_tiers_config_invalid`.
+
+---
+
+### Person tier explanation {#get-apiv1peopleidtier}
+
+**Endpoint:** `GET /api/v1/people/{id}/tier`
+
+Show every count behind one saved person's tier against its threshold,
+including people in tier 3. The body has the preview row's fields plus
+`exclusion` (`owner`, `automated_address`, `calendar_room`, or `null`),
+`signals` (the windowed counts), and `thresholds` (each check with `observed`,
+`required`, `enabled`, and `met`). An unknown person returns `404` /
+`person_profile_not_found`; rebuild and config errors match the preview.
 
 ---
 
