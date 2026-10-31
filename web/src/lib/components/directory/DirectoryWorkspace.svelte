@@ -378,7 +378,7 @@
 {/if}
 
 <style>
-  .directory-workspace { padding: var(--space-5) var(--page-gutter) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
+  .directory-workspace { --page-header-parent-gap: var(--space-4); padding: var(--space-5) var(--page-gutter) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
   .directory-controls { display: grid; gap: var(--space-2); min-width: 0; }
   .directory-toolbar, .filter-chips { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; min-width: 0; }
   .directory-toolbar :global(.kit-search-input) { min-width: min(100%, 300px); flex: 1; }

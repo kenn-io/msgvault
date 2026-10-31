@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type BrowserContext } from '@playwright/test';
 import { expectKitTheme, selectKitOption, setKitTheme } from './kit-ui';
 
@@ -41,6 +42,8 @@ test('Strict session cookie returns on same-origin bootstrap after a cross-site 
       body: `<a href="${landingURL}">Open archive</a>`
     });
   });
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', async (route) => {
     resolveBootstrapHeaders(await route.request().allHeaders());
     await route.fulfill({
@@ -67,7 +70,7 @@ test('Strict session cookie returns on same-origin bootstrap after a cross-site 
   const documentCookie = documentHeaders.cookie ?? '';
   const bootstrapCookie = bootstrapHeaders.cookie ?? '';
 
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages' })).toBeVisible();
   await expect(page.getByRole('form', { name: 'Log in' })).toHaveCount(0);
   expect(documentCookie).toContain(`${navigationCookieName}=${navigationCookieValue}`);
   expect(documentCookie).not.toContain(`${cookieName}=${cookieValue}`);
@@ -79,6 +82,8 @@ test('Settings navigation sends a CSRF-protected session mutation', async ({ pag
   const patchCaptured = new Promise<{ headers: Record<string, string>; body: unknown }>((resolve) => {
     resolvePatch = resolve;
   });
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', async (route) => {
     await route.fulfill({
       json: {
@@ -149,6 +154,8 @@ async function installSettingsDaemon(context: BrowserContext): Promise<void> {
     ],
     pending_restart: false
   });
+  await stubOperationStatus(context);
+  await context.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await context.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'session', csrf_token: 'csrf-token', https: true, plain_http_warning: false
   } }));

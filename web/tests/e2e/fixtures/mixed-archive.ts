@@ -1,3 +1,4 @@
+import { stubOperationStatus } from '../../kit-ui';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -601,6 +602,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
     }),
   );
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
   return {

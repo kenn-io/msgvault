@@ -104,9 +104,7 @@ export type ExploreWorkspace =
   | 'directory'
   | 'directory_review'
   | 'files'
-  | 'operations'
   | 'relationships'
-  | 'saved_views'
   | 'sources'
   | 'deletions'
   | 'settings';
@@ -161,6 +159,7 @@ export interface ExploreURLState {
   relationshipTarget: string | null;
   relationshipShowAll: boolean;
   relationshipFiles: boolean;
+  operationHistory: boolean;
   operationLane: '' | OperationLane;
   operationKind: '' | OperationKind;
   operationState: '' | OperationState;

@@ -30,11 +30,15 @@ export function syncUnavailableLabel(code: string | undefined): string {
   return code !== undefined && Object.hasOwn(SYNC_UNAVAILABLE, code) ? SYNC_UNAVAILABLE[code]! : 'Sync unavailable';
 }
 
+export function syncRunning(source: Pick<SourceStatus, 'active_sync' | 'latest_sync'>): boolean {
+  return Boolean(source.active_sync || source.latest_sync?.status === 'running');
+}
+
 export function syncStatusChip(
   source: Pick<SourceStatus, 'active_sync' | 'latest_sync' | 'scheduler_queued'>
 ): { label: string; tone: ChipTone } {
   const latest = source.latest_sync;
-  if (source.active_sync || latest?.status === 'running') return { label: 'Syncing', tone: 'info' };
+  if (syncRunning(source)) return { label: 'Syncing', tone: 'info' };
   if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return { label: 'Queued', tone: 'info' };
   if (!latest) return { label: 'Never synced', tone: 'muted' };
   if (latest.status === 'completed') {

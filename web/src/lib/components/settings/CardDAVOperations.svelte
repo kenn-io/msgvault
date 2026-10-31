@@ -27,11 +27,13 @@
     controller,
     syncConnection = undefined,
     connectionReady = true,
+    onStatusChange = () => undefined,
     onOpenOperations: providedOpenOperations = undefined
   }: {
     controller: CardDAVController;
     syncConnection?: string;
     connectionReady?: boolean;
+    onStatusChange?: () => void;
     onOpenOperations?: () => void;
   } = $props();
   const shellOpenOperations = getContext<(() => void) | undefined>('msgvault:open-carddav-operations');
@@ -173,7 +175,7 @@
       <Button
         label={controller.syncPending ? 'Checking CardDAV state…' : 'Sync now'}
         disabled={!controller.canSync || !connectionReady}
-        onclick={() => void controller.sync(syncConnection)}
+        onclick={async () => { await controller.sync(syncConnection); onStatusChange(); }}
       />
       <Button label="View CardDAV operations" surface="soft" onclick={openOperations} />
     </div>

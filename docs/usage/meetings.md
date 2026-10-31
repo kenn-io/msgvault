@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-29"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -33,7 +33,7 @@ Muesli can optionally archive locally retained recordings.
 ## Browse and search
 
 Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to find meetings in
-Everything. Filter to meeting notes or search across notes, email, and chats.
+Messages. Filter to meeting notes or search across notes, email, and chats.
 To search only meetings from the CLI:
 
 ```bash
@@ -50,7 +50,7 @@ aggregates remain email-only unless you choose another message type.
 
 ## Export context and read follow-ups
 
-In Everything, select meeting rows and choose **Export meeting context**. You
+In Messages, select meeting rows and choose **Export meeting context**. You
 can select explicit rows or **Select all matching items** for the current
 search and filters. The export includes exactly that selection. Mixed selections
 fail with **Select meetings only**; narrow selections larger than 100 meetings.
@@ -63,7 +63,7 @@ The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
 check those fields before treating an export as complete. A missing summary
 stays missing. msgvault does not generate a replacement from the transcript.
 
-**Meeting activity and follow-ups** appears in a meeting-filtered Everything
+**Meeting activity and follow-ups** appears in a meeting-filtered Messages
 view, participant and domain reading panes, Directory profiles, and
 Relationships. It follows the current scope. Filter action items by source
 status or exact assignee email, then use **Open archived meeting** to read the
@@ -413,7 +413,7 @@ the same key and backend share that spacing.
   With several sources, `sync-omi` moves on to the next source when a pass pauses.
 - **Paused passes.** A pass that runs out of time, yields to other archive
   work, or waits on a provider cooldown shows as **Paused** in Sources and
-  Operations. It keeps its checkpoint and records no error. A scheduled pass
+  Past runs. It keeps its checkpoint and records no error. A scheduled pass
   that saved progress continues right away; a cooldown waits for the next
   scheduled trigger.
 - **Cooldowns.** When Omi returns HTTP 429, msgvault waits for its

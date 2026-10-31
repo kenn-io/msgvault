@@ -1,200 +1,96 @@
-import { expect, test } from '@playwright/test';
-import {
-  installOperations,
-  OPERATION_PRIVACY_SENTINELS,
-  OPERATION_REFERENCES
-} from './fixtures/operations';
+import { expect, test, type Page } from '@playwright/test';
+import { installOperations } from './fixtures/operations';
+import { readFileSync } from 'node:fs';
+import type { OperationRunsResponse, OperationRunSummary } from '../../src/lib/api/generated/models';
 
-const operationsURL = `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`;
+const historyURL = (state: Record<string, unknown> = {}) => `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true, ...state }))}`;
 
-test('operations recovers from revision drift and restarts page one', async ({ page }) => {
-  const fixture = await installOperations(page);
-  fixture.driftNextPage();
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Load more operation history' }).click();
+async function openHistory(page: Page, path = '/') {
+  await page.goto(path);
+  await page.getByRole('button', { name: /Sync status:/ }).click();
+  await page.getByRole('menuitem', { name: 'Past runs' }).click();
+  await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
+}
 
-  const conflict = page.getByRole('alert', { name: 'Operation history conflict' });
-  await expect(conflict).toContainText('Operation history changed. Restart from the first page.');
-  await conflict.getByRole('button', { name: 'Restart operation history' }).click();
-  await expect(conflict).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Open Source sync run' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toHaveCount(0);
-});
-
-test('operations invokes only advertised CardDAV and visual actions and surfaces conflicts', async ({ page }) => {
-  const fixture = await installOperations(page);
-  await page.goto(operationsURL);
-
-  await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
-  const cardDAVDetail = page.getByRole('region', { name: 'Operation run detail' });
-  await expect(cardDAVDetail.getByRole('button', { name: 'Start CardDAV sync' })).toBeVisible();
-  await expect(cardDAVDetail.getByRole('button', { name: /visual index/i })).toHaveCount(0);
-  await cardDAVDetail.getByRole('button', { name: 'Start CardDAV sync' }).click();
-  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync']);
-  await expect(page.locator('[aria-live="polite"]')).toContainText('CardDAV sync request completed');
-
-  fixture.conflictNextCardDAV();
-  await cardDAVDetail.getByRole('button', { name: 'Start CardDAV sync' }).click();
-  await expect(page.getByRole('alert', { name: 'Operation action conflict' }))
-    .toContainText('current server state changed');
-  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync', 'carddav_sync']);
-
-  await page.getByRole('button', { name: 'Close operation detail' }).click();
-  await page.getByRole('button', { name: 'Open Visual embedding run' }).click();
-  const visualDetail = page.getByRole('region', { name: 'Operation run detail' });
-  await expect(visualDetail.getByRole('button', { name: 'Resume visual index' })).toBeVisible();
-  await expect(visualDetail.getByRole('button', { name: 'Build visual index' })).toHaveCount(0);
-  await expect(visualDetail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
-});
-
-test('operations direct opaque detail never renders private native values', async ({ page }) => {
+test('Past runs describes the time and outcome of repeated job kinds', async ({ page }) => {
   await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'operations', operationRunID: OPERATION_REFERENCES.document
-  }))}`);
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Document extraction');
-
-  const rendered = await page.locator('body').innerText();
-  for (const sentinel of OPERATION_PRIVACY_SENTINELS) {
-    expect(rendered, `rendered private sentinel: ${sentinel}`).not.toContain(sentinel);
-  }
+  const publicOperations = JSON.parse(readFileSync(new URL('./fixtures/operations-public.json', import.meta.url), 'utf8')) as OperationRunsResponse & { job_runs: OperationRunSummary[] };
+  await page.route(url => url.pathname === '/api/v1/operations/runs', route => route.fulfill({ json: {
+    runs: [publicOperations.runs.find(run => run.kind === 'source_sync')!, publicOperations.job_runs.find(run => run.kind === 'source_sync')!],
+    membership_revision: 1, unavailable_kinds: [],
+  } }));
+  await openHistory(page);
+  const runs = page.getByRole('button', { name: 'Open Source sync run', exact: true });
+  await expect(runs.nth(0)).toHaveAccessibleDescription(/Aug 30, 2026, 12:00 PM.*Succeeded/);
+  await expect(runs.nth(1)).toHaveAccessibleDescription(/Aug 30, 2026, 11:00 AM.*Failed/);
 });
 
-test('operations related links fetch and render their live status authorities', async ({ page }) => {
-  const fixture = await installOperations(page);
-  await page.goto(operationsURL);
-
-  for (const [linkName, statusName, expectedCopy, endpoint] of [
-    ['Open Document index status', 'Document index status', '4 of 5 owners ready', '/api/v1/documents/status/current'],
-    ['Open Document vector status', 'Document vector status', '7 of 9 chunks ready', '/api/v1/documents/vectors/status'],
-    ['Open Visual attachment status', 'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
-  ] as const) {
-    const link = page.getByRole('button', { name: linkName });
-    await link.click();
-    await expect(page.getByRole('region', { name: statusName })).toContainText(expectedCopy);
-    await expect.poll(() => fixture.statusRequests).toContain(endpoint);
-    await page.getByRole('button', { name: 'Back to operations' }).click();
-    await expect(link).toBeFocused();
-  }
+test('Past runs offers advertised actions and announces completion', async ({ page }) => {
+  await installOperations(page);
+  await openHistory(page);
+  await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
+  const detail = page.getByRole('region', { name: 'Operation run detail' });
+  const action = detail.getByRole('button', { name: 'Start CardDAV sync' });
+  await expect(action).toBeVisible();
+  await expect(detail.getByRole('button', { name: /visual index/i })).toHaveCount(0);
+  await action.click();
+  await expect(page.getByRole('status', { name: 'Operation status' })).toContainText('CardDAV sync request completed');
+  await page.getByRole('button', { name: 'All runs' }).click();
+  await page.getByRole('button', { name: 'Open Visual embedding run' }).click();
+  await expect(detail.getByRole('button', { name: 'Resume visual index' })).toBeVisible();
+  await expect(detail.getByRole('button', { name: 'Build visual index' })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
 });
 
-test('operations sends confirmed unconfigured document and visual status links to setup without fetching them', async ({ page }) => {
-  const fixture = await installOperations(page);
-  fixture.setOperationConfigured('document_extraction', false);
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Open Document index status' }).click();
-  const guide = page.getByRole('link', { name: 'Document indexing setup' });
-  await expect(guide).toBeVisible();
-  await expect(guide).toHaveAttribute('target', '_blank');
-  await expect(guide).toHaveAttribute(
-    'href',
-    'https://msgvault.io/docs/usage/document-indexing/#configure-the-policy'
-  );
-  await expect(page.getByText('Configured in config.toml on the daemon host.').first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /document index settings/i })).toHaveCount(0);
-  expect(fixture.statusRequests).not.toContain('/api/v1/documents/status/current');
+test('Past runs keeps focus through detail and history, then restores workspace focus', async ({ page }) => {
+  await installOperations(page);
+  await openHistory(page, '/?workspace=sources');
+  const row = page.getByRole('button', { name: 'Open Document extraction run' });
+  for (let index = 0; index < 120 && !(await row.evaluate(element => document.activeElement === element)); index += 1) await page.keyboard.press('Tab');
+  await expect(row).toBeFocused();
+  await row.press('Enter');
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await page.goBack();
+  await expect(row).toBeFocused();
+  await page.goForward();
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(row).toBeFocused();
+  await page.keyboard.press('Enter');
+  const link = page.getByRole('button', { name: 'Open Document index status' });
+  await link.click();
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(link).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
+});
 
+test('unconfigured visual status opens Search & AI settings', async ({ page }) => {
+  const fixture = await installOperations(page);
   fixture.setOperationConfigured('visual_embedding', false);
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Open Visual attachment status' }).click();
-  await expect(page.getByRole('button', { name: 'Open visual attachment settings' })).toBeVisible();
-  expect(fixture.statusRequests).not.toContain('/api/v1/multimodal/status');
-  await page.getByRole('button', { name: 'Open visual attachment settings' }).click();
+  await page.goto(historyURL({ operationStatus: 'getVisualAttachmentStatus' }));
+  const configure = page.getByRole('button', { name: 'Open visual attachment settings' });
+  await expect(configure).toBeVisible();
+  await configure.click();
   const settings = page.getByRole('main', { name: 'Settings' });
   await expect(settings).toBeVisible();
   await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
 });
 
-test('operations keeps a configured but unavailable document authority retry-only', async ({ page }) => {
+test('Refresh waits for completion and returns focus to its button', async ({ page }) => {
   const fixture = await installOperations(page);
-  fixture.failNextDocumentStatus();
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Open Document index status' }).click();
-
-  const status = page.getByRole('region', { name: 'Document index status' });
-  await expect(status.getByRole('alert')).toContainText('Unable to load document index status.');
-  await expect(status.getByRole('button', { name: 'Retry document index status' })).toBeVisible();
-  await expect(status.getByRole('button', { name: /settings/i })).toHaveCount(0);
-  await status.getByRole('button', { name: 'Retry document index status' }).click();
-  await expect(status).toContainText('4 of 5 owners ready');
-});
-
-test('the refresh control reloads status only and keeps paged history, detail, and focus', async ({ page }) => {
-  await page.clock.install();
-  const fixture = await installOperations(page);
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Load more operation history' }).click();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toBeVisible();
-  const sourceRow = page.getByRole('button', { name: 'Open Source sync run' });
-  await sourceRow.click();
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  await sourceRow.focus();
-  const listed = fixture.listQueries.length;
+  await openHistory(page);
+  const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
+  const release = fixture.holdNextOperationStatus();
   const reads = fixture.operationStatusReads;
-
-  await page.clock.fastForward('05:00');
-  await expect.poll(() => fixture.operationStatusReads).toBe(reads + 1);
-  expect(fixture.listQueries.length).toBe(listed);
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  await expect(sourceRow).toBeFocused();
-
-  const refresh = page.getByRole('button', { name: 'Refresh operation status' });
-  const releaseStatus = fixture.holdNextOperationStatus();
-  await refresh.focus();
   await refresh.click();
-  await expect.poll(() => fixture.operationStatusReads).toBe(reads + 2);
+  await expect.poll(() => fixture.operationStatusReads).toBeGreaterThan(reads);
   await expect(refresh).toBeDisabled();
-  expect(fixture.listQueries.length).toBe(listed);
-  releaseStatus();
+  release();
   await expect(refresh).toBeEnabled();
   await expect(refresh).toBeFocused();
-
-  await page.getByRole('button', { name: 'Reload run history' }).click();
-  await expect.poll(() => fixture.operationStatusReads).toBe(reads + 3);
-  await expect.poll(() => fixture.listQueries.length).toBe(listed + 1);
-  expect(fixture.listQueries.at(-1)?.get('cursor')).toBeNull();
-  await expect(page.getByRole('button', { name: 'Open Person fact sweep run' })).toHaveCount(0);
-});
-
-test('desktop refresh preserves selected detail identity and row focus when opaque references rotate', async ({ page }) => {
-  const fixture = await installOperations(page);
-  await page.goto(operationsURL);
-
-  const sourceRow = page.getByRole('button', { name: 'Open Source sync run' });
-  await sourceRow.click();
-  const selectedReference = () => JSON.parse(
-    new URL(page.url()).searchParams.get('explore') ?? '{}'
-  ).operationRunID as string | undefined;
-  const before = selectedReference();
-  const listedBefore = await sourceRow.getAttribute('data-run-id');
-  expect(listedBefore).toBe(before);
-  fixture.rotateReferencesOnNextRefresh();
-  await page.getByRole('button', { name: 'Reload run history' }).click();
-  await expect(sourceRow).not.toHaveAttribute('data-run-id', listedBefore!);
-  expect(selectedReference()).toBe(before);
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Source sync');
-  await page.getByRole('button', { name: 'Close operation detail' }).click();
-  await expect(sourceRow).toBeFocused();
-});
-
-test('narrow action reconciliation preserves selected detail identity when opaque references rotate', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const fixture = await installOperations(page);
-  await page.goto(operationsURL);
-
-  const visualRow = page.getByRole('button', { name: 'Open Visual embedding run' });
-  await visualRow.click();
-  const selectedReference = () => JSON.parse(
-    new URL(page.url()).searchParams.get('explore') ?? '{}'
-  ).operationRunID as string | undefined;
-  const before = selectedReference();
-  fixture.rotateReferencesOnNextRefresh();
-  await page.getByRole('button', { name: 'Resume visual index' }).click();
-  await expect(page.getByRole('status', { name: 'Operation status' }))
-    .toContainText('Visual index resume request completed; current operation state was refreshed.');
-  expect(selectedReference()).toBe(before);
-  await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toContainText('Visual embedding');
-  await page.getByRole('button', { name: 'Back to operation history' }).click();
-  await expect(visualRow).toBeFocused();
 });

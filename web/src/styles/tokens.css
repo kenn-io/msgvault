@@ -1,4 +1,7 @@
 :root {
+  --label-gap: var(--space-2);
+  --control-h: 28px;
+  --control-h-lg: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
