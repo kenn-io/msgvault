@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -34,4 +35,23 @@ func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
 	require.NoError(st.IndexStoredMessageContext(context.Background(), id))
 	require.NoError(st.DB().QueryRow(query, args...).Scan(&after))
 	assert.Equal(t, before, after)
+
+	// Restore a missing search entry without changing the stored body.
+	clearDocument := `DELETE FROM messages_fts WHERE rowid = ?`
+	if st.IsPostgreSQL() {
+		clearDocument = `UPDATE messages SET search_fts = NULL WHERE id = ?`
+	}
+	_, err := st.DB().Exec(st.Rebind(clearDocument), id)
+	require.NoError(err)
+	ctx := context.Background()
+	searchQuery := &search.Query{TextTerms: []string{"orchard"}}
+	ids, total, err := st.SearchMessageIDsQueryContext(ctx, searchQuery, 10)
+	require.NoError(err)
+	assert.Empty(t, ids)
+	assert.Zero(t, total)
+	require.NoError(st.IndexStoredMessageContext(ctx, id))
+	ids, total, err = st.SearchMessageIDsQueryContext(ctx, searchQuery, 10)
+	require.NoError(err)
+	assert.Equal(t, []int64{id}, ids)
+	assert.Equal(t, int64(1), total)
 }

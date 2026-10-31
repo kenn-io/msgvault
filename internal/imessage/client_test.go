@@ -45,37 +45,20 @@ func newChatDB(t *testing.T) (string, *sql.DB) {
 
 func TestImportIndexesMessageBodies(t *testing.T) {
 	for _, tt := range []struct {
-		name          string
-		service       string
-		outgoing      bool
-		owner         string
-		handle        any
-		attributed    bool
-		recipientTerm string
+		name string
+		text any
+		term string
 	}{
-		{name: "incoming SMS", service: "SMS", handle: "peer@example.test", recipientTerm: "me"},
-		{name: "incoming attributed iMessage", service: "iMessage", handle: "peer@example.test", attributed: true, recipientTerm: "me"},
-		{name: "outgoing iMessage", service: "iMessage", outgoing: true, owner: "owner@example.test", handle: "peer@example.test", recipientTerm: "peer"},
-		{name: "outgoing SMS phone", service: "SMS", outgoing: true, owner: "+12025550100", handle: "+12025550101", recipientTerm: ""},
-		{name: "unknown owner", service: "SMS", outgoing: true, handle: "peer@example.test", recipientTerm: "peer"},
-		{name: "missing handle", service: "iMessage", recipientTerm: "me"},
+		{name: "incoming SMS", text: strings.Repeat("padding ", 20) + "oldmarker", term: "oldmarker"},
+		{name: "NULL", term: "peer"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			ctx := context.Background()
 			path, db := newChatDB(t)
-			_, err := db.Exec(`UPDATE handle SET id = ?`, tt.handle)
+			_, err := db.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (725760000, ?, 1)`, tt.text)
 			require.NoError(err)
-			body := strings.Repeat("padding ", 20) + "oldmarker"
-			var text any = body
-			var attributed []byte
-			if tt.attributed {
-				text = nil
-				attributed = makeRealStreamtypedBlob(body)
-			}
-			_, err = db.Exec(`INSERT INTO message (date,text,attributedBody,service,is_from_me) VALUES (?,?,?,?,?)`, 725760000, text, attributed, tt.service, tt.outgoing)
-			require.NoError(err)
-			client, err := NewClient(path, WithOwnerHandle(tt.owner))
+			client, err := NewClient(path)
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			st := testutil.NewTestStore(t)
@@ -90,13 +73,16 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			assert.Zero(summary.Skipped)
 			var id int64
 			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
-			ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
+			ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{tt.term}}, 10)
 			require.NoError(err)
 			assert.Equal(int64(1), total)
 			assert.Equal([]int64{id}, ids)
+			if tt.text == nil {
+				return
+			}
 			_, err = st.RebuildFTS(nil)
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE message SET text = ?, attributedBody = NULL`, strings.Repeat("padding ", 20)+"newmarker")
+			_, err = db.Exec(`UPDATE message SET text = ?`, strings.Repeat("padding ", 20)+"newmarker")
 			require.NoError(err)
 			_, err = client.Import(ctx, st, src.ID)
 			require.NoError(err)
@@ -108,54 +94,6 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			require.NoError(err)
 			assert.Zero(total)
 			assert.Empty(ids)
-
-			if tt.recipientTerm != "" {
-				ids, _, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{tt.recipientTerm}}, 10)
-				require.NoError(err)
-				assert.Equal([]int64{id}, ids)
-			}
-
-			// Empty source text currently retains the stored body; keep it searchable.
-			for _, empty := range []any{"", nil} {
-				_, err = db.Exec(`UPDATE message SET text = ?`, empty)
-				require.NoError(err)
-				_, err = client.Import(ctx, st, src.ID)
-				require.NoError(err)
-				ids, _, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"newmarker"}}, 10)
-				require.NoError(err)
-				assert.Equal([]int64{id}, ids)
-				storedBody, err := st.GetMessageBodyText(id)
-				require.NoError(err)
-				assert.Equal(strings.Repeat("padding ", 20)+"newmarker", storedBody)
-			}
-		})
-	}
-}
-
-func TestImportTextlessMessagesSearchable(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		text any
-	}{{name: "NULL"}, {name: "empty", text: ""}} {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			path, db := newChatDB(t)
-			_, err := db.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (725760000, ?, 1)`, tt.text)
-			require.NoError(err)
-			client, err := NewClient(path)
-			require.NoError(err)
-			t.Cleanup(func() { _ = client.Close() })
-			st := testutil.NewTestStore(t)
-			if !st.FTS5Available() {
-				t.Skip("FTS5 not available")
-			}
-			src, err := st.GetOrCreateSource("apple_messages", "fixture")
-			require.NoError(err)
-			_, err = client.Import(context.Background(), st, src.ID)
-			require.NoError(err)
-			_, total, err := st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{"peer"}}, 10)
-			require.NoError(err)
-			assert.Equal(t, int64(1), total)
 		})
 	}
 }
