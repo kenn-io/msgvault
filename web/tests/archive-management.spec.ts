@@ -76,7 +76,7 @@ for (const failure of ['mail sync', 'contacts sync', 'contacts status']) {
     await page.route('**/api/v1/carddav/runs**', route => route.fulfill({ json: { runs: [] } }));
     await page.route('**/api/v1/carddav/sync', route => {
       attempts += 1;
-      return route.fulfill(reject ? { status: 400, json: {} } : { json: { status: 'succeeded' } });
+      return route.fulfill(failure === 'contacts sync' && reject ? { status: 400, json: {} } : { json: { status: 'succeeded' } });
     });
     await page.route('**/api/v1/sync/archive%40example.com**', route => {
       attempts += 1;
@@ -86,14 +86,18 @@ for (const failure of ['mail sync', 'contacts sync', 'contacts status']) {
     const label = failure === 'mail sync' ? 'Archive' : 'contacts@example.com';
     await page.getByRole('button', { name: `Details for ${label}`, exact: true }).click();
     const panel = page.getByRole('dialog', { name: label, exact: true });
-    if (failure !== 'contacts status') await panel.getByRole('button', { name: 'Sync now', exact: true }).click();
+    await panel.getByRole('button', { name: 'Sync now', exact: true }).click();
     const message = failure === 'mail sync' ? 'Source sync rejected' : failure === 'contacts sync' ? 'Unable to start CardDAV sync.' : 'Unable to load CardDAV status.';
     const alert = panel.getByRole('alert').filter({ hasText: message });
     await expect(alert).toBeInViewport();
     reject = false;
     if (failure === 'contacts status') {
-      await panel.getByRole('button', { name: 'Retry status', exact: true }).click();
+      const syncState = panel.getByRole('alert', { name: 'Sync state', exact: true });
+      await expect(syncState).toBeInViewport();
+      await expect(panel.getByRole('button', { name: 'Sync now', exact: true })).toBeDisabled();
+      await panel.getByRole('button', { name: 'Retry CardDAV sync state', exact: true }).click();
       await expect(alert).toHaveCount(0);
+      await expect(syncState).toHaveCount(0);
       await expect(panel.getByRole('button', { name: 'Sync now', exact: true })).toBeEnabled();
     } else {
       if (failure === 'mail sync') {
