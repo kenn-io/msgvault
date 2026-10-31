@@ -383,7 +383,8 @@ import (
 // 3.29.0 adds archived calendar occurrence listing, paging, detail and source scope.
 // 3.30.0 adds owner meeting link decisions and suggestions.
 // 3.31.0 adds stored hidden text flags to message details and search rows.
-const APISchemaVersion = "3.31.0"
+// 3.32.0 adds owner-only call evidence import, inspection and person summaries.
+const APISchemaVersion = "3.32.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

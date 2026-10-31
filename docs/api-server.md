@@ -163,16 +163,36 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Call history
+
+Call history is owner-only. Delegated agent grants do not authorize these routes.
+Imports use the daemon mutation gate and return stable message/source IDs.
+
+| Route | Contract |
+| --- | --- |
+| `POST /api/v1/import/calls` | One JSON request containing `format`, `account`, `record`, and optional explicit `bindings`; 1 MiB request limit. Returns `message_id` and `source_id`. |
+| `GET /api/v1/calls` | Typed observations, including withdrawn evidence. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
+| `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
+
+Read results use an `items` array. Limits default to 50 and are capped at 100.
+Times are RFC3339, with inclusive `after` and exclusive `before`.
+Invalid queries return 400; malformed imports 400, invalid observations 422,
+oversized imports 413, unsupported media 415, withdrawn-source/observation
+conflicts 409, and unavailable or busy service 503.
+The [call-history guide](usage/call-history.md) owns format details, attendance
+rules, deduplication and source limitations. The generated OpenAPI document
+describes every response field.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.30.0**.
+it is separate from the binary release version. The current schema is **3.32.0**.
 
-Schema 3.28.0 adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
+Schema 3.32.0 adds owner-only call evidence import, inspection and person summaries. It also adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
 
-Schema 3.29.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
+Schema 3.31.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
