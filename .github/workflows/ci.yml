@@ -55,7 +55,7 @@ jobs:
         run: |
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
           # workflowretry: allow Cap each attempt so a slow transfer leaves time to retry.
-          kit-retry 3 5 curl -fsSL --connect-timeout 30 --max-time 120 \
+          kit-retry 6 1 curl -fsSL --connect-timeout 30 --max-time 120 \
             "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
