@@ -198,6 +198,33 @@ describe('SourcesWorkspace', () => {
 
 
 
+  it('disables the other source panel while a start is pending and posts its next enabled click', async () => {
+    let finish!: (response: Response) => void;
+    const posts: string[] = [];
+    const fetchFn = api([
+      source(), source({ id: 2, display_name: 'Other', identifier: 'other@example.com' })
+    ], (url, request) => {
+      if (request.method !== 'POST') return;
+      posts.push(url.pathname);
+      if (posts.length === 1) return new Promise<Response>(resolve => { finish = resolve; });
+      return Response.json({ message: 'Other sync rejected' }, { status: 500 });
+    });
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+      await waitFor(() => expect(posts).toEqual(['/api/v1/sync/archive%40example.com']));
+      await fireEvent.click(screen.getByRole('button', { name: 'Details for Other' }));
+      const panel = screen.getByRole('dialog', { name: 'Other' });
+      const button = within(panel).getByRole('button', { name: /^Sync now$/ });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      finish(Response.json({ message: 'Archive sync rejected' }, { status: 500 }));
+      await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+      await fireEvent.click(button);
+      expect(await within(panel).findByText('Other sync rejected')).toBeDefined();
+      expect(posts).toEqual(['/api/v1/sync/archive%40example.com', '/api/v1/sync/other%40example.com']);
+    } finally { view.unmount(); }
+  });
+
   it('reports each rejected click despite an unchanged stored run', async () => {
     const events: unknown[] = [];
     const fetchFn = api([source({ latest_sync: run('failed', 0) })], (_url, request) =>
