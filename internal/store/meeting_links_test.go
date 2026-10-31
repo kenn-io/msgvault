@@ -777,7 +777,7 @@ func TestMeetingLinksRetainICSRecurrenceDiagnostics(t *testing.T) {
 			requirements.Len(imported.MessageIDs, 1)
 			master := imported.MessageIDs[0]
 			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			if tc.unsupported {
 				assertions.Empty(page.Occurrences)
