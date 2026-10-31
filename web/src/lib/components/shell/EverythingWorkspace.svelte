@@ -72,7 +72,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
-    onReviewDeletion: (mode: 'explicit' | 'all_matching') => void;
+    onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
@@ -825,7 +825,7 @@
                 onRetry={loader.retry}
               />
             {/if}
-            {#if !scope}<SelectionBar
+            <SelectionBar
               {selection}
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}
@@ -836,7 +836,7 @@
               onExport={exportSelection}
               {onReviewDeletion}
               onClear={focusGrid}
-            />{/if}
+            />
           {/if}
         </div>
       {/snippet}
