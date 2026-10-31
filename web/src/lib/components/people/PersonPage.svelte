@@ -49,7 +49,7 @@
   $effect(() => { if (filesOpen) selectedDate = null; });
 </script>
 
-<section class="person-page" aria-label="Person page">
+<section class="person-page" role="group" aria-label="Person page">
   {#if controller.timelineLoading && !detail}
     <p role="status">Loading…</p>
   {:else if controller.detailMissing}

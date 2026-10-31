@@ -17,8 +17,8 @@
   import type { ComponentProps } from 'svelte';
 
   type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack'>;
-  let { directory, urlState, onNavigate, onShowAllChange, ...page }:
-    PageProps & { directory: DirectoryController; urlState: ExploreURLState;
+  let { directory, urlState, onNavigate, onReplaceNavigation, onShowAllChange, ...page }:
+    PageProps & { directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
   const query = $derived(urlState.identityQuery ?? '');
   const controller = $derived(page.controller);
@@ -39,7 +39,8 @@
   let bulkAnchorID = $state<number>();
   let bulkContext = $state<ReturnType<RelationshipsController['personMergeContextSnapshot']>>();
   let staleLink = $state<{ a: number; b: number } | null>(null);
-  let soloProfile = $state<{ id: number; display_name: string } | null>(null);
+  type SoloProfile = { id: number; display_name: string; targets: string[] };
+  let soloProfile = $state<SoloProfile | null>(null);
   const profileFilters = $derived(Boolean(urlState.directoryContactState || urlState.directoryCategory || urlState.directoryOrganization || urlState.directoryPrimaryChannel || urlState.directoryLastContactAfter || urlState.directoryLastContactBefore));
   const directoryMode = $derived(facet === 'people' && (saved || profileFilters));
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
@@ -86,19 +87,25 @@
   $effect(() => {
     void navigationKey;
     const id = soloPerson;
-    if (id === null || (page.target !== null && !controller.detailMissing) || soloProfile?.id === id) return;
+    if (id === null || showsProfile(soloProfile, id, page.target)) return;
     const abort = new AbortController();
     const generation = ++openGeneration;
-    opening = true;
-    openingError = '';
+    opening = page.target === null; openingError = '';
     void getPersonProfile({ id }, { ...page.client, signal: abort.signal }).then((response) => {
       if (abort.signal.aborted || generation !== openGeneration) return;
       if (!response.data) throw new Error('Saved person not found.');
-      soloProfile = { id, display_name: response.data.display_name || 'Saved person' };
+      soloProfile = soloProfileOf(id, response.data);
+      if (!showsProfile(soloProfile, id, page.target)) onReplaceNavigation({ relationshipTarget: soloProfile.targets[0] ?? null, relationshipFiles: false });
     }).catch((cause: unknown) => { if (!abort.signal.aborted && generation === openGeneration) openingError = cause instanceof Error ? cause.message : 'Could not open this person.'; })
       .finally(() => { if (generation === openGeneration) opening = false; });
     return () => abort.abort();
   });
+  function soloProfileOf(id: number, profile: { display_name?: string; participant_ids?: number[] }): SoloProfile {
+    return { id, display_name: profile.display_name || 'Saved person', targets: (profile.participant_ids ?? []).map((participant) => `cluster:${participant}`) };
+  }
+  function showsProfile(profile: SoloProfile | null, id: number, target: string | null): boolean {
+    return profile?.id === id && (profile.targets.length ? profile.targets.includes(target ?? '') : target === null);
+  }
   async function open(key: string): Promise<void> {
     const generation = ++openGeneration;
     openingError = '';
@@ -109,9 +116,8 @@
       const response = await getPersonProfile({ id }, page.client);
       if (generation !== openGeneration) return;
       if (!response.data) throw new Error('Could not open this person.');
-      soloProfile = { id, display_name: response.data.display_name || 'Saved person' };
-      const participant = response.data.participant_ids?.[0];
-      onNavigate({ directoryPersonID: id, relationshipTarget: participant ? `cluster:${participant}` : null, relationshipFiles: false });
+      soloProfile = soloProfileOf(id, response.data);
+      onNavigate({ directoryPersonID: id, relationshipTarget: soloProfile.targets[0] ?? null, relationshipFiles: false });
     } catch (cause: unknown) { if (generation === openGeneration) openingError = cause instanceof Error ? cause.message : 'Could not open this person.'; }
     finally { if (generation === openGeneration) opening = false; }
   }

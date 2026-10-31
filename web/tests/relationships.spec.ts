@@ -288,7 +288,7 @@ for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
     const messages = page.getByRole('grid', { name: 'Messages results' });
-    await page.getByRole('region', { name: 'Person page' }).hover();
+    await page.getByRole('group', { name: 'Person page' }).hover();
     await page.mouse.wheel(0, 700);
     await expect(messages.getByText('Subject line')).toBeInViewport();
     expect((await messages.boundingBox())!.height).toBeGreaterThan(100);
@@ -488,7 +488,7 @@ test('People search and intersecting filters stay separate from identity scope a
   await page.getByRole('button', { name: 'Previous relationship year' }).click();
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' }).getByText('2025', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true }).click();
-  await page.getByRole('main', { name: 'Messages', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('group', { name: 'Person page', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByLabel('From', { exact: true }).fill('2026-07-01');
   await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' }).getByText('2025', { exact: true })).toBeVisible();
@@ -576,3 +576,50 @@ test('Saved People retains rows and reloads after a page cursor expires', async 
   await page.getByRole('button', { name: 'Reload', exact: true }).click();
   await expect(list.getByText('Reloaded 0', { exact: true })).toBeVisible();
 });
+test('Back restores the prior reader while staying on the same person', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/conversations/21**', route => route.fulfill({ json: { id: 21, anchor_id: 1, has_before: false, has_after: false, total: 1, messages: [{ id: 1, conversation_id: 21, subject: 'Subject line', message_type: 'email', from: 'Alice Example', to: [], sent_at: '2026-07-18T09:00:00Z', body: 'Email body', snippet: 'Email body', attachments: [] }] } }));
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.getByText('Team Chat').click();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ })).toBeVisible();
+  await page.getByRole('group', { name: 'Person page', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('From', { exact: true }).fill('2026-07-01');
+  await expect.poll(async () => (await exploreHistoryState(page)).filters).toContainEqual({ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] });
+  await page.keyboard.press('Escape');
+  await grid.getByText('Subject line').click();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Team Chat/ }).getByText('Latest chat message')).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
+});
+
+for (const previous of ['Alice', 'no person']) {
+  test(`returning from Directory opens the selected person's messages after ${previous}`, async ({ page }) => {
+    await prepare(page);
+    const profiles = [
+      { id: 91, display_name: 'Alice Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [1], carddav_bindings: [], vcard_uid: 'example-91' },
+      { id: 92, display_name: 'Bob Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [2], carddav_bindings: [], vcard_uid: 'example-92' },
+    ];
+    await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
+    for (const profile of profiles) await page.route(`**/api/v1/people/${profile.id}`, route => route.fulfill({ json: profile }));
+    await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
+    await page.route('**/api/v1/participants/1', route => route.fulfill({ json: { ...alice, profile: { id: 91, display_name: 'Alice Example' } } }));
+    await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
+    const list = page.getByRole('grid', { name: 'People results' });
+    if (previous === 'Alice') {
+      await list.getByText('Alice Example', { exact: true }).click();
+      await page.getByRole('radio', { name: 'Details', exact: true }).click();
+      await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
+    } else await page.getByRole('button', { name: 'Directory', exact: true }).click();
+    await page.getByRole('grid', { name: 'Directory people' }).getByText('Bob Example', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'People', exact: true }).click();
+    await expect(list.getByRole('row', { name: /Bob Example/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
+    await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
+  });
+}

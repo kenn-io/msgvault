@@ -29,15 +29,17 @@ it.each([
   { name: 'opened after the first result page', paged: true, period: undefined },
   { name: 'with its selected calendar day window', paged: false, period: { after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' } },
 ])('restores a reader $name', async ({ paged, period }) => {
-  const { props, requests } = setup(paged);
+  const row = period ? { ...saved, key: 'conversation:2', kind: 'conversation', message_type: 'slack', conversation_type: 'chat', source_type: 'slack' } : saved;
+  const { props, requests } = setup(paged, row);
   let view = render(PersonMessages, { props: { ...props, period } });
   try {
     const grid = await screen.findByRole('grid', { name: 'Messages results' });
     if (paged) { await within(grid).findByText('First page message'); await fireEvent.keyDown(grid, { key: 'End' }); }
     await fireEvent.click(await within(grid).findByText('Saved message'));
     await screen.findByText('Restored body');
-    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]?.selection.row.key).toBe('message:2'));
+    await waitFor(() => expect(window.history.state[RELATIONSHIP_READER_HISTORY_KEY]?.selection.row.key).toBe(period ? 'conversation:2' : 'message:2'));
     view.unmount();
+    if (period) row.anchor_message_id = 99;
     view = render(PersonMessages, { props });
     if (paged) await screen.findByText('First page message');
     await screen.findByText('Restored body');

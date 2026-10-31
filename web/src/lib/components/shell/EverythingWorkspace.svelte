@@ -629,7 +629,7 @@
   });
 </script>
 
-<main class="everything-workspace" aria-label="Messages">
+<svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
   {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
   </PageHeader>{/if}
@@ -866,7 +866,7 @@
     </SplitPane>
   </div>
 
-</main>
+</svelte:element>
 
 <style>
   .everything-workspace {

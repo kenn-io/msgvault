@@ -1,3 +1,10 @@
+<script module lang="ts">
+  // AppShell's ExploreState applies a popped URL first, and the effects it flushes rewrite
+  // the entry's reader, so keep the entry as Back/Forward left it before that listener runs.
+  let popped: Record<string, unknown> | null = null;
+  window.addEventListener('popstate', () => popped = window.history.state);
+</script>
+
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
@@ -20,16 +27,23 @@
     ? { dimension: 'participant', values: [String(identityScope.id)] }
     : { dimension: 'domain', values: [identityScope.domain] });
   const exploreState = new ExploreState(null);
-  const restored = untrack(() => relationshipReaderHistory(window.history.state, 'relationships', target));
-  const restoredRow = restored?.selection.kind === 'entry' ? restored.selection.row.key : null;
-  exploreState.replaceCommittedRestorableNavigation({ filters: untrack(() => predicate.filters ?? []), selectedRow: restoredRow, conversationAnchor: restoredRow && restored?.anchor ? String(restored.anchor) : null });
-  let restoredBounds = $state(restoredRow ? restored?.bounds : undefined);
+  let restoredRow = $state<string | null>(null);
+  let restoredBounds = $state<{ start: string; end: string }>();
+  let hasPredicate = false;
+  // Each history entry owns its reader: apply it with that entry's filters and keep it through their reload.
+  function restore(restored = relationshipReaderHistory(window.history.state, 'relationships', target)): void {
+    const filters = predicate.filters ?? [];
+    hasPredicate &&= JSON.stringify(filters) === JSON.stringify(exploreState.current.filters);
+    restoredRow = restored?.selection.kind === 'entry' ? restored.selection.row.key : null;
+    restoredBounds = restoredRow ? restored?.bounds : undefined;
+    exploreState.replaceCommittedRestorableNavigation({ filters, selectedRow: restoredRow, conversationAnchor: restoredRow && restored?.anchor ? String(restored.anchor) : null });
+  }
+  untrack(() => restore());
   const conversationBounds = $derived(period ? { start: period.after, end: period.before } : restoredBounds);
   const selection = new ExploreSelectionState();
   const session = new EverythingSessionState();
   let notice = $state('');
   let root = $state<HTMLElement>();
-  let hasPredicate = false;
   const loader = new ExploreLoader(untrack(() => client), exploreState, {
     isEnabled: () => true,
     predicate: requestPredicate,
@@ -56,7 +70,7 @@
     const anchor = exploreState.current.conversationAnchor;
     if (key && !row) return;
     window.history.replaceState({ ...window.history.state, [RELATIONSHIP_READER_HISTORY_KEY]: row
-      ? { target, selection: { kind: 'entry', row: $state.snapshot(row) }, anchor: anchor ? Number(anchor) : undefined, bounds: $state.snapshot(conversationBounds) }
+      ? { target, selection: { kind: 'entry', row: $state.snapshot(row) }, anchor: anchor ? Number(anchor) : row.anchor_message_id, bounds: $state.snapshot(conversationBounds) }
       : undefined }, '');
   });
   $effect(() => { if (exploreState.current.selectedRow !== restoredRow) restoredBounds = undefined; });
@@ -85,6 +99,7 @@
   onDestroy(() => { loader.destroy(); exploreState.destroy(); });
 </script>
 
+<svelte:window onpopstate={() => restore(relationshipReaderHistory(popped, 'relationships', target))} />
 <!-- svelte-ignore a11y_no_static_element_interactions -- Escape closes the embedded reader. -->
 <div class="messages" bind:this={root} onkeydown={escape}>
   <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={conversationBounds?.start} conversationEnd={conversationBounds?.end} {exploreState} {loader} {session} {selection} enabled

@@ -1282,6 +1282,7 @@
           directory={directoryController}
           urlState={exploreState.current}
           onNavigate={commitNavigation}
+          onReplaceNavigation={replaceCommittedNavigation}
           {client}
           controller={relationshipsController}
           target={exploreState.current.relationshipTarget}

@@ -679,5 +679,4 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.NoError(err)
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
-
 }
