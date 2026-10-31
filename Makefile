@@ -1,3 +1,6 @@
+# CI can retry acquisition commands inside mixed build/test recipes.
+DOWNLOAD_RETRY ?=
+
 # Makefile for msgvault
 
 .DEFAULT_GOAL := help
@@ -373,7 +376,7 @@ openapi: api-generate
 web-install: $(WEB_INSTALL_STAMP)
 
 $(WEB_INSTALL_STAMP): web/package.json web/bun.lock
-	cd web && bun install --frozen-lockfile
+	cd web && $(DOWNLOAD_RETRY) bun install --frozen-lockfile
 	@touch $(WEB_INSTALL_STAMP)
 
 web-generate: web-install
@@ -436,7 +439,7 @@ fmt:
 # Install the pinned linter used by CI; lint-ci runs this first, so skip it when already installed.
 lint-tools:
 	@if [ "$$("$(GOLANGCI_LINT_BIN)" version --short 2>/dev/null)" = "$(GOLANGCI_LINT_VERSION:v%=%)" ]; then exit 0; fi; \
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	$(DOWNLOAD_RETRY) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 # Build golangci-lint with the plugins in .custom-gcl.yml into the
 # repository-owned tool path. Strip repo-local Git variables so a build run
@@ -446,7 +449,7 @@ custom-gcl: lint-tools
 	@if [ -x "$(CUSTOM_GCL_BIN)" ] && [ "$(CUSTOM_GCL_BIN)" -nt .custom-gcl.yml ]; then case "$$("$(CUSTOM_GCL_BIN)" version --short 2>/dev/null)" in "$(GOLANGCI_LINT_VERSION)"-custom-gcl-*) exit 0;; esac; fi; \
 	mkdir -p "$(CI_TOOLS_BIN)"; \
 	unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
-	env $$unset_args GOFLAGS=-buildvcs=false "$(GOLANGCI_LINT_BIN)" custom \
+	env $$unset_args GOFLAGS=-buildvcs=false $(DOWNLOAD_RETRY) "$(GOLANGCI_LINT_BIN)" custom \
 		--destination "$(CI_TOOLS_BIN)" --name custom-gcl \
 		--version "$(GOLANGCI_LINT_VERSION)"
 
@@ -475,7 +478,7 @@ huma-check:
 # Run linter (CI, no auto-fix). The second pass lints the files that only the
 # PostgreSQL-only CGO_ENABLED=0 build compiles. It covers the packages whose
 # tests also build without CGO; the others' tests need the SQLite driver.
-lint-ci: custom-gcl testify-helper-check
+lint-ci: custom-gcl testify-helper-check lint-workflow-retries
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run ./...
 	CGO_ENABLED=0 TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run $(NOCGO_LINT_PKGS)
@@ -488,7 +491,7 @@ lint-ci: custom-gcl testify-helper-check
 # installed by the base branch's pull-request workflow cannot replace it.
 vuln-tools:
 	@mkdir -p "$(CI_TOOLS_BIN)"
-	GOBIN="$(CI_TOOLS_BIN)" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	GOBIN="$(CI_TOOLS_BIN)" $(DOWNLOAD_RETRY) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
@@ -642,3 +645,7 @@ help:
 	@echo "  bench          - Run query engine benchmarks"
 	@echo "  shootout       - Build MIME shootout tool"
 	@echo "  run-shootout   - Run MIME shootout"
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries

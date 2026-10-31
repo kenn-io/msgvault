@@ -29,13 +29,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: 'true'
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
       - name: Install Bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y bubblewrap
       - name: Download pinned Codex artifact
         run: |
           mkdir -p "$RUNNER_TEMP/codex-artifact"
           cd "$RUNNER_TEMP/codex-artifact"
-          curl -fsSL --retry 3 https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-x86_64-unknown-linux-musl.tar.gz -o codex.tar.gz
+          kit-download https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-x86_64-unknown-linux-musl.tar.gz codex.tar.gz
           echo '3d49d9af25a5168cfc51e50e520ab238b23083c259ae7c14f89b007cb2545c7b  codex.tar.gz' | sha256sum -c -
           tar -xzf codex.tar.gz
           echo '78a11f06e0a2dda42d13fba1d50dc62e8cbdb2d5f69789722f4d4d99b5cdbe30  codex-x86_64-unknown-linux-musl' | sha256sum -c -

@@ -25,9 +25,11 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: web/package.json
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
       - name: Install frontend dependencies
         working-directory: web
-        run: bun install --frozen-lockfile
+        shell: bash
+        run: kit-retry 3 5 bun install --frozen-lockfile
       - name: Test Command Prompt quoting and provider commands
         working-directory: web
         run: bun run test src/lib/settings/shell-quote.test.ts src/lib/components/settings/CardDAVAccountSettings.test.ts
