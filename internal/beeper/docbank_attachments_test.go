@@ -1057,6 +1057,31 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a"}, r.processing.Plans)
 	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
+
+	versions := make([]string, 20)
+	for i := range versions {
+		versions[i] = fmt.Sprintf("pending-%02d", i)
+	}
+	r.delivered(versions...)
+	require.NoError(r.runBatch(t.Context()))
+	r.processingDue()
+	r.delivered("new")
+	transport := http.DefaultTransport
+	defer func() { http.DefaultTransport = transport }()
+	synctest.Test(t, func(t *testing.T) {
+		deadline := time.Now().Add(time.Second)
+		http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+			if strings.HasPrefix(req.URL.Path, "/api/v1/processing/jobs/") {
+				synctest.Sleep(time.Until(deadline))
+			}
+			r.serve(w, req)
+		})
+		more, err := r.worker.processDocuments(t.Context(), deadline)
+		require.NoError(err)
+		assert.True(more)
+		assert.False(time.Now().Before(deadline), "slow polls exhaust the pass budget")
+		assert.Contains(r.processing.Jobs, "new", "new files start before the poll backlog exhausts the pass budget")
+	})
 }
 
 func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
