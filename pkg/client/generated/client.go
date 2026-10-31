@@ -1263,6 +1263,10 @@ type ClientInterface interface {
 	GetTextStats(ctx context.Context, options *GetTextStatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTextStatsResponse, error)
 	GetTextStatsWithResponse(ctx context.Context, options *GetTextStatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTextStatsResp, error)
 
+	// PrepareReply Prepare an owner reply review; explicit adoption may perform a budgeted lookup
+	PrepareReply(ctx context.Context, options *PrepareReplyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareReplyResponse, error)
+	PrepareReplyWithResponse(ctx context.Context, options *PrepareReplyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareReplyResp, error)
+
 	// Health Health check
 	Health(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HealthResponseJSON, error)
 	HealthWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*HealthResp, error)
@@ -20285,6 +20289,70 @@ func (c *Client) GetTextStats(ctx context.Context, options *GetTextStatsRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/text/stats")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PrepareReply Prepare an owner reply review; explicit adoption may perform a budgeted lookup
+func (c *Client) PrepareReply(ctx context.Context, options *PrepareReplyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareReplyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/x/replies/prepare",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PrepareReplyResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PrepareReplyErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PrepareReplyErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PrepareReplyResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PrepareReplyResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/x/replies/prepare")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

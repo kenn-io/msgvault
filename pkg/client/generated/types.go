@@ -13645,6 +13645,15 @@ func (r Reference) Validate() error {
 	return errors
 }
 
+type RefreshSummary struct {
+	Complete          bool       `json:"complete"`
+	LastCompleteAt    *time.Time `json:"last_complete_at,omitempty"`
+	OldestUncheckedAt *time.Time `json:"oldest_unchecked_at,omitempty"`
+	Outstanding       int64      `json:"outstanding"`
+	Overdue           bool       `json:"overdue"`
+	PendingRemoval    bool       `json:"pending_removal"`
+}
+
 type RejectPersonBriefRequest struct {
 	Reason *string `json:"reason,omitzero"`
 }
@@ -14089,6 +14098,50 @@ func (r RemoveResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ReplyPreparation struct {
+	AdoptAuthorID  *string     `json:"adopt_author_id,omitzero"`
+	AdoptPost      *string     `json:"adopt_post,omitzero"`
+	AdoptText      *string     `json:"adopt_text,omitzero"`
+	DraftID        string      `json:"draft_id" validate:"required"`
+	Mode           string      `json:"mode" validate:"required"`
+	Receipt        *SendResult `json:"receipt,omitempty"`
+	ReservedMicros int64       `json:"reserved_micros"`
+	Revision       int64       `json:"revision"`
+	TargetPostID   *string     `json:"target_post_id,omitzero"`
+	Text           *string     `json:"text,omitzero"`
+}
+
+func (r ReplyPreparation) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.DraftID, "required"); err != nil {
+		errors = errors.Append("DraftID", err)
+	}
+	if err := typesValidator.Var(r.Mode, "required"); err != nil {
+		errors = errors.Append("Mode", err)
+	}
+	if r.Receipt != nil {
+		if v, ok := any(r.Receipt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Receipt", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ReplyPrepareRequest struct {
+	AdoptPost *string `json:"adopt_post,omitzero"`
+	DraftID   string  `json:"draft_id" validate:"required"`
+	Revision  int64   `json:"revision"`
+}
+
+func (r ReplyPrepareRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type Result struct {
@@ -14642,6 +14695,21 @@ func (s Selector) Validate() error {
 	return errors
 }
 
+type SendResult struct {
+	Association    *string `json:"association,omitzero"`
+	AttemptID      *string `json:"attempt_id,omitzero"`
+	Code           *string `json:"code,omitzero"`
+	DraftID        string  `json:"draft_id" validate:"required"`
+	RemoteID       *string `json:"remote_id,omitzero"`
+	ReservedMicros int64   `json:"reserved_micros"`
+	Revision       int64   `json:"revision"`
+	Status         string  `json:"status" validate:"required"`
+}
+
+func (s SendResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type SenderCount struct {
 	Count  int64  `json:"count"`
 	Sender string `json:"sender" validate:"required"`
@@ -15183,6 +15251,7 @@ type SourceStatus struct {
 	SourceType            string         `json:"source_type" validate:"required"`
 	SyncUnavailableReason *string        `json:"sync_unavailable_reason,omitzero"`
 	UpdatedAt             string         `json:"updated_at" validate:"required"`
+	X                     *XSourceStatus `json:"x,omitempty"`
 }
 
 func (s SourceStatus) Validate() error {
@@ -15231,6 +15300,13 @@ func (s SourceStatus) Validate() error {
 	}
 	if err := typesValidator.Var(s.UpdatedAt, "required"); err != nil {
 		errors = errors.Append("UpdatedAt", err)
+	}
+	if s.X != nil {
+		if v, ok := any(s.X).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("X", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -16441,4 +16517,34 @@ type VisualTextSearchRequest struct {
 
 func (v VisualTextSearchRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type XSourceStatus struct {
+	CredentialError      *string        `json:"credential_error,omitzero"`
+	CredentialGeneration int64          `json:"credential_generation"`
+	HistoryGapPossible   bool           `json:"history_gap_possible"`
+	MentionsComplete     bool           `json:"mentions_complete"`
+	ModelError           *string        `json:"model_error,omitzero"`
+	Month                string         `json:"month" validate:"required"`
+	MonthEstimatedMicros int64          `json:"month_estimated_micros"`
+	MonthReservedMicros  int64          `json:"month_reserved_micros"`
+	MonthlyBudgetMicros  int64          `json:"monthly_budget_micros"`
+	OwnComplete          bool           `json:"own_complete"`
+	Retention            RefreshSummary `json:"retention"`
+}
+
+func (x XSourceStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(x.Month, "required"); err != nil {
+		errors = errors.Append("Month", err)
+	}
+	if v, ok := any(x.Retention).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Retention", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
