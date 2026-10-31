@@ -714,6 +714,40 @@ func absorbedPersonMergeSnapshotRoot(
 	return snapshot.Persons[1], nil
 }
 
+func (s *Store) postMergeOwnerAssertionObservationIDsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	snapshot personMergeSnapshot,
+) (map[int64]struct{}, error) {
+	snapshotEvents := make(map[int64]struct{})
+	for _, row := range snapshot.Rows {
+		if row.TableName == "person_observation_events" {
+			snapshotEvents[row.RowID] = struct{}{}
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,observation_id FROM person_observation_events
+		WHERE person_id=? AND event='owner-assertion-confirmed' ORDER BY id`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("read post-merge owner assertion events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	observations := make(map[int64]struct{})
+	for rows.Next() {
+		var eventID, observationID int64
+		if err := rows.Scan(&eventID, &observationID); err != nil {
+			return nil, fmt.Errorf("scan post-merge owner assertion event: %w", err)
+		}
+		if _, existedAtMerge := snapshotEvents[eventID]; !existedAtMerge {
+			observations[observationID] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read post-merge owner assertion events: %w", err)
+	}
+	return observations, nil
+}
+
 func (s *Store) deletePersonSplitCrossingLinksTx(
 	ctx context.Context, tx *loggedTx, selected []int64,
 ) error {
@@ -747,6 +781,19 @@ func (s *Store) restorePersonSplitRowsTx(
 	journal, err := loadPersonSplitJournalTx(ctx, tx, mergeID)
 	if err != nil {
 		return nil, err
+	}
+	postMergeOwnerAssertions, err := s.postMergeOwnerAssertionObservationIDsTx(ctx, tx, sourceID, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	postMergeObservationSuppressions := []personMergeObservationSuppressionDecision{}
+	if selection.restoresAbsorbed {
+		postMergeObservationSuppressions, err = s.capturePostMergeObservationSuppressionsTx(
+			ctx, tx, sourceID, journal, snapshot,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	selectedSet := make(map[int64]struct{}, len(selected))
 	for _, participantID := range selected {
@@ -820,6 +867,15 @@ func (s *Store) restorePersonSplitRowsTx(
 		if !ok {
 			return nil, fmt.Errorf("%w: missing split snapshot path %q",
 				ErrPersonMergeSnapshotCorrupt, row.snapshotPath)
+		}
+		if row.tableName == "person_observation_evidence" {
+			observationID := personSplitSnapshotRowInteger(snapshotRow, personObservationIDColumn)
+			if _, confirmedAfterMerge := postMergeOwnerAssertions[observationID]; confirmedAfterMerge {
+				if err := markPersonSplitJournalRowTx(ctx, tx, mergeID, splitID, row); err != nil {
+					return nil, err
+				}
+				continue
+			}
 		}
 		if personSplitSnapshotHasUnsupportedCandidate(
 			snapshotRow, unsupportedCandidates, unsupportedEvidence,
@@ -954,9 +1010,11 @@ func (s *Store) restorePersonSplitRowsTx(
 			}
 			continue
 		}
+		_, preserveOwnerAssertion := postMergeOwnerAssertions[snapshotRow.RowID]
 		if err := s.restoreExistingPersonSplitRowTx(
 			ctx, tx, row, snapshotRow, sourceID, newPersonID,
 			survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID,
+			preserveOwnerAssertion,
 		); err != nil {
 			return nil, err
 		}
@@ -976,12 +1034,15 @@ func (s *Store) restorePersonSplitRowsTx(
 		}
 	}
 	if selection.restoresAbsorbed {
-		if err := s.restorePostMergeObservationSuppressionsTx(ctx, tx, mergeID, sourceID, newPersonID, snapshot); err != nil {
+		if err := s.restorePostMergeObservationSuppressionsTx(ctx, tx, sourceID, newPersonID, postMergeObservationSuppressions); err != nil {
 			return nil, err
 		}
 	}
 	if selection.exact {
 		if err := s.restoreMergeAddedObservationCategoriesTx(ctx, tx, journal, snapshot); err != nil {
+			return nil, err
+		}
+		if err := s.restoreMergeAddedObservationSensitivityTx(ctx, tx, journal, snapshot); err != nil {
 			return nil, err
 		}
 	}
@@ -1132,7 +1193,7 @@ func (s *Store) reconcileSplitObservationReferencesTx(
 					return fmt.Errorf("withdraw split-incomplete deductive premises: %w", err)
 				}
 			}
-			if err := s.refreshObservationMentionsTx(ctx, tx, observationID); err != nil {
+			if err := s.recomputeObservationCitationSummaryTx(ctx, tx, observationID); err != nil {
 				return fmt.Errorf("refresh split observation citations: %w", err)
 			}
 		}
@@ -1662,6 +1723,7 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	row personMergeSnapshotRow,
 	sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID int64,
 	sourceUID, newUID string,
+	preserveOwnerAssertion bool,
 ) error {
 	spec, ok := personMergeTableRegistry[row.TableName]
 	if !ok {
@@ -1719,6 +1781,10 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	assignments := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns)+3)
 	for _, column := range row.Columns {
+		if preserveOwnerAssertion && row.TableName == personObservationsTableName &&
+			!slices.Contains([]string{"id", "person_id", "sequence", "subject_person_id"}, column.Name) {
+			continue
+		}
 		if preserveObservationLifecycle && slices.Contains(
 			[]string{"status", "status_reason", "valid_from", "valid_until", "superseded_by_id"}, column.Name,
 		) {

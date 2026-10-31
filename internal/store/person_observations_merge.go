@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -96,7 +95,7 @@ func (s *Store) movePersonObservationsTx(ctx context.Context, tx *loggedTx, merg
 			if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_evidence WHERE observation_id=?`, row.ID); err != nil {
 				return err
 			}
-			if err := s.refreshObservationMentionsTx(ctx, tx, row.ID); err != nil {
+			if err := s.recomputeObservationCitationSummaryTx(ctx, tx, row.ID); err != nil {
 				return err
 			}
 		}
@@ -122,6 +121,9 @@ func (s *Store) movePersonObservationsTx(ctx context.Context, tx *loggedTx, merg
 		return err
 	}
 	if err := s.recordMergeAddedObservationCategoriesTx(ctx, tx, mergeID, survivorID, snapshot); err != nil {
+		return err
+	}
+	if err := s.recordMergeAddedObservationSensitivityTx(ctx, tx, mergeID, survivorID, snapshot); err != nil {
 		return err
 	}
 	// The absorbed clock is recreated from the snapshot on an exact split.
@@ -283,7 +285,7 @@ func (s *Store) mergeOwnerObservationCollisionTx(ctx context.Context, tx *logged
 	if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_evidence WHERE observation_id=?`, keptID); err != nil {
 		return err
 	}
-	if err := s.refreshObservationMentionsTx(ctx, tx, keptID); err != nil {
+	if err := s.recomputeObservationCitationSummaryTx(ctx, tx, keptID); err != nil {
 		return err
 	}
 	if err := s.appendObservationEventTx(ctx, tx, personID, keptID, "merge-moved", "owner", fmt.Sprintf("merge:%d;owner-collision", mergeID), &incomingID); err != nil {
@@ -360,6 +362,61 @@ func (s *Store) recordMergeAddedObservationCategoriesTx(ctx context.Context, tx 
 	return nil
 }
 
+func (s *Store) recordMergeAddedObservationSensitivityTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID, survivorID int64,
+	snapshot personMergeSnapshot,
+) error {
+	spec := personMergeTableRegistry[personObservationsTableName]
+	for _, row := range snapshot.Rows {
+		if row.TableName != personObservationsTableName ||
+			personSplitSnapshotRowInteger(row, personMergePersonIDColumn) != survivorID ||
+			observationSnapshotSensitive(row) {
+			continue
+		}
+		postRows, err := s.capturePersonMergeQueryTx(
+			ctx, tx, spec,
+			`SELECT * FROM person_observations WHERE id=? AND person_id=?`,
+			[]any{row.RowID, survivorID}, survivorID,
+		)
+		if err != nil {
+			return fmt.Errorf("capture merge-added observation sensitivity: %w", err)
+		}
+		if len(postRows) == 0 {
+			continue
+		}
+		if !observationSnapshotSensitive(postRows[0]) {
+			continue
+		}
+		postJSON, err := json.Marshal(postRows[0])
+		if err != nil {
+			return fmt.Errorf("encode merge-added observation sensitivity: %w", err)
+		}
+		key, err := canonicalPersonMergeSnapshotRowKey(postRows[0].Columns, spec.keyColumns())
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_merge_rows
+			(merge_id,table_name,original_row_id,original_row_key,current_row_id,current_row_key,
+			 origin_side,provenance_kind,action,snapshot_path,post_merge_row_json)
+			VALUES(?,? ,NULL,?,?,?,'survivor','derived','recomputed','merge-added-observation-sensitivity',?)`,
+			mergeID, personObservationsTableName, key, row.RowID, key, string(postJSON)); err != nil {
+			return fmt.Errorf("journal merge-added observation sensitivity: %w", err)
+		}
+	}
+	return nil
+}
+
+func observationSnapshotSensitive(row personMergeSnapshotRow) bool {
+	for _, column := range row.Columns {
+		if column.Name == "sensitive" && column.Value.Boolean != nil {
+			return *column.Value.Boolean
+		}
+	}
+	return false
+}
+
 // Converted machine rows remain owner assertions after split: their old ledger
 // has been discarded and cannot be restored as evidence.
 func observationSplitSnapshotRow(row personMergeSnapshotRow) personMergeSnapshotRow {
@@ -403,6 +460,212 @@ func observationSplitSnapshotRow(row personMergeSnapshotRow) personMergeSnapshot
 	}
 	return row
 }
+
+func (s *Store) restoreMergeAddedObservationCategoriesTx(
+	ctx context.Context,
+	tx *loggedTx,
+	journal []personSplitJournalRow,
+	snapshot personMergeSnapshot,
+) error {
+	const snapshotPath = "merge-added-observation-category"
+	spec := personMergeTableRegistry["person_observation_categories"]
+	snapshotEvents := make(map[int64]struct{})
+	for _, row := range snapshot.Rows {
+		if row.TableName == "person_observation_events" {
+			snapshotEvents[row.RowID] = struct{}{}
+		}
+	}
+	observations := make(map[int64]struct{})
+	for _, row := range journal {
+		if row.tableName != "person_observation_categories" || row.snapshotPath != snapshotPath {
+			continue
+		}
+		if !row.currentKey.Valid || !row.postMergeJSON.Valid {
+			return fmt.Errorf("%w: incomplete merge-added observation category", ErrPersonMergeSnapshotCorrupt)
+		}
+		where, args, err := personSplitCurrentRowWhere(spec, row)
+		if err != nil {
+			return err
+		}
+		currentRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+			`SELECT * FROM person_observation_categories WHERE `+where, args, 0)
+		if err != nil {
+			return err
+		}
+		if len(currentRows) > 1 {
+			return fmt.Errorf("%w: merge-added observation category is ambiguous", ErrPersonSplitParticipants)
+		}
+		if len(currentRows) == 0 {
+			continue
+		}
+		var post personMergeSnapshotRow
+		if err := json.Unmarshal([]byte(row.postMergeJSON.String), &post); err != nil {
+			return fmt.Errorf("%w: decode merge-added observation category: %w", ErrPersonMergeSnapshotCorrupt, err)
+		}
+		observationID := personSplitSnapshotRowInteger(post, personObservationIDColumn)
+		observations[observationID] = struct{}{}
+		if !reflect.DeepEqual(currentRows[0].Columns, post.Columns) {
+			continue
+		}
+		laterReaffirmation, err := s.hasPostMergeObservationReaffirmationTx(ctx, tx, observationID, snapshotEvents)
+		if err != nil {
+			return fmt.Errorf("check later observation category assertion: %w", err)
+		}
+		if laterReaffirmation {
+			continue
+		}
+		result, err := tx.ExecContext(ctx, `DELETE FROM person_observation_categories WHERE `+where, args...)
+		if err != nil {
+			return fmt.Errorf("remove merge-added observation category: %w", err)
+		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("count removed merge-added observation category: %w", err)
+		} else if changed != 1 {
+			return fmt.Errorf("%w: merge-added observation category changed during split", ErrPersonSplitParticipants)
+		}
+	}
+	for observationID := range observations {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_observations SET sensitive=TRUE
+			WHERE id=? AND EXISTS (SELECT 1 FROM person_observation_categories WHERE observation_id=?)`,
+			observationID, observationID); err != nil {
+			return fmt.Errorf("restore sensitivity from retained observation categories: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) restoreMergeAddedObservationSensitivityTx(
+	ctx context.Context,
+	tx *loggedTx,
+	journal []personSplitJournalRow,
+	snapshot personMergeSnapshot,
+) error {
+	const snapshotPath = "merge-added-observation-sensitivity"
+	spec := personMergeTableRegistry[personObservationsTableName]
+	snapshotEvents := make(map[int64]struct{})
+	for _, row := range snapshot.Rows {
+		if row.TableName == "person_observation_events" {
+			snapshotEvents[row.RowID] = struct{}{}
+		}
+	}
+	for _, row := range journal {
+		if row.tableName != personObservationsTableName || row.snapshotPath != snapshotPath {
+			continue
+		}
+		if !row.currentKey.Valid || !row.postMergeJSON.Valid {
+			return fmt.Errorf("%w: incomplete merge-added observation sensitivity", ErrPersonMergeSnapshotCorrupt)
+		}
+		where, args, err := personSplitCurrentRowWhere(spec, row)
+		if err != nil {
+			return err
+		}
+		currentRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+			`SELECT * FROM person_observations WHERE `+where, args, 0)
+		if err != nil {
+			return err
+		}
+		if len(currentRows) > 1 {
+			return fmt.Errorf("%w: merge-added observation sensitivity is ambiguous", ErrPersonSplitParticipants)
+		}
+		if len(currentRows) == 0 || !observationSnapshotSensitive(currentRows[0]) {
+			continue
+		}
+		var post personMergeSnapshotRow
+		if err := json.Unmarshal([]byte(row.postMergeJSON.String), &post); err != nil {
+			return fmt.Errorf("%w: decode merge-added observation sensitivity: %w", ErrPersonMergeSnapshotCorrupt, err)
+		}
+		observationID := personSplitSnapshotRowInteger(post, "id")
+		laterReaffirmation, err := s.hasPostMergeObservationReaffirmationTx(ctx, tx, observationID, snapshotEvents)
+		if err != nil {
+			return fmt.Errorf("check later sensitive observation reaffirmation: %w", err)
+		}
+		if laterReaffirmation {
+			continue
+		}
+		var hasCategories bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM person_observation_categories WHERE observation_id=?)`, observationID).Scan(&hasCategories); err != nil {
+			return fmt.Errorf("check retained observation sensitivity categories: %w", err)
+		}
+		if hasCategories {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_observations SET sensitive=FALSE WHERE id=? AND sensitive=TRUE`, observationID); err != nil {
+			return fmt.Errorf("restore pre-merge observation sensitivity: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) hasPostMergeObservationOwnerAssertionTx(
+	ctx context.Context,
+	tx *loggedTx,
+	observationID int64,
+	snapshotEvents map[int64]struct{},
+) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM person_observation_events
+		WHERE observation_id=? AND event='owner-assertion-confirmed' ORDER BY id`, observationID)
+	if err != nil {
+		return false, fmt.Errorf("read post-merge owner assertion events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var eventID int64
+		if err := rows.Scan(&eventID); err != nil {
+			return false, fmt.Errorf("scan post-merge owner assertion event: %w", err)
+		}
+		if _, existedAtMerge := snapshotEvents[eventID]; !existedAtMerge {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("read post-merge owner assertion events: %w", err)
+	}
+	return false, nil
+}
+
+func (s *Store) hasPostMergeObservationReinforcementTx(
+	ctx context.Context,
+	tx *loggedTx,
+	observationID int64,
+	snapshotEvents map[int64]struct{},
+) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id,actor FROM person_observation_events
+		WHERE observation_id=? AND event='reinforced' ORDER BY id`, observationID)
+	if err != nil {
+		return false, fmt.Errorf("read observation reinforcement events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var eventID int64
+		var actor string
+		if err := rows.Scan(&eventID, &actor); err != nil {
+			return false, err
+		}
+		if _, existedAtMerge := snapshotEvents[eventID]; !existedAtMerge &&
+			(actor == "owner" || actor == "api") {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func (s *Store) hasPostMergeObservationReaffirmationTx(
+	ctx context.Context,
+	tx *loggedTx,
+	observationID int64,
+	snapshotEvents map[int64]struct{},
+) (bool, error) {
+	reinforced, err := s.hasPostMergeObservationReinforcementTx(ctx, tx, observationID, snapshotEvents)
+	if err != nil || reinforced {
+		return reinforced, err
+	}
+	return s.hasPostMergeObservationOwnerAssertionTx(ctx, tx, observationID, snapshotEvents)
+}
+
 func (s *Store) restoreObservationCopiesTx(ctx context.Context, tx *loggedTx, mergeID, sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID int64, snapshot personMergeSnapshot) error {
 	for _, row := range snapshot.Rows {
 		if row.TableName != personObservationsTableName || row.OriginSide != personMergeOriginAbsorbed || personSplitSnapshotRowText(row, "origin") == "owner" || personSplitSnapshotRowText(row, "level") == "explicit" {
@@ -481,265 +744,199 @@ func (s *Store) restoreObservationCopiesTx(ctx context.Context, tx *loggedTx, me
 }
 
 type personMergeObservationSuppressionDecision struct {
-	reason string
-	at     requiredTimestamp
+	id         int64
+	contentKey string
+	reason     string
+	actor      string
+	rejected   requiredTimestamp
+	cleared    nullableTimestamp
+	originSide personMergeOriginSide
 }
 
-func (s *Store) restoreMergeAddedObservationCategoriesTx(
+func (s *Store) capturePostMergeObservationSuppressionsTx(
 	ctx context.Context,
 	tx *loggedTx,
+	sourceID int64,
 	journal []personSplitJournalRow,
 	snapshot personMergeSnapshot,
-) error {
-	const snapshotPath = "merge-added-observation-category"
-	spec := personMergeTableRegistry["person_observation_categories"]
-	snapshotEvents := make(map[int64]struct{})
+) ([]personMergeObservationSuppressionDecision, error) {
+	absorbedObservationKeys := make(map[string]struct{})
+	baselineByID := make(map[int64]personMergeSnapshotRow)
+	originSideByID := make(map[int64]personMergeOriginSide)
 	for _, row := range snapshot.Rows {
-		if row.TableName == "person_observation_events" {
-			snapshotEvents[row.RowID] = struct{}{}
+		if row.TableName == personObservationsTableName && row.OriginSide == personMergeOriginAbsorbed {
+			absorbedObservationKeys[personSplitSnapshotRowText(row, "content_key")] = struct{}{}
+		}
+		if row.TableName == "person_observation_suppressions" {
+			baselineByID[row.RowID] = row
+			originSideByID[row.RowID] = row.OriginSide
 		}
 	}
-	observations := make(map[int64]struct{})
+	if len(absorbedObservationKeys) == 0 {
+		return nil, nil
+	}
 	for _, row := range journal {
-		if row.tableName != "person_observation_categories" || row.snapshotPath != snapshotPath {
+		if row.tableName != "person_observation_suppressions" || !row.postMergeJSON.Valid {
 			continue
 		}
-		if !row.currentKey.Valid || !row.postMergeJSON.Valid {
-			return fmt.Errorf("%w: incomplete merge-added observation category", ErrPersonMergeSnapshotCorrupt)
+		var post personMergeSnapshotRow
+		if err := json.Unmarshal([]byte(row.postMergeJSON.String), &post); err != nil {
+			return nil, fmt.Errorf("%w: decode post-merge observation suppression: %w", ErrPersonMergeSnapshotCorrupt, err)
 		}
-		where, args, err := personSplitCurrentRowWhere(spec, row)
-		if err != nil {
-			return err
-		}
-		currentRows, err := s.capturePersonMergeQueryTx(
-			ctx, tx, spec,
-			`SELECT * FROM person_observation_categories WHERE `+where,
-			args, 0,
-		)
-		if err != nil {
-			return err
-		}
-		if len(currentRows) > 1 {
-			return fmt.Errorf("%w: merge-added observation category is ambiguous", ErrPersonSplitParticipants)
-		}
-		if len(currentRows) == 1 {
-			var post personMergeSnapshotRow
-			if err := json.Unmarshal([]byte(row.postMergeJSON.String), &post); err != nil {
-				return fmt.Errorf("%w: decode merge-added observation category: %w",
-					ErrPersonMergeSnapshotCorrupt, err)
-			}
-			observationID := personSplitSnapshotRowInteger(post, personObservationIDColumn)
-			observations[observationID] = struct{}{}
-			if reflect.DeepEqual(currentRows[0].Columns, post.Columns) {
-				laterReinforcement, err := s.hasPostMergeObservationReinforcementTx(
-					ctx, tx, observationID, snapshotEvents,
-				)
-				if err != nil {
-					return fmt.Errorf("check later observation category assertion: %w", err)
-				}
-				if laterReinforcement {
-					continue
-				}
-				result, err := tx.ExecContext(ctx,
-					`DELETE FROM person_observation_categories WHERE `+where, args...,
-				)
-				if err != nil {
-					return fmt.Errorf("remove merge-added observation category: %w", err)
-				}
-				if changed, err := result.RowsAffected(); err != nil {
-					return fmt.Errorf("count removed merge-added observation category: %w", err)
-				} else if changed != 1 {
-					return fmt.Errorf("%w: merge-added observation category changed during split", ErrPersonSplitParticipants)
-				}
-			}
+		baselineByID[post.RowID] = post
+		if row.originSide != "" {
+			originSideByID[post.RowID] = row.originSide
 		}
 	}
-	for observationID := range observations {
-		if _, err := tx.ExecContext(ctx, `UPDATE person_observations SET sensitive=TRUE
-			WHERE id=? AND EXISTS (
-				SELECT 1 FROM person_observation_categories WHERE observation_id=?
-			)`, observationID, observationID); err != nil {
-			return fmt.Errorf("restore sensitivity from retained observation categories: %w", err)
-		}
-	}
-	return nil
-}
 
-func (s *Store) hasPostMergeObservationReinforcementTx(
-	ctx context.Context,
-	tx *loggedTx,
-	observationID int64,
-	snapshotEvents map[int64]struct{},
-) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM person_observation_events
-		WHERE observation_id=? AND event='reinforced' ORDER BY id`, observationID)
-	if err != nil {
-		return false, fmt.Errorf("read observation reinforcement events: %w", err)
+	type currentSuppression struct {
+		id         int64
+		contentKey string
+		reason     string
+		actor      string
+		rejected   requiredTimestamp
+		cleared    nullableTimestamp
 	}
-	found := false
+	rows, err := tx.QueryContext(ctx, `SELECT id,content_key,reason,actor,rejected_at,cleared_at
+		FROM person_observation_suppressions WHERE person_id=? ORDER BY id`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("read merged observation suppressions: %w", err)
+	}
+	current := []currentSuppression{}
 	for rows.Next() {
-		var eventID int64
-		if err := rows.Scan(&eventID); err != nil {
+		var row currentSuppression
+		if err := rows.Scan(&row.id, &row.contentKey, &row.reason, &row.actor, &row.rejected, &row.cleared); err != nil {
 			_ = rows.Close()
-			return false, err
+			return nil, fmt.Errorf("scan merged observation suppression: %w", err)
 		}
-		if _, existedAtMerge := snapshotEvents[eventID]; !existedAtMerge {
-			found = true
-		}
+		current = append(current, row)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return false, err
+		return nil, fmt.Errorf("read merged observation suppressions: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return false, err
+		return nil, fmt.Errorf("close merged observation suppressions: %w", err)
 	}
-	return found, nil
+
+	spec := personMergeTableRegistry["person_observation_suppressions"]
+	decisions := make(map[string]personMergeObservationSuppressionDecision)
+	for _, row := range current {
+		if _, belongsToAbsorbed := absorbedObservationKeys[row.contentKey]; !belongsToAbsorbed {
+			continue
+		}
+		currentRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+			`SELECT * FROM person_observation_suppressions WHERE id=?`, []any{row.id}, sourceID)
+		if err != nil {
+			return nil, err
+		}
+		if len(currentRows) != 1 {
+			return nil, fmt.Errorf("%w: merged observation suppression disappeared", ErrPersonSplitParticipants)
+		}
+		if baseline, ok := baselineByID[row.id]; ok && sameObservationSuppressionState(currentRows[0], baseline) {
+			continue
+		}
+		decision := personMergeObservationSuppressionDecision{
+			id: row.id, contentKey: row.contentKey, reason: row.reason,
+			actor: row.actor, rejected: row.rejected, cleared: row.cleared,
+			originSide: originSideByID[row.id],
+		}
+		previous, exists := decisions[row.contentKey]
+		if !exists || observationSuppressionDecisionAfter(decision, previous) {
+			decisions[row.contentKey] = decision
+		}
+	}
+	result := make([]personMergeObservationSuppressionDecision, 0, len(decisions))
+	for _, decision := range decisions {
+		result = append(result, decision)
+	}
+	slices.SortFunc(result, func(left, right personMergeObservationSuppressionDecision) int {
+		return strings.Compare(left.contentKey, right.contentKey)
+	})
+	return result, nil
+}
+
+func sameObservationSuppressionState(current, baseline personMergeSnapshotRow) bool {
+	currentValues := personSplitSnapshotColumnsByName(current.Columns)
+	baselineValues := personSplitSnapshotColumnsByName(baseline.Columns)
+	for _, name := range []string{"content_key", "reason", "actor", "rejected_at", "cleared_at"} {
+		if !reflect.DeepEqual(currentValues[name], baselineValues[name]) {
+			return false
+		}
+	}
+	return true
+}
+
+func observationSuppressionDecisionAfter(candidate, previous personMergeObservationSuppressionDecision) bool {
+	candidateAt := candidate.rejected.Time
+	if candidate.cleared.Valid && candidate.cleared.Time.After(candidateAt) {
+		candidateAt = candidate.cleared.Time
+	}
+	previousAt := previous.rejected.Time
+	if previous.cleared.Valid && previous.cleared.Time.After(previousAt) {
+		previousAt = previous.cleared.Time
+	}
+	if !candidateAt.Equal(previousAt) {
+		return candidateAt.After(previousAt)
+	}
+	return candidate.id > previous.id
 }
 
 func (s *Store) restorePostMergeObservationSuppressionsTx(
 	ctx context.Context,
 	tx *loggedTx,
-	mergeID, sourceID, newPersonID int64,
-	snapshot personMergeSnapshot,
+	sourceID int64,
+	newPersonID int64,
+	decisions []personMergeObservationSuppressionDecision,
 ) error {
-	absorbedObservationKeys := make(map[int64]string)
-	snapshotEventIDs := make(map[int64]struct{})
-	survivorSuppressionIDs := make(map[int64]struct{})
-	for _, row := range snapshot.Rows {
-		switch row.TableName {
-		case personObservationsTableName:
-			if row.OriginSide == personMergeOriginAbsorbed {
-				absorbedObservationKeys[row.RowID] = personSplitSnapshotRowText(row, "content_key")
-			}
-		case "person_observation_events":
-			snapshotEventIDs[row.RowID] = struct{}{}
-		case "person_observation_suppressions":
-			if row.OriginSide == personMergeOriginSurvivor {
-				survivorSuppressionIDs[row.RowID] = struct{}{}
-			}
+	for _, decision := range decisions {
+		clearedAt := any(nil)
+		if decision.cleared.Valid {
+			clearedAt = decision.cleared.Time
 		}
-	}
-	if len(absorbedObservationKeys) == 0 {
-		return nil
-	}
-
-	decisionKeys := make(map[int64]string, len(absorbedObservationKeys))
-	maps.Copy(decisionKeys, absorbedObservationKeys)
-	for _, row := range snapshot.Rows {
-		if row.TableName != personObservationsTableName || row.OriginSide != personMergeOriginAbsorbed {
-			continue
+		var restoredSuppressionID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM person_observation_suppressions
+			WHERE person_id=? AND content_key=? ORDER BY rejected_at DESC,id DESC LIMIT 1`,
+			newPersonID, decision.contentKey).Scan(&restoredSuppressionID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("find restored observation suppression: %w", err)
 		}
-		detail := fmt.Sprintf("merge:%d;level:%s", mergeID, personSplitSnapshotRowText(row, "level"))
-		rows, err := tx.QueryContext(ctx, `SELECT observation_id FROM person_observation_events
-			WHERE event='merge-converted' AND related_observation_id=? AND detail=?`, row.RowID, detail)
-		if err != nil {
-			return fmt.Errorf("find converted observation for merge %d: %w", mergeID, err)
-		}
-		convertedIDs := []int64{}
-		for rows.Next() {
-			var observationID int64
-			if err := rows.Scan(&observationID); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("scan converted observation for merge %d: %w", mergeID, err)
-			}
-			convertedIDs = append(convertedIDs, observationID)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("read converted observations for merge %d: %w", mergeID, err)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close converted observations for merge %d: %w", mergeID, err)
-		}
-		for _, observationID := range convertedIDs {
-			var contentKey string
-			if err := tx.QueryRowContext(ctx,
-				`SELECT content_key FROM person_observations WHERE id=?`, observationID,
-			).Scan(&contentKey); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
-				return fmt.Errorf("read converted observation content key %d: %w", observationID, err)
-			}
-			decisionKeys[observationID] = contentKey
-		}
-	}
-
-	decisions := make(map[string]personMergeObservationSuppressionDecision)
-	for observationID, key := range decisionKeys {
-		rows, err := tx.QueryContext(ctx, `SELECT id,event,created_at FROM person_observation_events
-			WHERE person_id=? AND observation_id=? AND actor='owner' AND event IN ('rejected','ended')
-			ORDER BY id`, newPersonID, observationID)
-		if err != nil {
-			return fmt.Errorf("read post-merge owner decisions for observation %d: %w", observationID, err)
-		}
-		for rows.Next() {
-			var eventID int64
-			var event string
-			var at requiredTimestamp
-			if err := rows.Scan(&eventID, &event, &at); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("scan post-merge owner decision for observation %d: %w", observationID, err)
-			}
-			if _, existedAtMerge := snapshotEventIDs[eventID]; existedAtMerge {
-				continue
-			}
-			reason := "owner-rejected"
-			if event == "ended" {
-				reason = "owner-forgotten"
-			}
-			previous, ok := decisions[key]
-			if !ok || at.Time.After(previous.at.Time) {
-				decisions[key] = personMergeObservationSuppressionDecision{reason: reason, at: at}
-			}
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("read post-merge owner decisions for observation %d: %w", observationID, err)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close post-merge owner decisions for observation %d: %w", observationID, err)
-		}
-	}
-
-	for key, decision := range decisions {
 		var sourceSuppressionID int64
 		sourceErr := tx.QueryRowContext(ctx, `SELECT id FROM person_observation_suppressions
-			WHERE person_id=? AND content_key=? AND cleared_at IS NULL`, sourceID, key).Scan(&sourceSuppressionID)
+			WHERE id=? AND person_id=?`, decision.id, sourceID).Scan(&sourceSuppressionID)
+		sourceExists := sourceErr == nil
 		if sourceErr != nil && !errors.Is(sourceErr, sql.ErrNoRows) {
 			return fmt.Errorf("find merged observation suppression: %w", sourceErr)
 		}
-		_, sourceSuppressionIsSurvivor := survivorSuppressionIDs[sourceSuppressionID]
-
-		var restoredSuppressionID int64
-		restoredErr := tx.QueryRowContext(ctx, `SELECT id FROM person_observation_suppressions
-			WHERE person_id=? AND content_key=? AND cleared_at IS NULL`, newPersonID, key).Scan(&restoredSuppressionID)
-		if restoredErr != nil && !errors.Is(restoredErr, sql.ErrNoRows) {
-			return fmt.Errorf("find restored observation suppression: %w", restoredErr)
-		}
-		if restoredErr == nil {
+		if err == nil {
 			if _, err := tx.ExecContext(ctx, `UPDATE person_observation_suppressions
-				SET reason=?,actor='owner',rejected_at=? WHERE id=?`, decision.reason, decision.at.Time, restoredSuppressionID); err != nil {
-				return fmt.Errorf("restore owner observation suppression: %w", err)
+				SET reason=?,actor=?,rejected_at=?,cleared_at=? WHERE id=?`,
+				decision.reason, decision.actor, decision.rejected.Time, clearedAt, restoredSuppressionID); err != nil {
+				return fmt.Errorf("restore post-merge observation suppression state: %w", err)
 			}
-		} else if sourceErr == nil && !sourceSuppressionIsSurvivor {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_observation_suppressions
-				SET person_id=?,reason=?,actor='owner',rejected_at=? WHERE id=?`, newPersonID, decision.reason, decision.at.Time, sourceSuppressionID); err != nil {
-				return fmt.Errorf("move post-merge observation suppression: %w", err)
+			if sourceExists && decision.originSide == "" {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM person_observation_suppressions WHERE id=? AND person_id=?`,
+					decision.id, sourceID); err != nil {
+					return fmt.Errorf("move post-merge observation suppression to restored profile: %w", err)
+				}
 			}
 			continue
-		} else {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO person_observation_suppressions
-				(person_id,content_key,reason,actor,rejected_at) VALUES(?, ?, ?, 'owner', ?)`,
-				newPersonID, key, decision.reason, decision.at.Time); err != nil {
-				return fmt.Errorf("copy post-merge observation suppression: %w", err)
-			}
 		}
-
-		if sourceErr == nil && !sourceSuppressionIsSurvivor {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_observation_suppressions SET cleared_at=? WHERE id=?`, decision.at.Time, sourceSuppressionID); err != nil {
-				return fmt.Errorf("clear moved observation suppression: %w", err)
+		if sourceExists && decision.originSide != personMergeOriginSurvivor {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_observation_suppressions
+				SET person_id=?,reason=?,actor=?,rejected_at=?,cleared_at=? WHERE id=? AND person_id=?`,
+				newPersonID, decision.reason, decision.actor, decision.rejected.Time, clearedAt,
+				decision.id, sourceID); err != nil {
+				return fmt.Errorf("move post-merge observation suppression to restored profile: %w", err)
+			}
+			continue
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO person_observation_suppressions
+				(person_id,content_key,reason,actor,rejected_at,cleared_at) VALUES(?,?,?,?,?,?)`,
+				newPersonID, decision.contentKey, decision.reason, decision.actor,
+				decision.rejected.Time, clearedAt); err != nil {
+				return fmt.Errorf("copy post-merge observation suppression: %w", err)
 			}
 		}
 	}

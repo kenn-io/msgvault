@@ -206,6 +206,35 @@ func TestObservationMergeCollisionJournalsCategoriesForSurvivorSubjectReference(
 	assert.NotContains(restored.Categories, personobs.CategoryHealth)
 }
 
+func TestObservationMergeCollisionPreservesReaffirmedSensitivityWithoutCategories(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, _ := observationBatchFixture(t, "I run")
+	content := "[PERSON] runs"
+	kept := observationOwnerRow(t, f.store, f.bobPersonID, content)
+	incoming := observationOwnerRow(t, f.store, in.PersonID, content)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE person_observations SET sensitive=TRUE WHERE id=?`), incoming)
+	require.NoError(err)
+
+	merge := observationMerge(t, f.store, f.bobPersonID, in.PersonID)
+	merged := observationGet(t, f.store, kept)
+	require.True(merged.Sensitive)
+	require.Empty(merged.Categories)
+
+	reaffirmed := applyObservationInput(t, f.store, personobs.BatchInput{PersonID: f.bobPersonID, Proposals: []personobs.ProposedObservation{{
+		Level: personobs.LevelExplicit, Origin: personobs.OriginOwner, Kind: personobs.KindState,
+		Content: content, ConfidenceBP: 1000, Sensitive: true,
+	}}}, 0)
+	require.Len(reaffirmed.Items, 1)
+	require.Equal(kept, reaffirmed.Items[0].ObservationID)
+
+	_ = observationSplit(t, f.store, merge, f.aliceID)
+	restored := observationGet(t, f.store, kept)
+	assert.True(restored.Sensitive)
+	assert.Empty(restored.Categories)
+}
+
 func TestPersonMergeSnapshotCapturesObservationChildTables(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

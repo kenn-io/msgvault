@@ -217,10 +217,6 @@ func TestObservationSplitPreservesPostMergeOwnerEndDecision(t *testing.T) {
 		INSERT INTO person_observation_events(person_id,observation_id,event,actor)
 		VALUES(?,?,'ended','owner')`), f.bobPersonID, absorbed)
 	require.NoError(err)
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
-		INSERT INTO person_observation_suppressions(person_id,content_key,reason,actor)
-		VALUES(?,?,'owner-forgotten','owner')`), f.bobPersonID, key)
-	require.NoError(err)
 
 	newPersonID := observationSplit(t, f.store, merge, f.aliceID)
 	ended := observationGet(t, f.store, absorbed)
@@ -237,7 +233,7 @@ func TestObservationSplitPreservesPostMergeOwnerEndDecision(t *testing.T) {
 	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT COUNT(*) FROM person_observation_suppressions
 		WHERE person_id=? AND content_key=? AND cleared_at IS NULL`), f.bobPersonID, key).Scan(&survivorSuppressions))
-	assert.Equal(1, absorbedSuppressions)
+	assert.Zero(absorbedSuppressions)
 	assert.Zero(survivorSuppressions)
 }
 

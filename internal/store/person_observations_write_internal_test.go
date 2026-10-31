@@ -33,7 +33,9 @@ func (s *Store) RejectObservationForTest(ctx context.Context, id int64) error {
 		if err := s.transitionObservationTx(ctx, tx, id, personobs.StatusRejected, personobs.StatusReasonOwnerRejected, "rejected", "owner", ""); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_observation_suppressions(person_id,content_key,reason,actor) VALUES(?,?,'owner-rejected','owner') ON CONFLICT DO NOTHING`, row.PersonID, row.ContentKey)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_observation_suppressions(person_id,content_key,reason,actor,rejected_at) VALUES(?,?,'owner-rejected','owner',CURRENT_TIMESTAMP)
+			ON CONFLICT (person_id,content_key) WHERE cleared_at IS NULL
+			DO UPDATE SET reason=excluded.reason,actor=excluded.actor,rejected_at=excluded.rejected_at`, row.PersonID, row.ContentKey)
 		if err != nil {
 			return err
 		}
