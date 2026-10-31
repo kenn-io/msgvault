@@ -101,6 +101,7 @@ export type IdentitySearchSort = GeneratedIdentitySearchSort;
 
 export type ExploreWorkspace =
   | 'everything'
+  | 'timeline'
   | 'directory'
   | 'directory_review'
   | 'files'

@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
 import Activity from '@lucide/svelte/icons/activity';
+import CalendarDays from '@lucide/svelte/icons/calendar-days';
 import Bookmark from '@lucide/svelte/icons/bookmark';
 import CheckCheck from '@lucide/svelte/icons/check-check';
 import Contact from '@lucide/svelte/icons/contact';
@@ -38,6 +39,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
     label: 'Archive',
     items: [
       { id: 'everything', label: 'Everything', icon: Inbox },
+      { id: 'timeline', label: 'Timeline', icon: CalendarDays },
       { id: 'files', label: 'Files', icon: Paperclip },
       { id: 'saved_views', label: 'Saved views', icon: Bookmark }
     ]

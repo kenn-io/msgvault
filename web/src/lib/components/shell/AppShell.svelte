@@ -69,6 +69,8 @@
   import FileViewer from '../files/FileViewer.svelte';
   import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
+  import TimelineWorkspace from '../timeline/TimelineWorkspace.svelte';
+  import { TimelineController } from '../../timeline/controller.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
   import PageHeader from './PageHeader.svelte';
@@ -388,6 +390,7 @@
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
   );
+  const timelineController = new TimelineController(untrack(() => client));
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
     (patch) => commitNavigation(patch),
@@ -844,7 +847,7 @@
     archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     commitNavigation({ selectedRow: recordingSelection(messageID), conversationAnchor: null });
   }
-  async function openArchivedMeeting(meeting: MeetingRef): Promise<void> {
+  async function openArchivedMeeting(meeting: Pick<MeetingRef, 'message_id'> & Partial<Pick<MeetingRef, 'conversation_id'>>): Promise<void> {
     const origin = canonicalFingerprint(exploreState.current);
     const returnSelectedRow = archiveMeetingID !== undefined ? archiveReturnSelection : exploreState.current.selectedRow;
     if (archiveMeetingID === undefined) archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
@@ -1282,6 +1285,7 @@
     appearance.destroy();
     relationshipsController.destroy();
     directoryController.destroy();
+    timelineController.destroy();
     directoryReviewController.destroy();
     relationshipReviewController.destroy();
     factLedgerController.destroy();
@@ -1352,6 +1356,15 @@
             void openSavedView(state);
           }}
         />
+      {:else if exploreState.current.workspace === 'timeline'}
+        <TimelineWorkspace controller={timelineController}
+          onOpenMessage={(id) => openFileItem(`message:${id}`)}
+          onOpenConversation={(id, anchor) => commitRestorableNavigation({
+            workspace: 'everything', presentation: 'table', selectedRow: `conversation:${id}`,
+            conversationAnchor: anchor ? String(anchor) : null, activeRow: null, scrollAnchor: null
+          })}
+          onOpenPerson={openDirectoryPerson}
+          onOpenMeeting={(id) => void openArchivedMeeting({ message_id: id })} />
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace {client} onOpenOperations={() => openOperations('messages', 'source_sync')} />
       {:else if exploreState.current.workspace === 'operations'}

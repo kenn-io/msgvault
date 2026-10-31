@@ -414,7 +414,7 @@ function normalize(value: unknown): ExploreURLState {
   const legacyFacet: RelationshipFacet | undefined =
     value.workspace === 'people' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
   const workspace = value.workspace === 'everything' || value.workspace === 'directory' || value.workspace === 'directory_review' || value.workspace === 'settings' ||
-    value.workspace === 'files' || value.workspace === 'relationships' ||
+    value.workspace === 'files' || value.workspace === 'timeline' || value.workspace === 'relationships' ||
     value.workspace === 'saved_views' || value.workspace === 'sources' ||
     value.workspace === 'deletions' || value.workspace === 'operations'
     ? value.workspace
