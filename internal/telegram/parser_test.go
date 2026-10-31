@@ -69,6 +69,19 @@ func TestExportReaderChatsBeforeLeftChats(t *testing.T) {
 	assert.Equal(t, []string{"user1", "user2"}, peers)
 }
 
+func TestExportReaderLegacyTextArray(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":5,"name":"Example chat","type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":["see ",{"type":"bold","text":"example"}," today"]}]}`))
+	reader, err := OpenExport(t.Context(), root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reader.Close()) }()
+	require.NoError(t, reader.Chats(t.Context(), func(chat *Chat) error {
+		require.Len(t, chat.Messages, 1)
+		assert.Equal(t, "see example today", chat.Messages[0].Text)
+		return nil
+	}))
+}
+
 func TestExportReaderMalformed(t *testing.T) {
 	for _, tc := range []struct{ name, data, want string }{
 		{"missing id", `{"type":"message","date_unixtime":"1","text":""}`, "id must be nonzero"},

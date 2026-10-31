@@ -18,6 +18,28 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestImportTextWithoutAttachmentWrites(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`CREATE FUNCTION fail_media_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected attachment stats write'; END $$`)
+		require.NoError(err)
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION fail_media_stats()`)
+		require.NoError(err)
+	} else {
+		_, err := st.DB().Exec(`CREATE TRIGGER fail_media_stats BEFORE UPDATE OF attachment_count ON messages BEGIN SELECT RAISE(ABORT, 'unexpected attachment stats write'); END`)
+		require.NoError(err)
+	}
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"only text"}]}`))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(err)
+	assert.EqualValues(t, 1, summary.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRow("SELECT attachment_count FROM messages").Scan(&count))
+	assert.Zero(t, count)
+}
+
 func TestImportPeerCollision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
