@@ -504,6 +504,29 @@ test('typing in the top bar narrows People without pressing Search', async ({ pa
   expect(queries).toEqual(['bob']);
 });
 
+for (const close of ['Escape', 'Back to People']) {
+  test(`narrow People moves focus into the person page and restores the grid with ${close}`, async ({ page }) => {
+    await prepare(page);
+    await page.setViewportSize({ width: 640, height: 900 });
+    await page.goto('/?workspace=relationships');
+    const list = page.getByRole('grid', { name: 'People results' });
+    await expect(list.getByText('Alice Example')).toBeVisible();
+    await list.focus();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
+    await expect(list).toBeHidden();
+    const back = page.getByRole('button', { name: 'Back to People', exact: true });
+    await expect.configure({ soft: true }).poll(() => page.locator('.body').evaluate(element => element.contains(document.activeElement))).toBe(true);
+
+    if (close === 'Escape') await page.keyboard.press('Escape');
+    else await back.click();
+
+    await expect(list).toBeVisible();
+    await expect(list).toBeFocused();
+  });
+}
+
 test('missing saved profiles keep Back to People on narrow screens', async ({ page }) => {
   await prepare(page);
   await page.setViewportSize({ width: 640, height: 900 });
