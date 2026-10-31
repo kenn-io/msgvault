@@ -49,3 +49,8 @@ func CountedEvent(evidence ActivityEvidence, role ActivityRole, direction Activi
 func countedMessageTypeSQL(message, conversation string) string {
 	return `(COALESCE(` + message + `.message_type,'') IN ('','` + MessageTypeEmail + `') OR ` + identityindex.IsChatSQL(message+".message_type", conversation+".conversation_type") + `)`
 }
+
+// countedMessageType mirrors countedMessageTypeSQL for live cold-message facts.
+func countedMessageType(messageType, conversationType string) bool {
+	return messageType == "" || messageType == MessageTypeEmail || identityindex.IsChat(messageType, conversationType)
+}

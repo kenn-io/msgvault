@@ -97,7 +97,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		return "", nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
 	// Native calls are synchronous logical evidence, never ordinary activity.
-	where := s.activityLiveEligibleSQL("m", "src") + ` AND m.message_type<>'call_record' AND ` + FullActivityEventWhere("ae")
+	where := s.activityLiveEligibleSQL() + ` AND m.message_type<>'call_record' AND ` + FullActivityEventWhere("ae")
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	windowWhere := []string{}
