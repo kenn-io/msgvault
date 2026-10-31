@@ -524,7 +524,7 @@
       source={selectedSource}
       syncing={syncing(selectedSource)}
       starting={Boolean(triggering)}
-      triggerError={triggerErrorSourceID === selectedSource.id ? triggerError : ''}
+      triggerError={triggerErrorSourceID === selectedSource.id ? triggerError : statusError}
       onRefresh={refresh}
       onSync={() => void syncNow(selectedSource)}
       onclose={() => (selected = undefined)}
