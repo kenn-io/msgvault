@@ -17,27 +17,34 @@ import (
 func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.com")
-	for day := 1; day <= 3; day++ {
-		b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 7, day, 12, 0, 0, 0, time.UTC)})
+	for day := 1; day <= 4; day++ {
+		for range day {
+			b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 7, day, 12, 0, 0, 0, time.UTC)})
+		}
 	}
 	engine := b.BuildEngine()
 
 	for _, tc := range []struct {
-		name string
-		page PageSpec
-		rows int
+		name     string
+		page     PageSpec
+		groupKey string
+		rows     int
+		total    int64
 	}{
-		{"limited", PageSpec{Limit: 1}, 1},
-		{"unpaged", PageSpec{}, 3},
+		{"limited", PageSpec{Limit: 1}, "", 1, 4},
+		{"unpaged", PageSpec{}, "", 4, 4},
+		{"keyed", PageSpec{}, "2026-07-04", 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Page: tc.page})
+			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Page: tc.page, GroupKey: tc.groupKey})
 			require.NoError(t, err)
 			require.Len(t, result.Rows, tc.rows)
-			assert.Equal(t, int64(3), result.TotalCount)
+			assert.Equal(t, tc.total, result.TotalCount)
 			for _, row := range result.Rows {
-				if tc.name == "limited" {
+				if tc.name == "limited" || tc.name == "keyed" {
 					assert.Empty(t, row.Level)
+				} else if row.Key == "2026-07-04" {
+					assert.Equal(t, identityindex.HeatFourthQuartile, row.Level)
 				} else {
 					assert.NotEmpty(t, row.Level)
 				}
