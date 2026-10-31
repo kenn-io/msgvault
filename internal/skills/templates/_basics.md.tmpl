@@ -9,8 +9,13 @@ may refresh derived caches such as the search index or analytics cache).
 - Commands talk to a local or remote archive daemon transparently — no
   connection setup needed. Pass `--local` to force the local archive
   when a remote is configured.
-- Always pass `--json` on read commands for structured output. The
-  `query` command uses `--format json` (its default) instead.
+- Pass `--json` on read commands for structured output. The `query`
+  command uses `--format json` (its default) instead. `timeline` defaults
+  to compact Markdown; use `--json` for its structured entries and open targets.
+- Use search → timeline → fetch: find a message with `search`, read its
+  context with `timeline --around msg:<id>`, then fetch only the details
+  needed. Timeline `open` objects name MCP tools and their arguments;
+  `anchor_ref` centers another timeline. They are not shell commands.
 - IDs: JSON output includes the internal numeric `id` and the
   `source_message_id` (e.g. Gmail message ID). `show-message`,
   `export-eml`, and `export-attachments` accept either form.

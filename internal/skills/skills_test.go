@@ -41,6 +41,7 @@ func TestRender_AllSkills(t *testing.T) {
 
 	wantNames := []string{
 		"msgvault-analytics", "msgvault-attachments", "msgvault-search",
+		"msgvault-timeline",
 	}
 	var gotNames []string
 	for _, sk := range rendered {
@@ -67,6 +68,27 @@ func TestRender_AllSkills(t *testing.T) {
 		assert.Contains(sk.Content, "UNTRUSTED sender-controlled data",
 			"every skill must carry the untrusted-content warning")
 	}
+}
+
+func TestRender_TimelineWorkflow(t *testing.T) {
+	rendered, err := Render("test")
+	require.NoError(t, err)
+	var content string
+	for _, sk := range rendered {
+		if sk.Name == "msgvault-timeline" {
+			content = sk.Content
+		}
+	}
+	require.NotEmpty(t, content)
+	for _, phrase := range []string{
+		"## msgvault conventions", "UNTRUSTED sender-controlled data",
+		"search → timeline → fetch", "anchor_ref", "open", "untrusted_text", "hidden_text",
+		"--tier 1,2", "--before 0 --after 0", "UTC (set [activity].timezone)",
+		"#9031", "c412", "e8812@20261022T1330Z", "copies", "owner-only", "retry:",
+	} {
+		assert.Contains(t, content, phrase)
+	}
+	assert.NotContains(t, content, "--tiers")
 }
 
 func TestRender_VersionDefaultsSafely(t *testing.T) {
