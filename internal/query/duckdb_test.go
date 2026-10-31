@@ -1743,6 +1743,26 @@ func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
 	assert.Equal(int64(2000), stats.TotalSize, "TotalSize")
 }
 
+func TestDuckDBEngine_GetTotalStats_EmailCalendarEventMatchesListing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{Subject: "ordinary email", MessageType: messageTypeEmail, SizeEstimate: 100})
+	b.AddMessage(MessageOpt{Subject: "invite event", MessageType: "calendar_event", SizeEstimate: 300})
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	filter := MessageFilter{MessageType: "calendar_event"}
+	rows, err := engine.ListMessages(ctx, filter)
+	require.NoError(err, "ListMessages")
+	require.Len(rows, 1)
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{Filter: &filter})
+	require.NoError(err, "GetTotalStats")
+	assert.Equal(int64(len(rows)), stats.MessageCount, "MessageCount matches listing")
+	assert.Equal(int64(300), stats.TotalSize, "TotalSize")
+}
+
 func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -4818,6 +4838,37 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs(t *testing.T) {
 		assert.Equal("test@gmail.com", targets[0].SourceIdentifier)
 		assert.Equal("msg1", targets[0].SourceMessageID)
 	}
+}
+
+func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("owner@example.test")
+	emailID := b.AddMessage(MessageOpt{Subject: "Email", MessageType: "email"})
+	legacyID := b.AddMessage(MessageOpt{Subject: "Legacy email", LegacyEmptyMessageType: true})
+	chatID := b.AddMessage(MessageOpt{Subject: "Chat", MessageType: "google_chat"})
+	b.AddMessage(MessageOpt{Subject: "Meeting", MessageType: "calendar_event"})
+	engine := b.BuildEngine()
+	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), MessageFilter{})
+	requirements.NoError(err)
+	var ids []int64
+	for _, target := range targets {
+		ids = append(ids, target.MessageID)
+	}
+	assertions.ElementsMatch([]int64{emailID, legacyID, chatID}, ids)
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "message_type:email | message_type:google_chat | message_type:calendar_event"
+	rows, err := engine.SubAggregate(t.Context(), MessageFilter{}, ViewTime, opts)
+	requirements.NoError(err)
+	var count int64
+	for _, row := range rows {
+		count += row.Count
+	}
+	assertions.Equal(int64(len(targets)+1), count, "archive aggregates include explicitly requested calendar events")
+	preview, err := engine.GetTotalStats(t.Context(), StatsOptions{SearchQuery: opts.SearchQuery})
+	requirements.NoError(err)
+	assertions.Equal(int64(len(targets)), preview.MessageCount)
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesNonEmailAndEmptyProviderID(t *testing.T) {

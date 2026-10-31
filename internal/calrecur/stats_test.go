@@ -49,9 +49,9 @@ func TestRecurrenceStatsCountUnderlyingCandidates(t *testing.T) {
 				occurrenceKeys = append(occurrenceKeys, o.Original.Key())
 			}
 			assertions.Equal(tc.wantKeys, occurrenceKeys)
-			end, bounded, stats := testConservativeEndWithStats(t.Context(), s, time.Hour, 0, 100)
+			end, bounded, candidates := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
 			requirements.True(bounded)
-			assertions.Equal(tc.candidates, stats.Candidates)
+			assertions.Equal(tc.candidates, candidates)
 			assertions.Equal(instant(t, tc.wantEnd), end.UTC())
 		})
 	}
@@ -72,9 +72,9 @@ func TestIterationStatsRetainLookaheadOnEarlyStopAndCancellation(t *testing.T) {
 	stats, err = testIterWithStats(ctx, s, until, 100, func(instance) bool { return true })
 	requirements.ErrorIs(err, context.Canceled)
 	assertions.Zero(stats.Candidates)
-	_, bounded, stats := testConservativeEndWithStats(ctx, s, time.Hour, 0, 100)
+	_, bounded, candidates := ConservativeEnd(ctx, s, time.Hour, 0, 100)
 	assertions.False(bounded)
-	assertions.Zero(stats.Candidates)
+	assertions.Zero(candidates)
 }
 
 func TestIterationStatsCountCandidateBeyondAbsoluteFoldHorizon(t *testing.T) {
@@ -150,9 +150,4 @@ func testIterWithStats(ctx context.Context, s Set, until time.Time, budget int, 
 	counter := &candidateBudget{ctx: ctx, limit: budget}
 	err := iter(ctx, s, until, counter, yield)
 	return struct{ Candidates int }{counter.used}, err
-}
-func testConservativeEndWithStats(ctx context.Context, s Set, d time.Duration, days, budget int) (time.Time, bool, struct{ Candidates int }) {
-	counter := &candidateBudget{ctx: ctx, limit: budget}
-	end, ok := conservativeEnd(ctx, s, d, days, counter)
-	return end, ok, struct{ Candidates int }{counter.used}
 }

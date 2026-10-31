@@ -142,3 +142,15 @@ func TestExpandHalfOpenWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestExpandZeroDurationAtWindowStart(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s := parsed(t, "RRULE:FREQ=DAILY;COUNT=2")
+	start := instant(t, "2027-03-02T17:00:00Z")
+	got, _, err := Expand(t.Context(), s, 0, 0, start, start.Add(time.Hour), 100)
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	assertions.Equal(start, got[0].Start)
+	assertions.Equal(start, got[0].End)
+}

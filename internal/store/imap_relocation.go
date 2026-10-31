@@ -57,7 +57,7 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 				actual.ID, actual.SourceID, actual.SourceMessageID,
 			)
 		}
-		if sourceType != "imap" {
+		if sourceType != sourceTypeIMAP {
 			return fmt.Errorf("IMAP relocation requires an IMAP source, found %q", sourceType)
 		}
 		expectedRFC822MessageID = mime.NormalizeMessageID(storedRFC822MessageID.String)

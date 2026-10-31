@@ -597,7 +597,8 @@ func TestAggregatePipeOREmailDefault(t *testing.T) {
 	require.True(ok)
 	targets, err := resolver.GetDeletionTargetsByAggregateSearch(t.Context(), opts.SearchQuery, query.MessageFilter{}, query.ViewSenders, rows[0].Key)
 	require.NoError(err)
-	assert.Equal(t, rows[0].Count, int64(len(targets)))
+	assert.Len(t, targets, 1, "only the email branch is eligible for remote deletion")
+	assert.Equal(t, gmailSourceID(0), targets[0].SourceMessageID)
 }
 
 func TestDuckDBAggregatePipeOREmailDefault(t *testing.T) {

@@ -2,6 +2,7 @@
 package calevent
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -32,15 +33,21 @@ type Event struct {
 	Status                                  string
 	AllDay                                  bool
 	Start, End                              *time.Time
-	StartDate, EndDate                      string
-	EventTimeZone, CalendarTimeZone         string
-	Recurrence                              []string
-	Attendees                               []Attendee
+	// StartWall stores the supplied local DTSTART fields as a UTC timestamp.
+	// It preserves wall times that resolve through a daylight-saving gap.
+	StartWall                       *time.Time `json:"start_wall,omitempty"`
+	StartDate, EndDate              string
+	EventTimeZone, CalendarTimeZone string
+	Recurrence                      []string
+	RecurrenceError                 string
+	Attendees                       []Attendee
 }
 
 // Decode reads a provider snapshot with the source calendar's time zone.
 func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	switch rawFormat {
+	case "ics":
+		return DecodeICS(context.Background(), raw, metadata, calendarZone, NewICSParseBudget())
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
 	default:

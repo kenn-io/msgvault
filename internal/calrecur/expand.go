@@ -166,7 +166,7 @@ func expand(ctx context.Context, s Set, duration time.Duration, durationDays int
 	}
 	var out []Occurrence
 	add := func(o Occurrence) {
-		if o.Start.Before(to) && o.End.After(from) {
+		if o.Start.Before(to) && (o.End.After(from) || o.Start.Equal(o.End) && !o.Start.Before(from)) {
 			out = append(out, o)
 		}
 	}
@@ -201,8 +201,11 @@ func expand(ctx context.Context, s Set, duration time.Duration, durationDays int
 // must also account for moved exceptions' effective bounds. Unbounded rules,
 // malformed input, context cancellation or exhausted budget make the bound
 // unknown. All-day ends use civil days and a 14-hour conservative margin.
-func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, durationDays int, budget int) (end time.Time, bounded bool) {
-	return conservativeEnd(ctx, s, duration, durationDays, &candidateBudget{ctx: ctx, limit: budget})
+// The candidate count includes work spent before an unknown bound.
+func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, durationDays int, budget int) (end time.Time, bounded bool, candidates int) {
+	counter := &candidateBudget{ctx: ctx, limit: budget}
+	end, bounded = conservativeEnd(ctx, s, duration, durationDays, counter)
+	return end, bounded, counter.used
 }
 
 func conservativeEnd(ctx context.Context, s Set, duration time.Duration, durationDays int, budgetCounter *candidateBudget) (end time.Time, bounded bool) {

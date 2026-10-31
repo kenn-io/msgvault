@@ -350,6 +350,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				if _, err := tx.Exec(fmt.Sprintf(`
 					UPDATE messages SET deleted_from_source_at = %s
 					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
+					  AND COALESCE(message_type, '') <> 'calendar_event'
 				`, s.dialect.Now()), messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
@@ -495,6 +496,7 @@ func captureUntrackedIMAPMessageIDs(
 		FROM messages
 		WHERE messages.source_id = ?
 		  AND messages.deleted_from_source_at IS NULL
+		  AND COALESCE(messages.message_type, '') <> 'calendar_event'
 		  AND NOT EXISTS (
 			SELECT 1 FROM source_merge_archive_only_messages marker
 			WHERE marker.message_id = messages.id
@@ -530,6 +532,7 @@ func captureUntrackedIMAPMessageIDs(
 			JOIN messages ON messages.id = message_labels.message_id
 			WHERE messages.source_id = ?
 			  AND messages.deleted_from_source_at IS NOT NULL
+			  AND COALESCE(messages.message_type, '') <> 'calendar_event'
 			  AND NOT EXISTS (
 				SELECT 1 FROM source_merge_archive_only_messages marker
 				WHERE marker.message_id = messages.id
