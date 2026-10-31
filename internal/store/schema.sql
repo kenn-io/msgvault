@@ -4820,3 +4820,30 @@ CREATE TABLE IF NOT EXISTS line_memberships (
 CREATE INDEX IF NOT EXISTS idx_line_unresolved_quotes
     ON messages(source_id,conversation_id,json_extract(metadata,'$.quotedMessageId'))
     WHERE message_type='line' AND reply_to_message_id IS NULL;
+
+-- Durable owner-admitted LINE replies; receipts outlive local drafts.
+CREATE TABLE IF NOT EXISTS line_reply_attempts (
+    draft_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL,
+    bot_user_id TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK(revision > 0),
+    conversation_id BIGINT NOT NULL,
+    source_conversation_id TEXT NOT NULL,
+    conversation_type TEXT NOT NULL,
+    reply_to_message_id BIGINT NOT NULL,
+    reply_to_source_message_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    quote_token TEXT NOT NULL DEFAULT '',
+    retry_key TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK(state IN ('admitted','remote_unknown','accepted_unresolved','remote_accepted','sent','provider_rejected','remote_unknown_expired','accepted_unresolved_expired')),
+    admitted_at DATETIME NOT NULL,
+    retry_until DATETIME NOT NULL,
+    next_retry_at DATETIME NOT NULL,
+    status_code INTEGER NOT NULL DEFAULT 0,
+    request_id TEXT NOT NULL DEFAULT '',
+    remote_message_id TEXT NOT NULL DEFAULT '',
+    remote_quote_token TEXT NOT NULL DEFAULT '',
+    message_id BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_line_reply_source_state ON line_reply_attempts(source_id,state);

@@ -11,11 +11,12 @@ import (
 
 // LineSource configures a push source. The secret itself remains in the environment.
 type LineSource struct {
-	ChannelID  string `toml:"channel_id"`
-	SecretEnv  string `toml:"secret_env"`
-	Enabled    bool   `toml:"enabled"`
-	Media      *bool  `toml:"media"`
-	MaxMediaMB int64  `toml:"max_media_mb"`
+	ChannelID string `toml:"channel_id"`
+	SecretEnv string `toml:"secret_env"`
+	Enabled   bool   `toml:"enabled"`
+	Media     *bool  `toml:"media"`
+	MaxMediaMB int64 `toml:"max_media_mb"`
+	AllowSend bool   `toml:"allow_send"`
 }
 
 func (s LineSource) MediaPolicy() attachmentpolicy.Policy {

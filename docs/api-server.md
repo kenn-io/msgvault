@@ -24,6 +24,31 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 | Receive LINE Official Account events | [LINE webhook](#line-webhook) |
+| Send a reviewed LINE reply | [Owner CLI transport](#line-reply) |
+
+### Send a reviewed LINE reply {#line-reply}
+
+Available on unreleased `main` with API schema 3.38.0: the owner can invoke
+`send-line-reply` through `POST /api/v1/cli/run` with ordinary owner API
+authentication:
+
+```json
+{"args":["send-line-reply","chat-draft-example","--revision","1","--json"]}
+```
+
+The CLI transport returns newline-delimited JSON events;
+`stdout` event data contains the send receipt, followed by a `complete` event.
+Inspect the receipt's `status`: command completion can report an accepted send
+with local archive work still pending. Repeating the command with the admitted
+revision resumes the same send; a completed receipt needs no provider request.
+See [LINE receipt states and recovery](usage/line.md#read-a-send-receipt).
+
+The daemon checks the current saved channel's `enabled` and `allow_send` policy
+and its own secret environment before admission and provider retries. Request
+`env` and `cwd` overrides are rejected. Delegated credentials receive HTTP 403
+`not_permitted` before draft lookup, regardless of draft permissions. Local
+LINE draft creation and lifecycle operations use the existing draft commands;
+see [the CLI reference](cli-reference.md#local-chat-drafts).
 
 ### LINE webhook {#line-webhook}
 

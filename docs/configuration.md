@@ -1720,20 +1720,24 @@ the daemon, and activate its public webhook.
 channel_id = "2000000001"
 secret_env = "MSGVAULT_LINE_SECRET_EXAMPLE"
 enabled = true
+allow_send = false
 ```
 
 | Key | Default | Contract |
 |---|---|---|
 | `channel_id` | required | Unique positive decimal channel ID, stored as a string; it must be canonical, without whitespace, a sign, or leading zeros, and fit uint64 |
 | `secret_env` | required | Explicit environment-variable name containing the channel secret on the daemon host; surrounding whitespace is trimmed; the name must match `[A-Za-z_][A-Za-z0-9_]*` |
-| `enabled` | `false` | Mount this channel's receiver when the daemon starts |
+| `enabled` | `false` | Mount this channel's receiver when the daemon starts; also required for sending |
 | `media` | `true` | Download incoming media; `false` keeps message metadata only |
 | `max_media_mb` | `250` | Per-file download cap in MiB; `0` uses the default |
+| `allow_send` | `false` | Permit the owner to send reviewed text replies from local chat drafts; agent grants cannot send |
 
 Disabled blocks are still validated. Duplicate channel IDs and unknown keys in
 `[[line]]` are rejected. The secret value is never stored in this file. Restart
-the daemon or service after changing its channel configuration or secret
+the daemon or service after changing receiver configuration or its secret
 environment; an already running process does not inherit later terminal exports.
+The send command reloads `enabled` and `allow_send` before admission and each
+provider retry. See [reviewed reply sending](usage/line.md#reply-from-a-reviewed-draft).
 
 The integration receives webhooks while the daemon runs and retries due work
 internally. After changing media settings, restart the daemon. Use

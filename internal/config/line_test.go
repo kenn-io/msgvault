@@ -48,3 +48,25 @@ secret_env="EXAMPLE_LINE_SECRET_B"
 		must.ErrorContains(loadConfigTextError(t, "[[line]]\nchannel_id=\"2000000000\"\nsecret_env=\"EXAMPLE_LINE_SECRET\"\n"+extra), "unknown LINE config key")
 	}
 }
+
+func TestLineSendConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		want        bool
+	}{
+		{"default", "", false}, {"enabled", "allow_send=true", true}, {"disabled", "allow_send=false", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := loadConfigText(t, "[[line]]\nchannel_id=\"2000000001\"\nsecret_env=\"EXAMPLE_LINE_SECRET\"\nenabled=true\n"+tc.field+"\n")
+			assert.Equal(tc.want, cfg.Line[0].AllowSend)
+			cfg.HomeDir = t.TempDir()
+			cfg.Data.DataDir = t.TempDir()
+			require.NoError(cfg.Save())
+			reloaded, err := Load(cfg.ConfigFilePath(), "")
+			require.NoError(err)
+			assert.Equal(tc.want, reloaded.Line[0].AllowSend)
+		})
+	}
+}

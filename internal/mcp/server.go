@@ -38,6 +38,7 @@ const (
 	ToolDraftDelete               = "draft_delete"
 	ToolDraftRecover              = "draft_recover"
 	ToolDraftSendAs               = "draft_send_as"
+	ToolSendLineReply             = "send_line_reply"
 	ToolSearchMessages            = "search_messages"
 	ToolQuerySQL                  = "query_sql"
 	ToolSearchMetadata            = "search_metadata"

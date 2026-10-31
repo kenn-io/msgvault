@@ -2659,6 +2659,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
 	}
+	if api.IsCLIRunSendLineReply(req.Args) {
+		return a.runCLISendLineReply(ctx, req, emit)
+	}
 	if api.IsCLIRunDraftCreate(req.Args) {
 		if api.IsCLIRunDraftForward(req.Args) {
 			return a.runCLIForwardDraft(ctx, req, emit)

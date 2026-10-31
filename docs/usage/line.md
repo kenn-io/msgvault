@@ -1,17 +1,18 @@
 ---
 last_edited: "2026-10-30"
 title: LINE Official Account
-description: Archive incoming LINE Official Account chats through signed Messaging API webhooks.
+description: Archive LINE Official Account chats and send reviewed text replies from local drafts.
 ---
 
-# Archive LINE Official Account chats
+# Archive and reply to LINE chats
 
 Connect a LINE Official Account to archive incoming direct chats, group chats,
 and existing multi-person rooms. Text is archived before profile or
 media downloads finish. Quotes link to messages in the same archived chat;
 `join`, `leave`, `memberJoined`, and `memberLeft` events update participants.
 Friendship events (`follow` and `unfollow`) are ignored. Incoming direct messages
-create their conversation.
+create their conversation. With an explicit send opt-in, the owner
+can reply from a reviewed local draft and archive the sent message.
 
 !!! note "Available on main"
     This integration is available in builds from `main`, newer than the latest
@@ -21,7 +22,8 @@ The archive starts when the webhook goes live. LINE has no message-history API,
 so msgvault cannot backfill earlier chats. Staff replies from Official Account
 Manager or the Official Account app, auto-replies, greetings, broadcasts, and
 messages sent through other tools are invisible to this integration. msgvault
-currently sends no LINE messages.
+archives its own replies when the owner uses a
+[reviewed reply draft](#reply-from-a-reviewed-draft).
 
 ## Connect your account
 
@@ -61,6 +63,7 @@ The saved block is:
 channel_id = "2000000001"
 secret_env = "MSGVAULT_LINE_SECRET_EXAMPLE"
 enabled = true
+allow_send = false
 ```
 
 Use another block for each channel. See [LINE configuration](../configuration.md#line)
@@ -141,6 +144,88 @@ anonymous direct chat.
 Template and Flex messages sent on a user's behalf by a LINE Front-end Framework
 (LIFF) app do not produce webhooks and cannot be archived. See
 [LINE's LIFF webhook limits](https://developers.line.biz/en/docs/messaging-api/receiving-messages/#webhook-when-sending-a-message-using-liff-sendmessages).
+
+## Reply from a reviewed draft
+
+The owner can send a text reply to an archived LINE direct chat, group, or room.
+Sending is off by default. In that channel's `[[line]]` block, set:
+
+```toml
+allow_send = true
+```
+
+The daemon reads the current saved channel policy before admitting a send and
+before each provider retry. The channel must remain enabled, with its secret
+in the daemon environment. No agent grant permits sending. Creating, reading,
+editing, or deleting a local draft does not send it.
+
+1. Create a draft for the archived conversation and an archived message in it:
+
+    ```bash
+    msgvault draft-compose --conversation 42 --reply-to 123 --body 'Thanks for the update.' --json
+    ```
+
+2. Review the returned draft ID, revision, destination, and body:
+
+    ```bash
+    msgvault draft-get chat-draft-example --json
+    ```
+
+3. Send the reviewed revision:
+
+    ```bash
+    msgvault send-line-reply chat-draft-example --revision 1 --json
+    ```
+
+The destination and parent must belong to the same archived source and chat.
+Text must be nonblank UTF-8 without NUL, up to 5,000 UTF-16 code units. msgvault
+quotes the parent when its archived metadata has a `quoteToken`. It sends one
+text message through LINE's push API; outbound files, images, stickers, and
+reply-token sends are not supported.
+
+Push messages consume the account's monthly message quota. LINE also restricts
+eligible recipients: a user generally must be a friend, or have messaged the
+account within the previous seven days; the account must belong to a target
+group or room. A successful response proves acceptance, not delivery. A blocked
+account or other LINE restrictions can prevent delivery. See
+[LINE's push API](https://developers.line.biz/en/reference/messaging-api/#send-push-message).
+
+### Read a send receipt
+
+The JSON result includes `draft_id`, `revision`, `source_id`, `conversation_id`,
+`status`, and `accepted`. Archived receipts include `remote_message_id` and
+`message_id`; pending receipts can include `retry_after`.
+
+| Status | Next action |
+|---|---|
+| `sent` | The sent message is archived in the original chat with its parent link. The draft is removed; repeat calls return the same receipt. |
+| `sent_archive_pending` | LINE accepted the message and its ID is saved. Repeat the same command to repair the archive locally. This recovery does not send again, even after policy revocation or retry expiry. |
+| `accepted_receipt_pending` | LINE accepted the request, but msgvault could not save its receipt. Keep any returned IDs. Repeat the same command after `retry_after`, before the cutoff, with sending still enabled and credentials available. Recovery can call LINE with the same key; it is not local-only and may remain unarchived if policy is revoked or the window expires. |
+| `admitted` or `remote_unknown` | A send may have reached LINE. Keep the draft frozen and repeat the same command after `retry_after`. |
+| `accepted_unresolved` | LINE accepted the request but supplied no usable single-message ID. Repeat the same command after `retry_after` to recover the receipt. |
+| `provider_rejected` | The first submission was definitively rejected. The draft can be edited or deleted. This draft ID keeps its terminal receipt; a new send requires a new reviewed draft. |
+| `remote_unknown_expired` or `accepted_unresolved_expired` | Provider retries have stopped. The draft stays frozen because sending a replacement could duplicate a message already accepted by LINE. |
+
+An admitted draft keeps one persisted UUID and immutable text, recipient, and
+quote token. Explicit retries reuse that UUID. LINE remembers retry keys for
+24 hours; msgvault stops provider retries 23 hours after admission and waits
+at least 30 seconds between attempts, honoring longer rate-limit or service
+retry delays. There are no background sends. See
+[LINE's retry semantics](https://developers.line.biz/en/docs/messaging-api/retrying-api-request/).
+Never create a replacement draft just to bypass an uncertain or expired send.
+A receipt without a remote ID may remain unarchived after the recovery window.
+The archived timestamp estimates send time from admission.
+
+The daemon HTTP API accepts the same command through
+[`POST /api/v1/cli/run`](../api-server.md#line-reply).
+The owner MCP tool `send_line_reply` requires confirmation of the exact draft ID
+and revision. Clients unable to complete confirmation cannot send. HTTP MCP
+also requires its existing write opt-in. Delegated MCP sessions omit the tool.
+See [chat tools](chat.md) for connection options.
+
+Messages sent from Official Account Manager or other tools still do not appear
+in this archive. Only replies sent through this msgvault command have a sent
+receipt that msgvault can archive.
 
 ## Check delivery
 

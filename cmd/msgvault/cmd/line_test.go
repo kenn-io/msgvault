@@ -231,3 +231,24 @@ func TestAddLinePreservesConcurrentConfigEdit(t *testing.T) {
 	must.NoError(err)
 	checks.Equal(17, loaded.Sync.RateLimitQPS)
 }
+
+func TestLineSendConfigSurvivesRegistration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg, _, _ := lineWiringFixture(t)
+	args := []string{"--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET"}
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
+	require.NoError(err)
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	require.NoError(err)
+	assert.False(loaded.Line[0].AllowSend)
+	loaded.Line[0].AllowSend = true
+	loaded.Line[0].Enabled = false
+	require.NoError(loaded.Save())
+	_, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
+	require.NoError(err)
+	loaded, err = config.Load(cfg.ConfigFilePath(), "")
+	require.NoError(err)
+	assert.True(loaded.Line[0].AllowSend)
+	assert.False(loaded.Line[0].Enabled)
+}

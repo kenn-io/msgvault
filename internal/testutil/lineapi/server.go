@@ -1,4 +1,4 @@
-// Package lineapi provides a synthetic Messaging API for receiver/processor tests.
+// Package lineapi provides a synthetic Messaging API for LINE tests.
 package lineapi
 
 import (
@@ -19,6 +19,9 @@ type Response struct {
 	Status int
 	Header http.Header
 	Body   string
+	// Accept records provider acceptance even if the response is lost or fails.
+	Accept     bool
+	Disconnect bool
 }
 
 // Request is a recorded request; all values belong to synthetic tests.
@@ -35,9 +38,10 @@ type Server struct {
 	responses map[string][]Response
 	requests  []Request
 	tokens    int
+	pushes    *pushState
 }
 
-func New() *Server { return &Server{responses: make(map[string][]Response)} }
+func New() *Server { return &Server{responses: make(map[string][]Response), pushes: newPushState()} }
 
 func (s *Server) Enqueue(method, path string, responses ...Response) {
 	s.mu.Lock()
@@ -83,6 +87,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, Request{r.Method, path, r.Header.Clone(), body})
 	key := r.Method + " " + path
+	var override *Response
+	if queued := s.responses[key]; len(queued) > 0 {
+		next := queued[0]
+		override = &next
+		s.responses[key] = queued[1:]
+	}
 	response := Response{Status: 200, Body: `{}`}
 	switch {
 	case key == "POST /oauth2/v3/token":
@@ -90,6 +100,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Body = fmt.Sprintf(`{"access_token":"synthetic-token-%d","token_type":"Bearer","expires_in":900}`, s.tokens)
 	case r.Header.Get("Authorization") == "":
 		response.Status = 401
+	case key == "POST /v2/bot/message/push":
+		response = s.pushResponse(r.Header.Get("X-Line-Retry-Key"), body, override)
+		override = nil
 	case key == "GET /v2/bot/info":
 		response.Body = `{"userId":"U00000000000000000000000000000001","basicId":"@example","displayName":"Example Bot"}`
 	case strings.Contains(path, "/profile/") || strings.Contains(path, "/member/"):
@@ -118,9 +131,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/content"):
 		response.Body = "synthetic-content"
 	}
-	if queued := s.responses[key]; len(queued) > 0 {
-		response = queued[0]
-		s.responses[key] = queued[1:]
+	if override != nil {
+		response = *override
+	}
+	if response.Disconnect {
+		if hijacker, ok := w.(http.Hijacker); ok {
+			connection, _, err := hijacker.Hijack()
+			if err == nil {
+				_ = connection.Close()
+			}
+			return
+		}
+		http.Error(w, "synthetic lost response", http.StatusGatewayTimeout)
+		return
 	}
 	for name, values := range response.Header {
 		w.Header()[name] = append([]string(nil), values...)

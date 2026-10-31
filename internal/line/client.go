@@ -29,7 +29,7 @@ const (
 )
 
 // APIError deliberately excludes provider bodies and credentials.
-// RetryAfter is an absolute retry deadline (zero unless status is 429).
+// RetryAfter is a deadline for 429 responses and 5xx with Retry-After.
 type APIError struct {
 	StatusCode int
 	RetryAfter time.Time
@@ -148,7 +148,14 @@ func (c *Client) tokenError(ctx context.Context, err error) error {
 	return errors.New("line: token request failed")
 }
 
-func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path string, body []byte, contentType, token string, client *http.Client) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, method, base, path string, body []byte, contentType, token string) (*http.Response, error) {
+	return c.sendWithHTTPClient(ctx, method, base, path, body, contentType, token, c.http, "")
+}
+
+func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path string, body []byte, contentType, token string, client *http.Client, retryKey string) (*http.Response, error) {
+	if !validBase(base) {
+		return nil, errors.New("line: invalid API base URL")
+	}
 	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("line: cannot create request")
@@ -158,6 +165,9 @@ func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path stri
 	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if retryKey != "" {
+		request.Header.Set("X-Line-Retry-Key", retryKey)
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -175,16 +185,16 @@ func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path stri
 }
 
 func (c *Client) authorized(ctx context.Context, method, base, path string, body []byte) (*http.Response, error) {
-	return c.authorizedWithHTTPClient(ctx, method, base, path, body, c.http)
+	return c.authorizedWithHTTPClient(ctx, method, base, path, body, c.http, "")
 }
 
-func (c *Client) authorizedWithHTTPClient(ctx context.Context, method, base, path string, body []byte, client *http.Client) (*http.Response, error) {
+func (c *Client) authorizedWithHTTPClient(ctx context.Context, method, base, path string, body []byte, client *http.Client, retryKey string) (*http.Response, error) {
 	token, err := c.accessToken(ctx, "")
 	if err != nil {
 		return nil, err
 	}
 	for attempt := range 2 {
-		response, err := c.sendWithHTTPClient(ctx, method, base, path, body, "application/json", token, client)
+		response, err := c.sendWithHTTPClient(ctx, method, base, path, body, "application/json", token, client, retryKey)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +212,7 @@ func (c *Client) authorizedWithHTTPClient(ctx context.Context, method, base, pat
 
 func (c *Client) statusError(response *http.Response) *APIError {
 	err := &APIError{StatusCode: response.StatusCode}
-	if response.StatusCode != http.StatusTooManyRequests {
+	if response.StatusCode != http.StatusTooManyRequests && (response.StatusCode < 500 || response.Header.Get("Retry-After") == "") {
 		return err
 	}
 	now := c.now()
@@ -303,7 +313,7 @@ func (c *Client) Content(ctx context.Context, messageID string, maxBytes int64) 
 	}
 	mediaHTTP := *c.http
 	mediaHTTP.Timeout = attachmentpolicy.DownloadTimeout(maxBytes)
-	response, err := c.authorizedWithHTTPClient(ctx, http.MethodGet, c.dataURL, "/v2/bot/message/"+url.PathEscape(messageID)+"/content", nil, &mediaHTTP)
+	response, err := c.authorizedWithHTTPClient(ctx, http.MethodGet, c.dataURL, "/v2/bot/message/"+url.PathEscape(messageID)+"/content", nil, &mediaHTTP, "")
 	if err != nil {
 		return nil, err
 	}

@@ -151,6 +151,12 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 			if pending {
 				return invalidSourceMerge("sources with pending LINE webhook work cannot be merged; process the inbox with sync-line first")
 			}
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_reply_attempts WHERE source_id=? AND state NOT IN ('sent','provider_rejected'))`, req.FromSourceID).Scan(&pending); err != nil {
+				return fmt.Errorf("check LINE replies before merge: %w", err)
+			}
+			if pending {
+				return invalidSourceMerge("sources with unresolved LINE reply attempts cannot be merged")
+			}
 		}
 		// Active provider receipts and local chat drafts remain bound to their
 		// source. Discarded provider receipts are retained as audit evidence and

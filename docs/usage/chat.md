@@ -80,9 +80,9 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
+These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.31.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
 
-`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
+`draft_delete`, `draft_recover`, and `send_line_reply` require client confirmation for the specific tool and arguments. Deletion removes a draft, recovery can finish an interrupted deletion, and LINE sending can make a provider request. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete, recover, or send them.
 
 | Tool | Command | Parameters |
 |---|---|---|
@@ -94,10 +94,11 @@ These tools run the matching CLI commands through your selected daemon. They req
 | `draft_delete` | `draft-delete` | Required `draft_id`, `revision` |
 | `draft_recover` | `draft-recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
 | `draft_send_as` | `draft-send-as` | Required `account`; lists Gmail sender identities |
+| `send_line_reply` | `send-line-reply` | Required `draft_id`, `revision`; owner only, requires the LINE channel's `allow_send` and exact client confirmation |
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
+Owner sessions expose these tools alongside the archive tools. HTTP LINE sending also requires `--http-allow-writes`. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
 
