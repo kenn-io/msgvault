@@ -355,3 +355,38 @@ func TestMeetingIdentityOccurrenceOnlyFindsGranolaWithOrphanRepresentative(t *te
 	assert.Equal([]int64{note}, got.ByOccurrence[seriesRef].LinkedTranscriptIDs)
 	assert.Equal("occ:"+ref, got.ByOccurrence[seriesRef].Key)
 }
+
+func TestMeetingIdentityOccurrenceOnlyFindsOrphanDecisionAfterMasterArrives(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	orphanData, orphan := calendarFixture(t, st, "orphan", `{"id":"orphan","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	noteData, note := identityNote(t, st, "manual-note", "")
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
+	before, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(orphan)}})
+	requirements.NoError(err)
+	assertions.Equal([]int64{note}, before.ByOccurrence[identityRef(orphan)].LinkedTranscriptIDs)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	// Matching provider and original keys from another source must stay separate.
+	_, unrelated := calendarFixture(t, st, "other-orphan", `{"id":"other-orphan","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "other@example.com")
+	_, otherNote := identityNote(t, st, "other-note", "")
+	requirements.NoError(st.LinkMeetingContext(t.Context(), otherNote, OccurrenceRef{MessageID: unrelated}))
+	ref := identityRef(master) + "@20270314T100000Z"
+	forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+	requirements.NoError(err)
+	assertions.Equal("occ:"+ref, forward.ByTranscript[note].Key)
+	for _, ctx := range []context.Context{t.Context(), sourcescope.WithSourceIDs(t.Context(), []int64{orphanData.Message.SourceID, noteData.Message.SourceID})} {
+		got, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+		requirements.NoError(err)
+		assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+		assertions.Equal("occ:"+ref, got.ByTranscript[note].Key)
+		assertions.NotContains(got.ByTranscript, otherNote)
+	}
+	hidden, err := st.ResolveMeetingIdentitiesContext(sourcescope.WithSourceIDs(t.Context(), []int64{orphanData.Message.SourceID}), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+	requirements.NoError(err)
+	assertions.Empty(hidden.ByOccurrence[ref].LinkedTranscriptIDs)
+	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
+	split, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+	requirements.NoError(err)
+	assertions.Empty(split.ByOccurrence[ref].LinkedTranscriptIDs)
+	assertions.NotContains(split.ByTranscript, note)
+}
