@@ -47,6 +47,17 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return target, nil
 		}
 		o := r.value.CalendarOccurrence
+		if c.src.Meetings != nil {
+			identity := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+				return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: []string{o.Ref}})
+			})
+			c.gap("meetings", identity.err, false)
+			var ok bool
+			o, ok = c.canonicalOccurrence(o, identity.value.ByOccurrence[o.Ref])
+			if !ok {
+				return target, nil
+			}
+		}
 		target.occurrence = &o
 		target.at = o.Start
 		if o.AllDay {
@@ -212,7 +223,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	return c.filterSubject(entries)
 }
 func anchorMatches(e Entry, target anchorTarget) bool {
-	if e.Key == target.ref.Ref || e.Ref == target.ref.Ref {
+	if e.Key == target.ref.Ref || e.Ref == target.ref.Ref || target.occurrence != nil && e.Ref == target.occurrence.Ref {
 		return true
 	}
 	if target.messageID > 0 {
@@ -231,13 +242,7 @@ func anchorMatches(e Entry, target anchorTarget) bool {
 func (c *composer) anchorFallback(target anchorTarget) Entry {
 	d := target.display
 	ref := messageRef(target.messageID)
-	snippet := d.Snippet
-	if snippet == "" {
-		snippet = d.Subject
-	}
-	if d.HiddenText {
-		snippet = ""
-	}
+	snippet := displaySnippet(d)
 	return Entry{Kind: entryKindMessage, Key: ref, Ref: ref, AnchorRef: ref, Time: target.at, Open: c.messageOpen(target.messageID), Anchor: true, Filtered: true, HiddenText: d.HiddenText, Message: &MessageEntry{Snippet: UntrustedText{Text: snippet}, People: []Person{}}}
 }
 func (c *composer) buildAnchor(target anchorTarget) {
@@ -375,13 +380,7 @@ func (c *composer) conversationEntries(conversation int64, from, to time.Time) [
 		if !c.admitTier(people) {
 			continue
 		}
-		text := d.Snippet
-		if text == "" {
-			text = d.Subject
-		}
-		if d.HiddenText {
-			text = ""
-		}
+		text := displaySnippet(d)
 		ref := messageRef(m.MessageID)
 		entries = append(entries, Entry{Kind: entryKindMessage, Key: ref, Ref: ref, AnchorRef: ref, Time: m.OccurredAt, Open: c.messageOpen(m.MessageID), HiddenText: d.HiddenText, Message: &MessageEntry{Direction: string(m.Direction), People: people, PeopleCount: len(people), Snippet: UntrustedText{Text: text}}})
 	}

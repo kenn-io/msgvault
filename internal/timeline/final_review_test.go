@@ -1,0 +1,326 @@
+package timeline
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/archivemarker"
+	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+func TestCanonicalMeetingCopySuppliesDisplayAndSelectedAlias(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	canonical := f.calendar("canonical", singleDayEvent)
+	stale := f.calendar("stale", strings.NewReplacer(`"id":"planning"`, `"id":"stale"`, `"Planning"`, `"Stale title"`, `T10:00:00Z`, `T09:00:00Z`, `T11:00:00Z`, `T09:30:00Z`, `alice@example.com`, `other@example.com`, `"Alice"`, `"Other"`).Replace(singleDayEvent))
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id IN (?,?)`), f.now, canonical, stale)
+	requirements.NoError(err)
+	f.project()
+	ref := fmt.Sprintf("evt:%d", canonical)
+	alias := fmt.Sprintf("evt:%d", stale)
+	identity, err := f.Store.ResolveMeetingIdentitiesContext(t.Context(), store.MeetingIdentityRequest{OccurrenceRefs: []string{alias}})
+	requirements.NoError(err)
+	requirements.Equal(ref, identity.ByOccurrence[alias].OccurrenceRef)
+	req := dayRequest()
+	req.Mode, req.With = ModeDay, "email:alice@example.com"
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.Equal(ref, entries[0].Ref)
+	assertions.Equal("Planning", entries[0].Meeting.Title.Text)
+	assertions.Equal(10, entries[0].Time.Hour())
+	requirements.Len(entries[0].Meeting.Attendees, 1)
+	assertions.Equal(f.peer, entries[0].Meeting.Attendees[0].ParticipantID)
+	anchorReq := anchorRequest(alias)
+	anchorReq.With = "email:alice@example.com"
+	anchored, err := Build(t.Context(), f.src, anchorReq)
+	requirements.NoError(err)
+	requirements.NotNil(anchored.Anchor)
+	assertions.Equal(alias, anchored.Anchor.Ref)
+	requirements.Len(anchored.History, 1)
+	assertions.True(anchored.History[0].Anchor)
+	assertions.Equal(ref, anchored.History[0].Ref)
+	assertions.Equal(10, anchored.History[0].Time.Hour())
+	// Safety metadata must come from the canonical row as well.
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=NULL, hidden_text_present=TRUE WHERE id=?`), canonical)
+	requirements.NoError(err)
+	hidden, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(hidden), 1)
+	assertions.True(allDayEntries(hidden)[0].HiddenText)
+	assertions.Empty(allDayEntries(hidden)[0].Meeting.Title.Text)
+}
+
+type personReadFailure struct{ PeopleSource }
+
+func (personReadFailure) ResolvePersonReferenceContext(context.Context, store.PersonRefKind, string, []int64, int) ([]store.PersonCandidate, error) {
+	return nil, errors.New("source unavailable")
+}
+
+func TestMalformedPersonReferenceIsInputError(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	for _, ref := range []string{"person:abc", "participant:0", "unknown:value"} {
+		got, err := Build(t.Context(), f.src, relationshipRequest(ref))
+		requirements.ErrorIs(err, ErrInvalidRequest, ref)
+		assertions.Nil(got)
+	}
+	f.src.People = personReadFailure{f.src.People}
+	got, err := Build(t.Context(), f.src, relationshipRequest("person:1"))
+	requirements.NoError(err)
+	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+}
+
+func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	source, err := f.Store.GetOrCreateSource("matrix", "matrix-fixture")
+	requirements.NoError(err)
+	conv, err := f.Store.EnsureConversation(source.ID, "encrypted", "Encrypted room")
+	requirements.NoError(err)
+	id := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
+		m.SourceID, m.ConversationID, m.MessageType = source.ID, conv, "matrix"
+		m.Snippet = sql.NullString{String: archivemarker.EncryptedMessagePlaceholder, Valid: true}
+		m.Subject = sql.NullString{String: "Suppressed subject", Valid: true}
+	})
+	f.project()
+	day := dayRequest()
+	day.IncludeNoise = true
+	got, err := Build(t.Context(), f.src, day)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(got), 1)
+	assertions.Equal("[encrypted]", allDayEntries(got)[0].Burst.Snippet.Text)
+	assertions.Contains(Markdown(got), `\[encrypted\]`)
+	assertions.NotContains(Markdown(got), "Suppressed subject")
+	req := anchorRequest(messageRef(id))
+	req.Conversation = true
+	individual, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(individual.History, 1)
+	assertions.Equal("[encrypted]", individual.History[0].Message.Snippet.Text)
+	assertions.Contains(Markdown(individual), `\[encrypted\]`)
+	// A tier filter forces the explicit anchor fallback through its separate path.
+	req.Conversation, req.Tiers = false, []int{1}
+	fallback, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(fallback.History, 1)
+	assertions.True(fallback.History[0].Filtered)
+	assertions.Equal("[encrypted]", fallback.History[0].Message.Snippet.Text)
+	relationship, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	assertions.Zero(relationship.Person.InteractionCount)
+}
+
+func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	one := f.calendar("one", singleDayEvent)
+	// A series occurrence and a single with the same UID are distinct identities.
+	f.calendar("two", strings.ReplaceAll(singleDayEvent, `"id":"planning"`, `"id":"two","recurrence":["RRULE:FREQ=DAILY;COUNT=1"]`))
+	note := f.transcript("ambiguous", "planning@example.com", f.now.Add(-2*time.Hour))
+	f.project()
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 3)
+	for _, entry := range entries {
+		if entry.Kind == "meeting" {
+			assertions.False(entry.Meeting.Attended)
+			assertions.Empty(entry.Meeting.LinkedTranscriptIDs)
+			assertions.Equal([]string{messageRef(note)}, entry.Meeting.PossiblyRelated)
+		}
+	}
+	d, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", one))
+	requirements.NoError(err)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{d.SourceID})
+	req := dayRequest()
+	req.Scope.Owner = false
+	before, err := Build(ctx, f.src, req)
+	requirements.NoError(err)
+	for _, entry := range allDayEntries(before) {
+		assertions.Empty(entry.Meeting.PossiblyRelated)
+	}
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET subject=? WHERE id=?`), "Hidden suggestion changed", note)
+	requirements.NoError(err)
+	after, err := Build(ctx, f.src, req)
+	requirements.NoError(err)
+	beforeJSON, err := json.Marshal(before)
+	requirements.NoError(err)
+	afterJSON, err := json.Marshal(after)
+	requirements.NoError(err)
+	assertions.True(bytes.Equal(beforeJSON, afterJSON), "restricted suggestions must preserve byte-identical output")
+}
+
+func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		for _, envelope := range []string{"other", "none"} {
+			t.Run(fmt.Sprintf("saved=%t/envelope=%s", saved, envelope), func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+				f := newTimelineFixture(t)
+				ref := "email:alice@example.com"
+				subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
+				if saved {
+					subject = store.ActivitySubject{PersonID: f.savePerson()}
+					ref = fmt.Sprintf("person:%d", subject.PersonID)
+				}
+				// An unsent observation makes the subject resolvable in the source-scoped control without adding contact.
+				draft := f.add(f.now, false)
+				requirements.NoError(f.Store.SetMessageSentState(draft, false))
+				raw := singleDayEvent
+				if envelope == "none" {
+					// Organizer-only calendar identity also supplies attendance.
+					raw = strings.NewReplacer(`"attendees":[{`, `"organizer":{`, `}]}`, `}}`).Replace(raw)
+				}
+				event := f.calendar("calendar-only-attendee", raw)
+				f.calendar("calendar-copy", strings.ReplaceAll(raw, `"id":"planning"`, `"id":"calendar-copy"`))
+				var notes []int64
+				for _, key := range []string{"one", "two"} {
+					note := f.transcript(key, "planning@example.com", f.now.Add(-time.Hour))
+					recipients := []int64{}
+					if envelope == "other" {
+						recipients = []int64{f.EnsureParticipant("other@example.com", "Other", "example.com")}
+					}
+					requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", recipients, nil))
+					notes = append(notes, note)
+				}
+				f.project()
+				ids, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), store.ContactQuery{Subject: subject, Now: f.now, Location: time.UTC}, 10)
+				requirements.NoError(err)
+				assertions.False(more)
+				assertions.ElementsMatch(notes, ids)
+				bounded, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), store.ContactQuery{Subject: subject, Now: f.now, Location: time.UTC}, 1)
+				requirements.NoError(err)
+				assertions.Len(bounded, 1)
+				assertions.True(more)
+				got, err := Build(t.Context(), f.src, relationshipRequest(ref))
+				requirements.NoError(err)
+				requirements.NotNil(got.Person)
+				assertions.Equal(1, got.Person.InteractionCount)
+				assertions.Equal([]string{"meeting"}, got.Person.Channels)
+				requirements.NotNil(got.Person.LastAt)
+				assertions.Equal(10, got.Person.LastAt.Hour())
+				assertions.Equal(1, got.Person.Monthly[11])
+				requirements.Len(got.History, 1)
+				assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
+				assertions.ElementsMatch(notes, got.History[0].Meeting.LinkedTranscriptIDs)
+				// Hidden text remains attendance evidence, but no hidden title leaks.
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id IN (?,?)`), notes[0], notes[1])
+				requirements.NoError(err)
+				hidden, err := Build(t.Context(), f.src, relationshipRequest(ref))
+				requirements.NoError(err)
+				assertions.Equal(1, hidden.Person.InteractionCount)
+				requirements.Len(hidden.History, 1)
+				assertions.True(hidden.History[0].HiddenText)
+				assertions.Empty(hidden.History[0].Meeting.Title.Text)
+				// Source context reaches discovery and exact resolution; no visible notes means no attendance.
+				detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", event))
+				requirements.NoError(err)
+				scoped, err := Build(sourcescope.WithSourceIDs(t.Context(), []int64{detail.SourceID, f.Source.ID}), f.src, relationshipRequest(ref))
+				requirements.NoError(err)
+				assertions.Zero(scoped.Person.InteractionCount)
+				assertions.Empty(scoped.History)
+				// Request clock excludes meetings in the future even if recording was imported earlier.
+				f.src.Clock = func() time.Time { return time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC) }
+				future, err := Build(t.Context(), f.src, relationshipRequest(ref))
+				requirements.NoError(err)
+				assertions.Zero(future.Person.InteractionCount)
+				assertions.Empty(future.History)
+			})
+		}
+	}
+}
+
+func TestRelationshipTranscriptOnlyFallback(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	id := f.transcript("standalone", "", f.now.Add(-time.Hour))
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	assertions.Equal(1, got.Person.InteractionCount)
+	requirements.Len(got.History, 1)
+	assertions.Equal(messageRef(id), got.History[0].Ref)
+	assertions.Equal("transcript", got.History[0].Kind)
+}
+
+func TestCalendarAttendanceRequiresCanonicalSubject(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	f.calendar("canonical-other", strings.ReplaceAll(singleDayEvent, "alice@example.com", "other@example.com"))
+	f.calendar("stale-attendee", strings.ReplaceAll(singleDayEvent, `"id":"planning"`, `"id":"stale"`))
+	note := f.transcript("recording", "planning@example.com", f.now.Add(-time.Hour))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", nil, nil))
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	assertions.Zero(got.Person.InteractionCount)
+	assertions.Empty(got.History)
+}
+
+func TestRelationshipCalendarAttendanceOlderThanExpansionWindow(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	f.calendar("old-calendar", strings.ReplaceAll(singleDayEvent, "2026-10-22", "2019-10-22"))
+	at := time.Date(2019, 10, 22, 10, 0, 0, 0, time.UTC)
+	note := f.transcript("old-recording", "planning@example.com", at)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", nil, nil))
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	assertions.Equal(1, got.Person.InteractionCount)
+	requirements.NotNil(got.Person.FirstAt)
+	assertions.Equal(at, *got.Person.FirstAt)
+	assertions.Equal([12]int{}, got.Person.Monthly)
+	requirements.Len(got.History, 1)
+	assertions.Equal(at, got.History[0].Time)
+}
+
+func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	person := f.savePerson()
+	draft := f.add(f.now, false)
+	requirements.NoError(f.Store.SetMessageSentState(draft, false))
+	unobserved := f.EnsureParticipant("unobserved@example.com", "Unobserved", "example.com")
+	event := f.calendar("only-unobserved", strings.ReplaceAll(singleDayEvent, "alice@example.com", "unobserved@example.com"))
+	note := f.transcript("recording", "planning@example.com", f.now.Add(-time.Hour))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", nil, nil))
+	f.project()
+	detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", event))
+	requirements.NoError(err)
+	noteSource, err := f.Store.GetOrCreateSource("meeting_import", "notes@example.com")
+	requirements.NoError(err)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID, detail.SourceID, noteSource.ID})
+	q := store.ContactQuery{Subject: store.ActivitySubject{PersonID: person}, Now: f.now, Location: time.UTC}
+	before, _, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
+	requirements.NoError(err)
+	assertions.Empty(before)
+	_, err = f.Store.LinkParticipants(f.peer, unobserved)
+	requirements.NoError(err)
+	after, _, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
+	requirements.NoError(err)
+	assertions.Equal(before, after)
+	owner, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+	requirements.NoError(err)
+	assertions.Equal([]int64{note}, owner)
+}

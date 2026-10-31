@@ -3,6 +3,7 @@ package timeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,8 +34,11 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 		return c.src.People.ResolvePersonReferenceContext(ctx, store.PersonRefKind(kind), value, allowed, 11)
 	})
 	if r.err != nil {
+		if errors.Is(r.err, store.ErrInvalidActivityRequest) {
+			return store.PersonCandidate{}, fmt.Errorf("%w: %w", ErrInvalidRequest, r.err)
+		}
 		c.gap("person", r.err, false)
-		return store.PersonCandidate{}, nil //nolint:nilerr // Source failures belong in gaps; only invalid requests return errors.
+		return store.PersonCandidate{}, nil // Source failures belong in gaps; only invalid requests return errors.
 	}
 	if len(r.value) == 0 {
 		return store.PersonCandidate{}, ErrUnknownReference
@@ -234,6 +238,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
 	entries = c.filterSubject(entries)
+	entries = slices.DeleteFunc(entries, func(e Entry) bool { return e.Time.After(c.t.Now) })
 	c.sortAndContinue("history", entries, true)
 	entries = c.afterPosition("history", entries)
 	if len(entries) > 20 {
