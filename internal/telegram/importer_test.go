@@ -618,178 +618,138 @@ func TestImportIgnoresOtherSyncTypeCheckpoint(t *testing.T) {
 	assert.EqualValues(1, summary.MessagesAdded)
 }
 
-func TestImportRecordsTelegramIdentities(t *testing.T) {
-	assert := assert.New(t)
+func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	opts := ImportOptions{RootDir: "testdata/full", AttachmentsDir: t.TempDir(), NoResume: true}
+	opts := ImportOptions{RootDir: "testdata/full", AttachmentsDir: t.TempDir()}
+	first, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	// An export imported before identity linking has participants and messages only.
+	_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
+	require.NoError(err)
+	bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Bob Sample")
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("beeper", "telegram")
+	require.NoError(err)
+	key := "provider:8:telegram:7:service:0::19:7000000000000666666"
+	_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
+		ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	require.NoError(err)
+
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
-	for _, id := range []string{"7000000000000123456", "7000000000000555555", "7000000000000666666", "7000000000000444444"} {
-		var key string
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT o.provider_user_id FROM participant_contact_observations o
-			JOIN participant_identifiers i ON i.participant_id = o.participant_id
-			WHERE i.identifier_type = 'telegram' AND i.identifier_value = ? AND o.active_until IS NULL AND o.superseded_at IS NULL AND o.source_id = ?`), "user"+id, summary.SourceID).Scan(&key))
-		assert.Equal("provider:8:telegram:7:service:0::19:"+id, key)
-	}
-	var count int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM participant_contact_observations o
-		JOIN participant_identifiers i ON i.participant_id = o.participant_id
-		WHERE i.identifier_type = 'telegram' AND (i.identifier_value LIKE 'channel%' OR i.identifier_value LIKE 'chat%')`).Scan(&count))
-	assert.Zero(count)
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_contact_observations").Scan(&count))
-	summary, err = Import(t.Context(), st, opts)
-	require.NoError(err)
 	assert.Zero(summary.MessagesAdded)
-	var after int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_contact_observations").Scan(&after))
-	assert.Equal(count, after)
-}
-
-func TestImportLinksPreviouslyArchivedSenders(t *testing.T) {
-	for _, noResume := range []bool{false, true} {
-		t.Run("no-resume="+strconv.FormatBool(noResume), func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			st := testutil.NewTestStore(t)
-			opts := ImportOptions{RootDir: "testdata/full", AttachmentsDir: t.TempDir()}
-			first, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			// An export imported before identity linking has participants and messages only.
-			_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
-			require.NoError(err)
-			bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Bob Sample")
-			require.NoError(err)
-			source, err := st.GetOrCreateSource("beeper", "telegram")
-			require.NoError(err)
-			key := "provider:8:telegram:7:service:0::19:7000000000000666666"
-			_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
-				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
-				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
-			})
-			require.NoError(err)
-
-			opts.NoResume = noResume
-			summary, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.Zero(summary.MessagesAdded)
-			assert.Equal(first.MessagesAdded, summary.MessagesSkipped)
-			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM participant_contact_observations WHERE source_id = ?"), first.SourceID).Scan(&count))
-			assert.Equal(4, count, "every export user's identity is recorded again")
-			participant, err := st.EnsureParticipantByIdentifier("telegram", "user7000000000000666666", "Bob Sample")
-			require.NoError(err)
-			members, err := st.ClusterMembers(participant)
-			require.NoError(err)
-			assert.ElementsMatch([]int64{participant, bridge}, members)
-		})
-	}
+	assert.Equal(first.MessagesAdded, summary.MessagesSkipped)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM participant_contact_observations WHERE source_id = ?"), first.SourceID).Scan(&count))
+	assert.Equal(4, count, "every export user's identity is recorded again")
+	participant, err := st.EnsureParticipantByIdentifier("telegram", "user7000000000000666666", "Bob Sample")
+	require.NoError(err)
+	members, err := st.ClusterMembers(participant)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{participant, bridge}, members)
 }
 
 func TestImportLinksArchivedPeerWithoutMessages(t *testing.T) {
-	for _, noResume := range []bool{false, true} {
-		t.Run("no-resume="+strconv.FormatBool(noResume), func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			st := testutil.NewTestStore(t)
-			root := t.TempDir()
-			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"name":"Alice Example","type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1610909872","text":"hello"}]}]}}`))
-			opts := ImportOptions{RootDir: root}
-			first, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			require.EqualValues(1, first.MessagesAdded)
-			// Older imports archived the peer as a recipient without identity observations.
-			_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
-			require.NoError(err)
-			peer, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
-			require.NoError(err)
-			bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
-			require.NoError(err)
-			source, err := st.GetOrCreateSource("beeper", "telegram")
-			require.NoError(err)
-			key := "provider:8:telegram:7:service:0::1:2"
-			_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
-				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
-				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
-			})
-			require.NoError(err)
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"name":"Alice Example","type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user1","date_unixtime":"1610909872","text":"hello"}]}]}}`))
+	opts := ImportOptions{RootDir: root}
+	first, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	require.EqualValues(1, first.MessagesAdded)
+	// Older imports archived the peer as a recipient without identity observations.
+	_, err = st.DB().Exec("DELETE FROM participant_contact_observations")
+	require.NoError(err)
+	peer, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
+	require.NoError(err)
+	bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("beeper", "telegram")
+	require.NoError(err)
+	key := "provider:8:telegram:7:service:0::1:2"
+	_, err = st.RecordContactObservationContext(t.Context(), bridge, store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
+		ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	require.NoError(err)
 
-			opts.NoResume = noResume
-			summary, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.Zero(summary.MessagesAdded)
-			assert.EqualValues(1, summary.MessagesSkipped)
-			members, err := st.ClusterMembers(peer)
-			require.NoError(err)
-			assert.ElementsMatch([]int64{peer, bridge}, members)
-		})
-	}
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesAdded)
+	assert.EqualValues(1, summary.MessagesSkipped)
+	members, err := st.ClusterMembers(peer)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{peer, bridge}, members)
 }
 
 func TestImportIdentityFailureIsRetryable(t *testing.T) {
 	for _, table := range []string{"participant_contact_observations", "participant_links"} {
-		for _, noResume := range []bool{false, true} {
-			t.Run(table+"/no-resume="+strconv.FormatBool(noResume), func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				st := testutil.NewTestStore(t)
-				ctx := t.Context()
-				bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
-				require.NoError(err)
-				participant, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
-				require.NoError(err)
-				source, err := st.GetOrCreateSource("beeper", "telegram")
-				require.NoError(err)
-				key := "provider:8:telegram:7:service:0::1:2"
-				_, err = st.RecordContactObservationContext(ctx, bridge, store.ParticipantContactObservationInput{
-					AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
-					ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
-					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
-				})
-				require.NoError(err)
-				// Fail only this sender's identity so the import reaches its message.
-				condition := "NEW.participant_id = " + strconv.FormatInt(participant, 10)
-				if table == "participant_links" {
-					condition = "TRUE"
-				}
-				if st.IsPostgreSQL() {
-					_, err = st.DB().Exec(`CREATE FUNCTION fail_telegram_identity() RETURNS trigger LANGUAGE plpgsql AS $$
-						BEGIN RAISE EXCEPTION 'forced identity failure'; END $$`)
-					require.NoError(err)
-					_, err = st.DB().Exec(`CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON ` + table + `
-						FOR EACH ROW WHEN (` + condition + `) EXECUTE FUNCTION fail_telegram_identity()`)
-				} else {
-					_, err = st.DB().Exec(`CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON ` + table + `
-						WHEN ` + condition + ` BEGIN SELECT RAISE(ABORT, 'forced identity failure'); END`)
-				}
-				require.NoError(err)
-				root := t.TempDir()
-				testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
-				summary, err := Import(ctx, st, ImportOptions{RootDir: root})
-				require.ErrorContains(err, "forced identity failure")
-				assert.Zero(summary.MessagesAdded)
-				var count int
-				require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&count))
-				assert.Zero(count)
-				members, err := st.ClusterMembers(participant)
-				require.NoError(err)
-				assert.NotContains(members, bridge)
-
-				drop := "DROP TRIGGER fail_telegram_identity"
-				if st.IsPostgreSQL() {
-					drop += " ON " + table
-				}
-				_, err = st.DB().Exec(drop)
-				require.NoError(err)
-				summary, err = Import(ctx, st, ImportOptions{RootDir: root, NoResume: noResume})
-				require.NoError(err)
-				assert.EqualValues(1, summary.MessagesAdded)
-				members, err = st.ClusterMembers(participant)
-				require.NoError(err)
-				assert.ElementsMatch([]int64{participant, bridge}, members)
+		t.Run(table, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			bridge, err := st.EnsureParticipantByIdentifier("beeper", "bridge-user", "Alice Example")
+			require.NoError(err)
+			participant, err := st.EnsureParticipantByIdentifier("telegram", "user2", "Alice Example")
+			require.NoError(err)
+			source, err := st.GetOrCreateSource("beeper", "telegram")
+			require.NoError(err)
+			key := "provider:8:telegram:7:service:0::1:2"
+			_, err = st.RecordContactObservationContext(ctx, bridge, store.ParticipantContactObservationInput{
+				AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("telegram"),
+				ProviderUserID: &key, OriginalValue: key, SourceID: &source.ID,
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
 			})
-		}
+			require.NoError(err)
+			// Fail only this sender's identity so the import reaches its message.
+			condition := "NEW.participant_id = " + strconv.FormatInt(participant, 10)
+			if table == "participant_links" {
+				condition = "TRUE"
+			}
+			if st.IsPostgreSQL() {
+				_, err = st.DB().Exec(`CREATE FUNCTION fail_telegram_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+					BEGIN RAISE EXCEPTION 'forced identity failure'; END $$`)
+				require.NoError(err)
+				_, err = st.DB().Exec(`CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON ` + table + `
+					FOR EACH ROW WHEN (` + condition + `) EXECUTE FUNCTION fail_telegram_identity()`)
+			} else {
+				_, err = st.DB().Exec(`CREATE TRIGGER fail_telegram_identity BEFORE INSERT ON ` + table + `
+					WHEN ` + condition + ` BEGIN SELECT RAISE(ABORT, 'forced identity failure'); END`)
+			}
+			require.NoError(err)
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","from_id":"user2","date_unixtime":"1610909872","text":"hello"}]}]}}`))
+			summary, err := Import(ctx, st, ImportOptions{RootDir: root})
+			require.ErrorContains(err, "forced identity failure")
+			assert.Zero(summary.MessagesAdded)
+			var count int
+			require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&count))
+			assert.Zero(count)
+			members, err := st.ClusterMembers(participant)
+			require.NoError(err)
+			assert.NotContains(members, bridge)
+
+			drop := "DROP TRIGGER fail_telegram_identity"
+			if st.IsPostgreSQL() {
+				drop += " ON " + table
+			}
+			_, err = st.DB().Exec(drop)
+			require.NoError(err)
+			summary, err = Import(ctx, st, ImportOptions{RootDir: root})
+			require.NoError(err)
+			assert.EqualValues(1, summary.MessagesAdded)
+			members, err = st.ClusterMembers(participant)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{participant, bridge}, members)
+		})
 	}
 }

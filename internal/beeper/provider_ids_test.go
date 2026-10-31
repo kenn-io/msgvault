@@ -166,7 +166,7 @@ func TestTelegramSharedKey(t *testing.T) {
 	for _, test := range []struct {
 		name, service, id, raw, want string
 	}{
-		{"native", "telegram", "@telegram_99:beeper.local", `{"providerID":"482111"}`, "provider:8:telegram:7:service:0::6:482111"},
+		{"native", "telegram", "@alice:beeper.local", `{"providerID":"482111"}`, "provider:8:telegram:7:service:0::6:482111"},
 		{"localpart", "telegram", "@telegram_482111:beeper.local", "", "provider:8:telegram:7:service:0::6:482111"},
 		{"invalid native falls back", "telegram", "@telegram_482111:beeper.local", `{"providerID":"invalid"}`, "provider:8:telegram:7:service:0::6:482111"},
 		{"non numeric", "telegram", "@telegram_alice:beeper.local", `{"providerID":"channel-482111"}`, ""},
@@ -176,6 +176,11 @@ func TestTelegramSharedKey(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, test.want, telegramSharedKey(test.service, &User{ID: test.id, Raw: []byte(test.raw)}))
+		})
+	}
+	for _, localpart := range []string{"-2", "2:server", "２"} {
+		t.Run("localpart="+localpart, func(t *testing.T) {
+			assert.Empty(t, telegramUserKey(localpart))
 		})
 	}
 }
