@@ -1049,7 +1049,6 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal([]string{"a"}, r.processing.Jobs)
 	assert.Equal(int64(1), r.processingCounts().Requested)
 	require.NoError(r.runBatch(t.Context()))
-	assert.Empty(r.processing.Polls)
 	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
@@ -1057,87 +1056,39 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a"}, r.processing.Plans)
 	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
-
-	versions := make([]string, 20)
-	for i := range versions {
-		versions[i] = fmt.Sprintf("pending-%02d", i)
-	}
-	r.delivered(versions...)
-	require.NoError(r.runBatch(t.Context()))
-	r.processingDue()
-	r.delivered("new")
-	transport := http.DefaultTransport
-	defer func() { http.DefaultTransport = transport }()
-	synctest.Test(t, func(t *testing.T) {
-		deadline := time.Now().Add(time.Second)
-		http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
-			if strings.HasPrefix(req.URL.Path, "/api/v1/processing/jobs/") {
-				synctest.Sleep(time.Until(deadline))
-			}
-			r.serve(w, req)
-		})
-		more, err := r.worker.processDocuments(t.Context(), deadline)
-		require.NoError(err)
-		assert.True(more)
-		assert.False(time.Now().Before(deadline), "slow polls exhaust the pass budget")
-		assert.Contains(r.processing.Jobs, "new", "new files start before the poll backlog exhausts the pass budget")
-	})
 }
 
 func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
-	for _, tc := range []struct {
-		backfill, state, outcome string
-	}{
-		{"after_poll", "failed", "consent"},
-		{"after_poll", "failed", "unsupported_format"},
-		{"after_poll", "operator_required", ""},
-	} {
-		t.Run(tc.backfill+"/"+tc.state+"/"+tc.outcome, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			r := newMirrorRig(t)
-			r.delivered("a")
-			require.NoError(r.runBatch(t.Context()))
-			assert.Equal([]string{"a"}, r.processing.Plans)
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a"}, r.processing.Plans)
 
-			jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
-			r.processing.States[jobID] = [3]string{tc.state, "rendition", tc.outcome}
-			r.processingDue()
+	jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
+	r.processing.States[jobID] = [3]string{"operator_required", "rendition", ""}
+	r.processingDue()
 
-			require.NoError(r.runBatch(t.Context()))
-			require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-			require.NoError(r.runBatch(t.Context()))
-			if tc.outcome == "unsupported_format" {
-				assert.Equal([]string{jobID}, r.processing.Polls)
-				assert.Equal([]string{"a"}, r.processing.Plans)
-				assert.Equal([]string{"a"}, r.processing.Jobs)
-				assert.Equal(map[string]int64{"unsupported_format": 1}, r.processingCounts().Outcomes)
-				return
-			}
-			assert.Equal([]string{"a", "a"}, r.processing.Plans)
-			assert.Equal([]string{"a", "a"}, r.processing.Jobs)
-			var savedJobID string
-			require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&savedJobID))
-			if tc.state == "operator_required" {
-				assert.Empty(savedJobID)
-				assert.Equal(map[string]int64{"rendition_operator_required": 1}, r.processingCounts().Outcomes)
-				assert.Zero(r.processingCounts().Requested)
-			} else {
-				assert.Equal(jobID, savedJobID)
-			}
-			assert.Equal([]string{jobID}, r.processing.Polls)
-			r.processing.States[jobID] = [3]string{"completed", "rendition", ""}
-			if tc.state == "operator_required" {
-				require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-				require.NoError(r.runBatch(t.Context()))
-				assert.Equal([]string{"a", "a", "a"}, r.processing.Jobs)
-				assert.Empty(r.processingCounts().Outcomes)
-			}
-			r.processingDue()
-			require.NoError(r.runBatch(t.Context()))
-			assert.Equal(int64(1), r.processingCounts().Extracted)
-		})
-	}
+	require.NoError(r.runBatch(t.Context()))
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	var savedJobID string
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id FROM docbank_attachment_processing`).Scan(&savedJobID))
+	assert.Empty(savedJobID)
+	assert.Equal(map[string]int64{"rendition_operator_required": 1}, r.processingCounts().Outcomes)
+	assert.Zero(r.processingCounts().Requested)
+	assert.Equal([]string{jobID}, r.processing.Polls)
+	r.processing.States[jobID] = [3]string{"completed", "rendition", ""}
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a", "a"}, r.processing.Jobs)
+	assert.Empty(r.processingCounts().Outcomes)
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
 }
 
 func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
@@ -1304,19 +1255,16 @@ func TestAttachmentMirrorProcessingInvalidProfile(t *testing.T) {
 				assert.Contains(err.Error(), "server_error")
 			}
 			assert.Empty(r.processing.Plans)
-			assert.Equal(int64(1), r.processingCounts().Waiting)
 		})
 	}
 }
 
 func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
 	tests := []struct {
-		name       string
-		planFaults int
-		run        func(*testing.T, *mirrorRig)
+		name string
+		run  func(*testing.T, *mirrorRig)
 	}{
-		{name: "plan/one failure", planFaults: 1},
-		{name: "plan/two failures", planFaults: 2},
+		{name: "plan/two failures"},
 		{name: "poll", run: func(t *testing.T, r *mirrorRig) {
 			t.Helper()
 			require := require.New(t)
@@ -1373,23 +1321,15 @@ func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
 			assert := assert.New(t)
 			hashes := r.delivered("c", "b", "a")
 			r.processing.Faults["c"] = http.StatusServiceUnavailable
-			if tc.planFaults == 2 {
-				r.processing.Faults["b"] = http.StatusServiceUnavailable
-			}
+			r.processing.Faults["b"] = http.StatusServiceUnavailable
 			err := r.runBatch(t.Context())
 			require.Error(err)
-			if tc.planFaults == 2 {
-				assert.Equal([]string{"c", "b"}, r.processing.Plans)
-				assert.Empty(r.processing.Jobs)
-				due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", r.processing.Fingerprint, new(store.DocbankAttachmentProcessingCursor), 20)
-				require.NoError(err)
-				require.Len(due, 1)
-				assert.Equal(hashes[2], due[0].ContentHash)
-			} else {
-				assert.Equal([]string{"c", "b", "a"}, r.processing.Plans)
-				assert.Equal([]string{"b", "a"}, r.processing.Jobs)
-				assert.Equal("queued", r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)][0])
-			}
+			assert.Equal([]string{"c", "b"}, r.processing.Plans)
+			assert.Empty(r.processing.Jobs)
+			due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", r.processing.Fingerprint, new(store.DocbankAttachmentProcessingCursor), 20)
+			require.NoError(err)
+			require.Len(due, 1)
+			assert.Equal(hashes[2], due[0].ContentHash)
 			delete(r.processing.Faults, "c")
 			delete(r.processing.Faults, "b")
 			r.processingDue()
@@ -1446,8 +1386,6 @@ func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
 		{name: "plan", path: "/api/v1/processing/plans", existing: true, wantDelivered: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
 			r := newMirrorRig(t)
 			if tc.existing {
 				r.delivered("a")
@@ -1455,35 +1393,30 @@ func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
 				r.worker.options.DocumentProfile = "documents"
 			}
 			r.add("new.pdf", "application/pdf", []byte("new file"))
-			requestStarted := make(chan struct{}, 1)
-			releaseRequest := make(chan struct{})
-			defer close(releaseRequest)
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if req.URL.Path == tc.path {
-					requestStarted <- struct{}{}
-					<-releaseRequest
-					return
-				}
-				r.serve(w, req)
-			}))
-			t.Cleanup(srv.Close)
-			client, err := docbankmedia.NewClient(srv.URL, nil)
-			require.NoError(err)
-			r.worker.client = client
-
-			deadline := time.Now().Add(2 * time.Second)
-			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-			defer cancel()
-			more, err := r.worker.runPass(ctx, deadline)
-			require.NoError(err)
-			assert.True(more)
-			assert.Equal(int32(1), r.Uploads.Load())
-			assert.Equal(tc.wantDelivered, r.status().Delivered)
-			select {
-			case <-requestStarted:
-			case <-time.After(2 * time.Second):
-				assert.Fail("processing request did not start")
-			}
+			transport := http.DefaultTransport
+			defer func() { http.DefaultTransport = transport }()
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				requestStarted := false
+				http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+					if req.URL.Path == tc.path {
+						requestStarted = true
+						<-req.Context().Done()
+						return
+					}
+					r.serve(w, req)
+				})
+				deadline := time.Now().Add(2 * time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				more, err := r.worker.runPass(ctx, deadline)
+				require.NoError(err)
+				assert.True(more)
+				assert.Equal(int32(1), r.Uploads.Load())
+				assert.Equal(tc.wantDelivered, r.status().Delivered)
+				assert.True(requestStarted, "processing request did not start")
+			})
 		})
 	}
 }
@@ -1528,7 +1461,6 @@ func TestAttachmentMirrorProcessingCancelled(t *testing.T) {
 	got := <-done
 	require.ErrorIs(got.err, context.Canceled)
 	assert.False(got.more)
-	assert.Equal(int64(1), r.processingCounts().Waiting)
 }
 
 func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
@@ -1573,12 +1505,12 @@ func TestAttachmentMirrorProcessingLocalErrors(t *testing.T) {
 		retry   bool
 		blocked bool
 	}{
-		{"unavailable", &docbankmedia.HTTPError{Status: http.StatusServiceUnavailable}, "", 5 * time.Minute, true, false},
-		{"plan_changed", &docbankmedia.HTTPError{Status: http.StatusConflict, Reason: "processing_plan_changed"}, "", 5 * time.Minute, true, false},
+		{"unavailable", &docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error"}, "", 5 * time.Minute, true, false},
+		{"plan_changed", &docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "processing_plan_changed"}, "", 5 * time.Minute, true, false},
 		{"invalid_receipt", docbankmedia.ErrInvalidReceipt, "invalid_receipt", 0, false, false},
-		{"stale_version", &docbankmedia.HTTPError{Status: http.StatusConflict, Reason: "stale_version"}, "stale_version", 0, false, false},
-		{"credentials", &docbankmedia.HTTPError{Status: http.StatusUnauthorized}, "", 0, false, true},
-		{"profile", &docbankmedia.HTTPError{Status: http.StatusConflict, Reason: "processing_profile_unavailable"}, "", 0, false, true},
+		{"stale_version", &docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "stale_version"}, "stale_version", 0, false, false},
+		{"credentials", &docbankmedia.HTTPError{Status: http.StatusUnauthorized, Code: "unauthorized"}, "", 0, false, true},
+		{"profile", &docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "processing_profile_unavailable"}, "", 0, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

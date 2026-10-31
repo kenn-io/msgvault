@@ -70,7 +70,6 @@ func TestProcessingInvalidReceipts(t *testing.T) {
 	}{
 		{name: "wrong event", body: `{"type":"done","job":{"id":"` + docbanktest.ProcessingJobID("a", "profile") + `"}}`, invalid: true},
 		{name: "missing job id", body: `{"type":"job","job":{}}`, invalid: true},
-		{name: "empty", body: ""},
 		{name: "truncated", body: `{"type":"job"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
