@@ -306,9 +306,9 @@ func validateRelationshipTimezone(timezone string) (*time.Location, string, erro
 		timezone = relationshipScoringTimezone
 	}
 	location, err := time.LoadLocation(timezone)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w: invalid timezone %q: %w",
-			ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, timezone, err)
+	if err != nil || timezone == "Local" {
+		return nil, "", fmt.Errorf("%w: %w: invalid timezone %q",
+			ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, timezone)
 	}
 	return location, timezone, nil
 }
