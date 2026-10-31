@@ -523,6 +523,7 @@
       {client}
       source={selectedSource}
       syncing={syncing(selectedSource)}
+      starting={Boolean(triggering)}
       triggerError={triggerErrorSourceID === selectedSource.id ? triggerError : ''}
       onRefresh={refresh}
       onSync={() => void syncNow(selectedSource)}

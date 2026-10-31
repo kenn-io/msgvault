@@ -57,13 +57,24 @@ it('prefers the run error over the scheduler error', () => {
 });
 
 it('targets each source separately when two sources share an email', () => {
-  const source = { identifier: 'archive@example.com', sync_unavailable_reason: 'sync_not_configured' };
+  const source = { source_type: 'gmail', identifier: 'archive@example.com', sync_unavailable_reason: 'sync_not_configured' };
   expect(syncCommand({ ...source, id: 1 })).toBe('msgvault sync --source-id 1');
   expect(syncCommand({ ...source, id: 2 })).toBe('msgvault sync --source-id 2');
 });
 
 it('offers a sync command for a source with a non-email identifier', () => {
-  const source = { id: 3, identifier: 'imaps://archive%40example.com@imap.example.com', sync_unavailable_reason: 'sync_not_configured' };
+  const source = { id: 3, source_type: 'imap', identifier: 'imaps://archive%40example.com@imap.example.com', sync_unavailable_reason: 'sync_not_configured' };
   expect(syncCommand(source)).toBe('msgvault sync --source-id 3');
   expect(syncCommand({ ...source, sync_unavailable_reason: 'source_not_schedulable' })).toBeUndefined();
+});
+
+it.each([
+  ['gmail', 'msgvault sync --source-id 4'],
+  ['imap', 'msgvault sync --source-id 4'],
+  ['msmail', 'msgvault sync --source-id 4'],
+  ['slack', undefined], ['beeper', undefined], ['mbox', undefined],
+  ['meeting_import', undefined], ['future_source', undefined],
+] as const)('offers a manual sync command only for supported source type %s', (source_type, want) => {
+  const command = syncCommand({ id: 4, source_type, sync_unavailable_reason: 'sync_not_configured' });
+  expect(command).toBe(want);
 });

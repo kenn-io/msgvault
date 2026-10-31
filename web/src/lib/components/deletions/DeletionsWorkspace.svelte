@@ -59,15 +59,21 @@
   onMount(() => void load());
   async function load(): Promise<void> { await controller.refresh(); }
   const selectedBatch = $derived(batches.find(batch => batch.id === selectedID));
-  async function open(batch: Batch): Promise<void> {
+  const selectedStatus = $derived(selectedBatch?.status);
+  $effect(() => {
+    if (selectedID && selectedStatus) void readDetail(selectedID);
+  });
+  function open(batch: Batch): void {
+    if (selectedID === batch.id) { close(); return; }
+    selectedID = batch.id;
+  }
+  async function readDetail(id: string): Promise<void> {
     const generation = ++detailGeneration;
     detailRequest?.abort();
-    if (selectedID === batch.id) { selectedID = undefined; return; }
-    selectedID = batch.id;
     panelDetail = undefined;
     const request = detailRequest = new AbortController();
     try {
-      const { data } = await getDeletion({ id: batch.id }, { ...client, signal: request.signal });
+      const { data } = await getDeletion({ id }, { ...client, signal: request.signal });
       if (generation !== detailGeneration || request.signal.aborted) return;
       panelDetail = data;
     } catch {

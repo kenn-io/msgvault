@@ -46,8 +46,9 @@ export function sourceFailure(
 }
 
 /** The sync command for a source that has no schedule. */
-export function syncCommand(source: Pick<SourceStatus, 'id' | 'sync_unavailable_reason'>): string | undefined {
+export function syncCommand(source: Pick<SourceStatus, 'id' | 'source_type' | 'sync_unavailable_reason'>): string | undefined {
   if (source.sync_unavailable_reason !== 'sync_not_configured') return undefined;
+  if (!['gmail', 'imap', 'msmail'].includes(source.source_type)) return undefined;
   return `msgvault sync --source-id ${source.id}`;
 }
 

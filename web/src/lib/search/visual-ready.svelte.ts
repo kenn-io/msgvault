@@ -6,8 +6,9 @@ import { IntegrationReadiness } from '../kata/kata-ready.svelte';
 export const visualReadinessKey = Symbol('visual-readiness');
 export function provideVisualReadiness(client: APIClient): IntegrationReadiness {
   const readiness = new IntegrationReadiness(async signal => {
-    const { data, response } = await getVisualAttachmentStatus({ ...client, signal });
-    return response.ok && data?.generation?.state === 'active' && data.generation.consented ? true : undefined;
+    const { data, error, response } = await getVisualAttachmentStatus({ ...client, signal });
+    if (response.status === 503 && error?.error === 'visual_search_not_ready') return false;
+    return response.ok ? Boolean(data?.generation?.state === 'active' && data.generation.consented) : undefined;
   });
   onDestroy(() => readiness.dispose());
   return setContext(visualReadinessKey, readiness);
