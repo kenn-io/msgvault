@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
@@ -140,7 +139,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  (ae.ref_kind='meeting' AND aep.role IN ('attendee','organizer')) OR
  (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
  (ae.direction='outbound' AND aep.role IN ('addressed','member')))
- AND (((COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
+ AND ((`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`)
  OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?))))
  ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)

@@ -64,7 +64,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	args = append(args, monthStart, monthEnd, monthStart, monthEnd)
 	query := cte + activityBurstGroupsCTE + `, contact_messages AS (
  SELECT r.* FROM representatives r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=COALESCE(r.conversation_id,0) AND b.local_date=r.local_date
- WHERE b.noise=0 AND r.ref_kind='message' AND r.encrypted=0 AND r.occurred_at<=?
+ WHERE b.noise=0 AND r.ref_kind='message' AND r.contact_eligible=1 AND r.encrypted=0 AND r.occurred_at<=?
  AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND ` + subject + ` AND ` + counted + `)
  ), exchanges AS (
  SELECT *,LAG(occurred_at) OVER(PARTITION BY source_id,conversation_id ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages

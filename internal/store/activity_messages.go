@@ -54,7 +54,7 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 	}
 	args = append(args, q.Limit)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+activityBurstGroupsCTE+`
- SELECT r.message_id,r.source_id,COALESCE(r.conversation_id,0),r.channel,r.direction,r.occurred_at,r.local_date,r.message_type,r.list_id,r.encrypted,r.large_inbound
+ SELECT r.message_id,r.source_id,COALESCE(r.conversation_id,0),r.channel,r.direction,r.occurred_at,r.local_date,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible
  FROM representatives r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=COALESCE(r.conversation_id,0) AND b.local_date=r.local_date
  WHERE `+where+` ORDER BY r.occurred_at `+order+`,r.message_id `+order+` LIMIT ?`), args...)
 	if err != nil {
@@ -67,14 +67,14 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 		var at nullableTimestamp
 		var kind string
 		var list sql.NullString
-		var encrypted, large int
-		if err = rows.Scan(&m.MessageID, &m.SourceID, &m.ConversationID, &m.Channel, &m.Direction, &at, &m.LocalDate, &kind, &list, &encrypted, &large); err != nil {
+		var encrypted, large, eligible int
+		if err = rows.Scan(&m.MessageID, &m.SourceID, &m.ConversationID, &m.Channel, &m.Direction, &at, &m.LocalDate, &kind, &list, &encrypted, &large, &eligible); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan activity message: %w", err)
 		}
 		m.OccurredAt = at.Time
 		result = append(result, m)
-		facts = append(facts, activityReadMessage{ID: m.MessageID, Direction: m.Direction, Meeting: IsMeetingMessageType(kind), List: list.Valid, Encrypted: encrypted != 0, LargeInbound: large != 0})
+		facts = append(facts, activityReadMessage{ID: m.MessageID, Direction: m.Direction, Meeting: IsMeetingMessageType(kind), List: list.Valid, Encrypted: encrypted != 0, LargeInbound: large != 0, ContactEligible: eligible != 0})
 	}
 	err = rows.Err()
 	_ = rows.Close()
