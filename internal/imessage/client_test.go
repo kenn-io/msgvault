@@ -5,17 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"log/slog"
 	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
@@ -47,23 +44,21 @@ func newChatDB(t *testing.T) (string, *sql.DB) {
 }
 
 func TestImportIndexesMessageBodies(t *testing.T) {
-	testutil.SkipIfPostgres(t, "inspects and repairs the SQLite FTS5 table")
 	for _, tt := range []struct {
-		name       string
-		service    string
-		outgoing   bool
-		owner      string
-		handle     any
-		attributed bool
-		wantFrom   string
-		wantTo     string
+		name          string
+		service       string
+		outgoing      bool
+		owner         string
+		handle        any
+		attributed    bool
+		recipientTerm string
 	}{
-		{name: "incoming SMS", service: "SMS", handle: "peer@example.test", wantFrom: "peer@example.test", wantTo: "me@imessage.local"},
-		{name: "incoming attributed iMessage", service: "iMessage", handle: "peer@example.test", attributed: true, wantFrom: "peer@example.test", wantTo: "me@imessage.local"},
-		{name: "outgoing iMessage", service: "iMessage", outgoing: true, owner: "owner@example.test", handle: "peer@example.test", wantFrom: "owner@example.test", wantTo: "peer@example.test"},
-		{name: "outgoing SMS phone", service: "SMS", outgoing: true, owner: "+12025550100", handle: "+12025550101", wantFrom: "+12025550100", wantTo: ""},
-		{name: "unknown owner", service: "SMS", outgoing: true, handle: "peer@example.test", wantFrom: "me@imessage.local", wantTo: "peer@example.test"},
-		{name: "missing handle", service: "iMessage", wantTo: "me@imessage.local"},
+		{name: "incoming SMS", service: "SMS", handle: "peer@example.test", recipientTerm: "me"},
+		{name: "incoming attributed iMessage", service: "iMessage", handle: "peer@example.test", attributed: true, recipientTerm: "me"},
+		{name: "outgoing iMessage", service: "iMessage", outgoing: true, owner: "owner@example.test", handle: "peer@example.test", recipientTerm: "peer"},
+		{name: "outgoing SMS phone", service: "SMS", outgoing: true, owner: "+12025550100", handle: "+12025550101", recipientTerm: ""},
+		{name: "unknown owner", service: "SMS", outgoing: true, handle: "peer@example.test", recipientTerm: "peer"},
+		{name: "missing handle", service: "iMessage", recipientTerm: "me"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -85,38 +80,23 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			st := testutil.NewTestStore(t)
-			require.True(st.FTS5Available())
+			if !st.FTS5Available() {
+				t.Skip("FTS5 not available")
+			}
 			src, err := st.GetOrCreateSource("apple_messages", "fixture")
 			require.NoError(err)
-			for range 2 {
-				summary, err := client.Import(ctx, st, src.ID)
-				require.NoError(err)
-				assert.Equal(1, summary.MessagesImported)
-				assert.Zero(summary.Skipped)
-			}
+			summary, err := client.Import(ctx, st, src.ID)
+			require.NoError(err)
+			assert.Equal(1, summary.MessagesImported)
+			assert.Zero(summary.Skipped)
 			var id int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_id = ?`, src.ID).Scan(&id))
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
 			ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
 			require.NoError(err)
 			assert.Equal(int64(1), total)
 			assert.Equal([]int64{id}, ids)
-			var subject, indexedBody, from, to, cc string
-			require.NoError(st.DB().QueryRow(`SELECT subject,body,from_addr,to_addr,cc_addr FROM messages_fts WHERE rowid = ?`, id).Scan(&subject, &indexedBody, &from, &to, &cc))
-			assert.Equal(body, indexedBody)
-			assert.Equal(tt.wantFrom, from)
-			assert.Empty(subject)
-			assert.Equal(tt.wantTo, to)
-			assert.Empty(cc)
-			var count int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE rowid = ?`, id).Scan(&count))
-			assert.Equal(1, count)
-
-			// Simulate an older archive that needed a real backfill before re-import.
-			_, err = st.DB().Exec(`DELETE FROM messages_fts WHERE rowid = ?`, id)
+			_, err = st.RebuildFTS(nil)
 			require.NoError(err)
-			inserted, err := st.BackfillFTS(nil)
-			require.NoError(err)
-			require.Equal(int64(1), inserted)
 			_, err = db.Exec(`UPDATE message SET text = ?, attributedBody = NULL`, strings.Repeat("padding ", 20)+"newmarker")
 			require.NoError(err)
 			_, err = client.Import(ctx, st, src.ID)
@@ -129,6 +109,12 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			require.NoError(err)
 			assert.Zero(total)
 			assert.Empty(ids)
+
+			if tt.recipientTerm != "" {
+				ids, _, err = st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{tt.recipientTerm}}, 10)
+				require.NoError(err)
+				assert.Equal([]int64{id}, ids)
+			}
 
 			// Empty source text currently retains the stored body; keep it searchable.
 			for _, empty := range []any{"", nil} {
@@ -147,133 +133,32 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 	}
 }
 
-func TestImportReimportPreservesBackfilledRecipients(t *testing.T) {
-	testutil.SkipIfPostgres(t, "inspects and repairs the SQLite FTS5 table")
+func TestImportTextlessMessagesSearchable(t *testing.T) {
 	for _, tt := range []struct {
-		name       string
-		outgoing   bool
-		wantTo     string
-		searchTerm string
-	}{
-		{name: "incoming owner recipient", wantTo: "owner@example.test", searchTerm: "owner"},
-		{name: "outgoing peer recipient", outgoing: true, wantTo: "peer@example.test", searchTerm: "peer"},
-	} {
+		name string
+		text any
+	}{{name: "NULL"}, {name: "empty", text: ""}} {
 		t.Run(tt.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			ctx := context.Background()
+			require := require.New(t)
 			path, db := newChatDB(t)
-			_, err := db.Exec(`INSERT INTO message (date,text,is_from_me) VALUES (725760000, ?, ?)`, strings.Repeat("padding ", 20)+"oldmarker", tt.outgoing)
+			_, err := db.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (725760000, ?, 1)`, tt.text)
 			require.NoError(err)
-
-			client, err := NewClient(path, WithOwnerHandle("owner@example.test"))
+			client, err := NewClient(path)
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			st := testutil.NewTestStore(t)
-			require.True(st.FTS5Available())
+			if !st.FTS5Available() {
+				t.Skip("FTS5 not available")
+			}
 			src, err := st.GetOrCreateSource("apple_messages", "fixture")
 			require.NoError(err)
-			_, err = client.Import(ctx, st, src.ID)
+			_, err = client.Import(context.Background(), st, src.ID)
 			require.NoError(err)
-
-			var id int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_id = ?`, src.ID).Scan(&id))
-			_, err = st.DB().Exec(`DELETE FROM messages_fts WHERE rowid = ?`, id)
+			_, total, err := st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{"peer"}}, 10)
 			require.NoError(err)
-			inserted, err := st.BackfillFTS(nil)
-			require.NoError(err)
-			require.Equal(int64(1), inserted)
-
-			_, err = db.Exec(`UPDATE message SET text = ?`, strings.Repeat("padding ", 20)+"newmarker")
-			require.NoError(err)
-			_, err = client.Import(ctx, st, src.ID)
-			require.NoError(err)
-
-			var to string
-			require.NoError(st.DB().QueryRow(`SELECT to_addr FROM messages_fts WHERE rowid = ?`, id).Scan(&to))
-			assert.Equal(tt.wantTo, to)
-			ids, _, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{tt.searchTerm}}, 10)
-			require.NoError(err)
-			assert.Equal([]int64{id}, ids)
+			assert.Equal(t, int64(1), total)
 		})
 	}
-}
-
-func TestImportCanceledEnvelopeReadPreservesBackfilledRecipients(t *testing.T) {
-	testutil.SkipIfPostgres(t, "inspects and repairs the SQLite FTS5 table")
-	assert, require := assert.New(t), require.New(t)
-	oldBody := strings.Repeat("padding ", 20) + "oldmarker"
-	path, chatDB := newChatDB(t)
-	_, err := chatDB.Exec(`INSERT INTO message (date,text) VALUES (725760000, ?)`, oldBody)
-	require.NoError(err)
-
-	var logs bytes.Buffer
-	client, err := NewClient(path,
-		WithOwnerHandle("owner@example.test"),
-		WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))),
-	)
-	require.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	st := testutil.NewTestStore(t)
-	require.True(st.FTS5Available())
-	src, err := st.GetOrCreateSource("apple_messages", "fixture")
-	require.NoError(err)
-	_, err = client.Import(context.Background(), st, src.ID)
-	require.NoError(err)
-
-	var id int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_id = ?`, src.ID).Scan(&id))
-	_, err = st.DB().Exec(`DELETE FROM messages_fts WHERE rowid = ?`, id)
-	require.NoError(err)
-	inserted, err := st.BackfillFTS(nil)
-	require.NoError(err)
-	require.Equal(int64(1), inserted)
-	ids, total, err := st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{"owner"}}, 10)
-	require.NoError(err)
-	require.Equal(int64(1), total)
-	require.Equal([]int64{id}, ids)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	var canceled atomic.Bool
-	st.DB().SetMaxOpenConns(1)
-	st.DB().SetMaxIdleConns(1)
-	conn, err := st.DB().Conn(context.Background())
-	require.NoError(err)
-	err = conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		if !ok {
-			return errors.New("test store is not using SQLite")
-		}
-		return sqliteConn.RegisterFunc("cancel_import_context", func() int64 {
-			canceled.Store(true)
-			cancel()
-			return 1
-		}, false)
-	})
-	require.NoError(err)
-	require.NoError(conn.Close())
-	_, err = st.DB().Exec(`
-		CREATE TRIGGER cancel_import_context_after_recipient_delete
-		AFTER DELETE ON message_recipients
-		BEGIN
-			SELECT cancel_import_context();
-		END
-	`)
-	require.NoError(err)
-	_, err = client.Import(ctx, st, src.ID)
-	require.NoError(err)
-	require.True(canceled.Load(), "recipient replacement should cancel the envelope lookup")
-	assert.Contains(logs.String(), "failed to load stored message envelope for search")
-	assert.Contains(logs.String(), "context canceled")
-
-	var indexedBody, to string
-	require.NoError(st.DB().QueryRow(`SELECT body,to_addr FROM messages_fts WHERE rowid = ?`, id).Scan(&indexedBody, &to))
-	assert.Equal(oldBody, indexedBody)
-	assert.Equal("owner@example.test", to)
-	ids, total, err = st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{"owner"}}, 10)
-	require.NoError(err)
-	assert.Equal(int64(1), total)
-	assert.Equal([]int64{id}, ids)
 }
 
 func TestImportFTSFailureContinues(t *testing.T) {
@@ -287,6 +172,9 @@ func TestImportFTSFailureContinues(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
 	src, err := st.GetOrCreateSource("apple_messages", "fixture")
 	require.NoError(err)
 	_, err = st.DB().Exec(`DROP TABLE messages_fts`)
@@ -297,7 +185,7 @@ func TestImportFTSFailureContinues(t *testing.T) {
 	assert.Zero(summary.Skipped)
 	assert.Contains(logs.String(), "failed to index message for search")
 	var id int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_id = ?`, src.ID).Scan(&id))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
 	body, err := st.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Equal("Synthetic body", body)

@@ -3890,23 +3890,27 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 	})
 }
 
-// StoredFTSEnvelopeForMessage returns the stored subject, sender, and email
-// recipients used by FTS backfill for one message. It does not read the body.
-func (s *Store) StoredFTSEnvelopeForMessage(ctx context.Context, messageID int64) (FTSDoc, error) {
-	aggregate := "GROUP_CONCAT"
-	if s.IsPostgreSQL() {
-		aggregate = "STRING_AGG"
-	}
-	envelope := storedFTSEnvelopeSQL(aggregate)
-	doc := FTSDoc{MessageID: messageID}
-	err := s.db.QueryRowContext(ctx, `SELECT `+
-		envelope.subject+`, `+envelope.fromAddr+`, `+envelope.toAddrs+`, `+envelope.ccAddrs+`
-		FROM messages m WHERE m.id = ?`, messageID).
-		Scan(&doc.Subject, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs)
-	if err != nil {
-		return FTSDoc{}, fmt.Errorf("load stored FTS envelope for message %d: %w", messageID, err)
-	}
-	return doc, nil
+// IndexStoredMessageContext fills or refreshes a message's search entry from stored
+// rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
+func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		if !s.fts5Available {
+			return nil
+		}
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return fmt.Errorf("load stored message for search: %w", err)
+		}
+		row.fts.Body = row.body
+		matches, err := s.dialect.FTSMatches(q, row.fts)
+		if err != nil {
+			return fmt.Errorf("compare stored search entry: %w", err)
+		}
+		if matches {
+			return nil
+		}
+		return s.dialect.FTSUpsert(q, row.fts)
+	})
 }
 
 // BackfillFTS fills missing search entries from existing message data on SQLite.
