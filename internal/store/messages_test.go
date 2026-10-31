@@ -26,6 +26,62 @@ func (failingMessageIDReader) Read([]byte) (int, error) {
 	return 0, errors.New("synthetic staged-ID read failure")
 }
 
+func TestStoredFTSEnvelopeForMessage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "fts-envelope")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	require.NoError(err)
+
+	phoneSenderID, err := st.EnsurePhoneParticipantContext(ctx, "+12025550100", "Phone Sender")
+	require.NoError(err)
+	phoneRecipientID, err := st.EnsurePhoneParticipantContext(ctx, "+12025550101", "Phone Recipient")
+	require.NoError(err)
+	recipientID, err := st.EnsureParticipant("recipient@example.test", "Recipient", "example.test")
+	require.NoError(err)
+	copyID, err := st.EnsureParticipant("copy@example.test", "Copy", "example.test")
+	require.NoError(err)
+	fallbackID, err := st.EnsureParticipant("fallback@example.test", "Fallback", "example.test")
+	require.NoError(err)
+
+	phoneMessageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "phone-sender", MessageType: "sms",
+		SenderID: sql.NullInt64{Int64: phoneSenderID, Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(phoneMessageID, "to", []int64{phoneRecipientID, recipientID}, nil))
+	require.NoError(st.ReplaceMessageRecipients(phoneMessageID, "cc", []int64{copyID}, nil))
+
+	phoneEnvelope, err := st.StoredFTSEnvelopeForMessage(ctx, phoneMessageID)
+	require.NoError(err)
+	assert.Equal(phoneMessageID, phoneEnvelope.MessageID)
+	assert.Equal("+12025550100", phoneEnvelope.FromAddr)
+	assert.Equal("recipient@example.test", phoneEnvelope.ToAddrs)
+	assert.Equal("copy@example.test", phoneEnvelope.CcAddrs)
+	assert.Empty(phoneEnvelope.Subject)
+	assert.Empty(phoneEnvelope.Body)
+
+	fallbackMessageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "fallback-sender", MessageType: "sms",
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(fallbackMessageID, "from", []int64{fallbackID}, nil))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), fallbackMessageID)
+	require.NoError(err)
+	var senderID sql.NullInt64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), fallbackMessageID).Scan(&senderID))
+	assert.False(senderID.Valid)
+
+	fallbackEnvelope, err := st.StoredFTSEnvelopeForMessage(ctx, fallbackMessageID)
+	require.NoError(err)
+	assert.Equal(fallbackMessageID, fallbackEnvelope.MessageID)
+	assert.Equal("fallback@example.test", fallbackEnvelope.FromAddr)
+}
+
 func TestReactionSourceIdentityIsScopedBySource(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

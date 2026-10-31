@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -445,6 +446,45 @@ func (c *Client) importMessage(
 		phoneCache, emailCache, summary,
 	); err != nil {
 		return fmt.Errorf("write message recipients: %w", err)
+	}
+
+	if body != "" {
+		doc, err := s.StoredFTSEnvelopeForMessage(ctx, msgID)
+		index := true
+		if err != nil {
+			c.logger.Warn("failed to load stored message envelope for search", "message_id", msgID, "error", err)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				index = false
+			} else {
+				doc = store.FTSDoc{MessageID: msgID, Body: body}
+				if msg.IsFromMe != 0 {
+					if ownerPID > 0 {
+						if c.ownerHandle == "" {
+							doc.FromAddr = "me@imessage.local"
+						} else {
+							phone, email, _ := resolveHandle(c.ownerHandle)
+							doc.FromAddr = phone
+							if doc.FromAddr == "" {
+								doc.FromAddr = email
+							}
+						}
+					}
+				} else if senderID.Valid && msg.HandleID != nil {
+					phone, email, _ := resolveHandle(*msg.HandleID)
+					doc.FromAddr = phone
+					if doc.FromAddr == "" {
+						doc.FromAddr = email
+					}
+				}
+			}
+		} else {
+			doc.Body = body
+		}
+		if index {
+			if err := s.UpsertFTSContext(ctx, doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs); err != nil {
+				c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
+			}
+		}
 	}
 
 	// Store raw data as JSON for completeness

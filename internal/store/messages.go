@@ -3890,6 +3890,25 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 	})
 }
 
+// StoredFTSEnvelopeForMessage returns the stored subject, sender, and email
+// recipients used by FTS backfill for one message. It does not read the body.
+func (s *Store) StoredFTSEnvelopeForMessage(ctx context.Context, messageID int64) (FTSDoc, error) {
+	aggregate := "GROUP_CONCAT"
+	if s.IsPostgreSQL() {
+		aggregate = "STRING_AGG"
+	}
+	envelope := storedFTSEnvelopeSQL(aggregate)
+	doc := FTSDoc{MessageID: messageID}
+	err := s.db.QueryRowContext(ctx, `SELECT `+
+		envelope.subject+`, `+envelope.fromAddr+`, `+envelope.toAddrs+`, `+envelope.ccAddrs+`
+		FROM messages m WHERE m.id = ?`, messageID).
+		Scan(&doc.Subject, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs)
+	if err != nil {
+		return FTSDoc{}, fmt.Errorf("load stored FTS envelope for message %d: %w", messageID, err)
+	}
+	return doc, nil
+}
+
 // BackfillFTS fills missing search entries from existing message data on SQLite.
 // PostgreSQL also refreshes entries with an old indexing version.
 // Processes in batches to avoid blocking for minutes on large archives.

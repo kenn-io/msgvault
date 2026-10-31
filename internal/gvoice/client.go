@@ -177,7 +177,7 @@ func (c *Client) Import(
 		switch entry.FileType {
 		case fileTypeText, fileTypeGroup:
 			n, err := c.importTextEntry(
-				s, sourceID, &entry, ownerID,
+				ctx, s, sourceID, &entry, ownerID,
 				labelIDs, phoneCache, convCache, summary,
 			)
 			if err != nil {
@@ -234,6 +234,7 @@ func (c *Client) ensureLabels(
 }
 
 func (c *Client) importTextEntry(
+	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
 	entry *indexEntry,
@@ -361,7 +362,6 @@ func (c *Client) importTextEntry(
 	); err != nil {
 		return 0, fmt.Errorf("upsert message body: %w", err)
 	}
-
 	// Store raw HTML
 	rawData, rErr := os.ReadFile(entry.FilePath)
 	if rErr == nil {
@@ -377,6 +377,7 @@ func (c *Client) importTextEntry(
 	); err != nil {
 		return 0, fmt.Errorf("write message recipients: %w", err)
 	}
+	c.upsertStoredFTS(ctx, s, msgID, msg.Body, msg.SenderPhone)
 
 	// Link labels
 	for _, labelName := range entry.Labels {
@@ -518,7 +519,10 @@ func (c *Client) importCallEntry(
 	); err != nil {
 		return fmt.Errorf("upsert message body: %w", err)
 	}
-
+	fromAddr := record.Phone
+	if isFromMe {
+		fromAddr = c.owner.GoogleVoice
+	}
 	// Store raw HTML
 	rawData, rErr := os.ReadFile(entry.FilePath)
 	if rErr == nil {
@@ -533,6 +537,7 @@ func (c *Client) importCallEntry(
 	); err != nil {
 		return fmt.Errorf("write message recipients: %w", err)
 	}
+	c.upsertStoredFTS(ctx, s, msgID, bodyStr, fromAddr)
 
 	// Link labels
 	for _, labelName := range entry.Labels {
@@ -552,6 +557,42 @@ func (c *Client) importCallEntry(
 
 	summary.MessagesImported++
 	return nil
+}
+
+func (c *Client) upsertStoredFTS(
+	ctx context.Context,
+	s *store.Store,
+	messageID int64,
+	body, fallbackFrom string,
+) {
+	doc, err := s.StoredFTSEnvelopeForMessage(ctx, messageID)
+	if err != nil {
+		c.logger.Warn(
+			"failed to load stored FTS envelope",
+			"message_id", messageID,
+			"error", err,
+		)
+		doc = store.FTSDoc{
+			MessageID: messageID,
+			FromAddr:  fallbackFrom,
+		}
+	}
+	doc.Body = body
+	if err := s.UpsertFTSContext(
+		ctx,
+		doc.MessageID,
+		doc.Subject,
+		doc.Body,
+		doc.FromAddr,
+		doc.ToAddrs,
+		doc.CcAddrs,
+	); err != nil {
+		c.logger.Warn(
+			"failed to index message for search",
+			"message_id", messageID,
+			"error", err,
+		)
+	}
 }
 
 // storeVoicemailAudio associates the recording named by one voicemail HTML
