@@ -1206,6 +1206,27 @@ func TestAttachmentMirrorProcessingIneligiblePlan(t *testing.T) {
 	assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans)
 }
 
+func TestAttachmentMirrorBackfillAfterProcessingConsent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	r.processing.JobFaults["a"] = http.StatusPreconditionRequired
+	r.processing.Reasons["a"] = "processing_consent_required"
+	require.ErrorContains(r.runBatch(t.Context()), "processing_consent_required")
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Waiting)
+	assert.Zero(r.processingCounts().Requested)
+	delete(r.processing.JobFaults, "a")
+	delete(r.processing.Reasons, "a")
+	require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Zero(r.processingCounts().Waiting)
+}
+
 func TestAttachmentMirrorProcessingBlockedKeepsUploading(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1223,10 +1244,8 @@ func TestAttachmentMirrorProcessingBlockedKeepsUploading(t *testing.T) {
 	assert.Len(r.processing.Jobs, 1)
 	assert.Equal(int64(26), r.status().Delivered)
 	assert.Equal(int64(26), r.processingCounts().Waiting)
-	var outcome, jobID string
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
-	assert.Empty(outcome)
-	assert.Empty(jobID)
+	assert.Zero(r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
 }
 
 func TestAttachmentMirrorProcessingInvalidProfile(t *testing.T) {
