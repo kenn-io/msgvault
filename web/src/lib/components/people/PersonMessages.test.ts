@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import type { MeetingMetricsRequest } from '../../api/generated/models';
+import { meetingActions, meetingMetrics, meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { RELATIONSHIP_READER_HISTORY_KEY } from '../../relationships/reader-history';
 import PersonMessages from './PersonMessages.svelte';
 
@@ -94,5 +95,25 @@ it('opens Tasks setup from a person message reader', async () => {
     await fireEvent.click(await within(await screen.findByRole('grid', { name: 'Messages results' })).findByText('Saved message'));
     await fireEvent.click(await screen.findByRole('button', { name: /^Set up$/ }));
     expect(onOpenSettings).toHaveBeenCalledOnce();
+  } finally { view.unmount(); }
+});
+
+it.each([
+  { name: 'person', identityScope: { kind: 'person' as const, id: 7 }, target: 'cluster:7', predicate: {}, period: { after: '2026-01-01T00:00:00Z', before: '2026-01-02T00:00:00Z' }, scope: { participant_id: 7, after: '2026-01-01T00:00:00Z', before: '2026-01-02T00:00:00Z' } },
+  { name: 'domain', identityScope: { kind: 'domain' as const, domain: 'exact.example' }, target: 'domain:exact.example', predicate: { query: 'stale URL text', search_mode: 'hybrid' as const, filters: [{ dimension: 'source' as const, values: ['2'] }, { dimension: 'after' as const, values: ['2026-01-01T00:00:00Z'] }] }, period: undefined, scope: { domains: ['exact.example'], source_ids: [2], after: '2026-01-01T00:00:00Z' } },
+])('exposes meeting activity for a $name with its scope', async ({ identityScope, target, predicate, period, scope }) => {
+  const metrics: MeetingMetricsRequest[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/meetings/metrics')) { metrics.push(await request.clone().json()); return Response.json(meetingMetrics()); }
+    if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
+    if (path.endsWith('/timeline')) return Response.json({ rows: [], total_count: 0, cache_revision: 'scope-cache', search_provenance: {} });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const view = render(PersonMessages, { props: { client, identityScope, target, predicate, period, onFiltersChange: vi.fn(), onClearPeriod: vi.fn(), onOpenFiles: vi.fn() } });
+  try {
+    await screen.findByText(/^4 meetings(?: ·|$)/);
+    expect(metrics[0]).toEqual({ scope });
   } finally { view.unmount(); }
 });

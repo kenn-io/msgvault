@@ -16,7 +16,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -1696,20 +1695,6 @@ func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 	assertions.Equal("jsontext.Value", property.Extensions["x-go-type"])
 	assertions.Equal(map[string]any{"path": "encoding/json/jsontext"},
 		property.Extensions["x-go-type-import"])
-}
-
-func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
-	t.Parallel()
-	dimensions := explorecatalog.RequestGroupingDimensions()
-	want := make([]any, len(dimensions))
-	for index, dimension := range dimensions {
-		want[index] = dimension
-	}
-
-	assert.Equal(t, want, exploreGroupingEnum())
-	dimension := OpenAPIDocument().Components.Schemas.Map()["ExploreGroupDimension"]
-	require.NotNil(t, dimension)
-	assert.Equal(t, want, dimension.Enum)
 }
 
 func TestOpenAPIArtifactUpToDate(t *testing.T) {

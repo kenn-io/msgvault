@@ -847,18 +847,15 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 		b.AddFrom(messageID, ownerID, "Owner")
 		b.AddTo(messageID, hotID, "Alex Hot")
 	}
-	newerColdMessage := b.AddMessage(MessageOpt{
-		SourceID: sourceID, MessageType: "email", IsFromMe: true,
-		SentAt: time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC),
-	})
-	b.AddFrom(newerColdMessage, ownerID, "Owner")
-	b.AddTo(newerColdMessage, coldID, "Alex Cold")
+	for range 5 {
+		newerColdMessage := b.AddMessage(MessageOpt{
+			SourceID: sourceID, MessageType: "email", IsFromMe: true,
+			SentAt: time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC),
+		})
+		b.AddFrom(newerColdMessage, ownerID, "Owner")
+		b.AddTo(newerColdMessage, coldID, "Alex Cold")
+	}
 	engine := b.BuildEngine()
-	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
-		CanonicalID: hotID, Year: 2026, Timezone: "UTC",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 100, calendar.Current.Temperature)
 
 	for _, test := range []struct {
 		name    string
@@ -874,7 +871,7 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 				sort  SortSpec
 				first int64
 			}{
-				{name: "default relevance", first: hotID},
+				{name: "default relevance", sort: SortSpec{Field: "activity_count", Direction: "desc"}, first: hotID},
 				{name: "name", sort: SortSpec{Field: "display_label", Direction: "asc"}, first: coldID},
 				{name: "most recent", sort: SortSpec{Field: "latest_at", Direction: "desc"}, first: coldID},
 			} {

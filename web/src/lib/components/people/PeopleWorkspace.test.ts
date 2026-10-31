@@ -122,8 +122,6 @@ it('resetting People filters commits one complete navigation', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
     expect(onNavigate.mock.calls.length + onShowAllChange.mock.calls.length).toBe(1);
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
-    await view.rerender({ urlState: { ...state.current, relationshipFacet: 'domains' } });
-    expect(await screen.findByText('No domains yet')).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -147,7 +145,15 @@ it('opening a saved person reads its profile once and leaves Directory sections 
     await fireEvent.click(await screen.findByText('Saved Example'));
     await screen.findByRole('heading', { name: 'Saved Example' });
     await waitFor(() => expect(directory.detailLoading).toBe(false));
-    expect.soft(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
+    expect(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
     expect(paths.filter(path => path.startsWith('/api/v1/people/91/'))).toEqual([]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('names an empty Domains list for the selected facet', async () => {
+  const client = clientFor({});
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: { ...state.current, relationshipFacet: 'domains' }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try { expect(await screen.findByText('No domains yet')).toBeDefined(); }
+  finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

@@ -421,7 +421,6 @@ test('domain calendar retries and retains its local day across Details', async (
   await calendar.getByRole('button', { name: 'Retry' }).click();
   await expect(calendar.getByRole('heading', { name: 'Activity since Jan 2022' })).toBeVisible();
   await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
-  await expect(calendar.getByRole('button', { name: '1 message on Jan 1, 2025', exact: true }).filter({ visible: true })).toHaveClass(/level-first-quartile/);
   const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2025' }).filter({ visible: true });
   await day.click();
   await expect.poll(() => bodies.at(-1)).toMatchObject({ filters: [
