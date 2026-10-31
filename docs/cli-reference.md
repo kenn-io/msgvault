@@ -3182,7 +3182,7 @@ reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
 
-### person track, provider, sweep, and facts
+### person track, tiers, provider, sweep, and facts
 
 Tracking chooses which profiles automatic maintenance may process. It does not
 grant consent to a provider or enroll a person in briefs.
@@ -3190,6 +3190,8 @@ grant consent to a provider or enroll a person in briefs.
 | Command | Purpose |
 |---|---|
 | `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person tiers preview [--json]` | List saved people in tier 1 or 2 (two-way contact or meetings), whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
+| `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
 | `person provider list` | List configured model profiles |
 | `person provider use <name>` | Select a checked profile and enable sweeps |

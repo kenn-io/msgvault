@@ -367,3 +367,16 @@ var (
 	OwnerIdentifierMatch = ownerIdentifierMatch
 	SenderOwnerFallback  = senderOwnerFallback
 )
+
+// TierOptionsAsOf reads person tier counts as of a fixed date, not today.
+func TierOptionsAsOf(options PersonTierOptions, asOf time.Time) PersonTierOptions {
+	options.asOf = asOf
+	return options
+}
+
+// SetPersonTierRowPage sets the tier read page size and returns the restore func.
+func SetPersonTierRowPage(n int) func() {
+	old := personTierRowPage
+	personTierRowPage = n
+	return func() { personTierRowPage = old }
+}

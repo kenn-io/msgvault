@@ -252,7 +252,11 @@ func (s *Store) ListActivityProjectionQueueContext(
 }
 
 func (s *Store) ActivityWatermarkContext(ctx context.Context) (int64, error) {
-	value, err := s.archiveMetadataValueContext(ctx, activityWatermarkKey)
+	return activityWatermark(ctx, s.db)
+}
+
+func activityWatermark(ctx context.Context, queryer contextRowQuerier) (int64, error) {
+	value, err := archiveMetadataValue(ctx, queryer, activityWatermarkKey)
 	if err != nil {
 		return 0, err
 	}
@@ -656,9 +660,9 @@ func setArchiveMetadataValueTx(
 	return nil
 }
 
-func (s *Store) archiveMetadataValueContext(ctx context.Context, key string) (string, error) {
+func archiveMetadataValue(ctx context.Context, queryer contextRowQuerier, key string) (string, error) {
 	var value string
-	err := s.db.QueryRowContext(ctx,
+	err := queryer.QueryRowContext(ctx,
 		`SELECT value FROM archive_metadata WHERE key = ?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

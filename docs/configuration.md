@@ -115,6 +115,67 @@ Set `enabled = false` to disable scoring in the configuration. See
 and [the API reference](api-server.md#identity-match-review-and-scoring) for
 endpoints.
 
+## People tiers
+
+`msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
+only to change which saved people it lists. Tier 1 is sustained two-way contact
+in the short window. Tier 2 is two-way contact in the long window, or meetings.
+Counts cover meetings and the email and chat messages that were sent or
+received. Drafts, texts that never left your phone, and call or voicemail
+records don't count. Archives imported before this change keep counting
+unsent texts until you import the Synctech backup again with
+`msgvault import-synctech-sms <path> --owner-phone <number>`. A Drive source
+doesn't re-download files it already imported, so download the backup from your
+Drive folder and import it locally with the source's owner phone. The import
+updates the existing messages in place. A group chat at or under `[activity]
+max_direct_counterparts` counts for each member. By default, newsletter and
+list messages are left out (`exclude_list_messages = false` counts them), and so
+are messages sent to more people than that limit. A person whose address is one
+of your own in any account is never listed.
+
+```toml
+[people.tiers]
+short_window_days = 90
+long_window_days = 365
+exclude_list_messages = true
+
+[people.tiers.tier1]
+min_outbound_short = 2
+min_inbound_short = 2
+min_active_days_short = 6
+breadth_min_active_days_short = 3
+breadth_min_channels_long = 2
+breadth_min_meeting_days_long = 2
+
+[people.tiers.tier2]
+min_outbound_long = 1
+min_inbound_long = 1
+min_active_days_long = 3
+min_meeting_days_long = 2
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `short_window_days` | `90` | Days counted for tier 1. At least 1 and at most `long_window_days`. |
+| `long_window_days` | `365` | Days counted for tier 2. At most 3650. |
+| `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
+| `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
+| `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. |
+| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window. Both are required, so one-way mail never qualifies. |
+| `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
+| `tier1.breadth_min_active_days_short` | `3` | Days needed for the breadth path to tier 1. |
+| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
+| `tier1.breadth_min_meeting_days_long` | `2` | Meeting days in the long window for the breadth path. `0` turns it off. |
+| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window. |
+| `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
+| `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
+
+The counts come from the activity projection. The windows end on today's date in
+its timezone, and the large-audience cut uses its direct limit. After you change
+`[activity] timezone` or `max_direct_counterparts`, counts follow the stored
+values and the commands warn until `msgvault activity build` rebuilds it. See
+[choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
+
 ## People sweep inference
 
 People sweeps use one named protocol profile at a time. A profile records the
