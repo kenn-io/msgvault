@@ -32,7 +32,7 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 	if q.ConversationID <= 0 || q.Limit < 1 || q.Limit > 500 {
 		return nil, fmt.Errorf("%w: messages require a conversation and limit 1..500", ErrInvalidActivityRequest)
 	}
-	filters, err := normalizedActivityFilters(q.Filters)
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
 		return nil, err
 	}
