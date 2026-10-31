@@ -238,6 +238,35 @@ func (s *Store) meetingIdentityMembers(ctx context.Context, r reboundReader, o l
 	if err != nil {
 		return nil, err
 	}
+	// A manual decision may retain the ID of a UID-less orphan saved before
+	// its master arrived. Include source-local exception targets, then let the
+	// forward resolver validate their current identity, splits and visibility.
+	if o.Identity.OccurrenceKey != "" {
+		_, original, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey)
+		if ok {
+			column, value := "e.original_start_at", any(original.Instant)
+			if original.AllDay {
+				column, value = "e.original_start_date", original.Date
+			}
+			var terms []string
+			var aliasArgs []any
+			for _, copy := range copies {
+				if copy.Event.Kind != meetingSeriesKind && copy.Event.Kind != meetingSingleKind {
+					continue
+				}
+				terms = append(terms, `(m.source_id=? AND e.series_provider_id=?)`)
+				aliasArgs = append(aliasArgs, copy.SourceID, copy.Event.ProviderEventID)
+			}
+			if len(terms) > 0 {
+				aliasArgs = append(aliasArgs, value)
+				aliases, err := meetingEventRows(ctx, r, `e.kind='exception' AND (`+strings.Join(terms, " OR ")+`) AND `+column+`=?`, aliasArgs, &budget)
+				if err != nil {
+					return nil, err
+				}
+				copies = append(copies, aliases...)
+			}
+		}
+	}
 	clauses := []string{`(d.target_ical_uid=? AND d.target_ical_uid<>'' AND d.occurrence_key=?)`}
 	args := []any{o.Identity.ICalUID, o.Identity.OccurrenceKey}
 	keyClauses := []string{`(k.kind='ical_uid' AND k.value=? AND k.value<>'')`}

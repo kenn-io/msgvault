@@ -9,37 +9,36 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // The cap selects a prefix of the readers' shared (FirstAt, Key) ordering,
 // before the day renderer applies its separate tier/exchange ranking.
 func TestMergeBurstsSelectsCombinedReaderOrder(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	var want []string
 	for i, cold := range []bool{true, false, true, false} {
 		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("ordered-%d", i), "Ordered")
-		require.NoError(err)
+		requirements.NoError(err)
 		at := f.now.Add(time.Duration(i/2) * time.Minute)
 		f.add(at, false, func(m *store.Message) { m.ConversationID = conv })
 		if cold {
-			require.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, fmt.Sprintf("ordered-%d", i), conversationpolicy.Cold))
+			requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, fmt.Sprintf("ordered-%d", i)))
 		}
 		want = append(want, fmt.Sprintf("burst:%d:%d:2026-10-22", f.Source.ID, conv))
 	}
 	f.project()
 	q := store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: 5000}
 	warm, err := f.src.Activity.ListActivityBurstsContext(t.Context(), q)
-	require.NoError(err)
+	requirements.NoError(err)
 	cold, err := f.src.Cold.ListColdActivityBurstsContext(t.Context(), q)
-	require.NoError(err)
-	require.Len(warm.Bursts, 2)
-	require.Len(cold.Bursts, 2)
+	requirements.NoError(err)
+	requirements.Len(warm.Bursts, 2)
+	requirements.Len(cold.Bursts, 2)
 	// Equal-time ties use lexical keys, rather than source preference.
 	slices.Sort(want[:2])
 	slices.Sort(want[2:])
@@ -48,15 +47,16 @@ func TestMergeBurstsSelectsCombinedReaderOrder(t *testing.T) {
 	for _, b := range merged[:3] {
 		got = append(got, b.Key)
 	}
-	assert.Equal(want[:3], got)
+	assertions.Equal(want[:3], got)
 	// The deduplication path must retain the same selection order.
 	merged = mergeBursts(warm.Bursts, append(cold.Bursts, warm.Bursts...))
-	require.Len(merged, 4)
-	assert.Equal(want[0], merged[0].Key)
+	requirements.Len(merged, 4)
+	assertions.Equal(want[0], merged[0].Key)
 }
 
 type countedTierPeople struct {
 	PeopleSource
+
 	calls [][]int64
 	asOf  []time.Time
 	fail  error
@@ -76,8 +76,8 @@ func (s *countedTierPeople) PersonTiersContext(ctx context.Context, ids []int64,
 }
 
 func TestBuildBatchesKnownPersonTiers(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	participants := []int64{f.peer}
 	persons := []int64{f.savePerson()}
@@ -86,7 +86,7 @@ func TestBuildBatchesKnownPersonTiers(t *testing.T) {
 		participants = append(participants, participant)
 		if i < 3 {
 			person, _, err := f.Store.CreatePersonFromParticipant(participant)
-			require.NoError(err)
+			requirements.NoError(err)
 			persons = append(persons, person.ID)
 		}
 	}
@@ -95,12 +95,12 @@ func TestBuildBatchesKnownPersonTiers(t *testing.T) {
 	for i := range 24 {
 		participant := participants[i%4]
 		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("tiers-%d", i), "Tier batching")
-		require.NoError(err)
+		requirements.NoError(err)
 		id := f.add(f.now.Add(-time.Duration(i)*time.Minute), false, func(m *store.Message) {
 			m.ConversationID = conv
 			m.SenderID = sql.NullInt64{Int64: participant, Valid: true}
 		})
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	}
 	f.project()
 	counted := &countedTierPeople{PeopleSource: f.src.People}
@@ -108,37 +108,37 @@ func TestBuildBatchesKnownPersonTiers(t *testing.T) {
 	req := dayRequest()
 	req.Tiers = []int{1}
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
+	requirements.NoError(err)
 	entries := allDayEntries(got)
-	require.Len(entries, 6)
+	requirements.Len(entries, 6)
 	for _, entry := range entries {
-		require.Len(entry.Burst.People, 1)
-		assert.Equal(persons[0], entry.Burst.People[0].PersonID)
-		assert.Equal(1, entry.Burst.People[0].Tier)
-		assert.Equal("observed", entry.Burst.People[0].TierSource)
+		requirements.Len(entry.Burst.People, 1)
+		assertions.Equal(persons[0], entry.Burst.People[0].PersonID)
+		assertions.Equal(1, entry.Burst.People[0].Tier)
+		assertions.Equal("observed", entry.Burst.People[0].TierSource)
 	}
-	require.Len(counted.calls, 1, "tier source calls must not grow with the number of entries")
-	assert.ElementsMatch(persons, counted.calls[0], "known IDs are distinct, including missing tiers but excluding unsaved people")
-	assert.Equal([]time.Time{f.now}, counted.asOf, "tier rules use the pinned request clock")
+	requirements.Len(counted.calls, 1, "tier source calls must not grow with the number of entries")
+	assertions.ElementsMatch(persons, counted.calls[0], "known IDs are distinct, including missing tiers but excluding unsaved people")
+	assertions.Equal([]time.Time{f.now}, counted.asOf, "tier rules use the pinned request clock")
 	// The cache belongs to one Build, so a later tier update must be observed.
 	f.tier(persons[0], 2)
 	f.project()
 	counted.calls = nil
 	got, err = Build(t.Context(), f.src, req)
-	require.NoError(err)
-	assert.Empty(allDayEntries(got))
-	require.Len(counted.calls, 1)
+	requirements.NoError(err)
+	assertions.Empty(allDayEntries(got))
+	requirements.Len(counted.calls, 1)
 }
 
 func TestBuildTierFailureRemainsGapWithoutPerEntryRetries(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	person := f.savePerson()
 	f.tier(person, 1)
 	for i := range 8 {
 		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("tier-error-%d", i), "Tier failure")
-		require.NoError(err)
+		requirements.NoError(err)
 		f.add(f.now.Add(-time.Duration(i)*time.Minute), false, func(m *store.Message) { m.ConversationID = conv })
 	}
 	f.project()
@@ -147,11 +147,11 @@ func TestBuildTierFailureRemainsGapWithoutPerEntryRetries(t *testing.T) {
 	req := dayRequest()
 	req.Tiers = []int{1}
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	assert.Empty(allDayEntries(got))
-	assert.Contains(got.Gaps, Gap{Section: "people", Code: "unavailable"})
-	require.Len(counted.calls, 1)
-	assert.Equal([]int64{person}, counted.calls[0])
+	requirements.NoError(err)
+	assertions.Empty(allDayEntries(got))
+	assertions.Contains(got.Gaps, Gap{Section: "people", Code: "unavailable"})
+	requirements.Len(counted.calls, 1)
+	assertions.Equal([]int64{person}, counted.calls[0])
 }
 
 // Shared flags change history admission and message omissions, while the
@@ -159,8 +159,8 @@ func TestBuildTierFailureRemainsGapWithoutPerEntryRetries(t *testing.T) {
 func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
-			assert := assertpkg.New(t)
-			require := requirepkg.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			f := newTimelineFixture(t)
 			ref := "email:alice@example.com"
 			if saved {
@@ -175,7 +175,7 @@ func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 			} {
 				key := fmt.Sprintf("shared-flags-%d", i)
 				conv, err := f.Store.EnsureConversation(f.Source.ID, key, "Shared flags")
-				require.NoError(err)
+				requirements.NoError(err)
 				for n := range group.count {
 					f.add(f.now.Add(-time.Duration(60+i*5+n)*time.Minute), false, func(m *store.Message) {
 						m.ConversationID = conv
@@ -185,18 +185,18 @@ func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 					})
 				}
 				if group.cold {
-					require.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, key, conversationpolicy.Cold))
+					requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, key))
 				}
 			}
 			f.project()
 			baseline, err := Build(t.Context(), f.src, relationshipRequest(ref))
-			require.NoError(err)
-			require.NotNil(baseline.Person)
-			require.Equal(1, baseline.Person.InteractionCount)
+			requirements.NoError(err)
+			requirements.NotNil(baseline.Person)
+			requirements.Equal(1, baseline.Person.InteractionCount)
 			if saved {
-				assert.Positive(baseline.Person.Person.PersonID)
+				assertions.Positive(baseline.Person.Person.PersonID)
 			} else {
-				assert.Zero(baseline.Person.Person.PersonID)
+				assertions.Zero(baseline.Person.Person.PersonID)
 			}
 			for _, tc := range []struct {
 				cold, noise                        bool
@@ -206,24 +206,24 @@ func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 				{true, false, 2, 0, 4}, {true, true, 4, 0, 0},
 			} {
 				t.Run(fmt.Sprintf("cold=%t/noise=%t", tc.cold, tc.noise), func(t *testing.T) {
-					assert := assertpkg.New(t)
-					require := requirepkg.New(t)
+					assertions := assert.New(t)
+					requirements := require.New(t)
 					req := relationshipRequest(ref)
 					req.IncludeCold, req.IncludeNoise = tc.cold, tc.noise
 					got, err := Build(t.Context(), f.src, req)
-					require.NoError(err)
-					assert.Equal(baseline.Person, got.Person)
-					assert.Len(got.History, tc.entries)
-					assert.Equal(tc.coldOmitted, got.Omitted.Cold)
-					assert.Equal(tc.noiseOmitted, got.Omitted.Noise)
+					requirements.NoError(err)
+					assertions.Equal(baseline.Person, got.Person)
+					assertions.Len(got.History, tc.entries)
+					assertions.Equal(tc.coldOmitted, got.Omitted.Cold)
+					assertions.Equal(tc.noiseOmitted, got.Omitted.Noise)
 					req.Around = "2026-10-22T12:00:00Z"
 					req.Before, req.After = tc.entries, 0
 					req.AfterSet = true
 					got, err = Build(t.Context(), f.src, req)
-					require.NoError(err)
-					assert.Len(got.History, tc.entries)
-					assert.Equal(tc.coldOmitted, got.Omitted.Cold)
-					assert.Equal(tc.noiseOmitted, got.Omitted.Noise)
+					requirements.NoError(err)
+					assertions.Len(got.History, tc.entries)
+					assertions.Equal(tc.coldOmitted, got.Omitted.Cold)
+					assertions.Equal(tc.noiseOmitted, got.Omitted.Noise)
 				})
 			}
 		})
@@ -231,12 +231,12 @@ func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 }
 
 func TestColdConversationIncludesAllMessages(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	conv, err := f.Store.EnsureConversation(f.Source.ID, "cold-conversation", "Cold conversation")
-	require.NoError(err)
-	require.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-conversation", conversationpolicy.Cold))
+	requirements.NoError(err)
+	requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-conversation"))
 	ids := []int64{}
 	for i := range 8 {
 		ids = append(ids, f.add(f.now.Add(-time.Hour+time.Duration(i/2)*time.Minute), false, func(m *store.Message) { m.ConversationID = conv }))
@@ -247,16 +247,16 @@ func TestColdConversationIncludesAllMessages(t *testing.T) {
 	hiddenReq.Before, hiddenReq.After = 0, 0
 	hiddenReq.BeforeSet, hiddenReq.AfterSet = true, true
 	hidden, err := Build(t.Context(), f.src, hiddenReq)
-	require.NoError(err)
-	require.Len(hidden.History, 1)
-	assert.True(hidden.Anchor.Filtered)
-	assert.Equal(8, hidden.Omitted.Cold)
+	requirements.NoError(err)
+	requirements.Len(hidden.History, 1)
+	assertions.True(hidden.Anchor.Filtered)
+	assertions.Equal(8, hidden.Omitted.Cold)
 	req.IncludeCold = true
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(got.History, 8)
-	assert.False(got.Anchor.Filtered)
-	assert.Zero(got.Omitted.Cold)
+	requirements.NoError(err)
+	requirements.Len(got.History, 8)
+	assertions.False(got.Anchor.Filtered)
+	assertions.Zero(got.Omitted.Cold)
 	want := []string{}
 	for _, id := range ids {
 		want = append(want, messageRef(id))
@@ -267,20 +267,20 @@ func TestColdConversationIncludesAllMessages(t *testing.T) {
 	pages := 0
 	for page := range 20 {
 		got, err = Build(t.Context(), f.src, req)
-		require.NoError(err)
-		require.NotEmpty(got.History)
+		requirements.NoError(err)
+		requirements.NotEmpty(got.History)
 		pages++
 		for _, entry := range got.History {
-			assert.False(seen[entry.Ref], "duplicate entry on page %d", page)
+			assertions.False(seen[entry.Ref], "duplicate entry on page %d", page)
 			seen[entry.Ref] = true
 			refs = append(refs, entry.Ref)
-			assert.Equal("message", entry.Kind)
+			assertions.Equal("message", entry.Kind)
 		}
 		if got.Cursor == "" {
 			break
 		}
 		req.Cursor = got.Cursor
 	}
-	assert.Greater(pages, 1)
-	assert.Equal(want, refs)
+	assertions.Greater(pages, 1)
+	assertions.Equal(want, refs)
 }

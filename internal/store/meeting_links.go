@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	meetingSingleKind       = "single"
 	meetingSeriesKind       = "series"
 	meetingExceptionKind    = "exception"
 	meetingCancelledStatus  = "cancelled"
@@ -63,11 +64,12 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 		if rows[i].rawFormat != rawFormatICS {
 			continue
 		}
-		uid, err := meetingICSUID(ctx, r, rows[i], budget)
+		component, err := meetingICSComponent(ctx, r, rows[i], budget)
 		if err != nil {
 			return nil, err
 		}
-		rows[i].ICalUID = uid
+		rows[i].ICalUID = component.UID
+		rows[i].Event.RecurrenceError = component.Event.RecurrenceError
 	}
 	return rows, nil
 }
@@ -322,35 +324,35 @@ func (s *Store) calendarUIDPredicate(uid string) (string, []any) {
  )`, []any{uid, key, key}
 }
 
-func meetingICSUID(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (string, error) {
+func meetingICSComponent(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (calevent.ICSComponent, error) {
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{row.MessageID}, args...)
 	var stored []byte
 	var compression sql.NullString
 	err := r.QueryRowContext(ctx, `SELECT raw.raw_data,raw.compression FROM message_raw raw JOIN messages m ON m.id=raw.message_id WHERE m.id=? AND m.deleted_at IS NULL`+scope, args...).Scan(&stored, &compression)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return calevent.ICSComponent{}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("read meeting ICS identity: %w", err)
+		return calevent.ICSComponent{}, fmt.Errorf("read meeting ICS identity: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
-		return "", nil //nolint:nilerr // Damaged optional evidence keeps the projected message identity.
+		return calevent.ICSComponent{}, nil //nolint:nilerr // Damaged optional evidence keeps the projected message identity.
 	}
 	parseBudget := calevent.NewICSParseBudget()
 	parseBudget.VerificationRemaining = budget
 	components, _, err := calevent.ParseICSWithDiagnostics(ctx, raw, "", row.Event.CalendarTimeZone, parseBudget)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, calrecur.ErrBudgetExceeded) {
-			return "", fmt.Errorf("decode meeting ICS identity: %w", err)
+			return calevent.ICSComponent{}, fmt.Errorf("decode meeting ICS identity: %w", err)
 		}
-		return "", nil // Invalid retained evidence cannot supply a UID.
+		return calevent.ICSComponent{}, nil // Invalid retained evidence cannot supply a UID.
 	}
 	if len(components) != 1 {
-		return "", nil
+		return calevent.ICSComponent{}, nil
 	}
-	return components[0].UID, nil
+	return components[0], nil
 }
 
 func freshestOrphanCalendarException(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (CalendarEventRow, error) {
