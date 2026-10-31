@@ -772,6 +772,32 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
+  it('recovers capped polling from the open source panel', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let reads = 0;
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_queued: true });
+    const fetchFn = api([], url => url.pathname.endsWith('/sources/status')
+      ? Response.json({ sources: [++reads <= 4 ? held : source({ latest_sync: run('completed', 7) })] }) : undefined);
+    const rendered = render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), maxLockHoldPolls: 3
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+    expect(within(panel).getByText('Queued')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reads).toBe(4);
+    const message = 'Automatic refresh paused. Source status may be stale.';
+    expect(within(panel).getByText(message)).toBeDefined();
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(within(panel).getByText('7 processed · 7 added')).toBeDefined());
+    expect(reads).toBe(5);
+    expect(within(panel).queryByText(message)).toBeNull();
+    expect(within(panel).queryByText('Queued')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
+    rendered.unmount();
+  });
+
   it('resets the lock-hold poll budget after a real active sync appears', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
