@@ -463,6 +463,10 @@ describe('OperationsController', () => {
     const controller = new OperationsController(createAPIClient(fetchFn));
     await controller.applyURLState(operationState());
 
+    expect(await controller.runAction(action === 'visual_resume' ? 'visual_build' : 'visual_resume')).toBe('failed');
+    expect(requests.some(request => request.method === 'POST')).toBe(false);
+    expect(controller.snapshot.actionError).toBe('This operation is not currently available.');
+
     const outcome = await controller.runAction(action);
 
     const actionRequest = requests.find((request) => request.method === 'POST')!;
@@ -650,14 +654,14 @@ describe('OperationsController.refreshStatus', () => {
   });
 });
 
-it('reports an aggregate CardDAV failed response as a failed action and refreshes state', async () => {
+it.each(['failed', 'partial'] as const)('reports an aggregate CardDAV %s response as a failed action and refreshes state', async status => {
   let reads = 0;
   const client = createAPIClient(async (input) => {
     const request = requestOf(input);
     if (request.method === 'POST')
       return Response.json({
         ...syncResult(),
-        status: 'failed',
+        status,
         connections: [
           {
             connection: 'work',
@@ -680,7 +684,8 @@ it('reports an aggregate CardDAV failed response as a failed action and refreshe
   await controller.applyURLState(operationState());
   expect(await controller.runAction('carddav_sync')).toBe('failed');
   expect(reads).toBe(4);
-  expect(controller.snapshot.actionError).not.toBeNull();
+  expect(controller.snapshot.actionError).toContain('work');
+  expect(controller.snapshot.actionError).not.toContain('private arbitrary');
   controller.destroy();
 });
 

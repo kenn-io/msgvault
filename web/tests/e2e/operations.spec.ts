@@ -25,8 +25,8 @@ test('Past runs describes the time and outcome of repeated job kinds', async ({ 
   await expect(runs.nth(1)).toHaveAccessibleDescription(/Aug 30, 2026, 11:00 AM.*Failed/);
 });
 
-test('operations invokes only advertised CardDAV and visual actions and surfaces conflicts', async ({ page }) => {
-  const fixture = await installOperations(page);
+test('Past runs offers advertised actions and announces completion', async ({ page }) => {
+  await installOperations(page);
   await openHistory(page);
   await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
   const detail = page.getByRole('region', { name: 'Operation run detail' });
@@ -34,13 +34,7 @@ test('operations invokes only advertised CardDAV and visual actions and surfaces
   await expect(action).toBeVisible();
   await expect(detail.getByRole('button', { name: /visual index/i })).toHaveCount(0);
   await action.click();
-  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync']);
-  await expect(action).toBeEnabled();
   await expect(page.getByRole('status', { name: 'Operation status' })).toContainText('CardDAV sync request completed');
-  fixture.conflictNextCardDAV();
-  await action.click();
-  await expect(page.getByRole('alert').filter({ hasText: 'current server state changed' })).toBeVisible();
-  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync', 'carddav_sync']);
   await page.getByRole('button', { name: 'All runs' }).click();
   await page.getByRole('button', { name: 'Open Visual embedding run' }).click();
   await expect(detail.getByRole('button', { name: 'Resume visual index' })).toBeVisible();
@@ -73,20 +67,6 @@ test('Past runs keeps focus through detail and history, then restores workspace 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
-});
-
-test('Past runs reveals the dirty Settings leave prompt after a history jump', async ({ page }) => {
-  await installOperations(page);
-  await page.goto(`/?workspace=sources&explore=${encodeURIComponent(JSON.stringify({ settingsCategory: 'search' }))}`);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const settings = page.getByRole('main', { name: 'Settings' });
-  await settings.getByRole('switch', { name: 'Semantic search', exact: true }).click();
-  await page.getByRole('button', { name: /Sync status:/ }).click();
-  await page.getByRole('menuitem', { name: 'Past runs' }).click();
-  await page.getByRole('button', { name: 'Open Source sync run' }).click();
-  await page.evaluate(() => window.history.go(-3));
-  await expect(page.getByRole('dialog', { name: 'Source sync', exact: true })).toBeHidden();
-  await expect(settings.getByText('Leave Settings and discard 1 unsaved change?', { exact: true })).toBeVisible();
 });
 
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {

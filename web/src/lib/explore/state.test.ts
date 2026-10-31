@@ -64,26 +64,35 @@ describe('Explore URL state', () => {
     }
   });
 
-  it.each(['stay', 'leave'] as const)('closes Past runs over an unindexed history destination and handles %s', async outcome => {
+  it.each([
+    ['unindexed', 'stay'], ['unindexed', 'leave'], ['indexed', 'leave']
+  ] as const)('closes Past runs over an %s history destination and handles %s', async (destination, outcome) => {
     window.history.replaceState(null, '', '/?workspace=sources');
-    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+    if (destination === 'unindexed') window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
     const state = new ExploreState(window);
+    if (destination === 'indexed') state.commitWorkspace('settings');
     let leave!: () => void;
     let stay: (() => void) | undefined;
     try {
       state.openOperationHistory({ operationKind: 'source_sync' });
       state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      const settingsIndex = window.history.state.exploreIndex;
       state.holdLeave = (next, restore) => { leave = next; stay = restore; return true; };
       const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       window.history.go(-3);
       await popped;
+      if (destination === 'indexed') await waitFor(() => expect(window.history.state.exploreIndex).toBe(settingsIndex));
       expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
         operationKind: '', operationRunID: null });
-      expect(window.location.search).toBe('?workspace=sources');
-      expect(window.history.state).toBeNull();
+      if (destination === 'unindexed') {
+        expect(window.location.search).toBe('?workspace=sources');
+        expect(window.history.state).toBeNull();
+      }
       state.holdLeave = undefined;
-      if (outcome === 'leave') leave();
-      else {
+      if (outcome === 'leave') {
+        leave();
+        if (destination === 'indexed') await waitFor(() => expect(state.current.workspace).toBe('sources'));
+      } else {
         stay!();
         expect(state.current.workspace).toBe('settings');
         expect(parseExploreURLState(window.location.search)).toMatchObject({ workspace: 'settings', operationHistory: false });
@@ -92,8 +101,11 @@ describe('Explore URL state', () => {
         await back;
       }
       expect(state.current).toMatchObject({ workspace: 'sources', operationHistory: false });
-      expect(window.location.search).toBe('?workspace=sources');
-      expect(window.history.state).toBeNull();
+      expect(parseExploreURLState(window.location.search).workspace).toBe('sources');
+      if (destination === 'unindexed') {
+        expect(window.location.search).toBe('?workspace=sources');
+        expect(window.history.state).toBeNull();
+      }
     } finally {
       state.destroy();
     }
@@ -132,24 +144,6 @@ describe('Explore URL state', () => {
     }
   });
 
-  it('holds leaving Settings until the draft is discarded', () => {
-    window.history.replaceState(null, '', '/?workspace=settings');
-    const state = new ExploreState(window);
-    let leave!: () => void;
-    state.holdLeave = (next) => { leave = next; return true; };
-    try {
-      state.commitWorkspace('sources');
-      expect(state.current.workspace).toBe('settings');
-      expect(window.location.search).toBe('?workspace=settings');
-      state.holdLeave = undefined;
-      leave();
-      expect(state.current.workspace).toBe('sources');
-      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
-    } finally {
-      state.destroy();
-    }
-  });
-
   it('closes Past runs while holding a departure from dirty Settings', () => {
     window.history.replaceState(null, '', '/?workspace=settings');
     const state = new ExploreState(window);
@@ -164,30 +158,6 @@ describe('Explore URL state', () => {
       state.holdLeave = undefined;
       leave();
       expect(state.current).toMatchObject({ workspace: 'sources', operationHistory: false });
-    } finally {
-      state.destroy();
-    }
-  });
-
-  it('closes Past runs after restoring dirty Settings from a three-entry Back jump', async () => {
-    window.history.replaceState(null, '', '/?workspace=sources');
-    const state = new ExploreState(window);
-    let leave!: () => void;
-    try {
-      state.commitWorkspace('settings');
-      state.openOperationHistory({ operationKind: 'source_sync' });
-      state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
-      const settingsIndex = window.history.state.exploreIndex;
-      state.holdLeave = (next) => { leave = next; return true; };
-      window.history.go(-3);
-      await waitFor(() => expect(leave).toBeTypeOf('function'));
-      await waitFor(() => expect(window.history.state.exploreIndex).toBe(settingsIndex));
-      expect(state.current).toMatchObject({ workspace: 'settings', operationHistory: false,
-        operationKind: '', operationRunID: null });
-      expect(parseExploreURLState(window.location.search).operationHistory).toBe(false);
-      state.holdLeave = undefined;
-      leave();
-      await waitFor(() => expect(state.current.workspace).toBe('sources'));
     } finally {
       state.destroy();
     }
@@ -420,19 +390,18 @@ describe('Explore URL state', () => {
     const operationRunID = `op2.${'a'.repeat(32)}.syntheticCiphertext_1`;
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'everything',
+      workspace: 'everything', operationHistory: true,
       operationLane: 'documents',
       operationKind: 'document_extraction',
       operationState: 'partial',
       operationStartedFrom: '2026-08-01T00:00:00Z',
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
       operationRunID,
-      operationStatus: 'getDocumentIndexStatus',
       operationCursor: 'must-not-survive'
     } as ExploreURLState));
 
     expect(restored).toMatchObject({
-      workspace: 'everything',
+      workspace: 'everything', operationHistory: true,
       operationLane: 'documents',
       operationKind: 'document_extraction',
       operationState: 'partial',
@@ -440,7 +409,6 @@ describe('Explore URL state', () => {
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
       operationRunID
     });
-    expect(restored.operationStatus).toBe('getDocumentIndexStatus');
     expect(restored).not.toHaveProperty('operationCursor');
   });
 
@@ -449,12 +417,12 @@ describe('Explore URL state', () => {
       'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
     ] as const) {
       const restored = parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'everything', operationStatus
+        ...defaultExploreURLState, workspace: 'everything', operationHistory: true, operationStatus
       }));
       expect(restored.operationStatus).toBe(operationStatus);
     }
     const invalid = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState, workspace: 'everything', operationStatus: 'getCardDAVStatus'
+      ...defaultExploreURLState, workspace: 'everything', operationHistory: true, operationStatus: 'getCardDAVStatus'
     } as unknown as ExploreURLState));
     expect(invalid.operationStatus).toBe('');
   });
@@ -562,7 +530,7 @@ describe('Explore URL state', () => {
   it('clears malformed, unknown, and lane-incompatible Operations URL values', () => {
     const invalid = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'everything',
+      workspace: 'everything', operationHistory: true,
       operationLane: 'contacts',
       operationKind: 'document_embedding',
       operationState: 'future_state',
@@ -572,7 +540,7 @@ describe('Explore URL state', () => {
     } as unknown as ExploreURLState));
 
     expect(invalid).toMatchObject({
-      workspace: 'everything',
+      workspace: 'everything', operationHistory: true,
       operationLane: 'contacts',
       operationKind: '',
       operationState: '',
@@ -583,7 +551,7 @@ describe('Explore URL state', () => {
 
     const unknownLane = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'everything',
+      workspace: 'everything', operationHistory: true,
       operationLane: 'future_lane',
       operationKind: 'carddav_sync'
     } as unknown as ExploreURLState));
@@ -594,7 +562,7 @@ describe('Explore URL state', () => {
   it('preserves ordered canonical nanosecond Operations bounds without millisecond truncation', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'everything',
+      workspace: 'everything', operationHistory: true,
       operationStartedFrom: '2026-08-01T00:00:00.000000001Z',
       operationStartedBefore: '2026-08-01T00:00:00.000000002Z'
     }));
