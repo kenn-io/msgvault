@@ -1088,10 +1088,9 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 	for _, tc := range []struct {
 		backfill, state, outcome string
 	}{
-		{"before_poll", "failed", "consent"},
-		{"during_poll", "failed", "consent"},
-		{"before_poll", "failed", "unsupported_format"},
-		{"before_poll", "operator_required", ""},
+		{"after_poll", "failed", "consent"},
+		{"after_poll", "failed", "unsupported_format"},
+		{"after_poll", "operator_required", ""},
 	} {
 		t.Run(tc.backfill+"/"+tc.state+"/"+tc.outcome, func(t *testing.T) {
 			require := require.New(t)
@@ -1105,23 +1104,8 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 			r.processing.States[jobID] = [3]string{tc.state, "rendition", tc.outcome}
 			r.processingDue()
 
-			if tc.backfill == "during_poll" {
-				var backfilled atomic.Bool
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					if req.Method == http.MethodGet && req.URL.Path == "/api/v1/processing/jobs/"+jobID && backfilled.CompareAndSwap(false, true) {
-						assert.NoError(r.f.Store.RetryDocbankAttachments(req.Context(), "dest"))
-					}
-					r.serve(w, req)
-				}))
-				t.Cleanup(srv.Close)
-				client, err := docbankmedia.NewClient(srv.URL, nil)
-				require.NoError(err)
-				r.worker.client = client
-				require.NoError(r.runBatch(t.Context()))
-				require.True(backfilled.Load())
-			} else {
-				require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
-			}
+			require.NoError(r.runBatch(t.Context()))
+			require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
 			require.NoError(r.runBatch(t.Context()))
 			if tc.outcome == "unsupported_format" {
 				assert.Equal([]string{jobID}, r.processing.Polls)
@@ -1141,11 +1125,7 @@ func TestAttachmentMirrorBackfillRetriesRecoverableJobFailure(t *testing.T) {
 			} else {
 				assert.Equal(jobID, savedJobID)
 			}
-			if tc.backfill == "during_poll" {
-				assert.Equal([]string{jobID, jobID}, r.processing.Polls)
-			} else {
-				assert.Equal([]string{jobID}, r.processing.Polls)
-			}
+			assert.Equal([]string{jobID}, r.processing.Polls)
 			r.processing.States[jobID] = [3]string{"completed", "rendition", ""}
 			if tc.state == "operator_required" {
 				require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))

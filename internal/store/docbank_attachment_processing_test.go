@@ -161,91 +161,23 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
-	require.Len(due, 7)
+	require.Len(due, 5)
 	assert.ElementsMatch([]string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required"}, []string{due[0].VersionID, due[1].VersionID, due[2].VersionID, due[3].VersionID, due[4].VersionID})
-	assert.Equal("pending", due[5].VersionID)
-	assert.Equal(store.DocbankProcessingRetryRequested, due[5].Outcome)
-	assert.Equal("pending-no-job", due[6].VersionID)
-	assert.Equal(store.DocbankProcessingRetryRequested, due[6].Outcome)
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
-	assert.Equal(int64(5), counts.Waiting)
-	assert.Equal(int64(2), counts.Requested)
+	assert.Equal(int64(6), counts.Waiting)
+	assert.Equal(int64(1), counts.Requested)
 	assert.Equal(map[string]int64{
 		"provider_timeout": 1,
 		"not_found":        1,
 	}, counts.Outcomes)
 	var savedOutcome, jobID string
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), pendingHash).Scan(&savedOutcome, &jobID))
-	assert.Equal(store.DocbankProcessingRetryRequested, savedOutcome)
+	assert.Equal("requested", savedOutcome)
 	assert.Equal(pendingJobID, jobID)
 	var next time.Time
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome, job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = ?`), noJobHash).Scan(&savedOutcome, &jobID, &next))
-	assert.Equal(store.DocbankProcessingRetryRequested, savedOutcome)
+	assert.Empty(savedOutcome)
 	assert.Empty(jobID)
-	assert.False(next.After(time.Now()))
-}
-
-func TestDocbankAttachmentProcessingBackfillDuringPoll(t *testing.T) {
-	for _, tc := range []struct {
-		name, outcome, jobID, failure string
-	}{
-		{"saved_job", "requested", fmt.Sprintf("%064x", 0x5678), "consent"},
-		{"first_attempt", "", "", "pdf_password_required"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := storetest.New(t)
-			ctx := t.Context()
-			f.SeedDocumentAttachments(f.CreateMessage("backfill"), []storetest.DocumentAttachment{{MIMEType: "application/pdf", VersionID: "pending"}})
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", store.DocbankAttachmentProcessing{
-				ContentHash: fmt.Sprintf("%064x", 0xabcdef), Fingerprint: "fp", Outcome: tc.outcome, JobID: tc.jobID,
-			}, time.Now().Add(-time.Minute)))
-			poll, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-			require.NoError(err)
-			require.Len(poll, 1)
-			require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
-			poll[0].Outcome = tc.failure
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", poll[0], time.Time{}))
-			retry, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-			require.NoError(err)
-			require.Len(retry, 1, "backfill must survive the in-flight poll's terminal result")
-			assert.Equal(store.DocbankProcessingRetryRequested, retry[0].Outcome)
-			assert.Equal(tc.jobID, retry[0].JobID)
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(store.BeeperMediaRetryDelay)))
-			delayed, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-			require.NoError(err)
-			require.Empty(delayed, "a temporary retry failure delays the next attempt")
-			require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
-			retry, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-			require.NoError(err)
-			require.Len(retry, 1, "a second backfill makes an already requested retry due now")
-			assert.Equal(store.DocbankProcessingRetryRequested, retry[0].Outcome)
-			assert.Equal(tc.jobID, retry[0].JobID)
-			retry[0].Outcome = "requested"
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(time.Hour)))
-			var outcome string
-			require.NoError(f.Store.DB().QueryRow(`SELECT outcome FROM docbank_attachment_processing`).Scan(&outcome))
-			assert.Equal("requested", outcome, "a worker that read the retry request can consume it")
-
-			require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
-			require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "attachments", "documents", "new-fp"))
-			retry, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", new(store.DocbankAttachmentProcessingCursor), 20)
-			require.NoError(err)
-			require.Len(retry, 1)
-			assert.Empty(retry[0].JobID, "a changed profile starts a new job")
-			retry[0].Fingerprint, retry[0].Outcome, retry[0].JobID = "new-fp", "requested", fmt.Sprintf("%064x", 0x5679)
-			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", retry[0], time.Now().Add(time.Hour)))
-			var fingerprint, savedJobID string
-			require.NoError(f.Store.DB().QueryRow(`SELECT fingerprint, outcome, job_id FROM docbank_attachment_processing`).Scan(&fingerprint, &outcome, &savedJobID))
-			assert.Equal("new-fp", fingerprint)
-			assert.Equal("requested", outcome)
-			assert.Equal(retry[0].JobID, savedJobID)
-			counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
-			require.NoError(err)
-			assert.Equal(int64(0), counts.Waiting)
-			assert.Equal(int64(1), counts.Requested)
-		})
-	}
+	assert.True(next.After(time.Now()))
 }

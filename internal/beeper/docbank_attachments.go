@@ -628,9 +628,7 @@ func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAtt
 	defer cancel()
 	if d.JobID != "" {
 		job, err := w.client.JobStatus(ctx, d.JobID)
-		restart := err == nil && d.Outcome == store.DocbankProcessingRetryRequested &&
-			store.DocbankRequeueOutcome(processingJobAnswer(job).outcome)
-		if !docbankmedia.IsNotFound(err) && !restart {
+		if !docbankmedia.IsNotFound(err) {
 			return job, d.JobID, err
 		}
 	}
