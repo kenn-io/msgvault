@@ -2651,6 +2651,41 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('preserves Messages selection on Stay and clears it when a saved view is applied', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const settingsClient = settingsLeaveClient();
+    const client = createAPIClient(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/explore')) return Response.json(exploreResponse({ rows: [entry(0), entry(1)], total_count: 2 }));
+      return settingsClient.fetch(input, init);
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state, settings: settingsWithLeaveGuard(client) });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await screen.findByText('Synthetic subject 0');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: ' ' });
+      expect(selectionStatus().textContent).toBe('1 selected');
+      await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+      await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Stay' }));
+      expect((screen.getByLabelText('Stop when idle after') as HTMLInputElement).value).toBe('15m');
+      await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
+      await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
+      await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+      await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+      await screen.findByRole('grid', { name: 'Messages results' });
+      expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
+    } finally {
+      rendered.unmount(); state.destroy();
+    }
+  });
+
   it('returns focus to the results grid after Clear selection', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
@@ -2964,9 +2999,8 @@ it.each([
   rendered.unmount(); state.destroy();
 });
 
-it('keeps Stay focused when a saved view holds departure from dirty Settings', async () => {
-  window.history.replaceState(null, '', '/?workspace=settings');
-  const client = createAPIClient(async input => {
+function settingsLeaveClient() {
+  return createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
     if (path.endsWith('/settings')) return Response.json({
       groups: [{ id: 'server', label: 'Server' }],
@@ -2974,12 +3008,17 @@ it('keeps Stay focused when a saved view holds departure from dirty Settings', a
         label: 'Idle timeout', value: { string: '20m0s' }, restart_required: false }],
       person_enrichment_providers: [], pending_restart: false,
     }, { headers: { ETag: '"settings-1"' } });
+    if (path.endsWith('/operations/runs')) return Response.json({ runs: [sourceRun], unavailable_kinds: [], membership_revision: 1 });
+    if (path.includes('/operations/runs/')) return Response.json({ ...sourceRun, related_status: 'listSourceStatus', supported_actions: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [view(1, 'Budget threads')] });
     if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     return Response.json(exploreResponse());
   });
-  const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => {
+}
+
+function settingsWithLeaveGuard(client: ReturnType<typeof createAPIClient>) {
+  return createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => {
     const registerLeave = getContext('msgvault:hold-settings-leave');
     return { render: () => '<div></div>', setup: element => {
       const component = mount(SettingsWorkspace, { target: element, props: { client, operationsController: args[8](), category: 'server' },
@@ -2987,6 +3026,12 @@ it('keeps Stay focused when a saved view holds departure from dirty Settings', a
       return () => { void unmount(component); };
     } };
   });
+}
+
+it('keeps Stay focused when a saved view holds departure from dirty Settings', async () => {
+  window.history.replaceState(null, '', '/?workspace=settings');
+  const client = settingsLeaveClient();
+  const settings = settingsWithLeaveGuard(client);
   const state = new ExploreState(window);
   const rendered = render(AppShell, { client, state, settings });
   try {
@@ -2996,6 +3041,49 @@ it('keeps Stay focused when a saved view holds departure from dirty Settings', a
     await tick();
     expect(state.current.workspace).toBe('settings');
     expect(document.activeElement).toBe(stay);
+  } finally {
+    rendered.unmount(); state.destroy();
+  }
+});
+
+it.each(['Source status', 'indexed Back'] as const)('keeps the Settings leave choice after Past runs closes through %s', async action => {
+  window.history.replaceState(null, '', '/?workspace=sources');
+  const state = new ExploreState(window);
+  state.commitWorkspace('settings');
+  const client = settingsLeaveClient();
+  const rendered = render(AppShell, { client, state, settings: settingsWithLeaveGuard(client) });
+  try {
+    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Idle' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: /^Past runs/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
+    const depart = async () => {
+      if (action === 'Source status') await fireEvent.click(await screen.findByRole('button', { name: 'Open Sources status' }));
+      else {
+        const index = window.history.state.exploreIndex;
+        const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+        window.history.go(-3);
+        await popped;
+        await waitFor(() => expect(window.history.state.exploreIndex).toBe(index));
+      }
+    };
+    await depart();
+    await waitFor(() => expect(state.current.operationHistory).toBe(false));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Stay' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(state.current.operationHistory).toBe(false);
+    expect(state.current.workspace).toBe('settings');
+    expect((screen.getByLabelText('Stop when idle after') as HTMLInputElement).value).toBe('15m');
+    if (action === 'Source status') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Idle' }));
+      await fireEvent.click(screen.getByRole('menuitem', { name: /^Past runs/ }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
+    }
+    await depart();
+    await waitFor(() => expect(state.current.operationHistory).toBe(false));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+    await waitFor(() => expect(state.current.workspace).toBe('sources'));
+    expect(state.current.operationHistory).toBe(false);
   } finally {
     rendered.unmount(); state.destroy();
   }
