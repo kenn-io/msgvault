@@ -925,7 +925,7 @@
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
     const selector =
       kind === 'filters'
-        ? 'button[aria-label="Filter"]'
+        ? exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
         : kind === 'grouping'
           ? '[data-group-picker] button'
           : '[data-sort-menu] button';
