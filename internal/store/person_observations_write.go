@@ -330,6 +330,37 @@ func (s *Store) observationCitationMessageIDsLiveTx(ctx context.Context, tx *log
 	return true, nil
 }
 
+func (s *Store) observationBatchPremiseCitationMessageIDsTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) ([]int64, error) {
+	roots := make([]int64, 0)
+	for _, item := range batch.Items {
+		if item.Failure != nil {
+			continue
+		}
+		for _, edge := range item.Proposal.Premises {
+			premise, err := s.loadObservationTx(ctx, tx, edge.ID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return nil, fmt.Errorf("read observation premise before source lock: %w", err)
+			}
+			if premise.PersonID == batch.PersonID {
+				roots = append(roots, premise.ID)
+			}
+		}
+		reinforcementRoots, err := s.observationReinforcementPremiseRootsTx(ctx, tx, batch.PersonID, item)
+		if err != nil {
+			return nil, fmt.Errorf("read observation reinforcement premises before source lock: %w", err)
+		}
+		roots = append(roots, reinforcementRoots...)
+	}
+	_, citationAncestors, err := s.observationPremiseAncestorsTx(ctx, tx, batch.PersonID, roots)
+	if err != nil {
+		return nil, err
+	}
+	return s.observationCitationMessageIDsTx(ctx, tx, citationAncestors)
+}
+
 func (s *Store) observationReinforcementPremiseRootsTx(ctx context.Context, tx *loggedTx, personID int64, item PreparedObservation) ([]int64, error) {
 	candidateID := int64(0)
 	autoLookup := item.Proposal.ReinforcesID == nil
@@ -520,11 +551,27 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 			return result, err
 		}
 	}
-	// Source rows must be locked before the person row. That makes the
-	// apply-time alignment check stable against message edits and reassignment.
+	// Lock direct and premise sources before the person row so apply-time
+	// alignment remains stable through the write transaction.
 	premiseIDs, err := s.lockObservationSupportSourcesTx(ctx, tx, b)
 	if err != nil {
 		return result, err
+	}
+	premiseSourceIDs, err := s.observationCitationMessageIDsTx(ctx, tx, premiseIDs)
+	if err != nil {
+		return result, err
+	}
+	lockedPremiseSourceIDs := make(map[int64]struct{}, len(premiseSourceIDs))
+	for _, messageID := range premiseSourceIDs {
+		lockedPremiseSourceIDs[messageID] = struct{}{}
+	}
+	for _, item := range b.Items {
+		if item.Failure != nil {
+			continue
+		}
+		for _, citation := range item.Citations {
+			lockedPremiseSourceIDs[citation.Leaf.MessageID] = struct{}{}
+		}
 	}
 	if err := s.lockPersonMutationTx(ctx, tx, b.PersonID); err != nil {
 		return result, err
@@ -600,6 +647,19 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		premiseMessageIDs, err := s.observationCitationMessageIDsTx(ctx, tx, citationAncestors)
 		if err != nil {
 			return result, err
+		}
+		if out.Failure == nil {
+			for _, messageID := range premiseMessageIDs {
+				if _, locked := lockedPremiseSourceIDs[messageID]; !locked {
+					out.Failure = &personobs.ValidationError{Field: "support", Reason: "citation-source-changed"}
+					break
+				}
+			}
+		}
+		if out.Failure != nil {
+			out.Outcome = "dropped-invalid"
+			result.Items = append(result.Items, out)
+			continue
 		}
 		premiseSourcesLive, err := s.observationCitationMessageIDsLiveTx(ctx, tx, premiseMessageIDs)
 		if err != nil {
