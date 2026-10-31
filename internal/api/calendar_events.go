@@ -22,10 +22,10 @@ func (s *Server) registerCalendarEventsRoute(api huma.API) {
 	op := rawAPIV1Operation("listCalendarEvents", http.MethodGet, "/calendar/events", "List archived calendar occurrences")
 	op.Tags = []string{"Calendar"}
 	op.Parameters = []*huma.Param{
-		{Name: "from", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
-		{Name: "to", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
-		{Name: "limit", In: "query", Schema: &huma.Schema{Type: "integer", Default: 100, Minimum: new(float64(1)), Maximum: new(float64(500))}},
-		{Name: "cursor", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
+		{Name: "from", In: queryParamLocation, Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
+		{Name: "to", In: queryParamLocation, Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
+		{Name: "limit", In: queryParamLocation, Schema: &huma.Schema{Type: "integer", Default: 100, Minimum: new(float64(1)), Maximum: new(float64(500))}},
+		{Name: "cursor", In: queryParamLocation, Schema: &huma.Schema{Type: huma.TypeString}},
 	}
 	op.Responses = jsonResponsesFor[store.CalendarOccurrencePage](api)
 	op.Errors = []int{400, 401, 403, 500, 503}
