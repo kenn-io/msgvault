@@ -77,7 +77,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	}
 
 	if subsetRows <= 0 {
-		return usageErr(cmd, errors.New("--rows must be a positive integer"))
+		return withHint(validationErr(cmd, errors.New("--rows must be a positive integer")), "pass --rows with a positive count, for example --rows 500 -o /tmp/demo-archive")
 	}
 	if subsetIncludeVCardResources && !subsetIncludeProfiles {
 		return usageErr(cmd, errors.New(
@@ -89,12 +89,12 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 	// semantics; refuse early on a PG DSN to mirror the equivalent
 	// guard in backupDatabase (cmd/msgvault/cmd/deduplicate.go).
 	if store.IsPostgresURL(srcDBPath) {
-		return errors.New("create-subset is SQLite-only (uses ATTACH DATABASE); not supported with PostgreSQL stores")
+		return withHint(errors.New("export subset is SQLite-only (uses ATTACH DATABASE); not supported with PostgreSQL stores"), "select a SQLite archive; use PostgreSQL backup tools for a PostgreSQL archive")
 	}
 	if _, err := os.Stat(srcDBPath); os.IsNotExist(err) {
 		return fmt.Errorf(
 			"source database not found: %s\n"+
-				"Run 'msgvault init-db' and sync first",
+				"Run 'msgvault database init' and sync first",
 			srcDBPath,
 		)
 	}

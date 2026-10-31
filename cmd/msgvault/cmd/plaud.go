@@ -27,7 +27,7 @@ const plaudConfigHint = `Add to your config.toml:
   enabled = true
   # schedule = "30 */6 * * *"
 
-Then run 'msgvault add-plaud work' on the daemon host to authorize via browser`
+Then run 'msgvault source plaud add work' on the daemon host to authorize via browser`
 
 const plaudCheckOwnerOnlyFlag = "check-owner-only"
 
@@ -36,7 +36,7 @@ func resolvePlaudSource(args []string, cfg *config.Config) (*config.PlaudSource,
 		return nil, errors.New("configuration is unavailable")
 	}
 	if len(cfg.Plaud) == 0 {
-		return nil, errors.New("no [[plaud]] sources configured\n\n" + plaudConfigHint)
+		return nil, sourceNotConfigured("plaud", errors.New("no [[plaud]] sources configured\n\n"+plaudConfigHint))
 	}
 	if len(args) > 0 {
 		src := cfg.GetPlaudSource(args[0])
@@ -80,9 +80,11 @@ func newAddPlaudLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-plaud [identifier]",
 		Short: "Authorize and register a Plaud cloud account",
-		Long:  "Authorize a configured Plaud account using browser OAuth on the daemon host. The live account email must match account_email before registration.",
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runAddPlaudLocal,
+		Example: `  msgvault source plaud add
+  msgvault source plaud add work`,
+		Long: "Authorize a configured Plaud account using browser OAuth on the daemon host. The live account email must match account_email before registration." + "\n\nThe optional identifier selects the identifier value in a [[plaud]] config block. \n\n" + plaudConfigHint,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runAddPlaudLocal,
 	}
 	registerOAuthPreflightedFlag(cmd)
 	cmd.Flags().Bool(plaudCheckOwnerOnlyFlag, false, "Internal: Check the archive owner before browser authorization")
@@ -98,7 +100,7 @@ func preflightAddPlaudAuthorize(cmd *cobra.Command, args []string) error {
 		return errors.New("configuration is unavailable")
 	}
 	if IsRemoteMode(state) {
-		return errors.New("add-plaud cannot run through a configured remote: the localhost OAuth callback runs on the daemon host; run msgvault add-plaud there, or SSH with localhost:8091 forwarded and run msgvault --local add-plaud on the daemon host")
+		return errors.New("source plaud add cannot run through a configured remote: the localhost OAuth callback runs on the daemon host; run msgvault source plaud add there, or SSH with localhost:8091 forwarded and run msgvault --local source plaud add on the daemon host")
 	}
 	src, err := resolvePlaudSource(args, state.cfg)
 	if err != nil {
@@ -187,7 +189,7 @@ func runAddPlaudLocal(cmd *cobra.Command, args []string) error {
 	if err = runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Plaud account %s authorized. Confirmed account email: %s. Run msgvault sync-plaud %s\n", src.Identifier, email, src.Identifier)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Plaud account %s authorized. Confirmed account email: %s. Run msgvault source plaud sync %s\n", src.Identifier, email, src.Identifier)
 	return nil
 }
 
@@ -256,7 +258,9 @@ func validatePlaudOwnerBeforeAuthorization(state *invocation, identifier, email 
 }
 
 func newSyncPlaudCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "sync-plaud [identifier]", Short: "Sync Plaud recordings, transcripts, and notes", Long: `Archive Plaud cloud recordings as searchable meetings. Every run checks full
+	cmd := &cobra.Command{Use: "sync-plaud [identifier]", Short: "Sync Plaud recordings, transcripts, and notes",
+		Example: `  msgvault source plaud sync
+  msgvault source plaud sync work --full`, Long: `Archive Plaud cloud recordings as searchable meetings. Every run checks full
 transcripts, speaker labels and all note tabs for edits. With no identifier,
 all configured accounts are synced. --limit starts with newest recordings and
 rotates through least recently checked records. --after applies locally and implies
@@ -318,7 +322,7 @@ func runSyncPlaud(cmd *cobra.Command, args []string) error {
 		sources = state.cfg.Plaud
 	}
 	if len(sources) == 0 {
-		return errors.New("no [[plaud]] sources configured\n\n" + plaudConfigHint)
+		return sourceNotConfigured("plaud", errors.New("no [[plaud]] sources configured\n\n"+plaudConfigHint))
 	}
 	probe, err := cmd.Flags().GetBool("probe")
 	if err != nil {
@@ -394,7 +398,7 @@ func runSyncPlaud(cmd *cobra.Command, args []string) error {
 func registeredPlaudSource(st *store.Store, src config.PlaudSource) error {
 	registered, err := st.GetSourceByTypeAndIdentifier(sourceTypePlaud, src.Identifier)
 	if errors.Is(err, store.ErrSourceNotFound) {
-		return fmt.Errorf("plaud source %q is not registered; run msgvault add-plaud %s first", src.Identifier, src.Identifier)
+		return fmt.Errorf("plaud source %q is not registered; run msgvault source plaud add %s first", src.Identifier, src.Identifier)
 	}
 	if err != nil {
 		return fmt.Errorf("find registered Plaud source: %w", err)

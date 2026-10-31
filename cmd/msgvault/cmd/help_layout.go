@@ -175,13 +175,14 @@ var topLevelCommandGroups = map[string]string{
 	"sync-twilio":            helpGroupSources,
 	"tui":                    helpGroupRead,
 	"unpack-attachments":     helpGroupMaintenance,
-	"update":                 helpGroupOperations,
+	cmdUseUpdate:             helpGroupOperations,
 	"update-account":         helpGroupSources,
 	"verify":                 helpGroupSources,
 	"version":                helpGroupOperations,
 }
 
 func ensureHelpLayout(root *cobra.Command) {
+	ensureCommandGrammar(root)
 	if _, loaded := helpLayoutRoots.LoadOrStore(root, struct{}{}); loaded {
 		return
 	}

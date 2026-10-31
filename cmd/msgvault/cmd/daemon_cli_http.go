@@ -2,16 +2,21 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -86,8 +91,17 @@ func runDaemonCLICommandHTTPWithEnv(
 		cwd = ""
 	}
 
-	var draftFailureReported, paused bool
-	stderr := &childStderr{w: cmd.ErrOrStderr()}
+	var paused bool
+	isDraft := api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args)
+	// In-process drafts can return reconciliation data on failure. Buffer that
+	// diagnostic so it becomes details of the one terminal error, not a second
+	// JSON object. Success stdout and successful stderr retain their payloads.
+	var draftStderr bytes.Buffer
+	stderrWriter := cmd.ErrOrStderr()
+	if isDraft {
+		stderrWriter = &draftStderr
+	}
+	stderr := &childStderr{w: stderrWriter}
 	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{
 		Args: args, Env: env, Cwd: cwd, GrantDecided: grantDecided,
 	}, func(stream, data string) error {
@@ -102,20 +116,28 @@ func runDaemonCLICommandHTTPWithEnv(
 			if _, err := fmt.Fprint(stderr, data); err != nil {
 				return fmt.Errorf("write CLI stderr: %w", err)
 			}
-			draftFailureReported = (api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args)) && data != ""
 		}
 		return nil
 	})
-	if runErr != nil && draftFailureReported {
-		// Draft stderr already contains the failure result or fixed code.
-		cmd.SilenceErrors = true
+	if isDraft {
+		if runErr != nil {
+			diagnostic := classifyCLIError(cmd, runErr)
+			if data := bytes.TrimSpace(draftStderr.Bytes()); len(data) > 0 {
+				raw := jsontext.Value(bytes.Clone(data))
+				if raw.IsValid() {
+					diagnostic.Details = raw
+				} else {
+					diagnostic.Details, _ = json.Marshal(string(data), jsontext.AllowInvalidUTF8(true))
+				}
+			}
+			return diagnostic
+		}
+		if _, err := draftStderr.WriteTo(cmd.ErrOrStderr()); err != nil {
+			return fmt.Errorf("write draft diagnostics: %w", err)
+		}
 	}
-	if runErr != nil && strings.Contains(runErr.Error(), cliSubprocessExitSentinel) {
-		// The daemon subprocess already streamed its real error to our
-		// stderr and exited non-zero. Propagate a non-zero exit without
-		// letting cobra print a second, redundant error line.
-		cmd.SilenceErrors = true
-		return proxiedChildError{stderr: stderr}
+	if proxy, ok := proxiedChildFailure(stderr, runErr); ok {
+		return proxy
 	}
 	if runErr == nil && !paused && manualSyncCLICommand(args) {
 		reportCLISyncFinished(cmd, st)
@@ -148,7 +170,90 @@ func (s *childStderr) Write(p []byte) (int, error) {
 
 // proxiedChildError is errCLISubprocessProxied plus the stderr the child
 // streamed, so the parent can tell which errors the child already showed.
-type proxiedChildError struct{ stderr *childStderr }
+type proxiedChildError struct {
+	stderr        *childStderr
+	code          int
+	errorReported bool
+}
+
+func (e proxiedChildError) ExitCode() int {
+	if e.code > 0 {
+		return e.code
+	}
+	return 1
+}
+
+func proxiedChildFailure(stderr *childStderr, err error) (proxiedChildError, bool) {
+	if err == nil || err.Error() != cliSubprocessExitSentinel {
+		return proxiedChildError{}, false
+	}
+	reported := false
+	if child, ok := errors.AsType[interface {
+		error
+		ErrorReported() bool
+	}](err); ok {
+		reported = child.ErrorReported()
+	}
+	return proxiedChildError{stderr: stderr, code: ExitCode(err), errorReported: reported}, true
+}
+
+func (e proxiedChildError) alreadyReported() bool {
+	if e.errorReported {
+		return true
+	}
+	if e.stderr == nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimSpace(string(e.stderr.tail)), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	last := strings.TrimSpace(lines[len(lines)-1])
+	// Old daemons cannot send metadata. Only a complete terminal diagnostic
+	// qualifies; an informational line merely quoting JSON never does.
+	var record struct {
+		Error struct {
+			Code     string `json:"code"`
+			Message  string `json:"message"`
+			Hint     string `json:"hint"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(last), &record) == nil && record.Error.Code != "" && record.Error.Hint != "" && record.Error.ExitCode > 0 {
+		return true
+	}
+	if strings.HasPrefix(last, "hint:") {
+		for _, line := range slices.Backward(lines[:len(lines)-1]) {
+			if strings.HasPrefix(line, "Error:") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// legacyMessage finds the final human diagnostic from a pre-hint daemon.
+// New daemons use explicit metadata instead of inspecting their stderr text.
+func (e proxiedChildError) legacyMessage() string {
+	if e.stderr == nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(e.stderr.tail)), "\n")
+	for _, line := range slices.Backward(lines) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "time=") && strings.Contains(line, `msg="msgvault exit"`) {
+			continue
+		}
+		if message, ok := strings.CutPrefix(line, "Error: "); ok {
+			return message
+		}
+		return ""
+	}
+	return ""
+}
 
 func (e proxiedChildError) Error() string { return errCLISubprocessProxied.Error() }
 
@@ -180,7 +285,7 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 	if cmd == nil {
 		return nil, errors.New("missing command")
 	}
-	runArgs := daemonCLICommandPath(cmd)
+	runArgs := cligrammar.Legacy(daemonCLICommandPath(cmd))
 
 	flags := make([]*pflag.Flag, 0)
 	cmd.Flags().Visit(func(flag *pflag.Flag) {

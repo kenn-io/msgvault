@@ -181,7 +181,7 @@ func validateSetupActivityTimezone(zone string) error {
 // Without a default credential, add-account needs --oauth-app to pick a
 // named app.
 func setupAddAccountCommand(o *config.OAuthConfig) string {
-	const base = "msgvault add-account you@example.com"
+	const base = "msgvault source gmail add you@example.com"
 	app, configured := setupOAuthApp(o)
 	if !configured {
 		return ""
@@ -221,18 +221,18 @@ func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHas
 		b.WriteString("  1. Add a Gmail account:\n")
 		b.WriteString("     " + addAccountCmd + "\n\n")
 		b.WriteString("  2. Sync your emails:\n")
-		b.WriteString("     msgvault sync-full you@example.com\n\n")
+		b.WriteString("     msgvault sync full you@example.com\n\n")
 		switch {
 		case hasRemote && serviceAccount:
 			b.WriteString("  3. Configure the same service-account key on your NAS.\n")
 			b.WriteString("     Service accounts mint tokens on demand, so there is no token to export.\n\n")
 		case hasRemote && bundleHasSecrets:
-			b.WriteString("  3. Export token to your NAS (after add-account):\n")
-			b.WriteString("     msgvault export-token you@example.com\n\n")
+			b.WriteString("  3. Export token to your NAS (after source gmail add):\n")
+			b.WriteString("     msgvault account export-token you@example.com\n\n")
 		case hasRemote:
 			b.WriteString("  3. Configure the same OAuth app and token storage on your NAS.\n")
-			b.WriteString("     The bundle does not carry these client credentials. After add-account:\n")
-			b.WriteString("     msgvault export-token you@example.com\n\n")
+			b.WriteString("     The bundle does not carry these client credentials. After source gmail add:\n")
+			b.WriteString("     msgvault account export-token you@example.com\n\n")
 			if namedOAuthApp != "" {
 				b.WriteString("     On the NAS, after token upload, bind the account to this app with:\n")
 				b.WriteString("     " + addAccountCmd + "\n\n")
@@ -240,11 +240,11 @@ func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHas
 		}
 	} else {
 		b.WriteString("  Add a source, for example:\n")
-		b.WriteString("     msgvault add-imap --host imap.example.com --username you@example.com\n")
-		b.WriteString("     msgvault add-o365 you@example.com\n")
+		b.WriteString("     msgvault source imap add --host imap.example.com --username you@example.com\n")
+		b.WriteString("     msgvault source o365 add you@example.com\n")
 		// A configured remote would receive this local file path.
 		if !hasRemote {
-			b.WriteString("     msgvault import-mbox you@example.com /path/to/export.mbox\n")
+			b.WriteString("     msgvault import mbox you@example.com /path/to/export.mbox\n")
 		}
 		b.WriteString("\n")
 		b.WriteString("  Gmail needs a Google OAuth credential: run msgvault setup again when you have one.\n")

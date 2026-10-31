@@ -275,7 +275,7 @@ func (s *Store) RunStartupMigrationsContext(
 		res.Notice = fmt.Sprintf(
 			"Notice: legacy [identity] config has %d address(es) but no accounts exist yet.\n"+
 				"The migration will run on the next command after you add an account\n"+
-				"(e.g. 'msgvault add-account ...').",
+				"(e.g. 'msgvault source gmail add ...').",
 			addrs,
 		)
 	case applied:

@@ -2,8 +2,10 @@ package api
 
 import (
 	"slices"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/cligrammar"
 )
 
 // CLIRunDraftReplyCommand names the daemon CLI command that the daemon runs
@@ -25,16 +27,19 @@ const (
 // IsCLIRunDraftReply reports whether args invoke the in-process draft-reply
 // route.
 func IsCLIRunDraftReply(args []string) bool {
+	args = cligrammar.Legacy(args)
 	return len(args) > 0 && args[0] == CLIRunDraftReplyCommand
 }
 
 func IsCLIRunDraftCompose(args []string) bool {
+	args = cligrammar.Legacy(args)
 	return len(args) > 0 && args[0] == CLIRunDraftComposeCommand
 }
 
 // IsCLIRunDraftForward reports whether args invoke the in-process
 // draft-forward route.
 func IsCLIRunDraftForward(args []string) bool {
+	args = cligrammar.Legacy(args)
 	return len(args) > 0 && args[0] == CLIRunDraftForwardCommand
 }
 
@@ -47,6 +52,7 @@ func IsCLIRunDraftCreate(args []string) bool {
 // delegated draft-get, draft-edit, or draft-delete. Any listed permission
 // admits the command; the daemon then requires it on the draft's source.
 func CLIRunDraftLifecyclePermissions(command string) []agentgrant.Permission {
+	command = strings.Join(cligrammar.Legacy(strings.Fields(command)), " ")
 	switch command {
 	case CLIRunDraftGetCommand:
 		return []agentgrant.Permission{
@@ -64,6 +70,7 @@ func CLIRunDraftLifecyclePermissions(command string) []agentgrant.Permission {
 }
 
 func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
+	args = cligrammar.Legacy(args)
 	if grant == nil || len(args) == 0 {
 		return false
 	}
@@ -79,6 +86,7 @@ func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 // IsCLIRunDraftLifecycle reports whether args invoke one of the managed draft
 // lifecycle routes that the daemon executes in-process.
 func IsCLIRunDraftLifecycle(args []string) bool {
+	args = cligrammar.Legacy(args)
 	if len(args) == 0 {
 		return false
 	}
@@ -92,6 +100,7 @@ func IsCLIRunDraftLifecycle(args []string) bool {
 
 // IsCLIRunDraftSendAs reports whether args invoke the owner-only send-as read.
 func IsCLIRunDraftSendAs(args []string) bool {
+	args = cligrammar.Legacy(args)
 	return len(args) > 0 && args[0] == CLIRunDraftSendAsCommand
 }
 

@@ -30,7 +30,10 @@ var _ peoplebrowser.Backend = (*daemonclient.PeopleBrowser)(nil)
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive terminal UI",
-	Long: `Open an interactive terminal UI for browsing email, text messages,
+	Long: `Interactive only: requires a terminal. Agents and scripts can use search,
+show, query, and stats for the same archive.
+
+Open an interactive terminal UI for browsing email, text messages,
 meeting transcripts, and people.
 
 Email mode provides aggregate views by:
@@ -70,14 +73,18 @@ Press '?' in any mode for its complete key reference, or 'q' to quit.
 
 Performance:
   The TUI talks to the msgvault HTTP API. Local runs use the daemon, which owns
-  database access and server-side cache selection. Run 'msgvault build-cache'
+  database access and server-side cache selection. Run 'msgvault cache build'
   on the daemon host to prebuild analytics cache files for large archives.
 
 HTTP Mode:
   When [remote].url is configured, the TUI connects to that remote server.
   Otherwise it starts or reuses the local daemon. Use --local to force the local
   daemon when a remote is configured.`,
+	Example: "  msgvault tui",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !commandStdinIsTerminal(cmd) {
+			return withHint(usageErr(cmd, errors.New("tui needs an interactive terminal")), "use 'msgvault search <query> --json', 'msgvault show <id> --json', 'msgvault query <sql>', or 'msgvault stats' for scripts")
+		}
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration is unavailable")
@@ -293,7 +300,7 @@ type tuiBackend struct {
 
 const (
 	analyticsCacheNoticeRefreshInterval = time.Second
-	analyticsCacheFallbackNotice        = "Aggregate views are using live SQL while the analytics cache initializes or because no usable cache is available; they may load slowly. If this continues, run 'msgvault build-cache', then restart the daemon."
+	analyticsCacheFallbackNotice        = "Aggregate views are using live SQL while the analytics cache initializes or because no usable cache is available; they may load slowly. If this continues, run 'msgvault cache build', then restart the daemon."
 )
 
 // analyticsCacheNotice asks the daemon which analytics engine currently

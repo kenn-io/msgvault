@@ -396,7 +396,7 @@ func TestDelegationNotReachableOverHTTP(t *testing.T) {
 
 // TestDelegatedDraftAcquiresOperationGate tests the P1 operation-gate fix.
 // A delegated POST /api/v1/cli/run for draft-reply must register as a gate
-// waiter (gate label: "msgvault draft-reply"); an unauthenticated request with
+// waiter (gate label: "msgvault draft reply"); an unauthenticated request with
 // the same body must bypass the gate entirely and return without waiting.
 func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:paralleltest // subtests take turns holding one shared operation gate
 	var gate LabeledOperationGate = NewSerialOperationGate()
@@ -426,7 +426,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 		assert.False(t, srv.requestGateEligible(req), "unauthenticated request must not be gate eligible")
 	})
 
-	t.Run("delegated draft-reply registers as gate waiter with label msgvault draft-reply", func(t *testing.T) {
+	t.Run("delegated draft-reply registers as gate waiter with label msgvault draft reply", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			gate := NewSerialOperationGate()
 			srv := NewServerWithOptions(ServerOptions{
@@ -470,7 +470,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 
 			synctest.Wait()
 			assert.True(t, gate.HasRequestWaiters(),
-				"delegated draft-reply must register as gate waiter (label: msgvault draft-reply)")
+				"delegated draft-reply must register as gate waiter (label: msgvault draft reply)")
 
 			releaseHold()
 			synctest.Wait()

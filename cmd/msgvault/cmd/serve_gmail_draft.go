@@ -34,7 +34,7 @@ const (
 // authorizeGmailDraft applies the daemon-start policy snapshot. Reads from
 // the archive and owner-only send-as listing do not use this write grant.
 func authorizeGmailDraft(policy []config.GmailDraftSource, sourceID int64, sourceType string) error {
-	return authorizeDraftPolicy("gmail", policy, sourceID, sourceType)
+	return authorizeDraftPolicy(sourceTypeGmail, policy, sourceID, sourceType)
 }
 
 // authorizeDraftPolicy checks a [[{provider}.drafts]] opt-in for the source.
@@ -72,7 +72,7 @@ func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.
 		return nil
 	}
 	return draftReplyError("insufficient_scope", fmt.Errorf(
-		"saved Gmail grant for %s does not cover this operation; re-authorize with add-account %s --force",
+		"saved Gmail grant for %s does not cover this operation; re-authorize with source gmail add %s --force",
 		source.Identifier, source.Identifier,
 	))
 }
@@ -502,7 +502,7 @@ func gmailDraftLifecycleOutputWithoutMessage(
 		lifecycle = "discarded"
 	}
 	output := gmailDraftLifecycleOutput{
-		Status: status, Provider: "gmail", DraftID: draft.DraftID,
+		Status: status, Provider: sourceTypeGmail, DraftID: draft.DraftID,
 		Revision: draft.Revision, Lifecycle: lifecycle, MessageID: draft.CurrentMessageID,
 		SourceID: draft.SourceID,
 		Receipt: gmailDraftLifecycleReceipt{
@@ -631,7 +631,7 @@ func emitGmailDraftLifecycleOutput(
 		fmt.Fprintf(&data, "provider outcome: %s\n", textutil.SanitizeTerminal(providerOutcome))
 	}
 	if output.Status == gmailDraftStatusPending || output.Status == "accepted_local_failed" {
-		fmt.Fprintf(&data, "retry draft-%s with --revision %d to reconcile with Gmail\n", output.PendingOperation, output.Revision)
+		fmt.Fprintf(&data, "retry draft %s with --revision %d to reconcile with Gmail\n", output.PendingOperation, output.Revision)
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
 }
@@ -1180,12 +1180,12 @@ func parseDraftSendAsArgs(args []string) (string, bool, error) {
 			continue
 		}
 		if account != "" || !utf8.ValidString(arg) || strings.TrimSpace(arg) == "" || strings.ContainsAny(arg, "\x00\r\n") {
-			return "", false, draftReplyError("invalid_args", errors.New("draft-send-as requires one account"))
+			return "", false, draftReplyError("invalid_args", errors.New("draft send-as requires one account"))
 		}
 		account = arg
 	}
 	if account == "" {
-		return "", false, draftReplyError("invalid_args", errors.New("draft-send-as requires one account"))
+		return "", false, draftReplyError("invalid_args", errors.New("draft send-as requires one account"))
 	}
 	return account, jsonOutput, nil
 }
@@ -1210,13 +1210,13 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 		return draftReplyNotPermitted(errors.New("gmail send-as listing is owner-only"))
 	}
 	if len(req.Env) != 0 || req.Cwd != "" {
-		return draftReplyError("invalid_args", errors.New("draft-send-as accepts no environment or working directory"))
+		return draftReplyError("invalid_args", errors.New("draft send-as accepts no environment or working directory"))
 	}
 	account, jsonOutput, err := parseDraftSendAsArgs(req.Args)
 	if err != nil {
 		return err
 	}
-	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
+	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: account, SourceType: sourceTypeGmail})
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}

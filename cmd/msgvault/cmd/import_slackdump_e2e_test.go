@@ -32,7 +32,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-slackdump",
+		"import", "slackdump",
 		"--me", "alice@example.com",
 		fixture,
 	})
@@ -103,7 +103,7 @@ func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-slackdump",
+		"import", "slackdump",
 		"--me", "UALICE",
 		"--no-default-identity",
 		fixture,
@@ -143,7 +143,7 @@ func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-slackdump",
+		"import", "slackdump",
 		"--me", "UALICE",
 		exportRoot,
 	})
@@ -168,7 +168,7 @@ func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 
 func resetImportSlackdumpFlagsAfterTest(t *testing.T) {
 	t.Helper()
-	command, _, err := rootCmd.Find([]string{"import-slackdump"})
+	command, _, err := rootCmd.Find([]string{"import", "slackdump"})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		command.Flags().VisitAll(func(flag *pflag.Flag) {

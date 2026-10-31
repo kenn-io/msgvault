@@ -72,7 +72,7 @@ var attributeDefinitionListCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return errors.New("attribute definitions response was empty")
+			return readDaemonResponseError(errors.New("attribute definitions response was empty"))
 		}
 		if attributeDefinitionJSON {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200.Definitions, json.Deterministic(true))
@@ -180,7 +180,7 @@ var attributeDefinitionRenameCmd = &cobra.Command{
 		label := strings.TrimSpace(attributeDefinitionLabel)
 		description := strings.TrimSpace(attributeDefinitionDescription)
 		if label == "" && !attributeDefinitionClearDescription && description == "" {
-			return usageErr(cmd, errors.New("--label or --description is required"))
+			return withHint(usageErr(cmd, errors.New("--label or --description is required")), "pass --label 'New label', --description 'New description', or --clear-description")
 		}
 		if attributeDefinitionClearDescription && description != "" {
 			return usageErr(cmd, errors.New(
@@ -196,7 +196,7 @@ var attributeDefinitionRenameCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("attribute definition response was empty")
+			return readDaemonResponseError(errors.New("attribute definition response was empty"))
 		}
 		etag := fmt.Sprintf(`"attribute-definition-%d-r%d"`, id, current.JSON200.Revision)
 		body := generated.PatchAttributeDefinitionBody{}
@@ -248,7 +248,7 @@ var attributeDefinitionDeleteCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("attribute definition response was empty")
+			return readDaemonResponseError(errors.New("attribute definition response was empty"))
 		}
 		etag := fmt.Sprintf(`"attribute-definition-%d-r%d"`, id, current.JSON200.Revision)
 		_, err = daemonclient.APIResponseWithStatuses(client,
@@ -273,14 +273,14 @@ func attributeObjectTypeArg(cmd *cobra.Command) (string, error) {
 	if value == "" || value == personValue || value == "organization" {
 		return value, nil
 	}
-	return "", usageErr(cmd, errors.New("object type must be person or organization"))
+	return "", withHint(validationErr(cmd, errors.New("object type must be person or organization")), "choose --object-type person or --object-type organization")
 }
 
 func readCLIDocument(cmd *cobra.Command, value string) ([]byte, error) {
 	trimmed := strings.TrimSpace(value)
 	switch {
 	case trimmed == "":
-		return nil, usageErr(cmd, errors.New("a JSON document is required"))
+		return nil, withHint(usageErr(cmd, errors.New("a JSON document is required")), "pass inline JSON, @path, or - for standard input; attribute definitions use --definition, and typed values use --value-json")
 	case trimmed == "-":
 		data, err := io.ReadAll(cmd.InOrStdin())
 		if err != nil {
@@ -365,7 +365,7 @@ func writeCLIAttributeDefinition(
 	cmd *cobra.Command, definition *generated.AttributeDefinition,
 ) error {
 	if definition == nil {
-		return errors.New("attribute definition response was empty")
+		return readDaemonResponseError(errors.New("attribute definition response was empty"))
 	}
 	if attributeDefinitionJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), definition, json.Deterministic(true))

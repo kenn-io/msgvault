@@ -33,25 +33,25 @@ var syncIncrementalCmd = &cobra.Command{
 	Use:     "sync [email]",
 	Aliases: []string{"sync-incremental"},
 	Short:   "Sync new mail from Gmail, IMAP, and Microsoft accounts",
-	Long: `Fetch new and changed mail for email accounts. Gmail uses the History API
-after a first 'sync-full'; IMAP compares folder high-water marks; Microsoft
-Graph mail (add-o365 --graph) uses per-folder delta cursors. Chat and meeting
-sources have their own sync-<source> commands; file imports are not synced.
+	Long: `Fetch new and changed mail from Gmail, IMAP, and Microsoft 365 accounts.
+Start Gmail and IMAP with 'msgvault sync full <account>'. Gmail then uses its
+History API; IMAP compares folder high-water marks. Microsoft Graph mail starts
+and continues with this command, using one delta cursor per folder.
 
-IMAP accounts use folder-based sync. Unchanged folders are skipped when
-UIDVALIDITY/UIDNEXT high water marks are available.
+With no account, sync every configured email source with credentials. Use
+--source-id for an exact source ID from 'msgvault account list'. List IMAP
+folders with 'msgvault source imap folders <account>' before selecting --folder
+or --skip-folder.
 
-Microsoft Graph mail accounts (add-o365 --graph) use one delta cursor per
-folder. The first sync downloads every folder; later syncs fetch only the
-changes, including moves and deletes.
-
-If no email is specified, syncs all accounts that have credentials configured.
-Accounts without tokens or history IDs are skipped.
-
-If history is too old (Gmail returns 404), automatically reconciles the complete
-mailbox, preserving archived content while repairing source-deletion metadata.`,
+Chat, calendar and meeting sources use 'msgvault source <provider> sync'.
+File imports are not synced; re-run their import command to ingest new exports.
+If Gmail history expires, sync reconciles the full mailbox while preserving
+archived messages.`,
 	Example: `  msgvault sync                 # Sync all accounts
-  msgvault sync you@example.com   # Sync specific account`,
+  msgvault sync you@example.com   # Sync specific account
+  msgvault sync --source-id 3
+  msgvault sync you@example.com --folder INBOX
+  msgvault sync --build-cache`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if isDaemonCLISubprocess() {
@@ -108,6 +108,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 	var imapTargets []*store.Source
 	var msmailTargets []*store.Source
 	var syncErrors []string
+	var gmailFailure error
 
 	if selectorSet {
 		// Resolve all sources for the identifier and route
@@ -131,7 +132,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		}
 		if len(gmailTargets) == 0 && len(imapTargets) == 0 && len(msmailTargets) == 0 {
 			if len(allMatches) > 0 {
-				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail, imap and msmail are supported)", syncSelectorLabel(selector))
+				return fmt.Errorf("%s exists but its source type cannot be synced (only Gmail, IMAP and Microsoft 365 mail are supported); for chat/calendar/meeting sources see 'msgvault source --help'; file imports are not synced", syncSelectorLabel(selector))
 			}
 			if legacy {
 				// Token not in DB — assume Gmail (legacy behaviour).
@@ -145,7 +146,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("list sources: %w", err)
 		}
 		if !slices.ContainsFunc(allSources, isIncrementalSyncSource) {
-			return errors.New("no email accounts to sync; add one with 'msgvault add-account <gmail>', 'add-imap', or 'add-o365' (file imports are not synced)")
+			return sourceNotConfigured(sourceTypeGmail, errors.New("no email accounts to sync; add one with 'msgvault source gmail add <gmail>', 'msgvault source imap add --host imap.example.com --username you@example.com', or 'msgvault source o365 add you@example.com' (file imports are not synced)"))
 		}
 		allSources = activeSyncSources(allSources)
 		for _, src := range allSources {
@@ -157,7 +158,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 				}
 				appName := sourceOAuthApp(src)
 				if !src.SyncCursor.Valid || src.SyncCursor.String == "" {
-					fmt.Printf("Skipping %s (no history ID - run 'sync-full' first)\n", src.Identifier)
+					fmt.Printf("Skipping %s (no history ID - run 'msgvault sync full %s' first)\n", src.Identifier, src.Identifier)
 					continue
 				}
 				// Service accounts are always ready
@@ -173,7 +174,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 						continue
 					}
 					if !info.Exists {
-						fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
+						fmt.Printf("Skipping %s (no OAuth token - run 'msgvault source gmail add %s' first)\n", src.Identifier, src.Identifier)
 						continue
 					}
 				}
@@ -191,7 +192,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 				imapTargets = append(imapTargets, src)
 			case sourceTypeMSMail:
 				if !newGraphMailManager(state).HasToken(src.Identifier) {
-					fmt.Printf("Skipping %s (no Microsoft Graph token - run 'add-o365 %s --graph' first)\n", src.Identifier, src.Identifier)
+					fmt.Printf("Skipping %s (no Microsoft Graph token - run 'msgvault source o365 add %s --graph' first)\n", src.Identifier, src.Identifier)
 					continue
 				}
 				msmailTargets = append(msmailTargets, src)
@@ -204,7 +205,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 				// Surface the collected errors (e.g. broken OAuth config).
 				return fmt.Errorf("%s", syncErrors[0])
 			}
-			return errors.New("no accounts are ready to sync")
+			return withHint(errors.New("no accounts are ready to sync"), "read the Skipping lines above and fix each account; list configured sources with 'msgvault account list --json'")
 		}
 	}
 
@@ -239,10 +240,11 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			break
 		}
 		if target.source == nil {
-			syncErrors = append(syncErrors, target.email+": no source found - run 'sync-full' first")
+			syncErrors = append(syncErrors, target.email+": no source found; run 'msgvault account list --json' to check identifiers, or add Gmail with 'msgvault source gmail add "+target.email+"'")
 			continue
 		}
 		if err := runIncrementalSync(ctx, s, getOAuthMgr, target.source, state); err != nil {
+			gmailFailure = err
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", target.email, err))
 			continue
 		}
@@ -256,6 +258,11 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		fmt.Println("Errors:")
 		for _, e := range syncErrors {
 			fmt.Printf("  %s\n", e)
+		}
+		if len(syncErrors) == 1 && gmailFailure != nil {
+			diagnostic := classifyCLIError(cmd, gmailFailure)
+			diagnostic.Message = "1 account failed to sync: " + syncErrors[0]
+			return errors.Join(diagnostic, cacheErr)
 		}
 		return errors.Join(
 			fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; ")),
@@ -276,7 +283,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 	cfg := state.cfg
 	logger := state.logger
 	if !source.SyncCursor.Valid || source.SyncCursor.String == "" {
-		return errors.New("no history ID - run 'sync-full' first")
+		return &cliError{Kind: "uninitialized", Code: "sync_history_missing", Message: source.Identifier + " has no sync history", Hint: "run 'msgvault sync full " + source.Identifier + "' for the first download", ExitCode: 5}
 	}
 
 	email := source.Identifier
@@ -368,7 +375,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 
 func init() {
 	syncIncrementalCmd.Flags().Int64("source-id", 0, "Exact source ID to sync")
-	syncIncrementalCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan; either folder flag replaces saved exclusions for this run (repeatable)")
+	syncIncrementalCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (list with msgvault source imap folders); either folder flag replaces saved exclusions for this run (repeatable)")
 	syncIncrementalCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip; either folder flag replaces saved exclusions for this run (repeatable)")
 	rootCmd.AddCommand(addManualSyncCacheFlags(syncIncrementalCmd))
 }

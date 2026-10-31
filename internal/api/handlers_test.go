@@ -934,6 +934,59 @@ func TestHandleCLISyncFullStreamsOutput(t *testing.T) {
 	assert.Equal(CLISyncEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
 }
 
+type cliSyncMetadataTestError struct{}
+
+func (cliSyncMetadataTestError) Error() string       { return "msgvault: cli subprocess exited non-zero" }
+func (cliSyncMetadataTestError) ExitCode() int       { return 5 }
+func (cliSyncMetadataTestError) ErrorReported() bool { return true }
+
+func TestHandleCLISyncPreservesSubprocessErrorMetadata(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := &mockStore{syncFunc: func(context.Context, CLISyncRequest, func(CLISyncEvent) error) error {
+		return cliSyncMetadataTestError{}
+	}}
+	srv := newCLIHandlerTestServer(st)
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/sync?email=alice@example.com")
+	requireNDJSONResponse(t, resp)
+
+	events := decodeNDJSONEvents[CLISyncEvent](t, resp.Body)
+	require.Len(events, 1, "subprocess error event")
+	assert.Equal(CLISyncEvent{
+		Type:          cliStreamEventTypeError,
+		Error:         "msgvault: cli subprocess exited non-zero",
+		ErrorReported: true,
+		ExitCode:      5,
+	}, events[0])
+}
+
+func TestHandleCLIRepairMessagePreservesSubprocessErrorMetadata(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := &mockStore{repairMessageFunc: func(_ context.Context, _ CLIRepairMessageRequest, _ func(CLIRepairMessageEvent) error) error {
+		return cliSyncMetadataTestError{}
+	}}
+	srv := newCLIHandlerTestServer(st)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/repair-message", strings.NewReader(`{"reference":"1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+	requireNDJSONResponse(t, resp)
+
+	events := decodeNDJSONEvents[CLIRepairMessageEvent](t, resp.Body)
+	require.Len(events, 1, "subprocess error event")
+	assert.Equal(CLIRepairMessageEvent{
+		Type:          cliStreamEventTypeError,
+		Error:         "msgvault: cli subprocess exited non-zero",
+		ErrorReported: true,
+		ExitCode:      5,
+	}, events[0])
+}
+
 func TestHandleCLISyncAcceptsFolderFilters(t *testing.T) {
 	t.Parallel()
 	var gotReq CLISyncRequest
@@ -5944,8 +5997,8 @@ func TestHandleFastSearchReportsCacheEncodingError(t *testing.T) {
 	var got ErrorResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal("cache_encoding_error", got.Error)
-	assert.NotContains(got.Message, "msgvault repair-encoding")
-	assert.Contains(got.Message, "msgvault build-cache --full-rebuild")
+	assert.NotContains(got.Message, "msgvault repair encoding")
+	assert.Contains(got.Message, "msgvault cache build --full-rebuild")
 }
 
 func TestHandleFastSearchForwardsSourceIDs(t *testing.T) {
@@ -6715,7 +6768,7 @@ func TestHandleDeepSearchBodyReadinessErrorIsActionable(t *testing.T) {
 	engine := &bodySearchTestEngine{
 		MockEngine: &querytest.MockEngine{},
 		searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' or complete the FTS backfill", query.ErrMessageBodySearchIndexStale)
+			return nil, fmt.Errorf("%w: run 'msgvault fts rebuild' or complete the FTS backfill", query.ErrMessageBodySearchIndexStale)
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
@@ -6727,7 +6780,7 @@ func TestHandleDeepSearchBodyReadinessErrorIsActionable(t *testing.T) {
 	var resp ErrorResponse
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
 	assert.Equal("body_search_index_unavailable", resp.Error, "error code")
-	assert.Contains(resp.Message, "rebuild-fts", "actionable rebuild guidance")
+	assert.Contains(resp.Message, "fts rebuild", "actionable rebuild guidance")
 	assert.Contains(resp.Message, "backfill", "actionable backfill guidance")
 }
 

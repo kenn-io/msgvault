@@ -360,9 +360,8 @@ function Install-Msgvault {
 
         # Get started instructions
         Write-Host "Get started:"
-        Write-Host "  msgvault init-db"
-        Write-Host "  msgvault add-account you@gmail.com"
-        Write-Host "  msgvault sync-full you@gmail.com --limit 100"
+        Write-Host "  msgvault quickstart"
+        Write-Host "  msgvault --help"
         Write-Host "  msgvault tui"
 
     } finally {

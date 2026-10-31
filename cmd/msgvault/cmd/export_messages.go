@@ -182,12 +182,12 @@ have a record_type: manifest first, then source, conversation, and message
 records, and a final complete record with counts.
 
 --start and --end are required RFC3339 timestamps. Narrow the export with
---source <type>:<email> (type and email from 'msgvault list-accounts
+--source <type>:<email> (type and email from 'msgvault account list
 --json', for example mbox:you@example.com), --message-type (exact values
 such as email, sms, whatsapp, meeting_transcript; unknown values match
 nothing), or --person-id from 'msgvault person list'.`,
-		Example: `  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z > sept.jsonl
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z --source mbox:you@example.com`,
+		Example: `  msgvault export messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z > sept.jsonl
+  msgvault export messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z --source mbox:you@example.com`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -219,7 +219,7 @@ func runExportMessages(
 		return err
 	}
 	if opts.Format != "jsonl" {
-		return fmt.Errorf("unsupported --format %q (expected jsonl)", opts.Format)
+		return withHint(validationErr(cmd, fmt.Errorf("unsupported --format %q (expected jsonl)", opts.Format)), "use --format jsonl; export messages writes JSON Lines to stdout")
 	}
 	messageTypes, err := normalizeMessageExportTypes(opts.MessageTypes)
 	if err != nil {
@@ -248,7 +248,7 @@ func runExportMessages(
 	if cmd.Flags().Changed("person-id") {
 		resolved, err := personresolver.Resolve(cmd.Context(), st, personresolver.Reference{Kind: personresolver.ReferencePerson, ID: opts.PersonID}, nil)
 		if err != nil {
-			return fmt.Errorf("resolve --person-id: %w", err)
+			return withHint(fmt.Errorf("resolve --person-id: %w", err), "find durable person IDs with 'msgvault person list --json'")
 		}
 		scope = &resolved.Scope
 		personID = &resolved.PersonID
@@ -295,20 +295,20 @@ func runExportMessages(
 func parseMessageExportBounds(startValue, endValue string) (time.Time, time.Time, error) {
 	start, err := time.Parse(time.RFC3339, startValue)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf(
+		return time.Time{}, time.Time{}, withHint(validationErr(nil, fmt.Errorf(
 			"invalid --start %q (expected RFC3339): %w", startValue, err,
-		)
+		)), "use --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z; start is inclusive and end is exclusive")
 	}
 	end, err := time.Parse(time.RFC3339, endValue)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf(
+		return time.Time{}, time.Time{}, withHint(validationErr(nil, fmt.Errorf(
 			"invalid --end %q (expected RFC3339): %w", endValue, err,
-		)
+		)), "use --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z; start is inclusive and end is exclusive")
 	}
 	start = start.UTC()
 	end = end.UTC()
 	if !start.Before(end) {
-		return time.Time{}, time.Time{}, errors.New("--start must be before --end")
+		return time.Time{}, time.Time{}, withHint(validationErr(nil, errors.New("--start must be before --end")), fmt.Sprintf("choose an increasing RFC3339 window; received --start %q and --end %q (end is exclusive)", startValue, endValue))
 	}
 	return start, end, nil
 }
@@ -317,7 +317,7 @@ func normalizeMessageExportTypes(values []string) ([]string, error) {
 	normalized := append([]string(nil), values...)
 	for _, value := range normalized {
 		if strings.TrimSpace(value) == "" {
-			return nil, errors.New("--message-type must be non-empty")
+			return nil, withHint(validationErr(nil, errors.New("--message-type must be non-empty")), "omit --message-type to include all types, or pass an exact value such as --message-type email or --message-type meeting_transcript")
 		}
 	}
 	sort.Strings(normalized)
@@ -331,9 +331,9 @@ func normalizeMessageExportSelectors(
 	for _, value := range values {
 		sourceType, identifier, ok := strings.Cut(value, ":")
 		if !ok || strings.TrimSpace(sourceType) == "" || strings.TrimSpace(identifier) == "" {
-			return nil, fmt.Errorf(
+			return nil, withHint(validationErr(nil, fmt.Errorf(
 				"invalid --source %q (expected non-empty type:identifier)", value,
-			)
+			)), "read type and identifier from 'msgvault account list --json', then pass --source mbox:you@example.com")
 		}
 		selectors = append(selectors, exportMessagesSourceSelector{
 			SourceType: sourceType,
@@ -369,9 +369,7 @@ func resolveMessageExportSources(
 			}
 		}
 		if matched == nil {
-			return nil, fmt.Errorf(
-				"source %s:%s not found", selector.SourceType, selector.Identifier,
-			)
+			return nil, withHint(&cliError{Kind: "not_found", Code: "source_not_found", ExitCode: 4, Message: fmt.Sprintf("source %s:%s not found", selector.SourceType, selector.Identifier)}, "read exact source types and identifiers with 'msgvault account list --json'")
 		}
 		sourceIDs = append(sourceIDs, matched.ID)
 	}

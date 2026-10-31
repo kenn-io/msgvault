@@ -40,11 +40,11 @@ Deduplication operates over all three concepts and has its own [Deduplication](/
 
 ## OAuth Apps and Tokens
 
-For personal Gmail accounts, a single `client_secret.json` supports all of them. Each `add-account` call authorizes one account and stores a separate token file.
+For personal Gmail accounts, a single `client_secret.json` supports all of them. Each `source gmail add` call authorizes one account and stores a separate token file.
 
 Google Workspace organizations often restrict OAuth to apps created within their own org. If a Workspace account fails to authorize with your default app, create a separate OAuth app inside that org and add it as a named app in `config.toml`. See the [OAuth Setup Guide](/docs/guides/oauth-setup/#google-workspace-accounts) for the full walkthrough.
 
-Workspace admins can also use a Google service account with domain-wide delegation. Configure `service_account_key` under `[oauth]` or `[oauth.apps.<name>]`, authorize the service account client in the Google Admin Console, then run `msgvault add-account user@domain.com`. Service-account accounts do not store per-user refresh tokens; msgvault mints delegated tokens on demand.
+Workspace admins can also use a Google service account with domain-wide delegation. Configure `service_account_key` under `[oauth]` or `[oauth.apps.<name>]`, authorize the service account client in the Google Admin Console, then run `msgvault source gmail add user@domain.com`. Service-account accounts do not store per-user refresh tokens; msgvault mints delegated tokens on demand.
 
 <figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
   <img src="/docs/assets/generated/concepts/oauth-multi-account-concept.png" alt="Two OAuth apps and the token files they create. A default app (config block [oauth]) authorizes personal Gmail accounts personal@gmail.com and other@gmail.com; a named app ([oauth.apps.acme]) authorizes the Workspace account you@acme.com. Each add-account run writes its own token file under ~/.msgvault/tokens/, color-matched to its account." loading="lazy" style="width: 100%; display: block;" />
@@ -54,14 +54,14 @@ Workspace admins can also use a Google service account with domain-wide delegati
 
 ```bash
 # Gmail accounts (OAuth)
-msgvault add-account personal@gmail.com
-msgvault add-account you@acme.com --oauth-app acme   # Workspace org
+msgvault source gmail add personal@gmail.com
+msgvault source gmail add you@acme.com --oauth-app acme   # Workspace org
 
 # IMAP accounts (password)
-msgvault add-imap --host imap.fastmail.com --username you@fastmail.com
+msgvault source imap add --host imap.fastmail.com --username you@fastmail.com
 
 # Microsoft 365 / Outlook.com (OAuth2 over IMAP)
-msgvault add-o365 you@outlook.com
+msgvault source o365 add you@outlook.com
 ```
 
 Gmail accounts open a browser for OAuth authorization. IMAP accounts prompt for a password and test the connection. All accounts share the same archive database (SQLite by default, or PostgreSQL) and attachment storage.
@@ -69,7 +69,7 @@ Gmail accounts open a browser for OAuth authorization. IMAP accounts prompt for 
 Start by listing what msgvault already knows about. Every command in this guide takes the identifier from this list (typically the email address or source name):
 
 ```bash
-msgvault list-accounts
+msgvault account list
 ```
 
 !!! tip "Add every account as a Test user"
@@ -77,13 +77,13 @@ msgvault list-accounts
 
 ### Gmail addresses and display names
 
-Pass your Gmail account's email address to `add-account`, then select that
+Pass your Gmail account's email address to `source gmail add`, then select that
 account in Google's consent screen. The argument is required and must be a bare
 email address. A label such as `Work` belongs in `--display-name`:
 
 ```bash
-msgvault add-account user@example.com --display-name "Work"
-msgvault update-account user@example.com --display-name "Personal"
+msgvault source gmail add user@example.com --display-name "Work"
+msgvault account update user@example.com --display-name "Personal"
 ```
 
 Msgvault checks the authenticated mailbox against the requested address, including
@@ -94,13 +94,13 @@ primary address returned by Google; a different local part is not assumed to be
 an alias of the same account.
 
 Changing a display name keeps the account identifier and archived mail intact.
-Commands such as `sync-full` continue to use the identifier from `list-accounts`.
+Commands such as `sync full` continue to use the identifier from `account list`.
 
 ### Recovering an older mislabeled Gmail account
 
 Older versions could store credentials under a label that did not match the
 authenticated mailbox. Account identifiers cannot currently be renamed in place.
-If you only need a readable name, use `update-account --display-name` above.
+If you only need a readable name, use `account update --display-name` above.
 
 To replace an incorrect identifier, remove the old Gmail source and add the
 primary address. **Removal deletes that source's local messages and sync state.**
@@ -110,10 +110,10 @@ identifier rather than moving mail to the new one. Removal does not delete mail
 from Google.
 
 ```bash
-msgvault list-accounts
-msgvault remove-account old-label --type gmail
-msgvault add-account user@example.com
-msgvault sync-full user@example.com
+msgvault account list
+msgvault account remove old-label --type gmail
+msgvault source gmail add user@example.com
+msgvault sync full user@example.com
 ```
 
 Reuse the `--oauth-app` value originally used for this account, if any. Named
@@ -135,7 +135,7 @@ Sync all accounts at once by omitting the email argument:
 
 ```bash
 # Full sync all accounts
-msgvault sync-full
+msgvault sync full
 
 # Incremental sync all accounts
 msgvault sync
@@ -144,7 +144,7 @@ msgvault sync
 Or sync a specific account:
 
 ```bash
-msgvault sync-full personal@gmail.com
+msgvault sync full personal@gmail.com
 msgvault sync work@company.com
 ```
 
@@ -212,8 +212,8 @@ not be marked as yours. Confirm it and update the existing messages without a
 provider resync:
 
 ```bash
-msgvault repair-identity you@example.com
-msgvault repair-identity --type imap
+msgvault repair identity you@example.com
+msgvault repair identity --type imap
 ```
 
 The default source type is Gmail. The command skips accounts whose own address
@@ -223,11 +223,11 @@ do not prevent it from adding the primary account address.
 ### Select an exact source
 
 A live account and an import can share the same email address. Use the numeric
-ID from `list-accounts` when a command needs one exact source:
+ID from `account list` when a command needs one exact source:
 
 ```bash
 msgvault sync --source-id 3
-msgvault sync-full --source-id 3
+msgvault sync full --source-id 3
 msgvault identity show --source-id 3
 ```
 
@@ -306,4 +306,4 @@ not replace the Email account filter.
 
 ## Command Reference
 
-See the [CLI Reference](/docs/cli-reference/#add-account) for the complete flag list on `add-account`, `add-imap`, `add-o365`, `identity`, and `collection`.
+See the [CLI Reference](/docs/cli-reference/#add-account) for the complete flag list on `source gmail add`, `source imap add`, `source o365 add`, `identity`, and `collection`.

@@ -340,7 +340,7 @@ func TestOwnerAndMissingSourceRefusedBeforeContent(t *testing.T) {
 	require.NoError(st.RemoveSource(src.ID))
 	_, err = NewImporter(st, f).Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"})
 	require.Error(err)
-	assert.Contains(err.Error(), "add-plaud")
+	assert.Contains(err.Error(), "source plaud add")
 }
 
 func TestRepeatedListPageAndCancellationFailRun(t *testing.T) {

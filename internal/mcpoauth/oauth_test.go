@@ -328,7 +328,7 @@ func TestTokenSource_MissingFileIsActionable(t *testing.T) {
 	m := newDefaultManager("", t.TempDir())
 	_, err := m.TokenSource(context.Background(), "nobody")
 	require.Error(err)
-	require.Contains(err.Error(), "add-circleback")
+	require.Contains(err.Error(), "source circleback add")
 }
 
 func TestHandlerAuthorizeIsActionable(t *testing.T) {
@@ -337,7 +337,7 @@ func TestHandlerAuthorizeIsActionable(t *testing.T) {
 	h := m.Handler("alice@example.com")
 	err := h.Authorize(context.Background(), nil, &http.Response{Status: "401 Unauthorized", Body: http.NoBody})
 	require.Error(err)
-	require.Contains(err.Error(), "add-circleback alice@example.com")
+	require.Contains(err.Error(), "source circleback add alice@example.com")
 }
 
 func TestSanitizeIdentifier_Injective(t *testing.T) {

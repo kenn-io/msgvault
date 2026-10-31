@@ -100,14 +100,14 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", mboxPath,
 		"--source-type", "hey",
 		"--label", "hey",
 		"--no-resume",
 		"--checkpoint-interval", "1",
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox")
+	require.NoError(rootCmd.ExecuteContext(context.Background()), "import mbox")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -199,7 +199,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", mboxPath,
 		"--source-type", "hey",
 		"--no-resume",
@@ -278,7 +278,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", mboxPath,
 		"--source-type", "hey",
 		"--no-resume",
@@ -448,13 +448,13 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", zipPath,
 		"--source-type", "hey",
 		"--checkpoint-interval", "1",
 		"--no-attachments",
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox resume")
+	require.NoError(rootCmd.ExecuteContext(context.Background()), "import mbox resume")
 
 	st2, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")

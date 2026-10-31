@@ -68,11 +68,9 @@ var addOmiCmd = &cobra.Command{
 Reads the API key from the matching [[omi]] entry in config.toml and
 validates conversation and transcript access with a live API call. Create a
 Developer API key with conversations:read in Omi Settings > Developer.
-Set base_url to your backend root for a self-hosted instance.
-
-Examples:
-  msgvault add-omi
-  msgvault add-omi you@example.com`,
+Set base_url to your backend root for a self-hosted instance.`,
+	Example: `  msgvault source omi add
+  msgvault source omi add you@example.com`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -122,7 +120,7 @@ Examples:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nOmi account registered successfully!\n")
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Identifier: %s\n\n", src.Identifier)
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "You can now run:")
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault sync-omi %s\n", src.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault source omi sync %s\n", src.Identifier)
 		return nil
 	},
 }
@@ -142,12 +140,10 @@ With no identifier, every configured [[omi]] source is synced.
 Use --full to rescan history, picking up edits to older conversations and
 rewriting derived projections; --after bounds a full sync to conversations
 created after the given date. Re-fetched conversations are upserted in place,
-so --full repairs existing rows without duplicates.
-
-Examples:
-  msgvault sync-omi
-  msgvault sync-omi you@example.com --limit 5
-  msgvault sync-omi --full --after 2024-01-01`,
+so --full repairs existing rows without duplicates.`,
+	Example: `  msgvault source omi sync
+  msgvault source omi sync you@example.com --limit 5
+  msgvault source omi sync --full --after 2024-01-01`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -240,7 +236,7 @@ Examples:
 			if interruptCtx.Err() != nil {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), "\nInterrupted.")
 				if sum != nil && sum.CheckpointSaved {
-					_, _ = fmt.Fprint(cmd.OutOrStdout(), " Run sync-omi again to resume.")
+					_, _ = fmt.Fprint(cmd.OutOrStdout(), " Run msgvault source omi sync again to resume.")
 				}
 				_, _ = fmt.Fprintln(cmd.OutOrStdout())
 				if err == nil {

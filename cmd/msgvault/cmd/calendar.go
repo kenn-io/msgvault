@@ -72,12 +72,14 @@ func newAddCalendarLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-calendar <email>",
 		Short: "Authorize Google Calendar and register its calendars",
+		Example: `  msgvault source calendar add you@gmail.com
+  msgvault source calendar add you@gmail.com --write --headless`,
 		Long: "Grants read-only Calendar access (calendar.readonly) to an account and " +
 			"registers its calendars for sync. Use --write to also grant calendar.events. " +
 			"Source write_calendars and invite_calendars remain explicit opt-ins. If the account already has a Gmail token, " +
 			"re-consent bundles Gmail + Calendar together; keep BOTH checked on the consent " +
 			"screen so Gmail access is not dropped.",
-		Args: cobra.ExactArgs(1),
+		Args: sourceExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -444,14 +446,15 @@ func newSyncCalendarLocalCmd() *cobra.Command {
 
 func newSyncCalendarLocalCmdWithClientBuilder(buildClient calendarSyncClientBuilder) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "sync-calendar <name|email>",
-		Aliases: []string{"sync-calendar-incremental"},
-		Short:   "Sync Google Calendar events for an account",
+		Use:   "sync-calendar <name|email>",
+		Short: "Sync Google Calendar events for an account",
+		Example: `  msgvault source calendar sync you@gmail.com
+  msgvault source calendar sync you@gmail.com --full --after 2026-01-01`,
 		Long: "Syncs calendar events for an account. The first run (or --full) does a full " +
 			"sync that enumerates and registers calendars; subsequent runs are incremental " +
 			"via syncToken. The account is resolved from a [[gcal]] config entry (by name or " +
 			"email) or used directly as an email. --after/--before bound a full sync only.",
-		Args: cobra.ExactArgs(1),
+		Args: sourceExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -964,7 +967,7 @@ type calendarSyncNextOptions struct {
 }
 
 func calendarSyncNextCommand(email, oauthApp string, opts calendarSyncNextOptions) string {
-	parts := []string{daemonService, "sync-calendar"}
+	parts := []string{daemonService, "source", "calendar", "sync"}
 	if oauthApp != "" {
 		parts = append(parts, "--oauth-app", oauthApp)
 	}
@@ -1021,7 +1024,7 @@ func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, int
 			return nil, err
 		}
 		if len(write) > 0 && write[0] && !mgr.HasScope(ctx, accountEmail, oauth.ScopeCalendarEvents) {
-			return nil, fmt.Errorf("%w: calendar event writes are not authorized; run 'msgvault add-calendar %s --write'", calcontrol.ErrDenied, accountEmail)
+			return nil, fmt.Errorf("%w: calendar event writes are not authorized; run 'msgvault source calendar add %s --write'", calcontrol.ErrDenied, accountEmail)
 		}
 		tokenSource, err = getTokenSourceWithReauth(ctx, mgr, accountEmail, interactive, calendarReauthHint)
 		if err != nil {
@@ -1047,7 +1050,7 @@ func requireCalendarTokenForSync(ctx context.Context, mgr *oauth.Manager, accoun
 
 func calendarTokenActionError(accountEmail string) error {
 	return fmt.Errorf(
-		"%w: calendar access for %s is not authorized; run 'msgvault add-calendar %s' to grant %s",
+		"%w: calendar access for %s is not authorized; run 'msgvault source calendar add %s' to grant %s",
 		calcontrol.ErrDenied,
 		accountEmail,
 		accountEmail,

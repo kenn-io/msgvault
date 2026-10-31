@@ -10,8 +10,9 @@ import (
 )
 
 var unpackAttachmentsCmd = &cobra.Command{
-	Use:   "unpack-attachments",
-	Short: "Restore packed attachments to loose files",
+	Use:     "unpack-attachments",
+	Short:   "Restore packed attachments to loose files",
+	Example: "  msgvault daemon stop\n  msgvault attachment unpack",
 	Long: `Restore every packed attachment blob to a loose file and remove the
 pack files.
 
@@ -21,7 +22,7 @@ as it is written back.
 
 The daemon must be stopped first ('msgvault daemon stop'): a running
 daemon holds pack files open, so this command refuses to run while one
-is detected. Re-running 'msgvault pack-attachments' packs everything
+is detected. Re-running 'msgvault attachment pack' packs everything
 again. When a remote server is configured, run this command on the archive
 host or pass --local to select this machine's local archive intentionally.`,
 	Args: cobra.NoArgs,
@@ -44,7 +45,7 @@ var unpackAttachmentsAfterDaemonLock func()
 func refuseUnpackWithLiveDaemon(dataDir string) error {
 	if findAnyDaemonRuntime(dataDir) != nil {
 		return errors.New(
-			"unpack-attachments: a msgvault daemon is running and holds pack files open; " +
+			"attachment unpack: a msgvault daemon is running and holds pack files open; " +
 				"stop it with `msgvault daemon stop`, then retry")
 	}
 	return nil
@@ -58,12 +59,12 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	cfg := state.cfg
 	if IsRemoteMode(state) {
 		return errors.New(
-			"unpack-attachments is local-only; run it on the archive host, " +
+			"attachment unpack is local-only; run it on the archive host, " +
 				"or pass --local to select this machine's local archive intentionally")
 	}
 	daemonLock, err := tryAcquireDaemonOwnerLock(cfg.Data.DataDir)
 	if err != nil {
-		return fmt.Errorf("unpack-attachments: %w", err)
+		return withHint(fmt.Errorf("attachment unpack: %w", err), "run 'msgvault daemon stop', retry 'msgvault attachment unpack', then run 'msgvault daemon start'")
 	}
 	defer func() {
 		if err := daemonLock.Close(); err != nil {

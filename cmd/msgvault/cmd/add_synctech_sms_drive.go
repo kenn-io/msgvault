@@ -30,9 +30,11 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 		SkipAuthForTest bool
 	}
 	cmd := &cobra.Command{
-		Use:   "add-synctech-sms-drive <name>",
-		Short: "Configure a Google Drive SMS Backup & Restore source",
-		Args:  cobra.ExactArgs(1),
+		Use:     "add-synctech-sms-drive <name>",
+		Short:   "Configure a Google Drive SMS Backup & Restore source",
+		Long:    `Save a named Google Drive source for SMS Backup & Restore XML backups. --folder-id identifies the Drive folder, --google-account chooses its OAuth account, and --owner-phone identifies your messages. The daemon imports stable backup files on the saved schedule. For a local file, use msgvault import synctech-sms instead.`,
+		Example: `  msgvault source synctech-sms add phone-backups --folder-id example-drive-folder --google-account you@gmail.com --owner-phone +15551234567`,
+		Args:    sourceExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -107,9 +109,11 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 
 func newSyncSynctechSMSCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "sync-synctech-sms <name>",
-		Short: "Run one configured synctech-sms source now",
-		Args:  cobra.ExactArgs(1),
+		Use:     "sync-synctech-sms <name>",
+		Short:   "Run one configured synctech-sms source now",
+		Long:    `Run one saved SMS Backup & Restore source immediately. The name is the value supplied to source synctech-sms add. Already processed backups are skipped; the saved owner number identifies outgoing messages.`,
+		Example: `  msgvault source synctech-sms sync phone-backups`,
+		Args:    sourceExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -377,7 +381,7 @@ func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource
 	ts, err := mgr.TokenSource(ctx, src.GoogleAccount)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("no Drive OAuth token for %s; run add-synctech-sms-drive on a machine with browser auth first: %w", src.GoogleAccount, err)
+			return nil, fmt.Errorf("no Drive OAuth token for %s; run source synctech-sms add on a machine with browser auth first: %w", src.GoogleAccount, err)
 		}
 		return nil, err
 	}

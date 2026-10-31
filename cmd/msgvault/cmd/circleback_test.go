@@ -166,7 +166,7 @@ func TestConfiguredCirclebackMissingRegisteredSourceStopsBeforeConnect(t *testin
 	})
 
 	require.Error(err)
-	assert.Contains(err.Error(), "run msgvault add-circleback work")
+	assert.Contains(err.Error(), "run msgvault source circleback add work")
 	sources, listErr := st.ListSources(circleback.SourceType)
 	require.NoError(listErr)
 	assert.Empty(sources, "scheduled sync must not create an unregistered source")
@@ -191,7 +191,7 @@ func TestAddCirclebackIdentityConfirmsPrimaryWhenAliasExists(t *testing.T) {
 	assert.Equal("user-b@example.com", identities[0].Address)
 	assert.Equal("user-z@example.com", identities[1].Address)
 	assert.Contains(out.String(), "Confirmed identity user-z@example.com")
-	assert.Contains(out.String(), "sync-circleback work --full")
+	assert.Contains(out.String(), "source circleback sync work --full")
 	assert.Nil(newAddCirclebackLocalCmd().Flags().Lookup("no-default-identity"),
 		"meeting identity confirmation is mandatory")
 }

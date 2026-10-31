@@ -21,7 +21,7 @@ func TestImportSlackdumpCommandRequiresIdentity(t *testing.T) {
 
 	err := command.ExecuteContext(context.Background())
 	require.Error(t, err)
-	assert.ErrorContains(t, err, `required flag(s) "me" not set`)
+	assert.ErrorContains(t, err, "--me is required: your Slack user ID or profile email")
 }
 
 func TestImportSlackdumpCommandRejectsNegativeLimitBeforeRouting(t *testing.T) {

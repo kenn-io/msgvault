@@ -36,7 +36,7 @@ type chatwootRunOptions struct {
 
 func resolveChatwootProfiles(args []string, cfg *config.Config, inboxScoped bool) ([]config.ChatwootSource, error) {
 	if len(cfg.Chatwoot) == 0 {
-		return nil, errors.New("no [[chatwoot]] profiles configured\n\n" + chatwootConfigHint)
+		return nil, sourceNotConfigured("chatwoot", errors.New("no [[chatwoot]] profiles configured\n\n"+chatwootConfigHint))
 	}
 	if len(args) > 0 {
 		src := cfg.GetChatwootSource(args[0])
@@ -117,7 +117,7 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 	}
 	for _, id := range src.Inboxes {
 		if src.InboxIncluded(id) && registered[id] == nil {
-			slog.Warn("Configured Chatwoot inbox is not registered; run add-chatwoot", "inbox", id, "profile", src.Identifier)
+			slog.Warn("Configured Chatwoot inbox is not registered; run msgvault source chatwoot add", "inbox", id, "profile", src.Identifier)
 		}
 	}
 	if len(requested) > 0 {
@@ -127,7 +127,7 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 				return nil, fmt.Errorf("chatwoot inbox %d is excluded by profile %q", id, src.Identifier)
 			}
 			if registered[id] == nil {
-				return nil, fmt.Errorf("chatwoot inbox %d is not registered; run msgvault add-chatwoot %s", id, src.Identifier)
+				return nil, fmt.Errorf("chatwoot inbox %d is not registered; run msgvault source chatwoot add %s", id, src.Identifier)
 			}
 			if registered[id].MergedIntoSourceID != 0 {
 				return nil, fmt.Errorf("chatwoot inbox %d: %w", id, store.ErrSourceRetired)
@@ -141,7 +141,7 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 		if retiredIncluded && len(requested) == 0 {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("no included Chatwoot inboxes registered for %q; run msgvault add-chatwoot %s", src.Identifier, src.Identifier)
+		return nil, fmt.Errorf("no included Chatwoot inboxes registered for %q; run msgvault source chatwoot add %s", src.Identifier, src.Identifier)
 	}
 	slices.Sort(ids)
 	return ids, nil
@@ -242,7 +242,9 @@ func registerScheduledChatwootJob(sched *scheduler.Scheduler, src config.Chatwoo
 func newAddChatwootCmd() *cobra.Command {
 	return &cobra.Command{
 		Use: "add-chatwoot [identifier]", Short: "Register Chatwoot inboxes",
-		Long: "Register inboxes selected by configured [[chatwoot]] profiles. With no identifier, process all profiles. Tokens are read from the daemon environment.",
+		Example: `  msgvault source chatwoot add
+  msgvault source chatwoot add work`,
+		Long: "Register inboxes selected by configured [[chatwoot]] profiles. With no identifier, process all profiles. Tokens are read from the daemon environment." + "\n\nThe optional identifier selects the identifier value in a [[chatwoot]] config block. \n\n" + chatwootConfigHint,
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -298,6 +300,8 @@ func newSyncChatwootCmd() *cobra.Command {
 	var inboxes []string
 	cmd := &cobra.Command{
 		Use: "sync-chatwoot [identifier]", Short: "Sync Chatwoot inboxes",
+		Example: `  msgvault source chatwoot sync
+  msgvault source chatwoot sync work --full`,
 		Long: "Sync selected registered inboxes, or all configured profiles with no identifier. With several profiles, --inbox requires an identifier. Discover new messages through activity scans, resume unfinished history, and recheck recent files and calls for seven days. Daily reconciliation recovers messages committed out of order. --limit bounds history; artifact refreshes run additionally.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if run.Limit < 0 {

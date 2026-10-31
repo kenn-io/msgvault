@@ -245,8 +245,10 @@ func defaultDocumentsCommandDeps() documentsCommandDeps {
 
 func newDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	parent := &cobra.Command{
-		Use:   documentsCommandName,
-		Short: "Manage document attachment indexing",
+		Use:     documentsCommandName,
+		Short:   "Manage document attachment indexing",
+		Long:    "Extract searchable text from archived attachments under the configured document policy. Inspect setup status, record exact provider consent where required, build, then inspect documents status and search. Hosted processing may upload attachment content.",
+		Example: "  msgvault documents status --json\n  msgvault documents search \"invoice example\" --json",
 	}
 	parent.AddCommand(newProbeMistralCmd(deps))
 	parent.AddCommand(newConsentMistralCmd(deps))
@@ -268,22 +270,24 @@ func newSearchDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	var rawDirections []string
 	var afterValue, beforeValue string
 	command := &cobra.Command{
-		Use:   "search <query>",
-		Short: "Search extracted document attachments",
-		Args:  cobra.MinimumNArgs(1),
+		Use:     "search <query>",
+		Short:   "Search extracted document attachments",
+		Long:    "Search document text already extracted from archived attachments. Lexical search stays local; semantic and hybrid modes send query text to the configured embedding provider and require its consent.",
+		Example: "  msgvault documents search \"invoice example\" --json",
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			request.Query = strings.Join(args, " ")
 			if command.Flags().Changed("person") && request.PersonID <= 0 {
-				return errors.New("--person must be a positive person ID")
+				return validationErr(command, errors.New("--person must be a positive person ID"))
 			}
 			if command.Flags().Changed("participant") && request.ParticipantID <= 0 {
-				return errors.New("--participant must be a positive participant ID")
+				return validationErr(command, errors.New("--participant must be a positive participant ID"))
 			}
 			if request.PersonID > 0 && request.ParticipantID > 0 {
-				return errors.New("--person and --participant are mutually exclusive")
+				return usageErr(command, errors.New("--person and --participant are mutually exclusive"))
 			}
 			if len(rawDirections) > 0 && request.PersonID == 0 && request.ParticipantID == 0 {
-				return errors.New("--direction requires --person or --participant")
+				return usageErr(command, errors.New("--direction requires --person or --participant"))
 			}
 			request.Directions = make([]personscope.Direction, len(rawDirections))
 			for i, direction := range rawDirections {
@@ -296,13 +300,13 @@ func newSearchDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 			}
 			var err error
 			if request.After, err = parseDocumentSearchDate(afterValue); err != nil {
-				return fmt.Errorf("invalid --after: %w", err)
+				return validationErr(command, fmt.Errorf("invalid --after: %w", err))
 			}
 			if request.Before, err = parseDocumentSearchDate(beforeValue); err != nil {
-				return fmt.Errorf("invalid --before: %w", err)
+				return validationErr(command, fmt.Errorf("invalid --before: %w", err))
 			}
 			if request.After != nil && request.Before != nil && !request.After.Before(*request.Before) {
-				return errors.New("--after must be before --before")
+				return validationErr(command, errors.New("--after must be before --before"))
 			}
 			return runSearchDocuments(command, request, jsonOutput, deps)
 		},
@@ -343,9 +347,11 @@ func newProbeMistralCmd(deps documentsCommandDeps) *cobra.Command {
 	var fixtureDirectory string
 	var validateOnly bool
 	command := &cobra.Command{
-		Use:   "probe-mistral",
-		Short: "Probe stateless Mistral OCR document format support",
-		Args:  cobra.NoArgs,
+		Use:     "probe-mistral",
+		Short:   "Probe stateless Mistral OCR document format support",
+		Long:    "Probe supported document formats using a complete synthetic fixture directory. --validate-only checks the fixtures locally without contacting Mistral. Review the resulting capabilities before consenting to archive uploads.",
+		Example: "  msgvault documents probe-mistral --fixtures /path/to/synthetic-fixtures --validate-only",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return runProbeMistral(command, fixtureDirectory, validateOnly, deps)
 		},
@@ -360,9 +366,11 @@ func newConsentMistralCmd(deps documentsCommandDeps) *cobra.Command {
 	var capabilityPath string
 	var confirmed bool
 	command := &cobra.Command{
-		Use:   "consent-mistral",
-		Short: "Record consent for the exact Mistral document policy",
-		Args:  cobra.NoArgs,
+		Use:     "consent-mistral",
+		Short:   "Record consent for the exact Mistral document policy",
+		Long:    "Record consent to the configured Mistral upload and privacy policy using an authenticated capability manifest. Consent covers this exact policy; changes may require consent again. Review the disclosure before passing --yes.",
+		Example: "  msgvault documents consent-mistral --capabilities capabilities.json --yes",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, nil)
@@ -382,9 +390,11 @@ func newBuildDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	var fullRebuild bool
 	var confirmed bool
 	command := &cobra.Command{
-		Use:   documentBuildSubcommand,
-		Short: "Extract and index eligible document attachments",
-		Args:  cobra.NoArgs,
+		Use:     documentBuildSubcommand,
+		Short:   "Extract and index eligible document attachments",
+		Long:    "Extract attachment text using the configured document provider and index the result. Review setup status and the exact provider consent before --yes; hosted extraction can upload attachment bytes.",
+		Example: "  msgvault documents build --yes",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			mode := documentBuildIncremental
 			if fullRebuild {
@@ -408,9 +418,11 @@ func newResumeDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 	var limit int
 	var confirmed bool
 	command := &cobra.Command{
-		Use:   cmdUseResume,
-		Short: "Resume pending and retry-ready document extraction",
-		Args:  cobra.NoArgs,
+		Use:     cmdUseResume,
+		Short:   "Resume pending and retry-ready document extraction",
+		Long:    "Continue document extraction under the existing configured policy. This processes pending and retry-ready attachments; use retry to reset a terminal failure before resuming.",
+		Example: "  msgvault documents resume --yes",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDocumentMutationViaDaemon(command, args, documentProviderForwardEnv(invocationFromCommand(command)))
@@ -428,9 +440,11 @@ func newDocumentStatusCmd(deps documentsCommandDeps) *cobra.Command {
 	var capabilityPath string
 	var jsonOutput bool
 	command := &cobra.Command{
-		Use:   statusValue,
-		Short: "Show document attachment indexing status",
-		Args:  cobra.NoArgs,
+		Use:     statusValue,
+		Short:   "Show document attachment indexing status",
+		Long:    "Inspect extraction coverage and the current document policy without starting extraction. Use this to find missing consent, failed work, or a profile ID before building or retiring.",
+		Example: "  msgvault documents status --json",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			// Without a Mistral manifest, the daemon's own provider policy
 			// defines the profile, so a remote-only client can inspect it.
@@ -449,9 +463,11 @@ func newRetryDocumentCmd(deps documentsCommandDeps) *cobra.Command {
 	var capabilityPath string
 	var canonicalBlobHash string
 	command := &cobra.Command{
-		Use:   "retry",
-		Short: "Retry one terminal document extraction",
-		Args:  cobra.NoArgs,
+		Use:     "retry",
+		Short:   "Retry one terminal document extraction",
+		Long:    "Reset a terminal extraction failure for one exact lowercase attachment SHA-256. Correct the reported provider or input problem first, then resume extraction.",
+		Example: "  msgvault documents retry --hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDocumentMutationViaDaemon(command, args, nil)
@@ -468,9 +484,11 @@ func newRetryDocumentCmd(deps documentsCommandDeps) *cobra.Command {
 func newRetireDocumentProfileCmd(deps documentsCommandDeps) *cobra.Command {
 	var confirmed bool
 	command := &cobra.Command{
-		Use:   "retire <profile-id>",
-		Short: "Retire one exact document extraction profile",
-		Args:  cobra.ExactArgs(1),
+		Use:     "retire <profile-id>",
+		Short:   "Retire one exact document extraction profile",
+		Long:    "Retire the exact profile ID reported by documents status. Review the selected profile before --yes; this changes derived document indexing rather than the original attachment bytes.",
+		Example: "  msgvault documents retire profile-example --yes",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(command, args)
@@ -486,9 +504,11 @@ func newPurgeDocumentDerivedCmd(deps documentsCommandDeps) *cobra.Command {
 	var canonicalBlobHash string
 	var confirmed bool
 	command := &cobra.Command{
-		Use:   "purge-derived",
-		Short: "Delete local document derivatives for one exact attachment hash",
-		Args:  cobra.NoArgs,
+		Use:     "purge-derived",
+		Short:   "Delete local document derivatives for one exact attachment hash",
+		Long:    "Permanently delete extracted local document derivatives for one attachment SHA-256. Original archived attachment bytes remain separate. Review the exact hash before confirming with --yes.",
+		Example: "  msgvault documents purge-derived --hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --yes",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(command, args)

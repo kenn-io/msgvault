@@ -23,11 +23,9 @@ func newUpdateAccountCmd() *cobra.Command {
 
 Set a display name or archive alias. Provider credentials and identifiers
 remain unchanged. Beeper sources can be marked history-only, or have their
-re-anchor marker accepted after manual verification.
-
-Examples:
-  msgvault update-account you@gmail.com --display-name "Work"
-  msgvault update-account --source-id 42 --display-name "Personal Email"`,
+re-anchor marker accepted after manual verification.`,
+		Example: `  msgvault account update you@gmail.com --display-name "Work"
+  msgvault account update --source-id 42 --display-name "Personal Email"`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runUpdateAccount,
 	}
@@ -42,7 +40,7 @@ Examples:
 func runUpdateAccount(cmd *cobra.Command, args []string) error {
 	acceptReanchor, _ := cmd.Flags().GetBool("accept-reanchor")
 	if updateDisplayName == "" && !cmd.Flags().Changed("alias") && !cmd.Flags().Changed("history-only") && !acceptReanchor {
-		return usageErr(cmd, errors.New("nothing to update: set a display name, alias, history-only, or accept-reanchor"))
+		return usageErr(cmd, errors.New("nothing to update: pass at least one of --display-name, --alias, --history-only, --accept-reanchor"))
 	}
 	if cmd.Flags().Changed("alias") {
 		alias, _ := cmd.Flags().GetString("alias")
@@ -61,7 +59,7 @@ func runUpdateAccount(cmd *cobra.Command, args []string) error {
 	case sourceIDSet && account != "":
 		return usageErr(cmd, errors.New("account and source ID are mutually exclusive"))
 	case !sourceIDSet && account == "":
-		return usageErr(cmd, errors.New("account or source ID is required"))
+		return usageErr(cmd, errors.New("account or source ID is required; choose an account or --source-id from 'msgvault account list --json'"))
 	}
 
 	st, _, err := OpenHTTPStore(cmd.Context())

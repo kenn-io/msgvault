@@ -78,7 +78,7 @@ enabled = false
 EOF
 
 if ! MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$$" \
-  "$binary" --home "$home_dir" --local build-cache --full-rebuild > "$scratch/cache.log" 2>&1; then
+  "$binary" --home "$home_dir" --local cache build --full-rebuild > "$scratch/cache.log" 2>&1; then
   cat "$scratch/cache.log" >&2
   exit 1
 fi

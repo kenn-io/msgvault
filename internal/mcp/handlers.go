@@ -556,7 +556,7 @@ func translateDaemonRequestError(err error) *toolResult {
 	case "body_search_unavailable":
 		message = "body_search_unavailable: exact message body search is unavailable"
 	case "body_search_index_unavailable":
-		message = "body_search_index_unavailable: message body search index is unavailable; ask the archive owner to search or run rebuild-fts, then retry"
+		message = "body_search_index_unavailable: message body search index is unavailable; ask the archive owner to search or run fts rebuild, then retry"
 	case "invalid_message_id":
 		message = "invalid_message_id: seed message ID is invalid"
 	default:
@@ -2535,7 +2535,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		SkippedCount: skipped,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
-		NextStep:     searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
+		NextStep:     searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault deletion execute'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute'. Run 'msgvault deletion cancel " + manifest.ID + "' to cancel",
 	}
 
 	if skipped > 0 {

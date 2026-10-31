@@ -303,7 +303,7 @@ describe('ExploreLoader', () => {
         error: 'cache_unavailable',
         message: 'The analytical cache is rebuilding.',
         readiness: 'building',
-        recovery_action: 'msgvault build-cache'
+        recovery_action: 'msgvault cache build'
       }, { status: 503 });
     });
     const state = new ExploreState(window);

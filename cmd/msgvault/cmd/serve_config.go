@@ -16,7 +16,7 @@ func addServeConfigFlags(cmd *cobra.Command) {
 
 func serveRuntimeOverrides(cmd *cobra.Command) config.RuntimeOverrides {
 	var overrides config.RuntimeOverrides
-	if cmd.Name() != "serve" {
+	if stableCommandPath(cmd) != "serve" {
 		return overrides
 	}
 	if flag := cmd.Flags().Lookup("bind"); flag != nil && flag.Changed {

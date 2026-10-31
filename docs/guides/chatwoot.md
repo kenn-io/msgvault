@@ -44,12 +44,12 @@ Non-loopback instances must use HTTPS.
 4. Register the inboxes, then sync:
 
     ```bash
-    msgvault add-chatwoot support
-    msgvault sync-chatwoot support
+    msgvault source chatwoot add support
+    msgvault source chatwoot sync support
     ```
 
 See the [configuration reference](../configuration.md#chatwoot) for all fields.
-Re-run `add-chatwoot` after adding or renaming inboxes or changing the include
+Re-run `source chatwoot add` after adding or renaming inboxes or changing the include
 filter. Sync processes selected inboxes already registered in the archive. Renaming the
 profile or inbox does not create another archive source; instance URL, account
 ID, and inbox ID determine its identity.
@@ -60,7 +60,7 @@ Sync includes resolved, pending, snoozed, and open conversations, including
 public system activity. Private notes are left out unless
 `include_private = true`. Sync refuses to run with `include_private` off once
 private notes are archived. Turning it on later and running
-`sync-chatwoot --full` backfills skipped notes.
+`source chatwoot sync --full` backfills skipped notes.
 
 Deleting a message in Chatwoot replaces its text and removes its files. When a
 later sync sees the deletion, msgvault keeps the archived text, files, and any
@@ -86,7 +86,7 @@ Media downloads are enabled by default. Call recordings have a separate 4 GiB
 per-file cap (`recording_max_bytes`); other media keeps the 250 MiB cap
 (`max_media_mb`). Zero selects each default.
 Set `media = false` for metadata and existing transcripts only, or use
-`sync-chatwoot --no-media` to defer downloads for one run. Eligible recent files
+`source chatwoot sync --no-media` to defer downloads for one run. Eligible recent files
 retry during normal syncs for seven days; older files need `--full`.
 Location and fallback attachments can
 contain metadata without downloadable files. Source access, unavailable files,
@@ -107,8 +107,8 @@ storage on an internal address, fail to download and retry like other failed
 files.
 
 ```bash
-msgvault sync-chatwoot support --inbox 7 --limit 100
-msgvault sync-chatwoot support --full
+msgvault source chatwoot sync support --inbox 7 --limit 100
+msgvault source chatwoot sync support --full
 ```
 
 `--limit` bounds history messages per conversation in this run. Pending media
@@ -198,4 +198,4 @@ visible archive scope.
 The integration reads messages and media. Its sync command does not send
 messages or delete source records. Read the [CLI reference](../cli-reference.md#sync-chatwoot)
 for flags and the [meeting guide](../usage/meetings.md) for meeting queries.
-Use [purge-excluded-media](../cli-reference.md#purge-excluded-media) to remove archived bytes now excluded by your media settings while keeping message text.
+Use [attachment purge-excluded](../cli-reference.md#purge-excluded-media) to remove archived bytes now excluded by your media settings while keeping message text.

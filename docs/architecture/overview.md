@@ -97,8 +97,8 @@ is configured. For ordinary archive commands, `--local` selects the local daemon
 it does not make the CLI open SQLite directly. Mutating jobs wait for the daemon's
 writer coordination instead of competing through independent foreground database
 connections. Some offline recovery commands require the daemon to be stopped. The
-offline `migrate` command applies the candidate binary's main archive schema
-migrations directly; `schema-version --database` reads its completion marker
+offline `database migrate` command applies the candidate binary's main archive schema
+migrations directly; `database version --database` reads its completion marker
 without migrations or daemon startup. See the [CLI contracts](../cli-reference.md#schema-version). The
 [daemon guide](../guides/daemon-migration.md) owns those lifecycle rules.
 
@@ -147,7 +147,7 @@ distinct consent and scope rules; see [configuration](../configuration.md).
 Staging writes a reviewable manifest for one exact source. Execution requires
 explicit consent from the invoking client. It records source-deletion state
 while retaining archived messages and attachment content. Local commands such
-as `gc` and `delete-deduped` can remove archive data and have separate
+as `gc` and `deletion purge-deduped` can remove archive data and have separate
 confirmation and backup rules. See [deletion](../usage/deletion.md) and
 [deduplication](../usage/deduplication.md).
 

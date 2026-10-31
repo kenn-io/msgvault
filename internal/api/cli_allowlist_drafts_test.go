@@ -21,19 +21,19 @@ import (
 func TestCLIRunDraftAllowlist(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
-	assertions.True(cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
-	assertions.True(cliRunCommandAllowed([]string{"draft-forward", "42", "--source-id=7", "--to=bob@example.com"}))
+	assertions.True(CLIRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
+	assertions.True(CLIRunCommandAllowed([]string{"draft-forward", "42", "--source-id=7", "--to=bob@example.com"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
 	assertions.True(IsCLIRunDraftSendAs([]string{"draft-send-as", "alice@example.com"}))
-	assertions.True(cliRunCommandAllowed([]string{"draft-send-as", "alice@example.com"}))
-	assertions.True(cliRunCommandAllowed([]string{"draft-edit", "draft-abc", "--revision=1", "--body=body"}))
-	assertions.True(cliRunCommandAllowed([]string{"draft-delete", "draft-abc", "--revision=1"}))
+	assertions.True(CLIRunCommandAllowed([]string{"draft-send-as", "alice@example.com"}))
+	assertions.True(CLIRunCommandAllowed([]string{"draft-edit", "draft-abc", "--revision=1", "--body=body"}))
+	assertions.True(CLIRunCommandAllowed([]string{"draft-delete", "draft-abc", "--revision=1"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-recover", "draft-abc", "--revision=1"}))
-	assertions.True(cliRunCommandAllowed([]string{"draft-recover", "draft-abc", "--revision=1"}))
-	assertions.False(cliRunCommandAllowed([]string{"configure-imap-drafts"}))
-	assertions.False(cliRunCommandAllowed([]string{"draft-reply"}))
-	assertions.False(cliRunCommandAllowed([]string{"draft-get"}))
-	assertions.False(cliRunCommandAllowed([]string{"draft-send-as"}))
+	assertions.True(CLIRunCommandAllowed([]string{"draft-recover", "draft-abc", "--revision=1"}))
+	assertions.False(CLIRunCommandAllowed([]string{"configure-imap-drafts"}))
+	assertions.False(CLIRunCommandAllowed([]string{"draft-reply"}))
+	assertions.False(CLIRunCommandAllowed([]string{"draft-get"}))
+	assertions.False(CLIRunCommandAllowed([]string{"draft-send-as"}))
 }
 
 func TestDelegatedDraftRecoverRequiresActionPermission(t *testing.T) {
@@ -156,7 +156,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		assert.Equal(t, http.StatusOK, code)
 	})
 
-	t.Run("draft-forward requires owner access", func(t *testing.T) {
+	t.Run("draft forward requires owner access", func(t *testing.T) {
 		code := sendDelegated([]string{"draft-forward", "42", "--source-id=1", "--to=alice@example.com"})
 		assert.Equal(t, http.StatusBadRequest, code)
 	})
@@ -169,7 +169,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		// add-imap is not in cliRunCommandAllowed at all → command_not_allowed
+		// add-imap is not in CLIRunCommandAllowed at all → command_not_allowed
 		var resp ErrorResponse
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 		assert.Equal(t, "command_not_allowed", resp.Error)

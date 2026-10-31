@@ -934,8 +934,9 @@ type setupProvidersOutput struct {
 func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
 	var options setupProvidersOptions
 	command := &cobra.Command{
-		Use:   "providers",
-		Short: "Configure retrieval and people inference providers",
+		Use:     "providers",
+		Short:   "Configure retrieval and people inference providers",
+		Example: "  msgvault setup providers --dry-run --json",
 		Long: `Read the environment and configure every lane that is still unset:
 
   ` + setupVoyageKeyEnv + `   text search with Voyage contextual embeddings (conversation

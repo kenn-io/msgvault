@@ -71,6 +71,41 @@ func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 	})
 }
 
+func TestRunCLISyncPreservesSubprocessErrorMetadata(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/cli/sync", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, `{"type":"stderr","data":"Error: source is not configured\n"}`+"\n")
+		_, _ = io.WriteString(w, `{"type":"error","error":"msgvault: cli subprocess exited non-zero","exit_code":5,"error_reported":true}`+"\n")
+	}))
+
+	st, err := New(Config{
+		URL:           "http://127.0.0.1",
+		AllowInsecure: true,
+		HTTPClient:    srv.Client(),
+		RequestMode:   RequestModeCLI,
+	})
+	require.NoError(err, "New")
+	var stderr strings.Builder
+	err = st.RunCLISync(t.Context(), CLISyncRequest{Email: "alice@example.com"}, func(stream, data string) error {
+		if stream == "stderr" {
+			_, _ = stderr.WriteString(data)
+		}
+		return nil
+	})
+	require.Error(err, "subprocess error")
+	child, ok := errors.AsType[*CLIRunError](err)
+	require.True(ok, "CLISync returns the typed stream error")
+	assert.True(child.HasExitCode(), "child exit code is explicit")
+	assert.Equal(5, child.ExitCode(), "exit code")
+	assert.True(child.ErrorReported(), "child reported its diagnostic")
+	assert.Equal("Error: source is not configured\n", stderr.String(), "stderr")
+}
+
 func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
 	require := require.New(t)
 	requestStarted := make(chan struct{})

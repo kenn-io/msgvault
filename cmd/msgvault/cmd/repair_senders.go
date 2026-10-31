@@ -15,8 +15,9 @@ import (
 func newRepairSendersCmd() *cobra.Command {
 	apply := false
 	cmd := &cobra.Command{
-		Use:   "repair-senders",
-		Short: "Restore missing email senders from archived MIME",
+		Use:     "repair-senders",
+		Short:   "Restore missing email senders from archived MIME",
+		Example: "  msgvault repair senders\n  msgvault repair senders --apply",
 		Long: `Scan archived email MIME for messages that have neither sender_id nor a
 From-recipient snapshot. The default is a read-only report. Pass --apply to
 restore both sender representations atomically and refresh derived analytics.

@@ -201,7 +201,7 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 	}
 }
 
-func TestShowThreadInvalidPaginationShowsUsage(t *testing.T) {
+func TestShowThreadInvalidPaginationShowsRecoveryHint(t *testing.T) {
 	for _, args := range [][]string{{"--limit", "0"}, {"--limit", "501"}, {"--offset", "-1"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			root := newRootCommand()
@@ -210,9 +210,13 @@ func TestShowThreadInvalidPaginationShowsUsage(t *testing.T) {
 			var output bytes.Buffer
 			root.SetOut(&output)
 			root.SetErr(&output)
+			assert := assert.New(t)
 			err := executeRootContext(t.Context(), root)
 			require.ErrorContains(t, err, args[0]+" must be")
-			assert.Contains(t, output.String(), "Usage:")
+			assert.Equal(3, ExitCode(err))
+			assert.NotContains(output.String(), "Usage:")
+			assert.Contains(output.String(), "hint:")
+			assert.Contains(output.String(), args[0])
 		})
 	}
 }

@@ -431,7 +431,7 @@ func TestAddMatrixRenewalResumesAfterPublishFailure(t *testing.T) {
 			server, cfg, old := setupMatrixRenewal(t)
 			failMatrixCredentialWrite(t, &saveMatrixCredentials, tc.fail)
 
-			require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, "password"), "retry add-matrix to finish")
+			require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, "password"), "retry source matrix add to finish")
 			pending, ok, err := matrixsource.LoadPendingCredentials(cfg.TokensDir(), old.UserID)
 			require.NoError(err)
 			require.True(ok, "the new login stays recoverable")
@@ -490,7 +490,7 @@ func TestAddMatrixRenewalDiscardsRevokedPendingLogin(t *testing.T) {
 	revoked := matrixsource.Credentials{Homeserver: server.URL, UserID: old.UserID, DeviceID: "GONE", AccessToken: "gone"}
 	require.NoError(matrixsource.SavePendingCredentials(cfg.TokensDir(), revoked))
 
-	require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, ""), "run add-matrix again")
+	require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, ""), "run msgvault source matrix add again")
 	creds, err := matrixsource.LoadCredentials(cfg.TokensDir(), old.UserID)
 	require.NoError(err)
 	assert.Equal(old, creds, "a revoked pending login never replaces the working one")

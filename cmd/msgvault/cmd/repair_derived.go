@@ -22,8 +22,9 @@ var (
 
 func newRepairDerivedCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "repair-derived",
-		Short: "Re-derive message text and metadata from stored payloads",
+		Use:     "repair-derived",
+		Short:   "Re-derive message text and metadata from stored payloads",
+		Example: "  msgvault repair derived --source-type imap",
 		Long: `Re-derive stored message columns from the payloads archived with them.
 
 Message bodies, snippets, the search index, and attachment metadata are computed
@@ -45,10 +46,10 @@ raw payloads, downloaded media, and sync cursors are untouched, so it is
 idempotent.
 
 Examples:
-  msgvault repair-derived
-  msgvault repair-derived --source-type imap
-  msgvault repair-derived --source-type beeper
-  msgvault repair-derived --source-type beeper --identifier instagramgo`,
+  msgvault repair derived
+  msgvault repair derived --source-type imap
+  msgvault repair derived --source-type beeper
+  msgvault repair derived --source-type beeper --identifier instagramgo`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -81,7 +82,7 @@ Examples:
 				label := src.SourceType + "/" + src.Identifier
 				rerr := repairDerivedSource(ctx, cmd.OutOrStdout(), s, src)
 				if ctx.Err() != nil {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run repair-derived to finish (idempotent).")
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run repair derived to finish (idempotent).")
 					return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 				}
 				if rerr != nil {

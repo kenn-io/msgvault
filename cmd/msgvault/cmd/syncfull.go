@@ -38,8 +38,9 @@ var (
 
 var syncFullCmd = &cobra.Command{
 	Use:   "sync-full [email]",
-	Short: "Perform a full sync of Gmail accounts",
-	Long: `Perform a full synchronization of a Gmail account.
+	Short: "Download full Gmail and IMAP mail history",
+	Long: `Download mail history from Gmail or IMAP accounts. Use this for their first
+sync; Microsoft Graph accounts use msgvault sync from the first run.
 
 Downloads all messages matching the query (or all messages if no query).
 Supports resumption from interruption - just run again to continue.
@@ -48,14 +49,12 @@ If no email is specified, syncs all configured accounts sequentially.
 
 Date filters:
   --after 2024-01-01     Only messages on or after this date
-  --before 2024-12-31    Only messages before this date
-
-Examples:
-  msgvault sync-full                             # Sync all accounts
-  msgvault sync-full you@gmail.com
-  msgvault sync-full you@gmail.com --after 2024-01-01
-  msgvault sync-full you@gmail.com --query "from:someone@example.com"
-  msgvault sync-full you@gmail.com --noresume    # Force fresh sync`,
+  --before 2024-12-31    Only messages before this date`,
+	Example: `  msgvault sync full                             # Sync all accounts
+  msgvault sync full you@gmail.com
+  msgvault sync full you@gmail.com --after 2024-01-01
+  msgvault sync full you@gmail.com --query "from:someone@example.com"
+  msgvault sync full you@gmail.com --noresume    # Force fresh sync`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateSyncFullFlags(cmd); err != nil {
@@ -70,22 +69,22 @@ Examples:
 
 func validateSyncFullFlags(cmd *cobra.Command) error {
 	if syncLimit < 0 {
-		return usageErr(cmd, errors.New("--limit must be a non-negative number"))
+		return validationErr(cmd, errors.New("--limit must be a non-negative number"))
 	}
 	if syncAfter != "" {
 		if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
-			return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
+			return validationErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
 		}
 	}
 	if syncBefore != "" {
 		if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
-			return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
+			return validationErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
 		}
 	}
 	return nil
 }
 
-// isFullSyncSource reports whether 'msgvault sync-full' downloads src.
+// isFullSyncSource reports whether 'msgvault sync full' downloads src.
 func isFullSyncSource(src *store.Source) bool {
 	return src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP
 }
@@ -138,7 +137,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			}
 			if len(allMatches) > 0 {
 				// Identifier exists but has no syncable source types.
-				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail and imap are supported)", syncSelectorLabel(selector))
+				return fmt.Errorf("%s exists but its source type cannot be synced (only Gmail and IMAP are supported); for chat/calendar/meeting sources see 'msgvault source --help'; file imports are not synced", syncSelectorLabel(selector))
 			}
 			if legacy {
 				// Token not in DB yet - assume Gmail (legacy behaviour).
@@ -152,7 +151,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("list sources: %w", err)
 		}
 		if !slices.ContainsFunc(allSources, isFullSyncSource) {
-			return errors.New("no Gmail or IMAP accounts to sync; add one with 'msgvault add-account <gmail>' or 'msgvault add-imap'; Microsoft Graph mail uses 'msgvault sync' (file imports are not synced)")
+			return sourceNotConfigured(sourceTypeGmail, errors.New("no Gmail or IMAP accounts to sync; add one with 'msgvault source gmail add <gmail>' or 'msgvault source imap add --host imap.example.com --username you@example.com'; Microsoft Graph mail uses 'msgvault sync' (file imports are not synced)"))
 		}
 		allSources = activeSyncSources(allSources)
 		for _, src := range allSources {
@@ -176,7 +175,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 						continue
 					}
 					if !info.Exists {
-						fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
+						fmt.Printf("Skipping %s (no OAuth token - run 'msgvault source gmail add %s' first)\n", src.Identifier, src.Identifier)
 						continue
 					}
 				}
@@ -200,7 +199,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			if len(syncErrors) > 0 {
 				return fmt.Errorf("%s", syncErrors[0])
 			}
-			return errors.New("no accounts are ready to sync")
+			return withHint(errors.New("no accounts are ready to sync"), "read the Skipping lines above and fix each account; list configured sources with 'msgvault account list --json'")
 		}
 	}
 
@@ -314,7 +313,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 
 	case sourceTypeIMAP:
 		if !src.SyncConfig.Valid || src.SyncConfig.String == "" {
-			return nil, fmt.Errorf("IMAP source %s has no config (run 'add-imap' first)", src.Identifier)
+			return nil, fmt.Errorf("IMAP source %s has no config (run 'msgvault source imap add --host imap.example.com --username %s' with your server host first)", src.Identifier, src.Identifier)
 		}
 		imapCfg, err := imaplib.ConfigFromJSON(src.SyncConfig.String)
 		if err != nil {
@@ -358,14 +357,14 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 			)
 			tokenFn, err := msMgr.TokenSource(ctx, imapCfg.Username)
 			if err != nil {
-				return nil, fmt.Errorf("load Microsoft token: %w (run 'add-o365' first)", err)
+				return nil, fmt.Errorf("load Microsoft token: %w (run 'msgvault source o365 add %s' first)", err, imapCfg.Username)
 			}
 			opts = append(opts, imaplib.WithTokenSource(tokenFn))
 			return imaplib.NewClient(imapCfg, "", opts...), nil
 		default:
 			password, err := imaplib.LoadCredentials(cfg.TokensDir(), src.Identifier)
 			if err != nil {
-				return nil, fmt.Errorf("load IMAP credentials: %w (run 'add-imap' first)", err)
+				return nil, fmt.Errorf("load IMAP credentials: %w (run 'msgvault source imap add --host %s --username %s' first)", err, imapCfg.Host, imapCfg.Username)
 			}
 			return imaplib.NewClient(imapCfg, password, opts...), nil
 		}
@@ -377,7 +376,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 
 // configuredTrustedSentMailboxes exposes the explicit Sent-folder trust
 // configured for exactly this IMAP source, keyed by its identifier (the
-// ACCOUNT value printed by `msgvault list-accounts`). Trust never crosses
+// ACCOUNT value printed by `msgvault account list`). Trust never crosses
 // accounts: another source with a same-named mailbox gets no entry. Nil-safe
 // because several command tests run without a loaded global config; a
 // missing entry means no explicit trust.
@@ -743,7 +742,7 @@ func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, 
 				}
 				for account := range cfg.Sync.IMAPSkipFolders {
 					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
-						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
+						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault account list", "account", account)
 					}
 				}
 			})
@@ -1000,7 +999,7 @@ func imapSkipReason(src *store.Source, cfg *config.Config, logger *slog.Logger) 
 	}
 	if !src.SyncConfig.Valid || src.SyncConfig.String == "" {
 		if !imaplib.HasCredentials(cfg.TokensDir(), src.Identifier) {
-			return fmt.Sprintf("Skipping %s (no credentials — run 'add-imap' or 'add-o365' first)", src.Identifier), nil
+			return fmt.Sprintf("Skipping %s (no credentials — run 'msgvault source imap add --host imap.example.com --username %s' or 'msgvault source o365 add %s' first)", src.Identifier, src.Identifier, src.Identifier), nil
 		}
 		return "", nil
 	}
@@ -1021,11 +1020,11 @@ func imapSkipReason(src *store.Source, cfg *config.Config, logger *slog.Logger) 
 			repairLogger(logger),
 		)
 		if !msMgr.HasToken(imapCfg.Username) {
-			return fmt.Sprintf("Skipping %s (no Microsoft token — run 'add-o365' first)", src.Identifier), nil
+			return fmt.Sprintf("Skipping %s (no Microsoft token — run 'msgvault source o365 add %s' first)", src.Identifier, imapCfg.Username), nil
 		}
 	default:
 		if !imaplib.HasCredentials(cfg.TokensDir(), src.Identifier) {
-			return fmt.Sprintf("Skipping %s (no credentials — run 'add-imap' first)", src.Identifier), nil
+			return fmt.Sprintf("Skipping %s (no credentials — run 'msgvault source imap add --host %s --username %s' first)", src.Identifier, imapCfg.Host, imapCfg.Username), nil
 		}
 	}
 	return "", nil

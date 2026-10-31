@@ -139,7 +139,7 @@ func runAddAccountForTestContext(ctx context.Context, t *testing.T, args ...stri
 
 	t.Log(out)
 	if runErr != nil {
-		return out, fmt.Errorf("run add-account: %w", runErr)
+		return out, fmt.Errorf("run source gmail add: %w", runErr)
 	}
 	return out, nil
 }
@@ -522,7 +522,7 @@ func TestAddAccount_ReadonlyRemediationPreservesNamedOAuthApp(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(),
-		"msgvault add-account user@example.com --oauth-app 'workspace app' --readonly")
+		"msgvault source gmail add user@example.com --oauth-app 'workspace app' --readonly")
 }
 
 // TestAddAccount_ReadonlyForceIsStillRefused is the regression for the change
@@ -738,7 +738,7 @@ func TestAddAccount_HeadlessAppliesGrantDecision(t *testing.T) {
 		require.NoError(err)
 		copyToken := strings.Index(out, "Copy the existing token from the headless server")
 		reauthorize := strings.Index(out,
-			"msgvault add-account "+scopeEscalationAccount+" --readonly --force")
+			"msgvault source gmail add "+scopeEscalationAccount+" --readonly --force")
 		require.NotEqual(-1, copyToken)
 		require.NotEqual(-1, reauthorize)
 		assert.Less(t, copyToken, reauthorize)
@@ -1048,6 +1048,6 @@ func TestAddAccount_ReadonlyRefusesAliasOfStoredToken(t *testing.T) {
 
 		require.Error(err)
 		assert.Contains(err.Error(),
-			"msgvault add-account username@gmail.com --oauth-app 'workspace app' --readonly")
+			"msgvault source gmail add username@gmail.com --oauth-app 'workspace app' --readonly")
 	})
 }

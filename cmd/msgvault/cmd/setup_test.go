@@ -140,8 +140,8 @@ func TestSetupWithoutGoogleCredentials(t *testing.T) {
 	// Enter at the credential prompt, then "n" for the remote server.
 	home, out := runSetupForTest(t, "\n\nn\n")
 
-	assert.NotContains(t, out, "add-account")
-	assert.Contains(t, out, "add-imap")
+	assert.NotContains(t, out, "source gmail add")
+	assert.Contains(t, out, "source imap add")
 	_, err := os.Stat(filepath.Join(home, "nas-bundle"))
 	assert.True(t, os.IsNotExist(err), "no NAS bundle without a remote")
 }
@@ -238,7 +238,7 @@ func TestSetupWithGoogleCredentialsPrintsGmailSteps(t *testing.T) {
 
 	home, out := runSetupForTest(t, secretsPath+"\n\nn\n")
 
-	assert.Contains(out, "add-account")
+	assert.Contains(out, "source gmail add")
 	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	require.NoError(err, "setup should save config.toml")
 	assert.Contains(string(data), "client_secret.json")
@@ -296,17 +296,17 @@ func TestSetupAddAccountCommand(t *testing.T) {
 		want  string
 	}{
 		{"none", config.OAuthConfig{}, ""},
-		{"default secrets", config.OAuthConfig{ClientSecrets: "/c.json"}, "msgvault add-account you@example.com"},
-		{"default command", config.OAuthConfig{ClientSecretsCommand: []string{"secret-store"}}, "msgvault add-account you@example.com"},
-		{"named command", config.OAuthConfig{Apps: map[string]config.OAuthApp{"work": {ClientSecretsCommand: []string{"secret-store"}}}}, "msgvault add-account you@example.com --oauth-app 'work'"},
-		{"service account", config.OAuthConfig{ServiceAccountKey: "/sa.json"}, "msgvault add-account you@example.com"},
+		{"default secrets", config.OAuthConfig{ClientSecrets: "/c.json"}, "msgvault source gmail add you@example.com"},
+		{"default command", config.OAuthConfig{ClientSecretsCommand: []string{"secret-store"}}, "msgvault source gmail add you@example.com"},
+		{"named command", config.OAuthConfig{Apps: map[string]config.OAuthApp{"work": {ClientSecretsCommand: []string{"secret-store"}}}}, "msgvault source gmail add you@example.com --oauth-app 'work'"},
+		{"service account", config.OAuthConfig{ServiceAccountKey: "/sa.json"}, "msgvault source gmail add you@example.com"},
 		{
 			"named apps only",
 			config.OAuthConfig{Apps: map[string]config.OAuthApp{
 				"work":  {ClientSecrets: "/w.json"},
 				"empty": {},
 			}},
-			"msgvault add-account you@example.com --oauth-app 'work'",
+			"msgvault source gmail add you@example.com --oauth-app 'work'",
 		},
 	}
 	for _, tt := range tests {
@@ -318,17 +318,17 @@ func TestSetupAddAccountCommand(t *testing.T) {
 
 func TestPrintSetupNextStepsExportNeedsBundledSecrets(t *testing.T) {
 	assert := assert.New(t)
-	const named = "msgvault add-account you@example.com --oauth-app 'work'"
+	const named = "msgvault source gmail add you@example.com --oauth-app 'work'"
 
 	var withSecrets bytes.Buffer
-	printSetupNextSteps(&withSecrets, "msgvault add-account you@example.com", true, true, false, "")
-	assert.Contains(withSecrets.String(), "msgvault export-token")
+	printSetupNextSteps(&withSecrets, "msgvault source gmail add you@example.com", true, true, false, "")
+	assert.Contains(withSecrets.String(), "msgvault account export-token")
 
 	var namedOnly bytes.Buffer
 	printSetupNextSteps(&namedOnly, named, true, false, false, "work")
-	assert.Contains(namedOnly.String(), "msgvault export-token")
+	assert.Contains(namedOnly.String(), "msgvault account export-token")
 	assert.Contains(namedOnly.String(), "Configure the same OAuth app")
-	assert.Contains(namedOnly.String(), "On the NAS, after token upload, bind the account to this app with:\n     msgvault add-account you@example.com --oauth-app 'work'")
+	assert.Contains(namedOnly.String(), "On the NAS, after token upload, bind the account to this app with:\n     msgvault source gmail add you@example.com --oauth-app 'work'")
 }
 
 func TestSetupUsesServiceAccountForSelectedCredential(t *testing.T) {
@@ -351,11 +351,11 @@ func TestSetupUsesServiceAccountForSelectedCredential(t *testing.T) {
 
 func TestPrintSetupNextStepsServiceAccountDoesNotExportToken(t *testing.T) {
 	var output bytes.Buffer
-	printSetupNextSteps(&output, "msgvault add-account you@example.com", true, false, true, "")
+	printSetupNextSteps(&output, "msgvault source gmail add you@example.com", true, false, true, "")
 
 	assert.Contains(t, output.String(), "service-account key")
 	assert.Contains(t, output.String(), "mint tokens on demand")
-	assert.NotContains(t, output.String(), "msgvault export-token")
+	assert.NotContains(t, output.String(), "msgvault account export-token")
 }
 
 func TestCreateNASBundle_RebuildWithoutSecretsRemovesOldCopy(t *testing.T) {
@@ -376,8 +376,8 @@ func TestPrintSetupNextStepsOmitsLocalImportForRemote(t *testing.T) {
 	printSetupNextSteps(&local, "", false, false, false, "")
 	printSetupNextSteps(&remote, "", true, false, false, "")
 
-	assert.Contains(t, local.String(), "import-mbox")
-	assert.NotContains(t, remote.String(), "import-mbox")
+	assert.Contains(t, local.String(), "import mbox")
+	assert.NotContains(t, remote.String(), "import mbox")
 }
 
 func TestSetupReplacesClientCommandWithFile(t *testing.T) {

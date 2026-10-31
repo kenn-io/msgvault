@@ -309,7 +309,7 @@
 
 <main class="deletions" aria-label="Deletions">
   <PageHeader title="Deletions">
-    {#snippet descriptionContent()}Deletions you've staged. Nothing is deleted until you run <code>msgvault delete-staged</code>.{/snippet}
+    {#snippet descriptionContent()}Deletions you've staged. Nothing is deleted until you run <code>msgvault deletion execute</code>.{/snippet}
   </PageHeader>
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 

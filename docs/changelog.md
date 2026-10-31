@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-21"
+last_edited: "2026-10-31"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -9,11 +9,21 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
-- Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
+- CLI help now includes an agent workflow, ID and target rules, examples and
+  recovery guidance using grouped command names. The moved flat commands and
+  their deprecation notices are removed. Errors carry a separate
+  `hint:` line, or `error.hint` in the final JSON stderr diagnostic. Usage,
+  invalid values, missing resources, setup, conflicts and unavailable services
+  have distinct [exit codes](cli-reference.md#agent-discovery-and-error-recovery);
+  older daemons can retain exit 1. Internal panics now exit 1 instead of 2.
+  Routine startup/exit records require debug logging. Closed confirmation input
+  now fails with guidance instead of reporting a successful abort.
+
+- Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault fts rebuild` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
 - Gmail full sync now includes Spam and Trash. Existing archives need an
-  explicit unfiltered, unlimited `sync-full` to discover older messages omitted
+  explicit unfiltered, unlimited `sync full` to discover older messages omitted
   by earlier full syncs; that backfill can increase Gmail API use, transfer, and
   local storage. Incremental sync does not backfill old omissions by itself.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
@@ -63,9 +73,9 @@ All notable changes to msgvault, grouped by release.
 
 - Root help groups commands by task and includes start-here commands. Subcommand
   help lists global flags compactly and explains common ID and output paths.
-- Unknown subcommands under help-only groups now exit 1 with suggestions;
+- Unknown subcommands under help-only groups now exit 2 with suggestions;
   `person find` previously printed help and exited 0.
-- `export-messages` reports missing `--start` and `--end` before contacting the
+- `export messages` reports missing `--start` and `--end` before contacting the
   daemon.
 
 - SQLite [metadata searches](usage/searching.md#search-metadata) use substring
@@ -92,8 +102,8 @@ All notable changes to msgvault, grouped by release.
   and through MCP `get_embeddings_status`.
 
 - Applications can compare a candidate binary's expected archive version with
-  the stored version using `schema-version`, then run `migrate` before replacing
-  the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
+  the stored version using `database version`, then run `database migrate` before
+  replacing the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
 
 - Owned-address changes recheck only matching messages. SQLite upgrades may
   take several minutes to build a one-time From-address index. See
@@ -112,13 +122,13 @@ All notable changes to msgvault, grouped by release.
   `MSGVAULT_TELEMETRY_ENABLED=0` turns it off, and `serve` says so at startup
   while it's on. See [telemetry](configuration.md#telemetry).
 
-- `list-accounts` and `embeddings list` keep working while a sync, import, or
+- `account list` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
 - `search --help` explains the fts, vector and hybrid modes, and an empty
   keyword search suggests `--mode hybrid` when embeddings can answer it. Search
   adds `--snippet`, `--sort date` for semantic pages, and a `filename:` operator
-  that needs daemon API 3.14.0. `show` aliases `show-message`, which gains
-  `--body-only` and `--strip-quoted`, and `show-thread` reads a conversation
+  that needs daemon API 3.14.0. `get` aliases `show`, which gains
+  `--body-only` and `--strip-quoted`, and `thread show` reads a conversation
   oldest first with quoted history removed. The reading view keeps complete
   URLs and uncertain wrapped headers.
 
@@ -126,25 +136,25 @@ All notable changes to msgvault, grouped by release.
   and meeting file import. Organizer and attendee names are trimmed, a value
   without `@` is no longer saved as a participant, a repeated attendee appears
   once in search, and recipient rows record the address. Existing meetings keep
-  their earlier form until they change; run `sync-granola --full` or
-  `sync-circleback --full` to rewrite them. Granola now skips unchanged notes
-  instead of rewriting them.
+  their earlier form until they change; run `source granola sync --full` or
+  `source circleback sync --full` to rewrite them. Granola now skips unchanged
+  notes instead of rewriting them.
 
 - Find mail by the address that received it: `received:work@example.org` finds
   forwarded and Bcc'd mail delivered to a confirmed alias, and
   `account:work@example.org` adds sent mail and calendar events. Older mail
   fills in on each source's next sync or import, or with
-  `msgvault repair-derived`. API schema 3.5.0; older daemons refuse these
+  `msgvault repair derived`. API schema 3.5.0; older daemons refuse these
   operators.
 - Pick a receiving address or the unattributed mail of a source in the TUI
   account picker, the Web UI's Explore account filter, and the MCP `account`
   argument; vector and hybrid search accept `received:` and `account:`. API
   schema 3.11.0.
-- Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
+- Rerunning `import whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits
   and senders that `LID.sqlite` resolves later. `--full` compares every message.
-- `import-whatsapp` accepts `--after` and `--before` for Apple databases, so a
+- `import whatsapp` accepts `--after` and `--before` for Apple databases, so a
   first import can fetch recent messages before the full run. Android imports
   reject both flags.
 - People provider keys stored with `msgvault person provider add --api-key-stdin`
@@ -171,7 +181,7 @@ All notable changes to msgvault, grouped by release.
   cites, with its state in the archive today and the text around it.
   Agents can also cite the Docbank transcript of a delivered voice note.
   Person agenda writes now work with a static Kata token.
-- [`message-tags`](cli-reference.md#message-tags) reads and edits Gmail
+- [`message tags`](cli-reference.md#message-tags) reads and edits Gmail
   labels, IMAP keywords, and Microsoft Graph categories on one archived message
   through the CLI, HTTP API, and MCP, and saves the verified result to the
   archive. Microsoft Graph sync now archives categories, so the first sync of an
@@ -181,11 +191,11 @@ All notable changes to msgvault, grouped by release.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
 - `person identities` and `GET /api/v1/people/{id}/identities` list the email
   addresses, phone numbers, and chat IDs your archive holds for a person, so
-  you can pick an email address for `draft-compose --to`. Phone numbers and
+  you can pick an email address for `draft compose --to`. Phone numbers and
   chat IDs show as unsupported. See
   [Draft to a person](cli-reference.md#draft-to-a-person).
 - CardDAV sync supports Microsoft 365 and Outlook.com contacts through
-  Microsoft Graph. `msgvault add-carddav --microsoft <email>` signs in and
+  Microsoft Graph. `msgvault source carddav add --microsoft <email>` signs in and
   saves the connection. Contacts and each folder inside it are address books.
   See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
 - A CardDAV update or unpublish attempted while the Google sign-in is missing

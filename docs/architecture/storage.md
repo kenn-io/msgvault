@@ -275,7 +275,7 @@ cache-dependent Web UI views report that preparation is in progress and retry
 until the cache becomes ready; terminal unavailable states retain the explicit
 rebuild action. Set `auto_build_cache = false` to skip automatic startup
 maintenance; scheduled syncs, ingest commands, and
-`msgvault build-cache` can refresh or build the cache explicitly.
+`msgvault cache build` can refresh or build the cache explicitly.
 
 Each build writes and verifies a same-filesystem staging tree before publishing
 under the exclusive cache lock. `_last_sync.json` is the commit marker: it is
@@ -284,22 +284,22 @@ publication leaves the previous committed cache usable; interruption during
 publication leaves the cache explicitly unavailable for repair, never marked
 ready with mixed old and new datasets. Queries hold the lock shared, so a build
 cannot replace Parquet files underneath an active reader. `msgvault
-build-cache` builds or repairs the cache on demand. PostgreSQL archives use live
+cache build` builds or repairs the cache on demand. PostgreSQL archives use live
 SQL for aggregate views rather than this Parquet acceleration layer.
 
 The cache includes `relationship_activity`, `relationship_people`,
 `relationship_domains`, and `relationship_daily` datasets. These compact edges
 and rollups avoid expanding every message's participant list during people,
 domain, relationship, timeline, and file-group queries. When a cache format changes, automatic cache building performs the required
-rebuild during daemon startup. Run `msgvault build-cache --full-rebuild` to
+rebuild during daemon startup. Run `msgvault cache build --full-rebuild` to
 request a full rebuild explicitly.
 
 ```bash
 # Manual build
-msgvault build-cache
+msgvault cache build
 
 # Full rebuild (discard existing)
-msgvault build-cache --full-rebuild
+msgvault cache build --full-rebuild
 ```
 
 Directory structure:
@@ -332,7 +332,7 @@ participants, attachments, and the derived datasets included in the build.
 Every attachment from every message is identified by its SHA-256 content hash,
 so identical bytes referenced by multiple messages are stored once. New
 content is written as a loose file first; background maintenance and
-`pack-attachments` move eligible loose objects into sealed immutable packs to
+`attachment pack` move eligible loose objects into sealed immutable packs to
 reduce file-count overhead. The archive can remain in a mixed state, and all
 normal readers resolve loose and packed content transparently.
 
@@ -352,9 +352,9 @@ Loose objects are sharded by the first two hash characters. Packed-object
 locations and immutable pack totals are recorded in `attachment_pack_index`
 and `attachment_packs`; loose objects have no pack-index row.
 
-Use `pack-attachments` to migrate the eligible loose backlog immediately,
-`repack-attachments` to reclaim dead space after content is removed, and
-`unpack-attachments` to restore cataloged packed objects to loose files before
+Use `attachment pack` to migrate the eligible loose backlog immediately,
+`attachment repack` to reclaim dead space after content is removed, and
+`attachment unpack` to restore cataloged packed objects to loose files before
 downgrading. The last command is local-only and requires the daemon to be
 stopped because it removes production pack files. See the [CLI
 reference](/docs/cli-reference/#pack-attachments) and [Backup](/docs/usage/backup/) guide
@@ -364,7 +364,7 @@ Set `[data].loose_attachments = true` when file-oriented backup or storage
 software requires stable individual attachment files. It prevents new packs,
 rejects pack and repack commands, and restores backup content loose, but does
 not convert existing packs automatically. Stop the daemon and run
-`unpack-attachments` once if the existing archive must become fully loose.
+`attachment unpack` once if the existing archive must become fully loose.
 
 ## Token Storage
 

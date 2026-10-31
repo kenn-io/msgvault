@@ -47,8 +47,8 @@ func TestBeeperSyncAccountsListsPartialFailuresAndContinues(t *testing.T) {
 	assert.Contains(text, "signal done in 0s: 2 chats, 0 messages (0 added), 6 errors\n")
 	assert.Contains(text, "Failed chats (")
 	assert.Contains(text, "Retry with the same global options (such as --local):")
-	assert.Contains(text, "fetch errors: msgvault sync-beeper --account signal")
-	assert.Contains(text, "attachment errors: msgvault backfill-beeper-media --account signal")
+	assert.Contains(text, "fetch errors: msgvault source beeper sync --account signal")
+	assert.Contains(text, "attachment errors: msgvault source beeper backfill-media --account signal")
 	assert.Contains(text, "clean done in")
 }
 
@@ -89,7 +89,7 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 	assert.Contains(text, "...and 2 more chats")
 	assert.Contains(text, "  1 other error isn't listed by chat; re-run to retry.\n")
 	assert.NotContains(text, "fetch errors:")
-	assert.Contains(text, "attachment errors: msgvault backfill-beeper-media --account signal \n")
+	assert.Contains(text, "attachment errors: msgvault source beeper backfill-media --account signal \n")
 
 	out.Reset()
 	writeBeeperRunFailures(t.Context(), &out, st, &beeper.ImportSummary{Errors: 4}, "signal", "sync-beeper")
@@ -115,5 +115,5 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 	assert.Contains(out.String(), "    !mixed:example.test: 1 attachment, 1 fetch errors; last: failed\n")
 	_, retry, found := strings.Cut(out.String(), "  Retry with the same global options (such as --local):\n")
 	require.True(found)
-	assert.Equal("    msgvault backfill-beeper-media --account signal\n", retry)
+	assert.Equal("    msgvault source beeper backfill-media --account signal\n", retry)
 }

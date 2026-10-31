@@ -245,7 +245,7 @@ func TestDaemonMessageTagsRevokedGrantUsesDefaultFactory(t *testing.T) {
 	failure, ok := errors.AsType[*emailtags.MessageTagError](err)
 	require.True(ok)
 	assert.Equal("provider_unavailable", failure.Code)
-	assert.Contains(failure.Message, "msgvault add-account")
+	assert.Contains(failure.Message, "msgvault source gmail add")
 }
 
 func TestDaemonMessageTagsReadonlyGrantDoesNotWrite(t *testing.T) {

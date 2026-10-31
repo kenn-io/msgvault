@@ -107,7 +107,7 @@ func BuilderError(err error, policy Policy) error {
 		"analytics.builder_threads=%d, analytics.builder_temp_limit=%s; "+
 		"check available memory and free disk space before raising the relevant "+
 		"builder limit in config.toml, or reduce analytics.builder_threads; "+
-		"retry with msgvault build-cache", err,
+		"retry with msgvault cache build", err,
 		policy.MemoryLimit, policy.Threads, policy.MaxTempDirectorySize)}
 }
 

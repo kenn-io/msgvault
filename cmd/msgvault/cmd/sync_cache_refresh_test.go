@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -49,7 +50,13 @@ func TestManualSyncRefreshVerifiesConversationOnlyChangesInBackground(t *testing
 		require.True(jobs.waitContext(waitCtx), "background verification must finish before store cleanup")
 	})
 	adapter := &storeAPIAdapter{store: s, config: c, cacheJobs: jobs}
-	require.NoError(adapter.queueCacheRefreshAfterManualSync(false, false))
+	// The fake subprocess isolates the stable child-execution contract; the
+	// production adapter must still queue the real cache publication check.
+	require.NoError(adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: []string{"source", "slack", "sync", "example"}}, nil,
+		func(_ context.Context, args []string, _ map[string]string, _ string, _ func(string, string) error) error {
+			assert.Equal([]string{"sync-slack", "example"}, args)
+			return nil
+		}))
 	waitCtx, stop := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 	defer stop()
 	require.True(jobs.waitContext(waitCtx))
