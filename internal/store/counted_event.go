@@ -12,11 +12,11 @@ type CountedEventInputs struct {
 // counts. Live-message eligibility and address exclusions are applied by callers.
 func CountedEventWhere(in CountedEventInputs) string {
 	return fmt.Sprintf(`((%s)='direct' AND (%s)=0 AND (%s) IN ('inbound','outbound') AND (
- ((%s)='meeting' AND (%s) IN ('attendee','organizer')) OR
+ ((%s)='meeting' AND (%s) IN ('attendee','organizer') AND ((%s)='outbound' OR (%s)=0)) OR
  ((%s)='message' AND (%s)='inbound' AND (%s)='sender' AND (%s)=0) OR
  ((%s)='message' AND (%s)='outbound' AND (%s) IN ('addressed','member'))
  ))`, in.Evidence, in.ListExcluded, in.Direction,
-		in.RefKind, in.Role,
+		in.RefKind, in.Role, in.Direction, in.LargeInbound,
 		in.RefKind, in.Direction, in.Role, in.LargeInbound,
 		in.RefKind, in.Direction, in.Role)
 }
@@ -29,7 +29,7 @@ func CountedEvent(evidence ActivityEvidence, role ActivityRole, direction Activi
 	}
 	switch refKind {
 	case "meeting":
-		return role == RoleAttendee || role == RoleOrganizer
+		return (role == RoleAttendee || role == RoleOrganizer) && (direction == DirectionOutbound || !largeInbound)
 	case "message":
 		if direction == DirectionInbound {
 			return role == RoleSender && !largeInbound

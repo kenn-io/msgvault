@@ -117,6 +117,12 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
 		after.PersonID, after.LocalDate, after.MessageID,
 		cfg.MinCallSeconds, cfg.MinCallSeconds, personTierRowPage)
 	callTypes := `'` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `'`
+	// List and audience exclusions are tallied after the classifier batch so
+	// their diagnostic counts remain available alongside counted contact.
+	counted := CountedEventWhere(CountedEventInputs{
+		Evidence: "aep.evidence", Role: "aep.role", Direction: "ae.direction", RefKind: "ae.ref_kind",
+		ListExcluded: "0", LargeInbound: "0",
+	})
 	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.local_date,ae.channel,
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
@@ -127,7 +133,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  JOIN messages m ON m.id=ae.message_id
  JOIN conversations c ON c.id=m.conversation_id
  JOIN sources src ON src.id=m.source_id
- WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`) AND aep.evidence='direct'
+ WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`) AND `+counted+`
  AND aep.local_date BETWEEN ? AND ?
  AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
