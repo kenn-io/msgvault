@@ -122,6 +122,7 @@ func TestCacheExportParityCopyParquetRoundTrip(t *testing.T) {
 
 type participantClusterInsertRecorder struct {
 	*sql.DB
+
 	inserts int
 }
 
