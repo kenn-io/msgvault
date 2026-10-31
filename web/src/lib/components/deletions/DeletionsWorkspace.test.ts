@@ -75,8 +75,13 @@ describe('DeletionsWorkspace', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
     const panel = screen.getByRole('dialog', { name: /^Staged / });
     expect(await within(panel).findByText(result === 'success' ? 'archive@example.com' : 'Account unavailable')).toBeDefined();
-    expect(within(panel).getByText('Staged')).toBeDefined();
-    expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+    if (result === 'failure') {
+      expect(within(panel).getByText('Staged')).toBeDefined();
+      expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+    } else {
+      expect(await within(panel).findByText('Deleted')).toBeDefined();
+      expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
+    }
     expect(seen).toEqual([{ method: 'GET', path: '/api/v1/deletions' }, { method: 'GET', path: '/api/v1/deletions/b1' }]);
   });
 
@@ -225,7 +230,7 @@ it('reads fresh progress when a batch is explicitly reopened', async () => {
     await screen.findByText('2 deleted · 0 failed');
     expect(reads).toBe(beforeReopen + 1);
     const panel = screen.getByRole('dialog', { name: /^Staged / });
-    expect(within(panel).getByText('Deleting')).toBeDefined();
-    expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+    expect(within(panel).getByText('Deleted')).toBeDefined();
+    expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); }
 });

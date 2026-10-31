@@ -38,7 +38,12 @@ test('page content sits one header gap below the divider, and full-width panes m
     if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Messages results' }).getByText(row.title, { exact: true })).toBeVisible();
     if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
     if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
-    if (label === 'Deletions') await expect(page.getByRole('table', { name: 'Staged deletions' }).getByText('archive@example.com', { exact: true })).toBeVisible();
+    if (label === 'Deletions') {
+      await page.getByRole('table', { name: 'Staged deletions' }).getByRole('button', { name: /^Open batch from/ }).click();
+      const panel = page.getByRole('dialog', { name: /^Staged / });
+      await expect(panel.getByText('archive@example.com', { exact: true })).toBeVisible();
+      await panel.getByRole('button', { name: 'Close', exact: true }).click();
+    }
     if (label === 'Sources') await expect(page.getByRole('table', { name: 'Sources' }).getByText('Archive', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
     const header = page.locator('.page-header:visible');

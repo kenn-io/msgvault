@@ -6,9 +6,9 @@ import VisualReadiness from './VisualReadiness.test-support.svelte';
 
 it.each([
   { name: 'uninitialized visual search', status: 503, body: { error: 'visual_search_not_ready' }, ready: false, absent: true, reads: 1 },
-  { name: 'no generation', status: 200, body: {}, ready: false, absent: true, reads: 1 },
-  { name: 'inactive generation', status: 200, body: { generation: { state: 'building', consented: true } }, ready: false, absent: true, reads: 1 },
-  { name: 'no consent', status: 200, body: { generation: { state: 'active', consented: false } }, ready: false, absent: true, reads: 1 },
+  { name: 'no generation', status: 200, body: {}, ready: false, absent: false, reads: 2 },
+  { name: 'inactive generation', status: 200, body: { generation: { state: 'building', consented: true } }, ready: false, absent: false, reads: 2 },
+  { name: 'no consent', status: 200, body: { generation: { state: 'active', consented: false } }, ready: false, absent: false, reads: 2 },
   { name: 'active consented generation', status: 200, body: { generation: { state: 'active', consented: true } }, ready: true, absent: false, reads: 1 },
   { name: 'other service failure', status: 503, body: { error: 'unavailable' }, ready: false, absent: false, reads: 2 },
 ])('$name', async ({ status, body, ready, absent, reads }) => {
