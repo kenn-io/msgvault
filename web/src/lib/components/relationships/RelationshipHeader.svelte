@@ -23,6 +23,7 @@
     loading?: boolean;
     filesOpen: boolean;
     showTabs?: boolean;
+    showIdentity?: boolean;
     missing?: boolean;
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
@@ -41,6 +42,7 @@
     loading = false,
     filesOpen,
     showTabs = true,
+    showIdentity = true,
     missing = false,
     onFilesToggle,
     client,
@@ -311,13 +313,13 @@
     </p>
   {:else}
     <div class="title-row">
-      <IdentityAvatar
+      {#if showIdentity}<IdentityAvatar
         label={displayLabel(detail)}
         seed={isPersonDetail(detail) ? `cluster:${detail.id}` : `domain:${detail.domain}`}
         shape={isPersonDetail(detail) ? 'person' : 'domain'}
         size={36}
       />
-      <h2>{displayLabel(detail)}</h2>
+      <h2>{displayLabel(detail)}</h2>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
           {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}

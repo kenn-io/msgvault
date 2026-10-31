@@ -493,7 +493,7 @@
     loader.submitted = true;
     loader.retry();
     const workspace = exploreState.current.workspace;
-    if (workspace === 'relationships') { commitNavigation({ query }); return; }
+    if (workspace === 'relationships') { commitNavigation({ identityQuery: query }); return; }
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
       focusGrid();
@@ -1237,7 +1237,7 @@
       {/if}
       <SearchBar
         workspace={exploreState.current.workspace}
-        query={exploreState.current.query}
+        query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
         mode={exploreState.current.searchMode}
         live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}
         compact={narrow}
@@ -1281,7 +1281,6 @@
         <PeopleWorkspace
           directory={directoryController}
           urlState={exploreState.current}
-          query={exploreState.current.query}
           onNavigate={commitNavigation}
           {client}
           controller={relationshipsController}

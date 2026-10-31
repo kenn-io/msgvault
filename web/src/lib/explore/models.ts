@@ -80,7 +80,7 @@ export type ExplorePredicate = GeneratedExploreHTTPRequest;
  * Predicate for the groups listing: the shared explore predicate plus the
  * groups-only exact-key filter (see ExploreGroupsHTTPRequest.group_key).
  */
-export type ExploreGroupsPredicate = ExplorePredicate & Pick<GeneratedExploreGroupsHTTPRequest, 'group_key' | 'sent_only'>;
+export type ExploreGroupsPredicate = ExplorePredicate & Pick<GeneratedExploreGroupsHTTPRequest, 'group_key' | 'sent_only' | 'timezone'>;
 export type ExploreResponse = GeneratedExploreHTTPResponse;
 export type ExploreSearchMode = NonNullable<ExplorePredicate['search_mode']>;
 export type OperationStatusAuthority = Exclude<

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
 )
@@ -40,6 +41,17 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetParticipants), e.parquetPath(datasetPersonDisplayNames))
 	if err != nil {
 		return nil, err
+	}
+	if request.Dimension == "day" {
+		zone := request.Timezone
+		if zone == "" {
+			zone = "UTC"
+		}
+		if _, err := time.LoadLocation(zone); err != nil {
+			return nil, fmt.Errorf("%w: %w: invalid timezone %q: %w", ErrInvalidExploreRequest, ErrInvalidRelationshipTimezone, zone, err)
+		}
+		expression := "strftime(timezone('" + strings.ReplaceAll(zone, "'", "''") + "', timezone('UTC', occurred_at)), '%Y-%m-%d')"
+		spec.key, spec.label, spec.groupBy = expression, expression, expression
 	}
 	order, err := exploreGroupOrder(request.Sort)
 	if err != nil {

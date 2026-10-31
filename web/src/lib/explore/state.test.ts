@@ -1039,7 +1039,7 @@ describe('relationships workspace state', () => {
       relationshipFacet: 'domains',
       relationshipTarget: 'domain:example.com',
       relationshipShowAll: true,
-      relationshipFiles: true
+      relationshipFiles: true, relationshipSaved: true, relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91
     };
 
     expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({
@@ -1047,7 +1047,7 @@ describe('relationships workspace state', () => {
       relationshipFacet: 'domains',
       relationshipTarget: 'domain:example.com',
       relationshipShowAll: true,
-      relationshipFiles: true
+      relationshipFiles: true, relationshipSaved: true, relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91
     });
   });
 
@@ -1838,18 +1838,6 @@ it('keeps embedded person navigation detached from shell history', () => {
   expect(state.current.filters).toEqual([{ dimension: 'participant', values: ['42'] }]);
   expect(window.location.href).toBe(address);
   expect(window.history.state).toEqual({ marker: 'outer' });
-  state.destroy();
-});
-
-it('remembers People list and profile filters in shareable URLs', () => {
-  const state = { ...defaultExploreURLState, workspace: 'relationships' as const, relationshipSaved: true,
-    relationshipSort: 'recent' as const, directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91 };
-  expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({ relationshipSaved: true,
-    relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91 });
-});
-
-it('keeps detached row focus from replacing the list predicate', () => {
-  const state = new ExploreState(null);
   const filters = state.current.filters;
   const groups = state.current.groupingChain;
   state.replaceTransient({ activeRow: 'message:7' });

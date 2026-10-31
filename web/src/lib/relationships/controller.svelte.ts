@@ -372,7 +372,7 @@ export class RelationshipsController {
   }
   async openTarget(target: string, predicate: ExplorePredicate, withTimeline = true): Promise<void> {
     this.withTimeline = withTimeline;
-    await this.openTargetWithCalendarState(target, predicate);
+    await this.openTargetWithCalendarState(target, predicate, this.target === target ? { year: this.relationshipCalendarYear } : {});
   }
   private async openTargetWithCalendarState(
     target: string,
@@ -384,21 +384,22 @@ export class RelationshipsController {
     const controller = new AbortController();
     this.detailAbort = controller;
     const generation = ++this.detailGeneration;
+    const sameTarget = this.target === target && this.detail !== null;
     this.target = target;
     this.lastPredicate = predicate;
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
-    this.detail = null;
-    this.firstContactAt = '';
-    this.lastContactAt = '';
+    if (!sameTarget) { this.detail = null; this.firstContactAt = ''; this.lastContactAt = ''; }
     this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineError = null;
     this.timelineRestartNotice = null;
     this.timelineLoadingMore = false;
-    this.canonicalID = null;
-    this.identityRevision = null;
-    this.resetRelationshipCalendar(restore.year, restore.restarted);
+    if (!sameTarget) {
+      this.canonicalID = null;
+      this.identityRevision = null;
+      this.resetRelationshipCalendar(restore.year, restore.restarted);
+    }
     this.timelineDay = restore.day ?? null;
     this.seenCursors = new Set<string>();
     const clusterID = parseClusterID(target);

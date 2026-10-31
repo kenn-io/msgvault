@@ -54,6 +54,7 @@
   type ExplorePreflight = GeneratedExplorePreflightResponse;
 
   interface Props {
+    meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
     scope?: import('../../explore/models').ExploreFilter;
     conversationStart?: string;
     conversationEnd?: string;
@@ -90,6 +91,7 @@
   }
 
   let {
+    meetingContext = undefined,
     scope = undefined,
     conversationStart = undefined,
     conversationEnd = undefined,
@@ -394,7 +396,7 @@
     const loading = loader.loading;
     const generation = loader.resultGeneration;
     const resultFingerprint = loader.resultFingerprint;
-    const isMeetingView = exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
+    const isMeetingView = !meetingContext && exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
     untrack(() => {
       if (!isMeetingView || session.meetingOverview?.fingerprint !== fingerprint) session.meetingOverview = undefined;
       if (!isMeetingView || !result || loading || resultFingerprint !== fingerprint) return;
@@ -705,9 +707,10 @@
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
-  {#if meetingScope}
+  {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
+  {#if meetingContext?.scope || meetingScope}
     <div class="meeting-overview">
-      <MessageMeetingSummary {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+      <MessageMeetingSummary {client} scope={(meetingContext?.scope ?? meetingScope)!} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
   {/if}

@@ -17,9 +17,10 @@
   import type { ComponentProps } from 'svelte';
 
   type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack'>;
-  let { directory, urlState, query, onNavigate, onShowAllChange, ...page }:
-    PageProps & { directory: DirectoryController; urlState: ExploreURLState; query: string;
+  let { directory, urlState, onNavigate, onShowAllChange, ...page }:
+    PageProps & { directory: DirectoryController; urlState: ExploreURLState;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
+  const query = $derived(urlState.identityQuery ?? '');
   const controller = $derived(page.controller);
   const facet = $derived(urlState.relationshipFacet);
   const showAll = $derived(urlState.relationshipShowAll);

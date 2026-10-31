@@ -31,4 +31,6 @@ export interface ExploreGroupsHTTPRequest {
   sent_only?: boolean;
   /** @maxItems 1 */
   sort?: ExploreGroupSort[];
+  /** IANA timezone for day grouping; defaults to UTC */
+  timezone?: string;
 }

@@ -4966,6 +4966,9 @@ type ExploreGroupsHTTPRequest struct {
 	// SentOnly Count sent messages only, excluding drafts and unsent items
 	SentOnly *bool              `json:"sent_only,omitempty"`
 	Sort     []ExploreGroupSort `json:"sort,omitempty"`
+
+	// Timezone IANA timezone for day grouping; defaults to UTC
+	Timezone *string `json:"timezone,omitzero"`
 }
 
 func (e ExploreGroupsHTTPRequest) Validate() error {

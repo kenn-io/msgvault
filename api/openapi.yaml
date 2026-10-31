@@ -5460,6 +5460,9 @@ components:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
           type: array
+        timezone:
+          description: IANA timezone for day grouping; defaults to UTC
+          type: string
       required:
         - grouping
       type: object

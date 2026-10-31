@@ -169,6 +169,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         ...('sent_only' in predicate ? { sent_only: Boolean(predicate.sent_only) } : {}),
+        ...(predicate.timezone ? { timezone: predicate.timezone } : {}),
         grouping: [dimension],
         limit: predicate.limit,
         presentation: 'table' as const,

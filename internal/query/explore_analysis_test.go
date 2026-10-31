@@ -675,6 +675,11 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	assert.Equal(int64(20), result.Rows[0].EstimatedBytes)
 	assert.Equal("2024-02-29", result.Rows[1].Key)
 	assert.Equal(int64(1), result.Rows[1].Count)
+	local, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: ExploreRequest{Context: context, SentOnly: true}, Dimension: "day", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366}})
+	require.NoError(err)
+	require.Len(local.Rows, 3)
+	assert.Equal("2023-12-31", local.Rows[0].Key)
+
 	context.After = new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	context.Before = new(context.After.AddDate(0, 0, 1))
 	day, err := engine.Explore(t.Context(), ExploreRequest{Context: context, SentOnly: true, Page: PageSpec{Limit: 500}})

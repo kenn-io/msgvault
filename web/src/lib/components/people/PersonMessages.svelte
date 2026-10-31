@@ -9,6 +9,7 @@
   import EverythingWorkspace from '../shell/EverythingWorkspace.svelte';
   import { EverythingSessionState } from '../shell/EverythingSessionState.svelte';
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
+  import { relationshipMeetingScope } from '../../meetings/scopes';
   import type { MeetingRef } from '../../api/generated/models';
 
   let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange }:
@@ -28,15 +29,20 @@
   let root = $state<HTMLElement>();
   const loader = new ExploreLoader(untrack(() => client), exploreState, {
     isEnabled: () => true,
-    predicate: () => {
-      const ordinary = exploreState.predicate();
-      return period ? { ...ordinary, filters: [...(ordinary.filters ?? []).filter((filter) => !['after', 'before'].includes(filter.dimension)),
-        { dimension: 'after', values: [period.after] }, { dimension: 'before', values: [period.before] }] } : ordinary;
-    },
+    predicate: requestPredicate,
     onPredicateChange: () => selection.clear(),
     onPagingNotice: (value) => notice = value ?? '',
     onRestorationFocus: focusGrid,
   }, untrack(() => identityScope));
+  function requestPredicate(): ExplorePredicate {
+    const ordinary = exploreState.predicate();
+    return period ? { ...ordinary, filters: [...(ordinary.filters ?? []).filter((filter) => !['after', 'before'].includes(filter.dimension)),
+      { dimension: 'after', values: [period.after] }, { dimension: 'before', values: [period.before] }] } : ordinary;
+  }
+  const meetingContext = $derived.by(() => {
+    try { return { scope: relationshipMeetingScope(identityScope.kind === 'person' ? { participant_id: identityScope.id } : { domains: [identityScope.domain] }, requestPredicate()) }; }
+    catch (cause: unknown) { return { error: cause instanceof Error ? cause.message : 'Meeting activity cannot use these filters.' }; }
+  });
   $effect(() => {
     const key = exploreState.current.selectedRow;
     const row = loader.rows.find((row) => row.key === key);
@@ -72,7 +78,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -- Escape closes the embedded reader. -->
 <div class="messages" bind:this={root} onkeydown={escape}>
-  <EverythingWorkspace {client} scope={scope} conversationStart={period?.after} conversationEnd={period?.before} {exploreState} {loader} {session} {selection} enabled
+  <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={period?.after} conversationEnd={period?.before} {exploreState} {loader} {session} {selection} enabled
     readingTargetKey={exploreState.current.selectedRow} conversationAnchorId={exploreState.current.conversationAnchor ? Number(exploreState.current.conversationAnchor) : undefined}
     sortNotice={notice} searchInput={undefined} selectionPreflight={undefined} meetingSelection={undefined}
     exportSelection={() => undefined} onReviewDeletion={() => undefined} commitNavigation={navigate}

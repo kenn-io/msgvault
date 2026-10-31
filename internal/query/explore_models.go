@@ -229,6 +229,7 @@ type ExploreCoverageResult struct {
 }
 
 type ExploreGroupRequest struct {
+	Timezone  string         `json:"timezone,omitempty"`
 	Explore   ExploreRequest `json:"explore"`
 	Dimension string         `json:"dimension"`
 	// GroupKey, when non-empty, restricts the response to the single group

@@ -2128,6 +2128,7 @@ describe('AppShell', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      const meetingResponse = meetingFixtureResponse(path); if (meetingResponse) return meetingResponse;
       if (path === '/api/v1/participants/1') return Response.json({
         id: 1, display_label: 'Alice Example', partial_label: false, identifiers: [],
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',

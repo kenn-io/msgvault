@@ -129,6 +129,7 @@ type ExploreGroupSort struct {
 }
 
 type ExploreGroupsHTTPRequest struct {
+	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day grouping; defaults to UTC"`
 	SentOnly     bool                    `json:"sent_only,omitempty" doc:"Count sent messages only, excluding drafts and unsent items"`
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
 	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
@@ -510,7 +511,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	groupingStarted := time.Now()
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
 		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec, SentOnly: request.SentOnly}, Dimension: string(dimension),
-		GroupKey: request.GroupKey, Sort: sortSpec,
+		GroupKey: request.GroupKey, Timezone: request.Timezone, Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	addExploreTiming(w, "grouping", time.Since(groupingStarted))

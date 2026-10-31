@@ -380,7 +380,7 @@ import (
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
 // 3.28.0 adds exact sender and To participant identities to conversation windows,
-// daily message grouping, and sent_only group filtering.
+// timezone-aware daily message grouping, and sent_only group filtering.
 const APISchemaVersion = "3.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

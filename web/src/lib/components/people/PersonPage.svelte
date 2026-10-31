@@ -29,6 +29,7 @@
   const context = $derived(contextPredicate(predicate));
   let details = $state(false);
   let selectedDate = $state<string | null>(null);
+  let domainYear = $state<number | null>(null);
   let sort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
   let filenameQuery = $state('');
   let mimeFamilies = $state<FileMIMEFamily[]>([]);
@@ -41,11 +42,10 @@
   const since = $derived(controller.firstContactAt ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(controller.firstContactAt)) : undefined);
   const period = $derived.by(() => {
     if (!selectedDate) return null;
-    if (domain) { const after = `${selectedDate}T00:00:00.000Z`; return { after, before: new Date(Date.parse(after) + 86400000).toISOString() }; }
     const bounds = localDayBoundsUTC(`${selectedDate}T00:00:00`);
     return { after: bounds.start, before: bounds.end };
   });
-  $effect(() => { void target; untrack(() => { selectedDate = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
+  $effect(() => { void target; untrack(() => { selectedDate = null; domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
   $effect(() => { if (filesOpen) selectedDate = null; });
 </script>
 
@@ -63,7 +63,7 @@
     {#if !filesOpen && !details}
       <div class="calendar">
         {#if domain}
-          <DomainCalendar {client} {domain} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
+          <DomainCalendar bind:year={domainYear} {client} {domain} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
         {:else}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}
@@ -79,7 +79,7 @@
     </div>
     {#if details}
       <div class="details">
-        <RelationshipHeader showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
+        <RelationshipHeader showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
           loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
           capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
           onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}
