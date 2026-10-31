@@ -214,9 +214,9 @@
   </div>
 {/snippet}
 {#snippet person()}
-  {#if opening}<p role="status">Loading person…</p>
+  {#if opening}<section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else if soloPerson !== null && (page.target === null || controller.detailMissing)}
-    {#if soloProfile?.id === soloPerson}<div class="solo-page"><section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{#if page.target !== null}<PersonPage {...page} onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} />{/if}</div>{:else if openingError}<Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} />{/if}
+    {#if soloProfile?.id === soloPerson}<div class="solo-page"><section class="solo"><Button label="Back to People" onclick={close} /><h2>{soloProfile.display_name}</h2><Button label="Open in Directory" onclick={() => page.onOpenDirectoryPerson?.(soloPerson!)} /></section>{#if page.target !== null}<PersonPage {...page} onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} />{/if}</div>{:else if openingError}<section class="solo"><Button label="Back to People" onclick={close} /><Button label="Retry" onclick={() => void open(`person:${soloPerson}`)} /></section>{/if}
   {:else}<PersonPage {...page} onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />{/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->

@@ -1,5 +1,5 @@
 import { openTypeahead } from '../../../test/kit-ui';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi, onTestFinished } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
@@ -236,5 +236,31 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
     await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic One'));
     await waitFor(() => expect(props.onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('ignores a completed saved profile lookup after an observed person supersedes it', async () => {
+  const saved = { ...profile(92, 1, []), display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active' };
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => release = resolve);
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [saved] }),
+    '/api/v1/people/92': () => pending,
+    '/api/v1/relationships': () => Response.json({ rows: [{ canonical_id: 1, display_label: 'Alice Example', last_at: when, member_ids: [1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } }] }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const onNavigate = vi.fn((patch) => state.commitNavigation(patch));
+  const props = () => ({ client, controller, directory, urlState: state.current, target: state.current.relationshipTarget, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() });
+  const view = render(PeopleWorkspace, { props: props() });
+  try {
+    await fireEvent.click(await screen.findByText('Saved Contact'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Saved' }));
+    await view.rerender(props());
+    await fireEvent.click(await screen.findByText('Alice Example'));
+    await view.rerender(props());
+    await act(async () => { release(Response.json(saved)); await pending; await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(state.current).toMatchObject({ directoryPersonID: null, relationshipTarget: 'cluster:1' });
+    expect(onNavigate.mock.calls).toEqual([[{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

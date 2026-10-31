@@ -762,7 +762,7 @@
   function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
     const grid = currentGrid();
-    if (!grid || event.target === grid) return;
+    if (!grid || event.target === grid || (event.target instanceof Element && event.target.closest('[role="grid"]') && event.target.closest('[role="grid"]') !== grid)) return;
     grid.focus();
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }

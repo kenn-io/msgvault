@@ -67,7 +67,7 @@
 
 <section class="person-page" role="group" aria-label="Person page">
   {#if controller.timelineLoading && !detail}
-    <p role="status">Loading…</p>
+    <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   {:else if controller.detailMissing && durablePersonID !== null}
     {@render files()}
   {:else if controller.detailMissing}
@@ -75,6 +75,7 @@
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   {:else if !detail}
     <EmptyState title={controller.timelineError ?? 'Select a person or domain'} />
+    {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
     {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
   {:else}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true} />

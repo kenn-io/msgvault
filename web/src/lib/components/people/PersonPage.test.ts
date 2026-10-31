@@ -126,3 +126,15 @@ it('keeps a stale identity mutation retry across Details and Messages', async ()
     await waitFor(() => expect(links).toBe(2));
   } finally { view.unmount(); controller.destroy(); }
 });
+
+it('keeps Back to People available after an observed person fails to load', async () => {
+  const client = createAPIClient(async () => Response.json({ error: 'internal_error', message: 'Could not load this person.' }, { status: 500 }));
+  const controller = new RelationshipsController(client, () => 'UTC');
+  await controller.openTarget('cluster:1', {}, false);
+  const onBack = vi.fn();
+  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context), onBack } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Back to People' }));
+    expect(onBack).toHaveBeenCalledOnce();
+  } finally { view.unmount(); controller.destroy(); }
+});
