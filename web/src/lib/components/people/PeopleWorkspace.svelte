@@ -239,6 +239,6 @@
   .list-content { display: flex; min-height: 0; flex: 1; }
   .filters { display: flex; flex-wrap: wrap; gap: var(--control-gap); padding: var(--space-3); }
   .filters label { display: flex; flex-direction: column; color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .solo-page { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .solo-page { height: 100%; min-width: 0; display: flex; flex-direction: column; min-height: 0; flex: 1; }
   .solo { padding: var(--page-gutter); }
 </style>
