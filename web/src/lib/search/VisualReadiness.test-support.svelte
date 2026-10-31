@@ -6,4 +6,4 @@
   const readiness = provideVisualReadiness(client);
 </script>
 
-<span>Ready: {readiness.ready}, absent: {readiness.absent}</span>
+<span>Ready: {readiness.ready}</span>

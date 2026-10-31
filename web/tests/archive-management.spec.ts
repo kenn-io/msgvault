@@ -63,7 +63,7 @@ for (const failure of ['mail sync', 'contacts sync', 'contacts status']) {
     await page.route('**/api/v1/sources/status', route => {
       return route.fulfill({ json: { sources: [{ id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
         last_sync_at: null, updated_at: row.occurred_at, active_sync: null, latest_sync: null, last_successful_sync: null,
-        can_sync: true, scheduled: false, next_sync_at: null }] } });
+        can_sync: true, scheduled: true, next_sync_at: null }] } });
     });
     await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [{ connection: 'default', orphaned: false, status }] } }));
     await page.route('**/api/v1/carddav/status**', route => route.fulfill(failure === 'contacts status' ? { status: 500, json: {} } : { json: status }));
