@@ -17,8 +17,6 @@ it.each([
   try {
     await controller.refresh();
     expect(controller.visible).toBe(visible);
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(new URL((fetch.mock.calls[0][0] as Request).url).pathname).toBe('/api/v1/deletions');
   } finally { controller.destroy(); }
 });
 

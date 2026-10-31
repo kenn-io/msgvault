@@ -20,16 +20,18 @@ function renderReady(props: ComponentProps<typeof FilesWorkspace>) {
 
 it('offers setup with the visual search toggle hidden while visual search is not ready', async () => {
   const onConfigureVisualSearch = vi.fn();
-  render(FilesWorkspace, {
+  const readiness = new IntegrationReadiness(async () => undefined);
+  render(FilesWorkspace, { props: {
     client: createAPIClient(async () => Response.json(response())),
     predicate: { filters: [], presentation: 'table' },
     sort: { field: 'occurred_at', direction: 'desc' },
     onConfigureVisualSearch
-  });
+  }, context: new Map([[visualReadinessKey, readiness]]) });
   await screen.findByText('fixture.pdf');
   expect(screen.queryByRole('switch', { name: 'Visual search' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Set up' }));
   expect(onConfigureVisualSearch).toHaveBeenCalledOnce();
+  readiness.dispose();
 });
 
 function response() {

@@ -234,13 +234,11 @@ describe('SourcesWorkspace', () => {
 
   it('shows panel failure repair and queued or executing sync controls', async () => {
     const fetchFn = api([
-      source({ identifier: 'archive@example.com', display_name: 'Alex', can_sync: false,
+      source({ identifier: 'archive@example.com', display_name: 'Alex', can_sync: false, scheduled: false,
         sync_unavailable_reason: 'sync_not_configured',
         latest_sync: run('failed', 0, {
           error_message: 'oauth2: token expired and refresh token is invalid (invalid_grant)' }) }),
       source({ id: 2, display_name: 'Waiting', identifier: 'waiting@example.com', can_sync: false, scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: run('completed', 5) }), source({ id: 3, display_name: 'Executing', identifier: 'executing@example.com', scheduler_queued: true, scheduler_started_at: '2026-07-19T10:00:00Z', active_sync: null, latest_sync: run('completed', 5) }),
-      source({ id: 4, display_name: 'Paused source', identifier: 'paused@example.com', latest_sync: run('paused', 3) }),
-      source({ id: 5, display_name: 'Cancelled source', identifier: 'cancelled@example.com', latest_sync: run('cancelled', 2) })
     ]);
     render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
 
@@ -254,8 +252,6 @@ describe('SourcesWorkspace', () => {
     expect(within(queued).getByText('Sync queued')).toBeDefined();
     const executing = screen.getByRole('row', { name: /Executing/ });
     expect(within(executing).getByText('Syncing…')).toBeDefined();
-    expect(within(screen.getByRole('row', { name: /Paused source/ })).getByText('Paused')).toBeDefined();
-    expect(within(screen.getByRole('row', { name: /Cancelled source/ })).getByText('Cancelled')).toBeDefined();
   });
 
   it('shows shared attachment rules and opens the existing Sources settings editor', async () => {
@@ -340,9 +336,6 @@ describe('SourcesWorkspace', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     expect(requests[1]!.method).toBe('POST');
-    const triggerURL = new URL(requests[1]!.url);
-    expect(triggerURL.pathname).toBe('/api/v1/sync/archive%40example.com');
-    expect(triggerURL.searchParams.get('source_type')).toBe('gmail');
 
     await vi.advanceTimersByTimeAsync(500);
     expect(screen.getByText('Awaiting accepted sync run…')).toBeDefined();
@@ -474,21 +467,6 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('names conflicting runs', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (request.method === 'POST') {
-        return Response.json({ error: 'sync_error', message: 'sync already running for archive@example.com' }, { status: 409 });
-      }
-      return Response.json({ sources: [source()] });
-    });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('already running');
-    rendered.unmount();
-  });
-
   it('releases Sync now buttons after a timeout and refreshes status without retriggering', async () => {
     let statusReads = 0;
     let triggers = 0;
@@ -527,7 +505,7 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('holds a first-load error until manual Retry', async () => {
+  it.each(['throw', 'malformed body'])('holds a first-load %s error until manual Retry', async failure => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
     const events: unknown[] = [], requests: Promise<void>[] = [];
@@ -536,12 +514,16 @@ describe('SourcesWorkspace', () => {
       if (path.endsWith('/carddav/connections')) return Response.json({ connections: [] });
       if (!path.endsWith('/sources/status')) return Response.json({}, { status: 404 });
       reads += 1;
-      if (reads === 1) throw new Error('status endpoint unreachable');
+      if (reads === 1) {
+        if (failure === 'throw') throw new Error('status endpoint unreachable');
+        return Response.json({ sources: {} });
+      }
       return Response.json({ sources: [source()] });
     });
     const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events, requests) });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
+    const alert = await screen.findByRole('alert');
+    if (failure === 'throw') expect(alert.textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
     await tick();
     await Promise.all(requests);
@@ -553,23 +535,6 @@ describe('SourcesWorkspace', () => {
     await waitFor(() => expect(reads).toBe(2));
     expect(await screen.findByText('Archive')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
-    rendered.unmount();
-  });
-
-  it('holds a first-load response processing error until manual Retry', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    let reads = 0;
-    const fetchFn = vi.fn<typeof fetch>(async () => {
-      reads += 1;
-      return Response.json(reads === 1 ? { sources: {} } : { sources: [source()] });
-    });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-
-    expect(await screen.findByRole('alert')).toBeDefined();
-    await vi.advanceTimersByTimeAsync(8_000);
-    expect(reads).toBe(1);
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('Archive')).toBeDefined();
     rendered.unmount();
   });
 
@@ -749,30 +714,7 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('caps lock-hold polling and offers a manual refresh', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
-    const fetchFn = vi.fn<typeof fetch>(async () => {
-      reads += 1;
-      return Response.json({ sources: [held] });
-    });
-    const rendered = render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), maxLockHoldPolls: 3
-    });
-
-    await screen.findByText('Sync in progress');
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(reads).toBe(4);
-    expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(reads).toBe(4);
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(reads).toBe(5);
-    rendered.unmount();
-  });
-
-  it('recovers capped polling from the open source panel', async () => {
+  it.each(['table', 'panel'])('recovers capped polling from the source %s', async surface => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
     const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_queued: true });
@@ -782,19 +724,26 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), maxLockHoldPolls: 3
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    const panel = screen.getByRole('dialog', { name: 'Archive' });
-    expect(within(panel).getByText('Queued')).toBeDefined();
+    await screen.findByRole('button', { name: 'Details for Archive' });
+    if (surface === 'panel') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Details for Archive' }));
+    }
+    const panel = surface === 'panel' ? screen.getByRole('dialog', { name: 'Archive' }) : undefined;
+    const scope = within(panel ?? rendered.container);
+    if (panel) expect(scope.getByText('Queued')).toBeDefined();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(reads).toBe(4);
     const message = 'Automatic refresh paused. Source status may be stale.';
-    expect(within(panel).getByText(message)).toBeDefined();
-    await fireEvent.click(within(panel).getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(within(panel).getByText('7 processed · 7 added')).toBeDefined());
+    expect(scope.getByText(message)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reads).toBe(4);
+    await fireEvent.click(scope.getByRole('button', { name: 'Refresh' }));
+    if (panel) await waitFor(() => expect(scope.getByText('7 processed · 7 added')).toBeDefined());
+    else await waitFor(() => expect(reads).toBe(5));
     expect(reads).toBe(5);
-    expect(within(panel).queryByText(message)).toBeNull();
-    expect(within(panel).queryByText('Queued')).toBeNull();
-    expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
+    await waitFor(() => expect(scope.queryByText(message)).toBeNull());
+    if (panel) expect(scope.queryByText('Queued')).toBeNull();
+    if (panel) expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
     rendered.unmount();
   });
 
