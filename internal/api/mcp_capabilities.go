@@ -59,13 +59,14 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 	return descriptors
 }
 
-// Advertise only routes consumed by the source and profile MCP tools, and only
+// Advertise only routes consumed by the source, profile, and loop MCP tools, and only
 // when their real routes are registered.
 func mcpOperationDescribed(operationID string) bool {
 	switch operationID {
 	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
-		"getPersonProfile", "patchPerson", "createPerson":
+		"getPersonProfile", "patchPerson", "createPerson",
+		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop":
 		return true
 	default:
 		return false

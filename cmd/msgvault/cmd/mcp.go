@@ -37,6 +37,7 @@ var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
+var mcpAllowLoopWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -117,6 +118,9 @@ Add to Claude Desktop config:
 		opts.AllowCalendarWrites = mcpAllowCalendarWrites
 		if mcpAllowProfileWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+		}
+		if mcpAllowLoopWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)
 		}
 		if mcpAllowSourceWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
@@ -560,6 +564,8 @@ func init() {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowLoopWrites, "allow-loop-writes", false,
+		"Allow approved open-loop done, snooze, and reopen decisions")
 	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
