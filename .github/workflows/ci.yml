@@ -130,7 +130,7 @@ jobs:
 
       - name: Install lint tools
         run: |
-          kit-retry 3 5 make lint-tools
+          make lint-tools
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Check OpenAPI artifacts
@@ -246,6 +246,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   frontend:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     runs-on: ubuntu-26.04
     timeout-minutes: 33
     steps:
@@ -272,8 +274,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
 
       - name: Install frontend dependencies
-        working-directory: web
-        run: kit-retry 3 5 bun install --frozen-lockfile
+        run: make web-install
 
       - &start-browser-server
         name: Start browser server
@@ -337,6 +338,8 @@ jobs:
           docker rm --force "$CONTAINER_ID"
 
   web-e2e:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     runs-on: ubuntu-26.04
     timeout-minutes: 31
     steps:
@@ -363,8 +366,7 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
 
       - name: Install frontend dependencies
-        working-directory: web
-        run: kit-retry 3 5 bun install --frozen-lockfile
+        run: make web-install
 
       - *start-browser-server
 

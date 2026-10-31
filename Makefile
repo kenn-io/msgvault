@@ -376,7 +376,7 @@ openapi: api-generate
 web-install: $(WEB_INSTALL_STAMP)
 
 $(WEB_INSTALL_STAMP): web/package.json web/bun.lock
-	cd web && bun install --frozen-lockfile
+	cd web && $(DOWNLOAD_RETRY) bun install --frozen-lockfile
 	@touch $(WEB_INSTALL_STAMP)
 
 web-generate: web-install
@@ -439,7 +439,7 @@ fmt:
 # Install the pinned linter used by CI; lint-ci runs this first, so skip it when already installed.
 lint-tools:
 	@if [ "$$("$(GOLANGCI_LINT_BIN)" version --short 2>/dev/null)" = "$(GOLANGCI_LINT_VERSION:v%=%)" ]; then exit 0; fi; \
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	$(DOWNLOAD_RETRY) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 # Build golangci-lint with the plugins in .custom-gcl.yml into the
 # repository-owned tool path. Strip repo-local Git variables so a build run
