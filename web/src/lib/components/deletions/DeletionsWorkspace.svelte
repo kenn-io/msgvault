@@ -160,11 +160,12 @@
 {/snippet}
 
 {#if selectedID && selectedBatch}
-  {@const chip = batchStatus(selectedBatch.status)}
+  {@const status = panelDetail?.status ?? selectedBatch.status}
+  {@const chip = batchStatus(status)}
   <SidePanel
     title={`Staged ${formatDateTime(selectedBatch.created_at)}`}
     onclose={close}
-    footer={cancellable(selectedBatch.status) ? cancelAction : undefined}
+    footer={cancellable(status) ? cancelAction : undefined}
   >
     <div class="panel">
       <div class="line">
