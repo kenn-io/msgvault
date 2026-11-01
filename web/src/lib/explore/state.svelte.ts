@@ -979,10 +979,9 @@ export class ExploreState {
       key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
       effectivePatch = { ...effectivePatch, operationRunID: null };
     }
-    if (
-      mode === 'push' ||
-      Object.keys(effectivePatch).some((key) => RESTORATION_INVALIDATING_FIELDS.has(key as keyof ExploreURLState))
-    ) {
+    const patchKeys = Object.keys(effectivePatch);
+    if (patchKeys.some((key) => !OPERATION_HISTORY_FIELDS.has(key) &&
+      (mode === 'push' || RESTORATION_INVALIDATING_FIELDS.has(key)))) {
       this.pendingRestorationEpoch = undefined;
     }
     const baseSearch = this.detached ? '' : this.browser.location.search;
@@ -1001,7 +1000,6 @@ export class ExploreState {
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
     // invalidate consumers that only read the canonical server predicate.
-    const patchKeys = Object.keys(effectivePatch);
     const keysToApply = OPERATION_FILTER_FIELDS.some((key) => key in effectivePatch)
       ? [...new Set([...patchKeys, ...OPERATION_FILTER_FIELDS, 'operationRunID'])]
       : patchKeys;

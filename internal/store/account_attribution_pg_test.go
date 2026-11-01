@@ -29,7 +29,7 @@ func requirePostgreSQLStore(t *testing.T) *store.Store {
 }
 
 // waitForLockWait returns the backend waiting on a lock while running a
-// statement that contains fragment.
+// statement that contains fragment in this store's database.
 func waitForLockWait(t *testing.T, st *store.Store, fragment, message string) int {
 	t.Helper()
 	var pid int
@@ -37,11 +37,60 @@ func waitForLockWait(t *testing.T, st *store.Store, fragment, message string) in
 	require.Eventually(t, func() bool {
 		err = st.DB().QueryRowContext(context.Background(), `
 			SELECT COALESCE(MIN(pid), 0) FROM pg_stat_activity
-			WHERE wait_event_type = 'Lock' AND POSITION($1 IN query) > 0`, fragment).Scan(&pid)
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock' AND POSITION($1 IN query) > 0`, fragment).Scan(&pid)
 		return err == nil && pid > 0
 	}, pgWaitBudget, 10*time.Millisecond, message)
 	require.NoError(t, err)
 	return pid
+}
+
+func TestPostgreSQLLockWaitIgnoresOtherDatabases(t *testing.T) {
+	require := require.New(t)
+	first := requirePostgreSQLStore(t)
+	second := requirePostgreSQLStore(t)
+	var firstDB, secondDB string
+	require.NoError(first.DB().QueryRow(`SELECT current_database()`).Scan(&firstDB))
+	require.NoError(second.DB().QueryRow(`SELECT current_database()`).Scan(&secondDB))
+	if firstDB == secondDB {
+		t.Skip("requires database-cloned fixtures")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	var target *store.Store
+	var targetPID int
+	for _, st := range []*store.Store{first, second} {
+		blocker, err := st.DB().BeginTx(ctx, nil)
+		require.NoError(err)
+		t.Cleanup(func() { _ = blocker.Rollback() })
+		_, err = blocker.ExecContext(ctx, `SELECT pg_advisory_xact_lock(115103)`)
+		require.NoError(err)
+		writer, err := st.DB().BeginTx(ctx, nil)
+		require.NoError(err)
+		t.Cleanup(func() { _ = writer.Rollback() })
+		var pid int
+		require.NoError(writer.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+		done := make(chan error, 1)
+		go func() {
+			_, err := writer.ExecContext(ctx, `SELECT pg_advisory_xact_lock(115103)`)
+			done <- err
+		}()
+		t.Cleanup(func() {
+			cancel()
+			<-done
+		})
+		// Observe each known backend before asking the shared helper to find
+		// one by query text.
+		require.Eventually(func() bool {
+			var waiting bool
+			return st.DB().QueryRowContext(ctx, `SELECT cardinality(pg_blocking_pids($1)) > 0`, pid).Scan(&waiting) == nil && waiting
+		}, pgWaitBudget, 10*time.Millisecond)
+		if pid > targetPID {
+			target, targetPID = st, pid
+		}
+	}
+	// An unscoped MIN(pid) must pick the other database's waiter.
+	assert.Equal(t, targetPID, waitForLockWait(t, target, "pg_advisory_xact_lock(115103)", "must find this database's waiter"))
 }
 
 func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) bool {
@@ -50,7 +99,8 @@ func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) 
 	require.NoError(t, st.DB().QueryRowContext(context.Background(), `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE l.pid = $1 AND c.relname = $2 AND l.granted)`, pid, relation).Scan(&held))
+			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			  AND l.pid = $1 AND c.relname = $2 AND l.granted)`, pid, relation).Scan(&held))
 	return held
 }
 
@@ -189,7 +239,8 @@ func TestAccountAttributionScopedPersistVsSourceRemovalPG(t *testing.T) {
 	require.Eventually(t, func() bool {
 		var waiting int
 		return st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pg_stat_activity
-			WHERE wait_event_type = 'Lock' AND POSITION('archive_metadata' IN query) > 0`).Scan(&waiting) == nil && waiting >= 2
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock' AND POSITION('archive_metadata' IN query) > 0`).Scan(&waiting) == nil && waiting >= 2
 	}, pgWaitBudget, 10*time.Millisecond, "source removal must wait for the identity row")
 	release()
 	assertNoDeadlock(t, waitResult(t, persistDone, "scoped persist"))
@@ -234,7 +285,8 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 	require.Eventually(func() bool {
 		return st.DB().QueryRowContext(context.Background(), `
 			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
+			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			  AND c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
 			  AND l.pid <> pg_backend_pid()`).Scan(&repairPID) == nil && repairPID > 0
 	}, pgWaitBudget, 10*time.Millisecond)
 

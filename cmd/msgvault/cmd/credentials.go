@@ -159,6 +159,9 @@ func configuredCredentialEndpoint(cfg *config.Config, id string) (string, error)
 }
 
 func putHeadlessCredential(cfg *config.Config, snapshot providercredentials.Snapshot, id, endpoint, key string) (providercredentials.Snapshot, error) {
+	if id == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
+		return providercredentials.Snapshot{}, errors.New("local embeddings do not use provider credentials")
+	}
 	if id == providercredentials.PersonEnrichmentSuppressionID {
 		if _, err := personenrichment.NewSuppressionHasher([]byte(key)); err != nil {
 			return providercredentials.Snapshot{}, fmt.Errorf("validate suppression key: %w", err)
@@ -196,7 +199,7 @@ func importCredentialEnvironment(cmd *cobra.Command, cfg *config.Config) error {
 			kept++
 			continue
 		}
-		if entry.environment == "" {
+		if entry.environment == "" || entry.id == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
 			continue
 		}
 		key, ok := os.LookupEnv(entry.environment)
