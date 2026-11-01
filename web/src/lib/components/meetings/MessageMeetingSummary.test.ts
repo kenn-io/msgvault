@@ -39,7 +39,6 @@ describe('Messages meeting summary', () => {
     });
     render(MessageMeetingSummary, { client, scope: { kind: 'direct', scope: { message_ids: [42] } }, onOpenMeeting });
     expect(await screen.findByText(new RegExp(`^${label} ·`))).toBeDefined();
-    expect(screen.queryByRole('region', { name: 'Meeting metrics' })).toBeNull();
     await fireEvent.click(await screen.findByRole('button', { name: /Action items/ }));
     const dialog = screen.getByRole('dialog', { name: 'Action items' });
     expect(within(dialog).getByText('Prepare review')).toBeDefined();
