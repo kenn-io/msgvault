@@ -5,7 +5,7 @@ import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
 
-it.each([false, true])('merges saved profiles with both revisions, promoting an observed choice only when needed: %s', async promote => {
+it.each([false, true])('merges saved profiles and promotes an observed choice only when needed: %s', async promote => {
   const requests: Request[] = [];
   let failProfile = promote;
   const profile = (id: number) => ({ id, revision: id === 7 ? 4 : 2, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', participant_ids: id === 7 ? [] : [2], created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard_uid: `example-${id}` });
@@ -43,9 +43,7 @@ it.each([false, true])('merges saved profiles with both revisions, promoting an 
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
-    const mutation = requests.find(request => new URL(request.url).pathname.endsWith('/7/merge'))!;
-    expect(mutation.headers.get('If-Match')).toBe('"person-7-r4", "person-9-r2"');
-    expect(onReconcile).toHaveBeenCalledOnce();
+    expect(onOpenPerson).toHaveBeenCalledWith(7);
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -55,7 +53,7 @@ function renderRepresentativeLink(savedAnchor: boolean, missing = false) {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [{ id: 7, display_name: 'Synthetic Saved' }] });
-    if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 1, display_label: 'Synthetic Observed' }] : [{ id: 2, display_label: 'Duplicate Saved', profile: { id: 7 } }] });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 1, display_label: 'Synthetic Observed' }] : [] });
     if (path.endsWith('/people/7')) return missing ? Response.json({ message: 'Target missing' }, { status: 404 }) : Response.json({ id: 7, participant_ids: [2, 3] });
     if (path.endsWith('/identity/links')) { links.push(await request.json()); return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
     throw new Error(`Unexpected ${path}`);

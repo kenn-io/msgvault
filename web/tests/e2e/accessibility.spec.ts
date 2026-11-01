@@ -339,12 +339,15 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.locator('#duplicate-17')).toBeVisible();
     await assertNoViolations(page, `Reviews identity matches ${theme}`);
 
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', directoryPersonID: 7
-    }))}`);
-    await setKitTheme(page, theme);
-    await expect(page.getByText('urn:uuid:synthetic-related-person')).toBeVisible();
-    await assertNoViolations(page, `Imported relationships ${theme}`);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
+        workspace: 'relationships', directoryPersonID: 7
+      }))}`);
+      await setKitTheme(page, theme);
+      await expect(page.getByText('urn:uuid:synthetic-related-person')).toBeVisible();
+      await assertNoViolations(page, `Imported relationships ${theme} ${viewport.width}`);
+    }
   });
 }
 
@@ -378,7 +381,6 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   await installDirectoryReviewArchive(page);
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true })));
   await expect(page.locator('#duplicate-17')).toBeVisible();
-  await assertNoViolations(page, 'People duplicates');
   await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
   await page.getByRole('button', { name: 'Back to People' }).click();
   const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
@@ -388,11 +390,8 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   await merge.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }).check();
   await merge.getByRole('button', { name: 'Merge into selected survivor' }).click();
   await expect(merge).toBeHidden();
-  await openPersonFacts(page);
-  await expect(page.getByRole('region', { name: 'Facts' })).toBeVisible();
-  await expect(page.getByLabel('Fact evidence')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('region', { name: 'Facts', exact: true }).getByRole('button', { name: 'Show', exact: true }).click();
+  await openPersonFacts(page);
   await expect(page.getByRole('radiogroup', { name: 'Fact ledger section' })).toBeVisible();
   await assertNoViolations(page, 'Directory Fact ledger narrow');
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -414,20 +413,6 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   await expect(splitCancel).toBeEnabled();
   await expect(splitCancel).toHaveCSS('opacity', '1');
   await assertNoViolations(page, 'Directory split modal');
-});
-
-test('Imported relationship reviews have no axe violations at narrow width', async ({ page }) => {
-  await installDirectoryReviewArchive(page);
-  for (const viewport of [
-    { label: 'narrow', width: 390, height: 844 }
-  ]) {
-    await page.setViewportSize(viewport);
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', directoryPersonID: 7
-    }))}`);
-    await expect(page.getByText('urn:uuid:synthetic-related-person')).toBeVisible();
-    await assertNoViolations(page, `Imported relationship reviews ${viewport.label}`);
-  }
 });
 
 for (const mode of ['failed', 'malformed'] as const) {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import type { RelationshipReview as GeneratedRelationshipReview } from '../api/generated/models';
-import { RelationshipReviewController, type RelationshipReviewState } from './relationship-review-controller.svelte';
+import { RelationshipReviewController } from './relationship-review-controller.svelte';
 
 type GeneratedReview = GeneratedRelationshipReview;
 
@@ -52,7 +52,7 @@ function requestOf(input: RequestInfo | URL): Request {
 
 describe('RelationshipReviewController', () => {
   it.each(['pending', 'accepted', 'rejected'] as const)(
-    'uses one exact generated unpaged GET for %s and projects only safe fields',
+    'loads the selected owner and projects only safe fields for %s',
     async (state) => {
       const requests: Array<{ method: string; path: string; query: Array<[string, string]> }> = [];
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -63,14 +63,14 @@ describe('RelationshipReviewController', () => {
       });
       const controller = new RelationshipReviewController(createAPIClient(fetchFn));
 
-      controller.applyContext(true, state, false);
+      controller.applyPerson(7);
       await vi.waitFor(() => expect(controller.loading).toBe(false));
 
       expect(requests).toEqual([
         {
           method: 'GET',
           path: '/api/v1/person-relationship-reviews',
-          query: [['status', state]],
+          query: [['person_id', '7']],
         },
       ]);
       expect(controller.rows).toEqual([
@@ -93,95 +93,6 @@ describe('RelationshipReviewController', () => {
     },
   );
 
-  it('commits a user state once before replacing context and never commits restored state', async () => {
-    const order: string[] = [];
-    const commit = vi.fn((patch: { relationshipReviewState?: RelationshipReviewState }) => {
-      order.push(`commit:${patch.relationshipReviewState}`);
-    });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const state = new URL(requestOf(input).url).searchParams.get('status');
-      order.push(`get:${state}`);
-      return Response.json({ reviews: [] });
-    });
-    const controller = new RelationshipReviewController(createAPIClient(fetchFn), commit);
-    controller.applyContext(true, 'pending', false);
-    await vi.waitFor(() => expect(controller.loading).toBe(false));
-    order.length = 0;
-
-    controller.setState('accepted');
-    await vi.waitFor(() => expect(controller.loading).toBe(false));
-    expect(order).toEqual(['commit:accepted', 'get:accepted']);
-    expect(commit).toHaveBeenCalledOnce();
-    expect(commit).toHaveBeenCalledWith({ relationshipReviewState: 'accepted' });
-
-    order.length = 0;
-    controller.applyContext(true, 'rejected', true);
-    await vi.waitFor(() => expect(controller.loading).toBe(false));
-    expect(order).toEqual(['get:rejected']);
-    expect(commit).toHaveBeenCalledOnce();
-    controller.destroy();
-  });
-
-  it('clears rows synchronously and ignores old work on state change and same-state restoration', async () => {
-    const firstReplacement = deferredResponse();
-    const restoredReplacement = deferredResponse();
-    const requests: Request[] = [];
-    let call = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      call += 1;
-      if (call === 1) return Response.json({ reviews: [generatedReview()] });
-      if (call === 2) return firstReplacement.promise;
-      if (call === 3) return restoredReplacement.promise;
-      throw new Error('Unexpected request');
-    });
-    const controller = new RelationshipReviewController(createAPIClient(fetchFn));
-    controller.applyContext(true, 'pending', false);
-    await vi.waitFor(() => expect(controller.rows).toHaveLength(1));
-
-    controller.setState('accepted');
-    expect(controller.rows).toEqual([]);
-    expect(controller.error).toBeNull();
-    controller.applyContext(true, 'accepted', true);
-    expect(requests[1]!.signal.aborted).toBe(true);
-    expect(controller.rows).toEqual([]);
-
-    firstReplacement.resolve(Response.json({ reviews: [generatedReview({ id: 51, status: 'accepted' })] }));
-    restoredReplacement.resolve(
-      Response.json({ error: 'unavailable', message: 'forbidden-stale-error' }, { status: 503 }),
-    );
-    await vi.waitFor(() => expect(controller.loading).toBe(false));
-    expect(controller.rows).toEqual([]);
-    expect(controller.error).toBe('Unable to load imported relationship reviews.');
-    expect(controller.error).not.toContain('forbidden');
-    expect(requests).toHaveLength(3);
-    controller.destroy();
-  });
-
-  it('aborts and clears when inactive, and late work cannot reactivate the surface', async () => {
-    const pending = deferredResponse();
-    let request!: Request;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      request = requestOf(input);
-      return pending.promise;
-    });
-    const controller = new RelationshipReviewController(createAPIClient(fetchFn));
-    controller.applyContext(true, 'pending', false);
-    await vi.waitFor(() => expect(controller.loading).toBe(true));
-
-    controller.applyContext(false, 'pending', false);
-    expect(controller.active).toBe(false);
-    expect(controller.rows).toEqual([]);
-    expect(controller.loading).toBe(false);
-    expect(request.signal.aborted).toBe(true);
-    pending.resolve(Response.json({ reviews: [generatedReview()] }));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(controller.active).toBe(false);
-    expect(controller.rows).toEqual([]);
-  });
-
   it('normalizes null to empty and retries an empty failed context only on demand', async () => {
     let attempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async () => {
@@ -192,7 +103,7 @@ describe('RelationshipReviewController', () => {
       return Response.json({ reviews: null });
     });
     const controller = new RelationshipReviewController(createAPIClient(fetchFn));
-    controller.applyContext(true, 'pending', false);
+    controller.applyPerson(7);
     await vi.waitFor(() => expect(controller.error).not.toBeNull());
 
     expect(attempts).toBe(1);
@@ -218,26 +129,11 @@ describe('RelationshipReviewController', () => {
       ),
     );
 
-    controller.applyContext(true, 'pending', false);
+    controller.applyPerson(7);
     await vi.waitFor(() => expect(controller.loading).toBe(false));
 
     expect(controller.error).toBe('The imported relationship review state is invalid.');
     expect(controller.rows).toEqual([]);
-    controller.destroy();
-  });
-
-  it('rejects a row whose status does not match the selected queue', async () => {
-    const controller = new RelationshipReviewController(
-      createAPIClient(
-        vi.fn<typeof fetch>(async () => Response.json({ reviews: [generatedReview({ status: 'accepted' })] })),
-      ),
-    );
-
-    controller.applyContext(true, 'pending', false);
-    await vi.waitFor(() => expect(controller.loading).toBe(false));
-
-    expect(controller.rows).toEqual([]);
-    expect(controller.error).toBe('Unable to load imported relationship reviews.');
     controller.destroy();
   });
 
@@ -252,7 +148,7 @@ describe('RelationshipReviewController', () => {
         }),
       ),
     );
-    controller.applyContext(true, 'pending', false);
+    controller.applyPerson(7);
     await vi.waitFor(() => expect(controller.loading).toBe(true));
 
     controller.destroy();
