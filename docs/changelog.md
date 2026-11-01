@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
+- Docling builds and resumes can keep several jobs in flight with [`max_concurrent_jobs`](usage/document-indexing.md#run-several-docling-jobs-at-once), so a self-hosted Docling Serve on a GPU is no longer mostly idle. The default stays at one job, and changing it needs no new consent.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,

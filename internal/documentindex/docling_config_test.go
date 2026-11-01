@@ -177,3 +177,30 @@ func TestDoclingDescriptorBindsTheOperatorPolicy(t *testing.T) {
 	assertions.NotEqual(descriptor.Fingerprint, other.Fingerprint)
 	assertions.NotEqual(descriptor.PolicyFingerprint, other.PolicyFingerprint)
 }
+
+func TestDoclingConcurrentJobsAreBoundedOutsideTheConsentIdentity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	c := doclingTestConfig()
+	assertions.Equal(1, c.MaxConcurrentJobs)
+	input, err := ResolveInputPolicy(&c, mistral.CapabilityManifest{})
+	requirements.NoError(err)
+	serial, err := c.ProfileFingerprint(mistral.CapabilityManifest{}, input.AllowedMediaTypes)
+	requirements.NoError(err)
+	c.MaxConcurrentJobs = 16
+	parallel, err := c.ProfileFingerprint(mistral.CapabilityManifest{}, input.AllowedMediaTypes)
+	requirements.NoError(err)
+	assertions.Equal(serial, parallel, "job concurrency must not require new consent or a re-index")
+	for _, jobs := range []int{0, -1, 17} {
+		c.MaxConcurrentJobs = jobs
+		assertions.ErrorContains(c.Validate(), "max_concurrent_jobs: must be between 1 and 16")
+	}
+}
+
+func TestMistralRejectsConcurrentJobs(t *testing.T) {
+	c := DefaultDocumentsConfig()
+	require.NoError(t, c.Validate())
+	c.MaxConcurrentJobs = 2
+	assert.ErrorContains(t, c.Validate(), "max_concurrent_jobs: Mistral runs one job at a time")
+}

@@ -287,6 +287,33 @@ until its replacement publishes successfully. Search, retirement, and removal
 use the shared commands below. Document embeddings remain independent and may
 use a separately configured local embedding endpoint.
 
+### Run several Docling jobs at once
+
+By default, a build or resume sends one document at a time and waits for its
+result. A Docling Serve on a GPU then sits mostly idle, and a large archive
+takes days instead of hours. Set `max_concurrent_jobs` to keep several jobs in
+flight:
+
+```toml
+[attachments.documents]
+max_concurrent_jobs = 3
+```
+
+- Match the value to how many conversions your Docling Serve runs at once, such
+  as its local engine worker count (`DOCLING_SERVE_ENG_LOC_NUM_WORKERS`). Extra
+  jobs wait in Docling's queue while their `total_timeout` runs, so they can
+  fail with `provider_timeout`.
+- Each job holds its document and its result in msgvault's memory, up to
+  `max_file_bytes` and `max_response_bytes`.
+- The run limits still apply. A pass handles at most `--limit` documents and
+  `max_pages_per_run` divided by `max_pages_per_document`, which is 20 with the
+  defaults. Run `resume` again to continue. Both page limits are part of the
+  consent identity.
+- One build sends each document at most once and keeps one daemon operation,
+  so scheduled syncs wait for it as they do for a serial build.
+- The value is not part of the consent identity. Changing it needs no new
+  consent and does not re-extract documents.
+
 ## Build and validate Mistral fixtures {#build-and-validate-the-synthetic-fixtures}
 
 The repository fixture builder creates 21 formats deterministically. Five
