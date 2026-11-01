@@ -4,7 +4,10 @@ import { tick } from 'svelte';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import KataEvidenceDialog from './KataEvidenceDialog.svelte';
-import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
+import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
+import { DirectoryController } from '../../directory/controller.svelte';
+import { DirectoryReviewController } from '../../directory/review-controller.svelte';
+import { ExploreState } from '../../explore/state.svelte';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 
@@ -71,7 +74,7 @@ describe('KataEvidenceDialog', () => {
       if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Example sender', partial_label: false, identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel' });
       if (path.endsWith('/timeline')) return Response.json({
         canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', total_count: 1,
-        rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1,
+        rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, match: {}, participant_ids: [], participant_labels: [], message_type: 'email', conversation_type: 'email', attachment_count: 0, attachment_size: 0, deleted_from_source: false, source_identifier: 'archive@example.com', source_type: 'gmail',
           title: 'Follow up', has_attachments: false, message_count: 1, anchor_message_id: 42, conversation_id: 70 }]
       });
       if (path === '/api/v1/conversations/70') return Response.json({
@@ -85,9 +88,13 @@ describe('KataEvidenceDialog', () => {
     });
     const controller = new RelationshipsController(client, () => 'UTC');
     const predicate = { filters: [], presentation: 'table' as const };
-    const workspace = render(RelationshipsWorkspace, { props: {
-      client, controller, predicate, facet: 'people', target: 'cluster:1', showAll: false, filesOpen: false,
-      onFacetChange: vi.fn(), onTargetChange: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn()
+    const directory = new DirectoryController(client);
+    const state = new ExploreState(null);
+    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+    const workspace = render(PeopleWorkspace, { props: {
+      client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(),
+      predicate, target: 'cluster:1', filesOpen: false, urlState: state.current,
+      onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn()
     } });
     await controller.openTarget('cluster:1', predicate);
     await fireEvent.click((await screen.findByText('Follow up')).closest('[role="row"]')!);
@@ -111,6 +118,7 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.keyDown(reading, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
     workspace.unmount();
+    controller.destroy(); directory.destroy(); state.destroy();
   });
 
   const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
