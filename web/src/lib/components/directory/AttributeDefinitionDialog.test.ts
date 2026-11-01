@@ -114,16 +114,18 @@ describe('AttributeDefinitionDialog', () => {
     expect(document.activeElement).toBe(result);
   });
 
-  it.each([
-    ['Text', 'text', 'text', undefined],
-    ['Integer', 'integer', 'duration', undefined],
-    ['Number', 'real', 'text', undefined],
-    ['Boolean', 'boolean', 'checkbox', undefined],
-    ['Date', 'date', 'date', undefined],
-    ['Timestamp', 'timestamp', 'timestamp', undefined],
-    ['JSON', 'json', 'json', undefined],
-    ['Person reference', 'record_reference', 'person', 'person'],
-  ])('sends a server-compatible %s definition', async (optionLabel, valueType, fieldType, recordTarget) => {
+  it.each<{ optionLabel: string; valueType: string; fieldType: string; recordTarget?: string; cardinality?: string; choices?: string; expected?: Array<{ value: string; label: string }> }>([
+    { optionLabel: 'Text', valueType: 'text', fieldType: 'text' },
+    { optionLabel: 'Integer', valueType: 'integer', fieldType: 'duration' },
+    { optionLabel: 'Number', valueType: 'real', fieldType: 'text' },
+    { optionLabel: 'Boolean', valueType: 'boolean', fieldType: 'checkbox' },
+    { optionLabel: 'Date', valueType: 'date', fieldType: 'date' },
+    { optionLabel: 'Timestamp', valueType: 'timestamp', fieldType: 'timestamp' },
+    { optionLabel: 'JSON', valueType: 'json', fieldType: 'json' },
+    { optionLabel: 'Person reference', valueType: 'record_reference', fieldType: 'person', recordTarget: 'person' },
+    { optionLabel: 'Text', valueType: 'text', fieldType: 'multiselect', cardinality: 'multi', choices: ' email | Email\n phone | Phone ', expected: [{ value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' }] },
+    { optionLabel: 'Integer', valueType: 'integer', fieldType: 'select', choices: '1 | One', expected: [{ value: '1', label: 'One' }] },
+  ])('sends a server-compatible $optionLabel definition ($fieldType)', async ({ optionLabel, valueType, fieldType, recordTarget, cardinality = 'single', choices, expected }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -135,7 +137,8 @@ describe('AttributeDefinitionDialog', () => {
         field_type: fieldType,
         ...(recordTarget ? { record_target: recordTarget } : {}),
         is_sensitive: false,
-        options: undefined,
+        cardinality,
+        options: expected ? { choices: expected } : undefined,
       });
       if (request.method === 'POST') return Response.json(created, { status: 201 });
       return Response.json({ definitions: [created] });
@@ -144,40 +147,16 @@ describe('AttributeDefinitionDialog', () => {
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Synthetic field' } });
     await chooseSelectOption(screen.getByLabelText('Value type'), optionLabel);
+    if (cardinality === 'multi') await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
+    if (choices) await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: choices } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
 
     const body = (await requests[0]!.clone().json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ value_type: valueType, field_type: fieldType });
+    expect(body).toMatchObject({ value_type: valueType, field_type: fieldType, cardinality });
+    if (expected) expect(body.options).toEqual({ choices: expected });
     if (recordTarget) expect(body).toHaveProperty('record_target', recordTarget);
     else expect(body).not.toHaveProperty('record_target');
-  });
-
-  it.each([
-    { type: 'Text', valueType: 'text', cardinality: 'multi', fieldType: 'multiselect', choices: ' email | Email\n phone | Phone ', expected: [{ value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' }] },
-    { type: 'Integer', valueType: 'integer', cardinality: 'single', fieldType: 'select', choices: '1 | One', expected: [{ value: '1', label: 'One' }] },
-  ] as const)('sends trimmed labeled $type choices with $cardinality cardinality', async ({ type, valueType, cardinality, fieldType, choices, expected }) => {
-    const requests: Request[] = [];
-    const created = definition({ value_type: valueType, cardinality, field_type: fieldType, is_sensitive: false });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST'
-        ? Response.json(created, { status: 201 })
-        : Response.json({ definitions: [created] });
-    });
-
-    render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Preferred channel' } });
-    await chooseSelectOption(screen.getByLabelText('Value type'), type);
-    if (cardinality === 'multi') await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
-    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: choices } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await waitFor(() => expect(requests).toHaveLength(2));
-
-    await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      value_type: valueType, cardinality, field_type: fieldType, options: { choices: expected },
-    });
   });
 
   it.each([

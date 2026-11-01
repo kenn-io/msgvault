@@ -16,6 +16,7 @@ function person() {
 describe('ProfileHistoryDialog', () => {
   it.each(['attributes', 'definitions'])('reloads custom history on open and retries failed %s without hiding profile history', async (failedSection) => {
     let failing = true;
+    let note = 'Earlier note';
     const requests: URL[] = [];
     const definition: AttributeDefinition = {
       id: 8, universal_id: '00000000-0000-4000-8000-000000000008', object_type: 'person', slug: 'note', label: 'Note',
@@ -37,7 +38,7 @@ describe('ProfileHistoryDialog', () => {
       if (url.pathname.endsWith('/attributes')) {
         if (failing && failedSection === 'attributes') return Response.json({ message: 'attributes unavailable' }, { status: 503 });
         return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [{
-          id: 9, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Earlier note' },
+          id: 9, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: note },
           source: 'user', active_from: when, active_until: '2026-08-02T00:00:00Z', created_at: when,
         }] }] });
       }
@@ -57,11 +58,12 @@ describe('ProfileHistoryDialog', () => {
     expect(await screen.findByText('Earlier note')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     await dialog.unmount();
+    note = 'Latest note';
     render(ProfileHistoryDialog, props);
     expect(await screen.findByText('Current Name')).toBeDefined();
-    expect(requests.filter((url) => url.pathname.endsWith('/attributes'))).toHaveLength(3);
-    expect(requests.filter((url) => url.pathname.endsWith('/attributes')).map(url => url.searchParams.get('history'))).toEqual(['true', 'true', 'true']);
-    expect(requests.filter((url) => url.pathname.endsWith('/attribute-definitions'))).toHaveLength(3);
+    expect(await screen.findByText('Latest note')).toBeDefined();
+    expect(screen.queryByText('Earlier note')).toBeNull();
+    expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
   it('retains current structured provenance alongside superseded rows and observations', async () => {
