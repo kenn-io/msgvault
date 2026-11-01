@@ -28,16 +28,19 @@ function setup(paged: boolean, row = saved) {
   const props = { client, identityScope: { kind: 'person' as const, id: 1 }, target: 'cluster:1', predicate: {}, onOpenFiles: vi.fn(), onFiltersChange: vi.fn(), onClearPeriod: vi.fn() };
   return { props, requests };
 }
-it('offers Clear selection without Review deletion for selected person messages', async () => {
+it('shows person messages without selection or presentation controls', async () => {
   const { props } = setup(false);
   const view = render(PersonMessages, { props });
   try {
-    const checkbox = await screen.findByRole('checkbox', { name: 'Select Saved message' });
-    await fireEvent.click(checkbox);
-    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Review deletion…' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
-    expect(screen.getByRole('checkbox', { name: 'Select Saved message', checked: false })).toBeDefined();
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
+    await within(grid).findByText('Saved message');
+    expect(within(grid).queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /^Show as:/ })).toBeNull();
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(within(grid).queryByRole('row', { selected: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
   } finally { view.unmount(); }
 });
 it.each([
