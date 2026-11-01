@@ -40,7 +40,7 @@
   import { ExploreLoader } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
-  import { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
+  import { ExploreSelectionState, ExploreState, navigationFingerprint } from '../../explore/state.svelte';
   import { RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
@@ -175,7 +175,7 @@
   });
   let archiveWasOpen = false;
   const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
-  const archiveNavigationFingerprint = $derived(canonicalFingerprint(exploreState.current));
+  const archiveNavigationFingerprint = $derived(navigationFingerprint(exploreState.current));
 
   $effect(() => {
     void archiveNavigationFingerprint;
@@ -810,11 +810,11 @@
     commitNavigation({ selectedRow: recordingSelection(messageID), conversationAnchor: null });
   }
   async function openArchivedMeeting(meeting: MeetingRef): Promise<void> {
-    const origin = canonicalFingerprint(exploreState.current);
+    const origin = navigationFingerprint(exploreState.current);
     const returnSelectedRow = archiveMeetingID !== undefined ? archiveReturnSelection : exploreState.current.selectedRow;
     if (archiveMeetingID === undefined) archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const message = await archivedMeeting.load(meeting.message_id, meeting.conversation_id);
-    if (!message || origin !== canonicalFingerprint(exploreState.current)) return;
+    if (!message || origin !== navigationFingerprint(exploreState.current)) return;
     archiveReturnSelection = returnSelectedRow;
     commitRestorableNavigation({ selectedRow: archiveMeetingSelection(message.id), conversationAnchor: null });
     window.history.replaceState({
