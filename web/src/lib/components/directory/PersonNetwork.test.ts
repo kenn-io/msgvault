@@ -104,9 +104,9 @@ describe('PersonNetwork', () => {
     expect(screen.getByRole('button', { name: 'Open person Second Hop Person' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Open person Selected Person' })).toBeNull();
     const relationOf = (button: HTMLElement) => button.parentElement?.querySelector('.relation')?.textContent;
-    expect(relationOf(peer)).toBe('works with');
+    expect(relationOf(peer)).toBe('Selected Person works with');
     expect(relationOf(screen.getByRole('button', { name: 'Open organization Shared Organization' }))).toBe('Engineer');
-    expect(relationOf(screen.getByRole('button', { name: 'Open person Second Hop Person' }))).toBe('mentors');
+    expect(relationOf(screen.getByRole('button', { name: 'Open person Second Hop Person' }))).toBe('Curated Peer mentors');
 
     await fireEvent.click(peer);
     await fireEvent.click(screen.getByRole('button', { name: 'Open organization Shared Organization' }));
@@ -114,17 +114,23 @@ describe('PersonNetwork', () => {
     expect(onOpenOrganization).toHaveBeenCalledWith(21);
   });
 
-  it('names a link between two people at the same distance, visibly and for screen readers', async () => {
+  it('names both ends of a link, in either direction and between two people at the same distance', async () => {
     const projection = connected();
-    projection.edges.push({ id: 'relationship:33', kind: 'relationship', source_node_id: 'organization:21', target_node_id: 'person:9', relationship_type_slug: 'sponsor', label: 'sponsors' });
+    projection.nodes.push({ id: 'person:10', kind: 'person', entity_id: 10, label: 'Third Person', hop: 2 });
+    projection.edges.push(
+      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' },
+      { id: 'relationship:34', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:9', relationship_type_slug: 'sibling', label: 'sibling of' },
+    );
     const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async () => Response.json(projection))), 7);
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
 
-    const second = await screen.findByRole('button', { name: 'Open person Second Hop Person' });
-    expect(second.parentElement?.querySelector('.relation')?.textContent).toBe('mentors, Shared Organization sponsors');
+    const relationOf = async (name: string) => (await screen.findByRole('button', { name })).parentElement?.querySelector('.relation')?.textContent;
+    // Curated Peer mentors Second Hop Person; Third Person mentors Curated Peer. The same verb reads differently by direction.
+    expect(await relationOf('Open person Second Hop Person')).toBe('Curated Peer mentors, Third Person sibling of');
+    expect(await relationOf('Open person Third Person')).toBe('mentors Curated Peer');
     const links = within(screen.getByRole('list', { name: 'Network connections' })).getAllByRole('listitem').map((item) => item.textContent);
-    expect(links).toContain('Shared Organization sponsors Second Hop Person');
-    expect(links).toHaveLength(4);
+    expect(links).toContain('Third Person sibling of Second Hop Person');
+    expect(links).toHaveLength(5);
   });
 
   it('sends exact depth and ended-data queries and retains the last projection through loading, error, and retry', async () => {
