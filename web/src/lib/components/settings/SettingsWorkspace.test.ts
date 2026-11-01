@@ -727,6 +727,26 @@ it('shows unavailable message coverage after a failed initial read', async () =>
   expect(await within(row).findByText('Unavailable')).toBeDefined();
 });
 
+it('marks failed coverage refreshes unavailable without hiding Overview', async () => {
+  let coverageReads = 0;
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.includes('/search/coverage')) {
+      return ++coverageReads === 1
+        ? Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] })
+        : Response.json({ error: 'vector_generation_changed' }, { status: 503 });
+    }
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  const features = screen.getByRole('list', { name: 'Features' });
+  const row = within(features).getByText('Message search').closest('li')!;
+  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
+  expect(within(row).getByText('Unavailable')).toBeDefined();
+  expect(within(features).getByText('Source sync')).toBeDefined();
+});
+
 it('refreshes a pending message rebuild and keeps Contacts available', async () => {
   let building = false;
   let reads = 0;
