@@ -44,8 +44,6 @@
   import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
-  import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
-  import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
   import type { OperationSettingsTarget } from '../../operations/labels';
   import type { OperationRunDetail, OperationsURLState } from '../../operations/models';
@@ -71,8 +69,6 @@
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
   import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
-  import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
-  import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
   import PageHeader from './PageHeader.svelte';
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
@@ -233,18 +229,15 @@
   }
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitWorkspace(workspace);
   }
   function openDirectoryFromRelationship(participantID: number): void {
     beforeCommit();
     directoryController.resetForPromotion();
-    directoryPromotionParticipantID = participantID;
     exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: null, relationshipTarget: `cluster:${participantID}`, relationshipFiles: false });
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
@@ -372,17 +365,11 @@
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
     (patch) => commitNavigation(patch),
+    result => {
+      if (!result.ok && result.kind !== 'merge_required') announceOperation(result.message);
+      if (result.ok) void Promise.all([shellData.refreshDuplicates(), directoryController.refreshSelectedPerson(), relationshipsController.loadList(exploreState.predicate())]);
+    },
   );
-  const relationshipReviewController = new RelationshipReviewController(
-    untrack(() => client),
-    (patch) => commitNavigation(patch),
-  );
-  const factLedgerController = new FactLedgerController(untrack(() => client));
-  // Participant IDs only enter here from a successfully loaded
-  // /participants/{id} Relationship detail. It is intentionally ephemeral:
-  // browser restoration and ordinary Directory navigation never invent a
-  // promotion context.
-  let directoryPromotionParticipantID = $state<number>();
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
   let cardDAVSettingsRequestKey = 0;
   const settingsNavigationTarget = $derived(exploreState.current.workspace === 'settings'
@@ -532,7 +519,6 @@
       return;
     }
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitSearchIn('everything', query, mode);
   }
   let paletteOpen = $state(false);
@@ -545,9 +531,7 @@
   // An epoch is a monotonically increasing restoration event, not a boolean
   // mode. Capture the initial value so ordinary URL commits do not turn into
   // repeated page-one reloads merely because the initial epoch is positive.
-  let appliedDirectoryRestorationEpoch = untrack(() => exploreState.restorationEpoch);
   let appliedDirectoryReviewRestorationEpoch = untrack(() => exploreState.restorationEpoch);
-  let appliedFactLedgerRestorationEpoch = untrack(() => exploreState.restorationEpoch);
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
@@ -557,56 +541,18 @@
   // component tests, but normal app navigation reaches the controller here.
   $effect(() => {
     const restorationEpoch = exploreState.restorationEpoch;
-    const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
-    appliedDirectoryRestorationEpoch = restorationEpoch;
-    if (exploreState.current.workspace !== 'directory') return;
-    const personID = exploreState.current.directoryPersonID;
-    if (personID !== null) { untrack(() => replaceCommittedNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false })); return; }
-    const directoryState = {
-      directoryQuery: exploreState.current.directoryQuery,
-      directoryContactState: exploreState.current.directoryContactState,
-      directoryCategory: exploreState.current.directoryCategory,
-      directoryOrganization: exploreState.current.directoryOrganization,
-      directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-      directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-      directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-      directorySort: exploreState.current.directorySort,
-      directoryPersonID: exploreState.current.directoryPersonID,
-    };
-    untrack(() => directoryController.applyURLState(directoryState, historyRestoration));
-  });
-  // Review offsets are ephemeral like Directory cursors. A Back/Forward
-  // restoration always starts its restored queue at page zero, while an
-  // ordinary workspace round trip keeps the AppShell-owned request/page.
-  $effect(() => {
-    const restorationEpoch = exploreState.restorationEpoch;
     const historyRestoration = restorationEpoch !== appliedDirectoryReviewRestorationEpoch;
     appliedDirectoryReviewRestorationEpoch = restorationEpoch;
-    const relationshipState = exploreState.current.relationshipReviewState;
-    const factActive =
-      exploreState.current.workspace === 'directory_review' && exploreState.current.reviewKind === 'fact';
-    const factHistoryRestoration = factActive && restorationEpoch !== appliedFactLedgerRestorationEpoch;
-    if (factActive) appliedFactLedgerRestorationEpoch = restorationEpoch;
-    untrack(() =>
-      factLedgerController.applyContext(factActive, exploreState.current.directoryPersonID, factHistoryRestoration),
-    );
-    if (exploreState.current.workspace !== 'directory_review') {
-      untrack(() => relationshipReviewController.applyContext(false, relationshipState, historyRestoration));
-      return;
-    }
-    const reviewState = {
-      reviewKind: exploreState.current.reviewKind,
-      identityState: exploreState.current.identityState,
-    };
-    untrack(() => directoryReviewController.applyURLState(reviewState, historyRestoration));
-    untrack(() =>
-      relationshipReviewController.applyContext(
-        reviewState.reviewKind === 'relationship',
-        relationshipState,
-        historyRestoration,
-      ),
-    );
+    const active = exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates;
+    const identityState = exploreState.current.identityState;
+    untrack(() => {
+      void settleDuplicate();
+      if (active) directoryReviewController.applyURLState({ reviewKind: 'identity', identityState }, historyRestoration);
+    });
   });
+  async function settleDuplicate(): Promise<void> {
+    await directoryReviewController.settleDecision();
+  }
   $effect(() => {
     const mode = getThemeMode();
     if (mode === appearance.current.theme) return;
@@ -1034,25 +980,12 @@
       }));
     }),
   );
-  const reviewWorkspaceCommand: AppCommand = {
-    id: 'workspace:directory-review',
-    label: 'Open Reviews',
-    section: 'Navigate',
-    keywords: 'Navigate Reviews Directory identity matches fact review',
-    keys: [],
-    combos: [],
-    scopes: [],
-    destructive: false,
-    review: false,
-    run: () => commitWorkspace('directory_review'),
-  };
   const commandRegistry = $derived([
     ...createCommandRegistry(commandHandlers),
-    reviewWorkspaceCommand,
     ...groupingCommands,
   ]);
   const shellCommands = $derived([
-    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['directory', 'deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
+    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
     ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: `Open view: ${view.name}`, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
     { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
     ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
@@ -1218,8 +1151,6 @@
     relationshipsController.destroy();
     directoryController.destroy();
     directoryReviewController.destroy();
-    relationshipReviewController.destroy();
-    factLedgerController.destroy();
     operationsController.destroy();
     void flashViewError(shellData.expireDelete());
     if (ownsState) exploreState.destroy();
@@ -1238,6 +1169,7 @@
       collapsed={sidebarCollapsed}
       showCollapseToggle
       jobs={shellData.jobs}
+      duplicateCount={shellData.duplicateCount}
       views={shellData.views}
       deletionsStaged={shellData.deletionsStaged}
       viewsError={shellData.error}
@@ -1312,6 +1244,8 @@
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
+          reviews={directoryReviewController}
+          onDuplicatesChanged={() => void shellData.refreshDuplicates()}
           directory={directoryController}
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
@@ -1351,43 +1285,6 @@
           onOpenFileItem={openFileItem}
           onOpenFileConversation={openFileConversation}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-        />
-      {:else if exploreState.current.workspace === 'directory'}
-        <DirectoryWorkspace
-          onConfigureVisualSearch={openVisualAttachmentSettings}
-          {client}
-          controller={directoryController}
-          onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-          promotionParticipantID={directoryPromotionParticipantID}
-          onOpenPerson={openDirectoryPerson}
-          state={{
-            directoryQuery: exploreState.current.directoryQuery,
-            directoryContactState: exploreState.current.directoryContactState,
-            directoryCategory: exploreState.current.directoryCategory,
-            directoryOrganization: exploreState.current.directoryOrganization,
-            directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-            directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-            directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-            directorySort: exploreState.current.directorySort,
-            directoryPersonID: exploreState.current.directoryPersonID,
-          }}
-          onOpenCardDAVConflict={openCardDAVConflict}
-          onOpenCardDAVSettings={openCardDAVSettings}
-          onAnnounce={announceOperation}
-          onOpenRelationship={openRelationship}
-          onReviewFacts={(personID) =>
-            commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
-        />
-      {:else if exploreState.current.workspace === 'directory_review'}
-        <DirectoryReviewWorkspace
-          controller={directoryReviewController}
-          relationshipController={relationshipReviewController}
-          factController={factLedgerController}
-          directoryPersonID={exploreState.current.directoryPersonID}
-          {client}
-          onSelectFactPerson={(personID) => commitNavigation({ directoryPersonID: personID })}
-          onOpenPerson={openDirectoryPerson}
-          onAnnounce={announceOperation}
         />
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
@@ -1589,6 +1486,7 @@
         collapsed={false}
         showCollapseToggle={false}
         jobs={shellData.jobs}
+        duplicateCount={shellData.duplicateCount}
         views={shellData.views}
         deletionsStaged={shellData.deletionsStaged}
         viewsError={shellData.error}
@@ -1631,6 +1529,12 @@
     onConfigure={openVisualAttachmentSettings} />
 {/if}
 <div bind:this={flashRoot}><FlashBanner /></div>
+{#if directoryReviewController.pending}
+  {#key directoryReviewController.pending.candidate.id}<UndoToast message={directoryReviewController.pending.decision === 'accept' ? 'Pair merged' : 'Pair kept separate'} onUndo={async () => { const id = directoryReviewController.pending?.candidate.id; directoryReviewController.undoDecision(); await tick(); document.getElementById(`duplicate-${id}`)?.focus(); }} onExpire={() => void settleDuplicate()} />{/key}
+{/if}
+{#if shellData.pending}
+  {#key shellData.pending.id}<UndoToast message={`Deleted ${shellData.pending.name}`} onUndo={() => shellData.undoDelete()} onExpire={() => void flashViewError(shellData.expireDelete())} />{/key}
+{/if}
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 

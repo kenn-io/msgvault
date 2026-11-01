@@ -1,5 +1,7 @@
 <script lang="ts">
   import { appShortcuts, Button, Checkbox, Modal, IconButton } from '@kenn-io/kit-ui';
+  import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
+  import { untrack, onDestroy } from 'svelte';
   import Pencil from '@lucide/svelte/icons/pencil';
   import X from '@lucide/svelte/icons/x';
 
@@ -20,6 +22,10 @@
   }
 
   let { client, controller, personID, catalogOnly = false, onOpenPerson }: Props = $props();
+  const imports = new RelationshipReviewController(untrack(() => client));
+  $effect(() => { if (!catalogOnly) imports.applyPerson(personID); });
+  onDestroy(() => imports.destroy());
+  const importedConnections = $derived(imports.rows.filter(row => row.status === 'accepted' && row.matched_person_id !== undefined));
   let relationshipEditor = $state<PersonRelationshipView | null | undefined>(undefined);
   let relationshipTypeEditor = $state<RelationshipType | null | undefined>(undefined);
   let deletingRelationship = $state<PersonRelationshipView>();
@@ -142,6 +148,14 @@
         {/each}
       </div>
     {/if}
+    {#if imports.loading}<p role="status">Loading imported connections…</p>{/if}
+    {#if imports.error}<p role="alert">{imports.error}<Button label="Retry imported connections" size="sm" onclick={() => void imports.retry()} /></p>{/if}
+    {#each imports.rows.filter(row => row.status !== 'accepted' || !controller.relationships.some(view => view.counterpart_person_id === row.matched_person_id)) as row (row.id)}
+      <DetailRow label={sentenceCase(row.status)} description={[row.raw_related_type, row.source, row.value_kind, row.updated_at, row.reviewed_at].filter(Boolean).join(' · ')}>
+        {row.raw_related_value}
+        {#if row.matched_person_id && !controller.relationships.some(view => row.status === 'accepted' && view.counterpart_person_id === row.matched_person_id)}<Button label="Open person" size="sm" onclick={() => onOpenPerson?.(row.matched_person_id!)} />{/if}
+      </DetailRow>
+    {/each}
   {:else}
     <header><h3>Connection types</h3><Button size="sm" label="Add type" onclick={() => relationshipTypeEditor = null} /></header>
     {#if controller.relationshipTypesLoading}<p class="muted" role="status">Loading relationship types…</p>

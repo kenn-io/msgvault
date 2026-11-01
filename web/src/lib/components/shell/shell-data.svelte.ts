@@ -1,5 +1,6 @@
 import {
   deleteSavedView,
+  listIdentityMatchCandidates,
   listSavedViews,
   patchSavedView,
 } from '../../api/generated/api/api';
@@ -31,6 +32,7 @@ export class ShellData {
   get views(): SavedView[] {
     return this.#ordered.filter(view => view.id !== this.pending?.id && !this.#deleting.includes(view.id));
   }
+  duplicateCount = $state(0);
   pending = $state<SavedView>();
   error = $state<string>();
   readonly deletions: DeletionsController;
@@ -67,13 +69,20 @@ export class ShellData {
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
     const deletions = this.refreshDeletions();
+    const duplicates = this.refreshDuplicates(controller.signal);
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
     if (views) this.#ordered = views;
-    await deletions;
+    await Promise.all([deletions, duplicates]);
   }
 
+  async refreshDuplicates(signal?: AbortSignal): Promise<void> {
+    try {
+      const result = await listIdentityMatchCandidates({ state: 'candidate,conflict', limit: 100, offset: 0 }, { ...this.#client, signal });
+      if (result.data && !signal?.aborted) this.duplicateCount = result.data.candidates?.length ?? 0;
+    } catch { /* Keep the last count while offline. */ }
+  }
   refreshDeletions(): Promise<void> { return this.deletions.refresh(); }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {

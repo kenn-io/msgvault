@@ -40,7 +40,7 @@ describe('AppSidebar', () => {
   });
 
   it.each(['directory', 'directory_review'])('keeps People current when opening an old %s link', (workspace) => {
-    renderSidebar({ active: workspace });
+    renderSidebar({ active: 'relationships' });
     expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 

@@ -20,6 +20,7 @@ export type RelationshipReviewRow = Pick<
 >;
 type RelationshipReviewCommit = (patch: { relationshipReviewState?: RelationshipReviewState }) => void;
 export class RelationshipReviewController {
+  personID = $state<number>();
   active = $state(false);
   state = $state<RelationshipReviewState>('pending');
   rows = $state<RelationshipReviewRow[]>([]);
@@ -49,6 +50,12 @@ export class RelationshipReviewController {
     this.replaceContext(active, state);
     if (active) void this.load();
   }
+  applyPerson(personID: number): void {
+    if (this.active && this.personID === personID) return;
+    this.personID = personID;
+    this.replaceContext(true, this.state);
+    void this.load();
+  }
   setState(state: RelationshipReviewState): void {
     if (this.disposed || !this.active || this.state === state) return;
     this.commit({ relationshipReviewState: state });
@@ -67,7 +74,7 @@ export class RelationshipReviewController {
     this.error = null;
     try {
       const response = await generatedListPersonRelationshipReviews(
-        { status: state },
+        this.personID === undefined ? { status: state } : { person_id: this.personID },
         {
           ...this.client,
           signal: abort.signal,
@@ -75,7 +82,7 @@ export class RelationshipReviewController {
       );
       if (!this.ownsRequest(abort, request, context, state)) return false;
       if (response.data) {
-        const rows = safeRows(response.data.reviews, state);
+        const rows = safeRows(response.data.reviews, this.personID === undefined ? state : undefined);
         if (!rows) {
           this.error = 'Unable to load imported relationship reviews.';
           return false;
@@ -101,7 +108,7 @@ export class RelationshipReviewController {
     }
   }
   async retry(): Promise<void> {
-    if (this.disposed || !this.active || this.loading || !this.error || this.rows.length > 0) return;
+    if (this.disposed || !this.active || this.loading || !this.error) return;
     await this.load();
   }
   destroy(): void {
@@ -148,7 +155,7 @@ export class RelationshipReviewController {
 }
 function safeRows(
   values: GeneratedReview[] | null,
-  selectedState: RelationshipReviewState,
+  selectedState: RelationshipReviewState | undefined,
 ): RelationshipReviewRow[] | undefined {
   if (values === null) return [];
   const rows: RelationshipReviewRow[] = [];
@@ -159,7 +166,7 @@ function safeRows(
       typeof value.raw_related_value !== 'string' ||
       typeof value.raw_related_type !== 'string' ||
       typeof value.value_kind !== 'string' ||
-      value.status !== selectedState ||
+      (selectedState !== undefined ? value.status !== selectedState : !['pending', 'accepted', 'rejected'].includes(value.status)) ||
       typeof value.source !== 'string' ||
       typeof value.created_at !== 'string' ||
       typeof value.updated_at !== 'string' ||

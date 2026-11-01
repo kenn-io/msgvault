@@ -78,9 +78,8 @@ const RESTORATION_INVALIDATING_FIELDS = new Set<keyof ExploreURLState>([
   'directoryLastContactBefore',
   'directorySort',
   'directoryPersonID',
-  'reviewKind',
+  'peopleDuplicates',
   'identityState',
-  'relationshipReviewState',
   'query',
   'searchMode',
   'filters',
@@ -168,9 +167,8 @@ export const defaultExploreURLState: ExploreURLState = {
   directoryLastContactBefore: '',
   directorySort: 'name',
   directoryPersonID: null,
-  reviewKind: 'identity',
+  peopleDuplicates: false,
   identityState: 'candidate',
-  relationshipReviewState: 'pending',
   query: '',
   searchMode: 'full_text',
   filters: [],
@@ -424,12 +422,12 @@ function normalize(value: unknown): ExploreURLState {
       : defaultExploreURLState.presentation;
   const legacyFacet: RelationshipFacet | undefined =
     value.workspace === 'people' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
-  const workspace = value.workspace === 'everything' || value.workspace === 'directory' || value.workspace === 'directory_review' || value.workspace === 'settings' ||
+  const workspace = value.workspace === 'everything' || value.workspace === 'settings' ||
     value.workspace === 'files' || value.workspace === 'relationships' ||
     value.workspace === 'sources' ||
     value.workspace === 'deletions'
     ? value.workspace
-    : legacyFacet ? 'relationships' : value.workspace === 'operations' ? 'settings' : 'everything';
+    : legacyFacet || value.workspace === 'directory' || value.workspace === 'directory_review' ? 'relationships' : value.workspace === 'operations' ? 'settings' : 'everything';
   const filesView = workspace === 'files' || (workspace === 'everything' && presentation === 'files');
   const normalizedWorkspace = filesView ? 'files' : workspace;
   const normalizedPresentation = filesView
@@ -445,17 +443,10 @@ function normalize(value: unknown): ExploreURLState {
   const relationshipTarget = legacyFacet
     ? legacyRelationshipTarget(analysisTarget, legacyFacet)
     : relationshipTargetValue(value.relationshipTarget);
-  const reviewKind: DirectoryReviewKind = value.reviewKind === 'fact' || value.reviewKind === 'relationship'
-    ? value.reviewKind
-    : 'identity';
   const identityState: IdentityReviewState =
     value.identityState === 'conflict' || value.identityState === 'accepted' || value.identityState === 'rejected'
       ? value.identityState
       : 'candidate';
-  const relationshipReviewState: RelationshipReviewState =
-    value.relationshipReviewState === 'accepted' || value.relationshipReviewState === 'rejected'
-      ? value.relationshipReviewState
-      : 'pending';
   const settingsAuthority = normalizeSettingsNavigationAuthority(value.settingsAuthority);
   const operationLane = typeof value.operationLane === 'string' &&
     OPERATION_LANES.has(value.operationLane as OperationLane)
@@ -502,9 +493,8 @@ function normalize(value: unknown): ExploreURLState {
     directoryLastContactBefore: directoryDay(value.directoryLastContactBefore),
     directorySort: value.directorySort === 'last_contact_desc' || value.directorySort === 'last_contact_asc' ? value.directorySort : 'name',
     directoryPersonID: directoryPersonID(value.directoryPersonID),
-    reviewKind,
     identityState,
-    relationshipReviewState,
+    peopleDuplicates: value.peopleDuplicates === true || value.workspace === 'directory_review' && value.reviewKind !== 'fact' && value.reviewKind !== 'relationship',
     query: typeof value.query === 'string' ? value.query : '',
     searchMode,
     filters: filters(value.filters),
@@ -518,7 +508,7 @@ function normalize(value: unknown): ExploreURLState {
     fileMIMEFamilies: value.schemaVersion === 2 ? fileMIMEFamilies(value.fileMIMEFamilies) : [],
     personFilePresentation: value.personFilePresentation === 'media' ? 'media' : 'files',
     personFileDirections: personFileDirections(value.personFileDirections),
-    identityQuery: typeof value.identityQuery === 'string' ? value.identityQuery : '',
+    identityQuery: value.workspace === 'directory' && typeof value.directoryQuery === 'string' ? value.directoryQuery : typeof value.identityQuery === 'string' ? value.identityQuery : '',
     identitySort: isRecord(value.identitySort) &&
       (value.identitySort.field === 'activity_count' || value.identitySort.field === 'latest_at' || value.identitySort.field === 'display_label') &&
       (value.identitySort.direction === 'asc' || value.identitySort.direction === 'desc')
@@ -530,7 +520,7 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
-    relationshipSaved: value.relationshipSaved === true,
+    relationshipSaved: value.relationshipSaved === true || value.workspace === 'directory',
     relationshipSort: value.relationshipSort === 'name' || value.relationshipSort === 'recent' ? value.relationshipSort : 'closest',
     operationHistory: value.operationHistory === true || (value.operationHistory === undefined && value.workspace === 'operations' &&
       !!(operationRunID(value.operationRunID) || operationStatus || operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore)),
@@ -562,18 +552,17 @@ function normalize(value: unknown): ExploreURLState {
 // Fields that only describe one workspace stay out of the link when another
 // workspace is shared; browser history still carries them for Back/Forward.
 const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<ExploreWorkspace>>> = {
-  directoryQuery: ['directory', 'relationships'],
-  directoryContactState: ['directory', 'relationships'],
-  directoryCategory: ['directory', 'relationships'],
-  directoryOrganization: ['directory', 'relationships'],
-  directoryPrimaryChannel: ['directory', 'relationships'],
-  directoryLastContactAfter: ['directory', 'relationships'],
-  directoryLastContactBefore: ['directory', 'relationships'],
-  directorySort: ['directory', 'relationships'],
-  directoryPersonID: ['directory', 'directory_review', 'relationships'],
-  reviewKind: ['directory_review'],
-  identityState: ['directory_review'],
-  relationshipReviewState: ['directory_review'],
+  directoryQuery: ['relationships'],
+  directoryContactState: ['relationships'],
+  directoryCategory: ['relationships'],
+  directoryOrganization: ['relationships'],
+  directoryPrimaryChannel: ['relationships'],
+  directoryLastContactAfter: ['relationships'],
+  directoryLastContactBefore: ['relationships'],
+  directorySort: ['relationships'],
+  directoryPersonID: ['relationships'],
+  peopleDuplicates: ['relationships'],
+  identityState: ['relationships'],
   fileSort: ['files'],
   fileFilenameQuery: ['files'],
   fileMIMEFamilies: ['files'],
