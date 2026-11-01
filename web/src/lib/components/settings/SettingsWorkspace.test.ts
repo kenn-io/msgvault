@@ -559,6 +559,44 @@ it('keeps edited People search details visible when switching the feature off', 
   await waitFor(() => expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull());
 });
 
+it('keeps People profile removal tied to the displayed revision after a shared-settings conflict reload', async () => {
+  let revision = '"s1"';
+  let removed = false;
+  const doc = settingsDoc();
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' && request.method === 'GET') return Response.json(doc, { headers: { ETag: revision } });
+    if (path === '/api/v1/settings' && request.method === 'PATCH') return Response.json({ message: 'Config changed' }, { status: 412 });
+    if (path.includes('/settings/people-inference')) {
+      if (request.method === 'DELETE') {
+        if (request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+        removed = true;
+      }
+      return Response.json({
+        profiles: removed ? [{ ...inferenceProfile, name: 'backup' }] : [
+          { ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' },
+          { ...inferenceProfile, name: 'backup' },
+        ], configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await screen.findByText('model-one');
+  revision = '"s2"';
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('The settings changed on disk. The latest are loaded. Review your changes and save again.');
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  await screen.findByText('model-one');
+  await fireEvent.click(screen.getByRole('button', { name: 'Remove profile' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
+  await waitFor(() => expect(seen.find(request => request.method === 'DELETE')).toBeDefined());
+  expect(seen.find(request => request.method === 'DELETE')?.ifMatch).toBe('"s1"');
+  expect(removed).toBe(false);
+  await screen.findByText('People sweep settings changed on disk. Reload and review your changes before trying again.');
+});
+
 it('refreshes the shared config revision when creating a profile succeeds before its key fails', async () => {
   let revision = '"s1"';
   let created = false;
