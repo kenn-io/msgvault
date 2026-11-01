@@ -319,7 +319,10 @@
     <div class="message-thread">
       {#each messages as message (message.id)}
         <MessageCard
-          {onOpenPerson}
+          onOpenPerson={onOpenPerson ? (participantID) => {
+            onAnchorChange?.(message.id);
+            onOpenPerson?.(participantID);
+          } : undefined}
           {onOpenSettings}
           {onOpenMeeting}
           client={apiClient}
