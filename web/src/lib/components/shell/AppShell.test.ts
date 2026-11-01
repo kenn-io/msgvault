@@ -928,7 +928,7 @@ describe('AppShell', () => {
       const search = await screen.findByRole('searchbox', { name: 'Search keyboard shortcuts' });
 
       await fireEvent.keyDown(search, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull());
       await waitFor(() => expect(document.activeElement).toBe(entry));
     });
 
@@ -939,7 +939,7 @@ describe('AppShell', () => {
       await fireEvent.keyDown(theme, { key: '?', shiftKey: true });
       await fireEvent.click(await screen.findByRole('button', { name: 'Close' }));
 
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull());
       await waitFor(() => expect(document.activeElement).toBe(theme));
     });
 
@@ -952,7 +952,7 @@ describe('AppShell', () => {
       const search = await screen.findByRole('searchbox', { name: 'Search keyboard shortcuts' });
 
       await fireEvent.keyDown(search, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull());
       await waitFor(() => expect(document.activeElement).toBe(opener));
     });
 
