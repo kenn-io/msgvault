@@ -90,7 +90,6 @@
   import type { JobTarget } from '../../jobs/jobs';
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
-  import UndoToast from '../common/UndoToast.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
 
   const media = mediaReadiness();
@@ -410,6 +409,30 @@
     window.addEventListener('pagehide', expire);
     void tick().then(() => {
       if (document.activeElement === document.body) flashRoot?.querySelector<HTMLElement>('.kit-flash-banner__action')?.focus();
+    });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', expire);
+      dismissFlash(flashID);
+    };
+  });
+
+  $effect(() => {
+    const pending = directoryReviewController.pending;
+    if (!pending) return;
+    const flashID = untrack(() => showFlash(pending.decision === 'accept' ? 'Merge queued' : 'Keep separate queued', {
+      durationMs: 8000,
+      action: { label: 'Undo', onclick: async () => {
+        directoryReviewController.undoDecision();
+        await tick();
+        document.getElementById(`duplicate-${pending.candidate.id}`)?.focus();
+      } },
+    }));
+    const expire = () => void directoryReviewController.settleDecision();
+    const timer = setTimeout(expire, 8000);
+    window.addEventListener('pagehide', expire);
+    void tick().then(() => {
+      if (document.activeElement === document.body) flashRoot?.querySelector<HTMLElement>('.kit-flash-banner:last-child .kit-flash-banner__action')?.focus();
     });
     return () => {
       clearTimeout(timer);
@@ -1545,12 +1568,6 @@
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
     onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
-{/if}
-{#if directoryReviewController.pending}
-  {#key directoryReviewController.pending.candidate.id}<UndoToast message={directoryReviewController.pending.decision === 'accept' ? 'Merge queued' : 'Keep separate queued'} onUndo={async () => { const id = directoryReviewController.pending?.candidate.id; directoryReviewController.undoDecision(); await tick(); document.getElementById(`duplicate-${id}`)?.focus(); }} onExpire={() => void directoryReviewController.settleDecision()} />{/key}
-{/if}
-{#if shellData.pending}
-  {#key shellData.pending.id}<UndoToast message={`Deleted ${shellData.pending.name}`} onUndo={() => shellData.undoDelete()} onExpire={() => void flashViewError(shellData.expireDelete())} />{/key}
 {/if}
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />

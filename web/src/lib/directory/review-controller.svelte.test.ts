@@ -259,7 +259,7 @@ describe('DirectoryReviewController', () => {
     await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Original Example', address: 'absorbed@example.com', count: 3 }));
 
     await vi.waitFor(() => expect(controller.summaries.get('person:1')).toMatchObject({ address: 'Saved person' }));
-    expect(controller.summaries.get('person:1')?.count).toBeUndefined();
+    expect(controller.summaries.get('person:1')).not.toHaveProperty('count');
     await expect(settle(controller, 17, 'accept')).resolves.toMatchObject({
       ok: false, kind: 'stale', status: 409
     });

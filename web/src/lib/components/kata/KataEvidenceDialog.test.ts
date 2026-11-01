@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, onTestFinished } from 'vitest';
 import { tick } from 'svelte';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import KataEvidenceDialog from './KataEvidenceDialog.svelte';
-import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
+import PersonPage from '../people/PersonPage.svelte';
+import { DirectoryController } from '../../directory/controller.svelte';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 
@@ -72,7 +73,7 @@ describe('KataEvidenceDialog', () => {
       if (path.endsWith('/timeline')) return Response.json({
         canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', total_count: 1,
         rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1,
-          title: 'Follow up', has_attachments: false, message_count: 1, anchor_message_id: 42, conversation_id: 70 }]
+          title: 'Follow up', has_attachments: false, message_count: 1, anchor_message_id: 42, conversation_id: 70, match: {} }]
       });
       if (path === '/api/v1/conversations/70') return Response.json({
         id: 70, anchor_id: 42, has_before: false, has_after: false, total: 1,
@@ -85,10 +86,12 @@ describe('KataEvidenceDialog', () => {
     });
     const controller = new RelationshipsController(client, () => 'UTC');
     const predicate = { filters: [], presentation: 'table' as const };
-    const workspace = render(RelationshipsWorkspace, { props: {
-      client, controller, predicate, facet: 'people', target: 'cluster:1', showAll: false, filesOpen: false,
-      onFacetChange: vi.fn(), onTargetChange: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn()
+    const directory = new DirectoryController(client);
+    render(PersonPage, { props: {
+      client, controller, directory, predicate, target: 'cluster:1', filesOpen: false,
+      onFiltersChange: vi.fn(), onReconcilePersonMerge: vi.fn(async () => undefined), onFilesToggle: vi.fn()
     } });
+    onTestFinished(() => { controller.destroy(); directory.destroy(); });
     await controller.openTarget('cluster:1', predicate);
     await fireEvent.click((await screen.findByText('Follow up')).closest('[role="row"]')!);
     const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
@@ -111,7 +114,6 @@ describe('KataEvidenceDialog', () => {
     expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBe(reading);
     await fireEvent.keyDown(reading, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
-    workspace.unmount();
   });
 
   const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
