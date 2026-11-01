@@ -10,7 +10,7 @@
   import { formatRelativeTime } from '../../util/format';
   import { basisLine, blockerLine, joinParts, messageCount } from '../../people/format';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
-  import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
+  import { IDENTITY_REVIEW_PAGE_LIMIT, type DirectoryReviewController } from '../../directory/review-controller.svelte';
   import IdentityCandidateCard from '../directory/IdentityCandidateCard.svelte';
 
   interface Props {
@@ -84,7 +84,7 @@
                   <span class="name">{nameOf(id)}</span>
                   {#if summary && summary !== 'failed'}
                     <span class="detail">{summary.address}</span>
-                    <span class="detail" data-mono>{joinParts([summary.lastAt ? formatRelativeTime(summary.lastAt) : '', messageCount(summary.count)])}</span>
+                    <span class="detail" data-mono>{joinParts([summary.lastAt ? formatRelativeTime(summary.lastAt) : '', summary.count === undefined ? '' : messageCount(summary.count)])}</span>
                   {:else if !summary}
                     <span class="detail">Loading…</span>
                   {:else}<Button label="Retry person" size="sm" onclick={() => controller.retrySummary(id)} />
@@ -129,7 +129,7 @@
   {#if controller.decisionError}<p role="alert">{controller.decisionError}</p>{/if}
   {#if controller.status && !controller.rows.some(row => row.id === controller.lastMerge?.candidateID)}<p role="status">{controller.status}</p>{/if}
   {#if controller.pageError}<p role="alert">{controller.pageError}<Button label="Retry page" onclick={() => void controller.retryPage()} /></p>{/if}
-  <nav aria-label="Duplicate pages"><Button label="Previous" disabled={controller.loading || !controller.hasPreviousPage} onclick={() => void controller.loadPreviousPage()} /><span>Page {controller.offset / 10 + 1}</span><Button label="Next" disabled={controller.loading || !controller.hasNextPage} onclick={() => void controller.loadNextPage()} /></nav>
+  <nav aria-label="Duplicate pages"><Button label="Previous" disabled={controller.loading || !controller.hasPreviousPage} onclick={() => void controller.loadPreviousPage()} /><span>Page {controller.offset / IDENTITY_REVIEW_PAGE_LIMIT + 1}</span><Button label="Next" disabled={controller.loading || !controller.hasNextPage} onclick={() => void controller.loadNextPage()} /></nav>
 </div>
 
 <style>

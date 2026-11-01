@@ -47,6 +47,13 @@ test('duplicate merge chooses a survivor through the existing revision-checked d
   await page.getByRole('button', { name: 'Back to People' }).click();
   const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
   await expect(merge).toBeVisible();
+  await merge.getByRole('button', { name: 'Open Synthetic One profile' }).click();
+  await expect(page.getByRole('heading', { name: 'Synthetic One', exact: true })).toBeVisible();
+  await expect(merge).toBeHidden();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByText('Possible duplicates', { exact: true }).click();
+  await page.locator('.cards > li').last().getByRole('button', { name: 'Merge', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to People' }).click();
   await merge.getByRole('radio', { name: 'Synthetic One (Person 7)' }).click();
   await merge.getByRole('checkbox', { name: /I understand/ }).check();
   await merge.getByRole('button', { name: 'Merge into selected survivor' }).click();
