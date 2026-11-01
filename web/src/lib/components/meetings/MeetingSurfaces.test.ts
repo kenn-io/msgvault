@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import { lanes } from '../../../test/operations';
 import { createAPIClient } from '../../api/client';
@@ -6,7 +6,9 @@ import type { MeetingMetricsRequest } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
-import PersonDetail from '../directory/PersonDetail.svelte';
+import PersonDetails from '../people/PersonDetails.svelte';
+import { DirectoryController } from '../../directory/controller.svelte';
+import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import AppShell from '../shell/AppShell.svelte';
 
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [3, 7], vcard_uid: 'person-7', created_at: '', updated_at: '' };
@@ -21,7 +23,7 @@ function ancillary(path: string): Response {
 }
 
 describe('meeting panel surfaces', () => {
-  it('refreshes same Directory person identity revisions and ignores delayed pre-merge evidence', async () => {
+  it('refreshes same Details person identity revisions and ignores delayed pre-merge evidence', async () => {
     const metrics: MeetingMetricsRequest[] = [];
     let resolveOld!: (response: Response) => void;
     let oldSignal!: AbortSignal;
@@ -36,16 +38,20 @@ describe('meeting panel surfaces', () => {
       if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
       return ancillary(path);
     });
-    const bundle: DirectoryReadBundle = { person, etags: {}, errors: {} };
-    const view = render(PersonDetail, { client, personID: 7, bundle });
+    const bundle: DirectoryReadBundle = { person: { ...person, participant_ids: [] }, etags: {}, errors: {} };
+    const directory = new DirectoryController(client);
+    directory.selectedPersonID = 7; directory.detail = bundle;
+    directory.profile = new DirectoryProfileController(client, 7, bundle);
+    const view = render(PersonDetails, { client, personID: 7, directory });
     await waitFor(() => expect(resolveOld).toBeDefined());
-    await view.rerender({ client, personID: 7, bundle: { ...bundle, person: { ...person, revision: 2, participant_ids: [7, 9] } } });
+    await act(() => { directory.profile!.person = { ...person, revision: 2, participant_ids: [] }; });
     expect(await screen.findByText('4 meetings')).toBeDefined();
     expect(metrics).toEqual([{ scope: { person_id: 7 } }, { scope: { person_id: 7 } }]);
     expect(oldSignal.aborted).toBe(true);
     resolveOld(Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: 99 } })));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByText('99 meetings')).toBeNull();
+    view.unmount(); directory.destroy();
   });
 
   it('uses separately loaded exact group authority across a workspace round-trip', async () => {

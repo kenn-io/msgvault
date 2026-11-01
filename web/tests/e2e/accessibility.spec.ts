@@ -277,7 +277,7 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network list and visualization have no axe violations', async ({ page }) => {
+test('Directory network rows stay separated within bounds and have no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();

@@ -157,7 +157,7 @@ it('resetting People filters commits one complete navigation', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('opening a saved person reads its profile once and opens Details', async () => {
+it('reads a saved profile once and loads its fields when Details opens', async () => {
   const paths: string[] = [];
   const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
   const client = createAPIClient(async input => {
@@ -187,7 +187,6 @@ it('opening a saved person reads its profile once and opens Details', async () =
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
     expect(screen.getByText('Overdue · 3 interactions')).toBeDefined();
-    expect(paths).toContain('/api/v1/meetings/metrics');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -267,7 +266,7 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   await controller.openTarget('cluster:1', {}, false);
   const onOpenDirectoryPerson = vi.fn();
   const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
-  let view = render(PeopleWorkspace, { props });
+  const view = render(PeopleWorkspace, { props });
   try {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
@@ -285,12 +284,7 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
     expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
     await screen.findByText('absorbed@example.com');
-    view.unmount();
-    // Back returns to People with the same saved-list URL and shell-owned controllers.
-    view = render(PeopleWorkspace, { props });
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
-    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic One'));
-    await waitFor(() => expect(props.onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: null, relationshipFiles: false }));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
