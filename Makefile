@@ -162,6 +162,7 @@ PG_SHIPPED_ONLY_PKGS := \
 	./internal/personmatchworker \
 	./internal/personscope/resolver \
 	./internal/plaud \
+	./internal/pocket \
 	./internal/postgresprofile \
 	./internal/provideridentity \
 	./internal/query \
