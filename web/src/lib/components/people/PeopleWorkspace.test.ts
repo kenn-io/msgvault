@@ -514,7 +514,8 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
     routes[`/api/v1/people/${id}`] = request => request.method === 'DELETE' ? pending : Response.json(profile(id, 1, []), { headers: { ETag: `"person-${id}-r1"` } });
     routes[`/api/v1/people/${id}/profile`] = () => Response.json({ person: profile(id, 1, []), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-${id}-r1"` } });
   }
-  const client = clientFor(routes); const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
+  const paths: string[] = [];
+  const client = clientFor(routes, paths); const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client, undefined, () => void controller.loadList({})); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
   const onNavigate = vi.fn();
   const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
@@ -527,8 +528,10 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
     state.commitNavigation({ directoryPersonID: 9 });
     await view.rerender({ urlState: state.current });
     await screen.findByRole('heading', { name: 'Synthetic Two' });
+    paths.length = 0;
     await act(async () => { finish(new Response(null, { status: 204 })); await deletion.mock.results[0]!.value; });
     expect(onNavigate).not.toHaveBeenCalled();
+    expect(paths.filter(path => path === '/api/v1/relationships')).toHaveLength(1);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
