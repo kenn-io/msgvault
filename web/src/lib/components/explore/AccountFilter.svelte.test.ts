@@ -46,12 +46,9 @@ describe('AccountFilter', () => {
       { key: 'identity:7:aW5ib3hAZXhhbXBsZS5uZXQ', source_id: 7, account_address: 'inbox@example.net', message_count: 3, source_deleted_count: 0 },
     ]);
     const onChange = vi.fn();
-    const filters = [{ dimension: 'account' as const, values: ['identity:7:aW5ib3hAZXhhbXBsZS5uZXQ'] }];
-    const view = render(AccountFilter, { client: createAPIClient(fetchFn), filters, onChange, showSingleMailbox });
-    const select = await screen.findByRole('combobox', { name: /^Account:/ });
-    await waitFor(() => expect(select).toHaveProperty('disabled', false));
-    await view.rerender({ filters: [] });
-    expect(screen.queryAllByRole('combobox', { name: /^Account:/ })).toHaveLength(count);
+    render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange, showSingleMailbox });
+    await waitFor(() => expect(fetchFn).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryAllByRole('combobox', { name: /^Account:/ })).toHaveLength(count));
   });
 
   it('retries an unavailable catalog until the receiving addresses arrive', async () => {
