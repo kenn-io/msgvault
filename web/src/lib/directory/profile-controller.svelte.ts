@@ -186,16 +186,12 @@ export class DirectoryProfileController {
         this.attributes = attributes.data;
         this.attributesError = null;
         refreshed = true;
-      } else {
-        this.attributesError = failureMessage(attributes.error, attributes.response?.status ?? 0);
-      }
+      } else this.attributesError = failureMessage(attributes.error, attributes.response?.status ?? 0);
       if (definitions.data) {
         this.definitions = definitions.data.definitions ?? [];
         this.definitionsError = null;
         refreshed = true;
-      } else {
-        this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
-      }
+      } else this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
       const errors = { ...this.bundle.errors };
       if (contactState.data) {
         this.bundle = { ...this.bundle, contactState: contactState.data };
