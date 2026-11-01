@@ -255,7 +255,7 @@ describe('MessageCard', () => {
   });
 });
 
-it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }])('offers the Kata task flow when $state', async ({ state, shown }) => {
+it.each([{ state: 'ready', shown: true }, { state: 'disabled', shown: false }])('offers the Kata task flow when $state', async ({ state, shown }) => {
   const fetchFn = vi.fn<typeof fetch>(async (input) => {
     const path = new URL((input as Request).url).pathname;
     return Response.json(path.endsWith('/issues') ? { issues: [] } : { state, project: 'example' });
