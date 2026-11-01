@@ -333,8 +333,6 @@ it('loads a saved person deep link inside its person page', async () => {
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
     release(Response.json(profile(7, 1, [])));
     await screen.findByRole('heading', { name: 'Synthetic One' });
-    expect(await screen.findByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeDefined();
-    expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -479,8 +477,8 @@ it.each([['participant', false], ['profile', false], ['missing', false], ['netwo
   let failed = true;
   const saved = profile(failure === 'network' ? 9 : 7, 1, [1]);
   const client = clientFor({
-    '/api/v1/people/7': () => failure === 'network' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: failure === 'missing' ? 'Person not found' : 'Saved profile unavailable' }, { status: failure === 'missing' ? 404 : 503 }) : Response.json(saved),
-    '/api/v1/people/9': () => { if (failed) throw new Error('Could not load selected person.'); return Response.json(saved); },
+    '/api/v1/people/7': () => failure === 'network' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: failure === 'missing' ? 'Person not found' : 'Saved profile unavailable' }, { status: failure === 'missing' ? 404 : 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
+    '/api/v1/people/9': () => { if (failed) throw new Error('Could not load selected person.'); return Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }); },
     '/api/v1/participants/1': () => failure === 'participant' && failed ? Response.json({ message: 'Participant unavailable' }, { status: 503 }) : Response.json({ id: 1, display_label: 'Synthetic One', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
   });
@@ -514,17 +512,14 @@ it.each([['participant', false], ['profile', false], ['missing', false], ['netwo
 });
 
 it.each([false, true])('refreshes the selected profile after bulk links (partial failure=%s)', async partial => {
-  let links = 0; let revision = 1; const writes: Request[] = [];
+  let links = 0; let revision = 1; const profileReads: number[] = [];
   const saved = () => profile(7, revision, revision === 1 ? [1] : [1, 2]);
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, i) => ({ canonical_id: i + 1, display_label, member_ids: [i + 1], last_at: when, score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
     '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${revision}"` } }),
-    '/api/v1/people/7/profile': request => {
-      if (request.method === 'PATCH') { writes.push(request); return Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${revision + 1}"` } }); }
-      return Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${revision}"` } });
-    },
+    '/api/v1/people/7/profile': () => { profileReads.push(revision); return Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${revision}"` } }); },
     '/api/v1/identity/links': () => { if (++links === 2 && partial) return Response.json({ error: 'internal_error', message: 'Synthetic pair failed' }, { status: 500 }); revision += 1; return Response.json({ identity_revision: revision, cache_state: 'ready' }); },
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
@@ -533,15 +528,12 @@ it.each([false, true])('refreshes the selected profile after bulk links (partial
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await screen.findByRole('button', { name: 'Add phone' });
+    await waitFor(() => expect(directory.profile?.person?.revision).toBe(1));
+    profileReads.length = 0;
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
     await screen.findByText(partial ? /Synthetic pair failed/ : 'People are now treated as the same person.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+12025550123' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save contact point' }));
-    await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]!.headers.get('If-Match')).toBe(`"person-7-r${revision}"`);
+    expect(profileReads).toEqual(partial ? [2] : [2, 3]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

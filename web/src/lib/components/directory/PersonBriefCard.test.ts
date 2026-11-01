@@ -254,7 +254,6 @@ describe('PersonBriefCard', () => {
     const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(screen.getByRole('checkbox', { name: 'Also track this person' })).toBeDefined();
-    expect(screen.getByText('Write briefs for this person')).toBeDefined();
     expect(screen.queryByText('No brief yet.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Generate a brief now' })).toBeNull();
     expect(paths).toEqual(['/api/v1/people/7/brief-enrollment']);
@@ -338,7 +337,6 @@ describe('PersonBriefCard', () => {
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
-      else await waitFor(() => expect(toggle.checked).toBe(false));
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.

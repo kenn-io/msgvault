@@ -228,5 +228,6 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Close organization editor' }));
     expect(screen.getByRole('dialog', { name: 'Create organization' })).toBeDefined();
     resolveCreate(new Response(JSON.stringify(organization(22, 1, 'Pending Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
   });
 });

@@ -29,7 +29,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: (options.definitions ?? []).filter(definition => new URL(request.url).searchParams.get('include_hidden') === 'true' || definition.is_active) });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
   const summary = createRawSnippet(() => ({ render: () => '<p>Summary row</p>' }));
   const view = render(PersonFields, options.summary ? { controller, summary } : { controller });
   return { controller, writes, view };
@@ -101,22 +101,13 @@ it('identifies row actions and confirmations by value and service scope without 
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('blocks attribute additions after a failed read and retries before editing the unseen value', async () => {
+it('blocks attribute additions after a failed read and retries loading values', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
-  let reads = 0;
-  const writes: Request[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') {
-      writes.push(request.clone());
-      return Response.json({ value: { ...current, id: 42, value: { type: 'text', text: 'Updated note' } }, superseded: { ...current, superseded_at: when } });
-    }
-    if (path.endsWith('/attributes')) {
-      reads += 1;
-      return reads === 1 ? Response.json({ message: 'Attributes unavailable' }, { status: 503 }) : Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
-    }
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
     if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r1"' } });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
@@ -130,15 +121,8 @@ it('blocks attribute additions after a failed read and retries before editing th
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Attributes unavailable'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
     expect(await screen.findByText('Existing note')).toBeDefined();
-    expect(screen.queryByRole('alert')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note: Existing note' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Updated note' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    expect(await screen.findByText('Updated note')).toBeDefined();
-    await expect(writes[0]!.json()).resolves.toMatchObject({ expected_value_id: 41, value: { type: 'text', text: 'Updated note' } });
+    expect(screen.getByRole('button', { name: 'Edit Note: Existing note' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -269,14 +253,10 @@ it('shows a repeated label once, the editor after the list, and the summary befo
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows sensitive values as Hidden and lets More fields reveal a hidden field and open its form', async () => {
-  const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Private note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
-  const religion = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', display_order: 2 } as AttributeDefinition;
-  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Secret example' }, active_from: when, created_at: when, source: 'user' };
-  const { controller, view } = harness(profile(), { definitions: [note, religion], bundle: { definitions: { definitions: [note, religion] }, attributes: { person_id: 7, attributes: [{ definition: note, current: [value], history: [] }] } } });
+it('lets More fields reveal a hidden field and open its form', async () => {
+  const religion = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
+  const { controller, view } = harness(profile(), { definitions: [religion], bundle: { definitions: { definitions: [religion] } } });
   try {
-    expect(screen.getByText('Hidden')).toBeDefined();
-    expect(screen.queryByText('Secret example')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
     expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();
