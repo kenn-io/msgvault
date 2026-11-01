@@ -9,8 +9,8 @@
   import RelationshipsTab from '../directory/RelationshipsTab.svelte';
   import AttributeDefinitionDialog from '../directory/AttributeDefinitionDialog.svelte';
   import OrganizationsSettings from './OrganizationsSettings.svelte';
-  let { client }: { client: APIClient } = $props();
-  const entities = new DirectoryEntityController(untrack(() => client), 0);
+  let { client, onDirectoryChange }: { client: APIClient; onDirectoryChange?: () => void | Promise<void> } = $props();
+  const entities = new DirectoryEntityController(untrack(() => client), 0, { onDirectoryChange: () => onDirectoryChange?.() });
   const fields = new DirectoryProfileController(untrack(() => client), 0, { etags: {}, errors: {} }, { includeHiddenDefinitions: true });
   let creating = $state(false);
   let editing = $state<AttributeDefinition>();

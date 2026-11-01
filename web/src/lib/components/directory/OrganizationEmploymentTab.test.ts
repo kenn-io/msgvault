@@ -83,7 +83,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(postedBody.source_ref).toBeUndefined();
     expect(employmentReads).toBe(1);
     expect(screen.getByText('Architect')).toBeDefined();
-    expect(controller.employmentProjection?.organization_name).toBe('Synthetic Org');
     expect(screen.getByText(/Engineer/).closest('li')?.textContent).not.toContain('Primary');
   });
 

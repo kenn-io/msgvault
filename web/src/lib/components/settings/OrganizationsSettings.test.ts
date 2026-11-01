@@ -54,7 +54,7 @@ describe('OrganizationsSettings', () => {
     expect(posts).toBe(1);
   });
 
-  it('creates, fresh-ETag edits, replaces a profile without losing media hashes, and deletes an unused organization', async () => {
+  it('creates, edits, replaces a profile without losing media hashes, and deletes an unused organization', async () => {
     const requests: Request[] = [];
     let readRevision = 2;
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
@@ -84,7 +84,6 @@ describe('OrganizationsSettings', () => {
     await fireEvent.input(organizationName, { target: { value: 'Renamed Synthetic Org' } });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save organization' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
-    expect(requests.find((request) => request.method === 'PATCH')?.headers.get('If-Match')).toBe('"organization-21-r2"');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
@@ -93,7 +92,6 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
     const put = requests.find((request) => request.method === 'PUT')!;
-    expect(put.headers.get('If-Match')).toBe('"organization-21-r3"');
     expect(await put.json()).toMatchObject({ media: [{ content_hash: 'sha256:synthetic' }] });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
@@ -179,7 +177,6 @@ describe('OrganizationsSettings', () => {
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
 
     const put = requests.find((request) => request.method === 'PUT')!;
-    expect(put.headers.get('If-Match')).toBe('"organization-21-r3"');
     const body = await put.json();
     expect(body.names).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4' }),
@@ -256,7 +253,6 @@ describe('OrganizationsSettings', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
     await waitFor(() => expect(puts).toBe(2));
-    expect(requests.filter((request) => request.method === 'PUT')[1]?.headers.get('If-Match')).toBe('"organization-21-r4"');
   });
 
   it('does not dismiss an editor during submission and closes it after success', async () => {

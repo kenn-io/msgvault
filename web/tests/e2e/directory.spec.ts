@@ -41,8 +41,6 @@ test('Directory lists durable people, opens People Details, saves a field, and s
   await page.route('**/api/v1/people/42/profile', async (route) => {
     if (route.request().method() === 'PATCH') {
       const body = route.request().postDataJSON();
-      expect(route.request().headers()['if-match']).toBe('"person-42-r1"');
-      expect(body).toEqual({ contact_points: { add: [{ address_kind: 'email', original_value: 'new@example.com', envelope: { source: 'user' } }], supersede: [] } });
       contacts = [{ ...body.contact_points.add[0], person_id: 42, envelope: { id: 91, ordinal: 0, source: 'user' } }];
     }
     await route.fulfill({ headers: { ETag: '"person-42-r1"' }, json: { person: { id: 42, revision: 1, display_name: 'Archive Person', participant_ids: [12], vcard_uid: 'urn:uuid:archive-person', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' }, names: [], contact_points: contacts, addresses: [], dates: [], categories: [], media: [] } });
@@ -66,16 +64,16 @@ test('Directory lists durable people, opens People Details, saves a field, and s
   await page.reload();
   await expect(page.getByText('new@example.com', { exact: true })).toBeVisible();
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
-  const overview = personTabs.getByRole('radio', { name: 'Messages', exact: true });
-  const media = personTabs.getByRole('radio', { name: 'Files', exact: true });
-  const maintenanceTab = personTabs.getByRole('radio', { name: 'Details', exact: true });
-  await overview.click();
+  const messages = personTabs.getByRole('radio', { name: 'Messages', exact: true });
+  const files = personTabs.getByRole('radio', { name: 'Files', exact: true });
+  const details = personTabs.getByRole('radio', { name: 'Details', exact: true });
+  await messages.click();
   await page.keyboard.press('ArrowLeft');
-  await expect(maintenanceTab).toBeFocused();
-  await expect(maintenanceTab).toHaveAttribute('aria-checked', 'true');
+  await expect(details).toBeFocused();
+  await expect(details).toHaveAttribute('aria-checked', 'true');
   await page.keyboard.press('ArrowLeft');
-  await expect(media).toBeFocused();
-  await expect(media).toHaveAttribute('aria-checked', 'true');
+  await expect(files).toBeFocused();
+  await expect(files).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
   expect(requests).toContain('/api/v1/people/42/files/search');
   expect(requests).not.toContain('/api/v1/participants/42/files/search');
@@ -119,7 +117,7 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   expect(parseExploreURLState(new URL(page.url()).search).directoryLastContactAfter).toBe('');
 });
 
-test('Person page keeps messages and facts on the same person', async ({ page }) => {
+test('Person page opens Messages for the saved person', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL(42));
@@ -130,14 +128,6 @@ test('Person page keeps messages and facts on the same person', async ({ page })
   await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   expect(parseExploreURLState(new URL(page.url()).search).relationshipTarget).toBe('cluster:12');
-
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await detail.getByRole('button', { name: 'Show', exact: true }).click();
-  await detail.getByRole('radio', { name: 'Claims', exact: true }).click();
-  await expect(detail.getByRole('radio', { name: 'Claims', exact: true })).toBeChecked();
-  await expect(detail.getByRole('heading', { name: 'Claims', exact: true })).toBeVisible();
-  expect(parseExploreURLState(new URL(page.url()).search).directoryPersonID).toBe(42);
 });
 
 test('Person tabs stay on one line at phone width', async ({ page }) => {

@@ -1435,7 +1435,7 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
-        person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
+        person_id: 7, cadence_status: 'current', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
       });
       if (/\/api\/v1\/participants\/(42|19)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic Person', profile: { id: 7 }, identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: '2026-08-01T00:00:00Z', last_at: '2026-08-01T00:00:00Z' });
       if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
@@ -1443,6 +1443,19 @@ describe('AppShell', () => {
       return Response.json(exploreResponse());
     });
   }
+
+  it('opens the Directory list from an already selected saved person', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 }))}`);
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(directoryPersonFetch()), state, enabled: false });
+    try {
+      await screen.findByRole('heading', { name: 'Synthetic Person' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
+      await screen.findByRole('main', { name: 'Directory' });
+      expect(state.current.directoryPersonID).toBeNull();
+      expect(state.current.relationshipTarget).toBeNull();
+    } finally { view.unmount(); state.destroy(); }
+  });
 
   it('returns to Files after replacing an old Directory person route', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);

@@ -110,7 +110,8 @@
       () => void,
       (authority: RelatedOperationStatus) => void,
       () => void,
-      OperationsController
+      OperationsController,
+      () => Promise<void>
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -1299,7 +1300,8 @@
           () => commitNavigation({ workspace: 'sources' }),
           openOperationAuthority,
           () => void shellData.jobs.refresh(true),
-          operationsController
+          operationsController,
+          () => directoryController.reloadFirstPage()
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
