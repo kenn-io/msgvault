@@ -2031,7 +2031,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('saves the selected People participant and commits the person to the URL', async () => {
+  it('keeps a promoted participant saved after Back and reselecting it', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
     }))}`);
@@ -2043,9 +2043,13 @@ describe('AppShell', () => {
       if (meetingResponse) return meetingResponse;
       requests.push(request);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
+      if (path === '/api/v1/relationships') return Response.json({ rows: [{
+        canonical_id: 11, display_label: 'Synthetic Candidate', member_ids: [11], score: 1, last_at: '2026-07-19T10:00:00Z',
+        signals: { last_interaction_at: '2026-07-19T10:00:00Z', sent_count: 1, sent_to_them: 1, received_from_them: 0, meeting_count: 0, meetings_together: 0, modalities: 1 }
+      }] });
       if (path === '/api/v1/participants/11') return Response.json({
         id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
+        ...(promoted ? { profile: { id: 42, display_name: 'Synthetic Candidate', revision: 1 } } : {}),
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
@@ -2097,6 +2101,14 @@ describe('AppShell', () => {
     expect(promotion).toBeDefined();
     await expect(promotion!.clone().json()).resolves.toMatchObject({ participant_id: 11 });
     await screen.findByRole('button', { name: 'More actions' });
+
+    window.history.back();
+    await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
+    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Candidate'));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'More actions' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
 
     rendered.unmount();
     state.destroy();
