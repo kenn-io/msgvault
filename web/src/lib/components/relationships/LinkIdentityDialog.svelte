@@ -80,7 +80,7 @@
     searching = true;
     searchError = null;
     try {
-      const [saved, observed] = await Promise.all([
+      const [savedOutcome, observedOutcome] = await Promise.allSettled([
         onConfirmPerson ? listDirectoryPeople({ q: trimmed, limit: SEARCH_LIMIT }, { ...client, signal: controller.signal }) : undefined,
         generatedSearchParticipants(
           {
@@ -89,18 +89,18 @@
             sort: { field: 'activity_count', direction: 'desc' },
             limit: SEARCH_LIMIT,
           },
-          {
-            ...client,
-            signal: controller.signal,
-          },
+          { ...client, signal: controller.signal },
         ),
       ]);
       if (generation !== searchGeneration || controller.signal.aborted) return;
+      const saved = savedOutcome.status === 'fulfilled' ? savedOutcome.value : undefined;
+      const observed = observedOutcome.status === 'fulfilled' ? observedOutcome.value : undefined;
       savedResults = (saved?.data?.people ?? []).filter(row => row.id !== excludePersonID);
       const seen = new Set(savedResults.map(row => row.id));
-      results = (observed.data?.rows ?? []).filter(row => row.id !== excludeID && (excludePersonID === undefined || row.profile?.id !== excludePersonID) && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
-      const failed = saved && !saved.data ? saved : observed.data ? undefined : observed;
+      results = (observed?.data?.rows ?? []).filter(row => row.id !== excludeID && (excludePersonID === undefined || row.profile?.id !== excludePersonID) && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
+      const failed = saved && !saved.data ? saved : observed?.data ? undefined : observed;
       if (failed) searchError = messageFor(failed.error, failed.response.status);
+      for (const outcome of [savedOutcome, observedOutcome]) if (outcome.status === 'rejected') throw outcome.reason;
     } catch (cause: unknown) {
       if (generation === searchGeneration && !controller.signal.aborted) searchError = messageFor(cause, 0);
     } finally {

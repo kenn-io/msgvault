@@ -1,12 +1,12 @@
 import { mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
 
-it.each([false, true])('merges saved profiles and promotes an observed choice only when needed: %s', async promote => {
+it.each([{ promote: false, disposed: false }, { promote: true, disposed: false }, { promote: false, disposed: true }])('merges saved profiles with promotion=$promote and disposal during reconciliation=$disposed', async ({ promote, disposed }) => {
   const requests: Request[] = [];
   let failProfile = promote;
   const client = createAPIClient(async input => {
@@ -25,8 +25,11 @@ it.each([false, true])('merges saved profiles and promotes an observed choice on
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
-  const onReconcile = vi.fn(async () => undefined), onOpenPerson = vi.fn();
-  const view = render(MergePeopleDialog, { client, controller, personID: 7, participantID: null, name: 'Synthetic One', onReconcile, onOpenPerson, onClose: vi.fn() });
+  let finishReconcile!: () => void;
+  const onReconcile = vi.fn(() => disposed ? new Promise<void>(resolve => { finishReconcile = resolve; }) : Promise.resolve());
+  let currentPerson = 7, unmounted = false;
+  const onOpenPerson = vi.fn((id: number) => { currentPerson = id; }), onClose = vi.fn();
+  const view = render(MergePeopleDialog, { client, controller, personID: 7, participantID: null, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Two/ }));
@@ -43,8 +46,16 @@ it.each([false, true])('merges saved profiles and promotes an observed choice on
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
-    expect(onOpenPerson).toHaveBeenCalledWith(7);
-  } finally { view.unmount(); controller.destroy(); }
+    if (disposed) {
+      const closes = onClose.mock.calls.length;
+      view.unmount();
+      unmounted = true;
+      currentPerson = 99;
+      await act(async () => finishReconcile());
+      expect(currentPerson).toBe(99);
+      expect(onClose).toHaveBeenCalledTimes(closes);
+    } else expect(onOpenPerson).toHaveBeenCalledWith(7);
+  } finally { if (!unmounted) view.unmount(); controller.destroy(); }
 });
 
 function renderRepresentativeLink(savedAnchor: boolean, missing = false) {

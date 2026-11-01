@@ -281,18 +281,21 @@ describe('LinkIdentityDialog', () => {
   });
 });
 
-it.each(['saved', 'observed'] as const)('keeps %s search choices usable when the other source returns 503', async (source) => {
+it.each((['saved', 'observed'] as const).flatMap(source => (['HTTP 503', 'transport failure', 'body failure'] as const).map(failure => ({ source, failure }))))('keeps $source search choices usable when the other source has $failure', async ({ source, failure }) => {
   const onConfirmPerson = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' }));
   const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' }));
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
     if (path.endsWith('/people/directory') && source === 'saved') return Response.json({ people: [{ id: 9, revision: 1, display_name: 'Synthetic Saved', categories: [], organizations: [] }] });
     if (path.endsWith('/participants/search') && source === 'observed') return Response.json({ rows: [person(2, 'Synthetic Observed')], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
+    if (failure === 'transport failure') throw new TypeError('Source unavailable');
+    if (failure === 'body failure') return new Response(new ReadableStream({ start(controller) { controller.error(new Error('Source unavailable')); } }), { headers: { 'Content-Type': 'application/json' } });
     return Response.json({ error: 'unavailable', message: 'Source unavailable' }, { status: 503 });
   });
   const view = render(LinkIdentityDialog, { client, excludeID: 1, personLabel: 'Alice Example', onConfirm, onConfirmPerson, onClose: vi.fn() });
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
+    await screen.findByText('Source unavailable');
     await fireEvent.mouseDown(await screen.findByRole('option', { name: source === 'saved' ? /Synthetic Saved/ : /Synthetic Observed/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(source === 'saved' ? onConfirmPerson : onConfirm).toHaveBeenCalledWith(source === 'saved' ? 9 : 2));
