@@ -52,6 +52,7 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
 it.each([
   { name: 'preserves restored kinds when adding Email', filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
   { name: 'groups meeting kinds in a meetings-only archive', filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: undefined, expected: ['meeting_note', 'meeting_minutes'] },
+  { name: 'includes older SMS when conversation groups expose only MMS', filters: [], kinds: ['mms'], label: 'Conversation', expected: ['chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs', 'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot'] },
 ])('$name', async ({ filters, kinds, label, expected }) => {
   const onChange = vi.fn();
   render(FilterMenu, {
