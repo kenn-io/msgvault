@@ -76,6 +76,7 @@ test('Past runs keeps focus through history and related status, and preserves Me
   await row.click();
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
   await expect(page.getByRole('dialog')).toHaveAccessibleName('Past runs');
+  await expect(page.getByRole('region', { name: 'Operation run detail' }).getByText('Document extraction', { exact: true })).toBeVisible();
   await page.goBack();
   await expect(row).toBeFocused();
   expect(exploreRequests).toBe(1);

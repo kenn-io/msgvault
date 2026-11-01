@@ -8,14 +8,15 @@ it('keeps cancelled run metadata with and without an error', () => {
   const run: OperationRunSummary = {
     ...jobRun('document_extraction'), state: 'cancelled' as const,
     started_at: '2026-10-12T12:00:00Z', finished_at: '2026-10-12T12:01:00Z',
-    counters: [{ name: 'processed', value: 4, unit: 'documents' }],
+    counters: [{ name: 'attempted', value: 4, unit: 'documents' }, { name: 'succeeded', value: 4, unit: 'documents' }],
   };
   render(OperationRunTable, { rows: [
-    { ...run, trigger: 'manual', error: { code: 'upstream_failed', message: 'Upstream operation failed.' } },
-    { ...run, id: `${run.id}-scheduled`, trigger: 'scheduled', error: undefined },
+    { ...run, trigger: 'manual', error: { code: 'invocation_cancelled', message: 'Operation was cancelled.' } },
+    { ...jobRun('source_sync'), state: 'cancelled', started_at: run.started_at, finished_at: run.finished_at,
+      counters: [{ name: 'processed', value: 4, unit: 'messages' }], error: undefined },
   ] });
-  expect(screen.getByText('Manual · 1 minute · 4 documents processed · Upstream operation failed.')).toBeTruthy();
-  expect(screen.getByText('Scheduled · 1 minute · 4 documents processed')).toBeTruthy();
+  expect(screen.getByText('Manual · 1 minute · 4 documents attempted · 4 succeeded · Operation was cancelled.')).toBeTruthy();
+  expect(screen.getByText('— · 1 minute · 4 messages processed')).toBeTruthy();
 });
 
 it('describes the time and outcome of repeated job kinds', () => {
