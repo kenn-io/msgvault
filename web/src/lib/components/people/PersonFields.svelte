@@ -253,35 +253,35 @@
         <Plus size={14} aria-hidden="true" />{row.label}
       </button>
     {:else}
+      {@const point = row.kind === 'profile' && row.section === 'contact_points' ? row.record as import('../../api/generated/models').PersonContactPoint : undefined}
+      {@const scope = point ? [point.service_slug, point.scope_kind, point.scope_value].filter(Boolean).join(' · ') : ''}
+      {@const valueLabel = `${row.label}: ${sensitive(row) && row.kind === 'attribute' ? `value ${row.current.ordinal + 1}` : row.value}${scope ? ` · ${scope}` : ''}`}
       <!-- Like a contact card, a run of the same kind shows its label once. -->
       <DetailRow label={rows[index - 1]?.kind !== 'add' && rows[index - 1]?.label === row.label ? '' : row.label}>
         {#if sensitive(row)}<span class="hidden-value">Hidden</span>{:else}{row.value}{/if}
-        {#if row.kind === 'profile' && row.section === 'contact_points'}
-          {@const point = row.record as import('../../api/generated/models').PersonContactPoint}
-          {#if point.service_slug || point.scope_kind || point.scope_value}<small>{[point.service_slug, point.scope_kind, point.scope_value].filter(Boolean).join(' · ')}</small>{/if}
-        {/if}
+        {#if scope}<small>{scope}</small>{/if}
         {#if overdue && row.kind === 'attribute' && row.definition.slug === 'contact_frequency'}<span class="overdue">Overdue</span>{/if}
         {#snippet actions()}
           {#if row.kind === 'attribute' && row.definition.is_sensitive}
             <IconButton
               size="sm"
-              ariaLabel={isAttributeRevealed(row.definition, revealed) ? `Hide ${row.label}` : `Show ${row.label}`}
+              ariaLabel={isAttributeRevealed(row.definition, revealed) ? `Hide ${valueLabel}` : `Show ${valueLabel}`}
               onclick={() => toggleReveal(row.definition)}
             >
               {#if isAttributeRevealed(row.definition, revealed)}<EyeOff size={14} aria-hidden="true" />{:else}<Eye size={14} aria-hidden="true" />{/if}
             </IconButton>
           {/if}
-          <IconButton size="sm" ariaLabel={`Edit ${row.label}`} disabled={!canEdit(row) || sensitive(row)} onclick={() => startEdit(row)}>
+          <IconButton size="sm" ariaLabel={`Edit ${valueLabel}`} disabled={!canEdit(row) || sensitive(row)} onclick={() => startEdit(row)}>
             <Pencil size={14} aria-hidden="true" />
           </IconButton>
-          <IconButton size="sm" ariaLabel={`Remove ${row.label}`} disabled={!canRemove(row) || sensitive(row)} onclick={() => { close(); confirming = row; }}>
+          <IconButton size="sm" ariaLabel={`Remove ${valueLabel}`} disabled={!canRemove(row) || sensitive(row)} onclick={() => { close(); confirming = row; }}>
             <X size={14} aria-hidden="true" />
           </IconButton>
         {/snippet}
       </DetailRow>
       {#if confirming?.id === row.id}
-        <div class="notice" role="group" aria-label={`Confirm removing ${row.label}`}>
-          <span>Remove this current value and keep it in History?</span>
+        <div class="notice" role="group" aria-label={`Confirm removing ${valueLabel}`}>
+          <span>Remove {valueLabel} and keep it in History?</span>
           <Button label="Cancel" disabled={controller.mutationPending} onclick={() => confirming = undefined} />
           <Button label="Confirm removal" tone="danger" disabled={!canRemove(row) || sensitive(row)} onclick={() => void closeCurrent()} />
         </div>
