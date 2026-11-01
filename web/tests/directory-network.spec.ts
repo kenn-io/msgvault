@@ -47,7 +47,7 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await expect(graph.locator('svg')).toHaveAttribute('aria-hidden', 'true');
   const peer = graph.getByRole('button', { name: 'Open person Curated Peer' });
   await expect(peer).toBeVisible();
-  await expect(peer.locator('xpath=..').locator('.relation')).toHaveText('works with, mentors');
+  await expect(peer.locator('xpath=..').locator('.relation')).toHaveText('Archive Person works with, Archive Person mentors');
   const organization = graph.getByRole('button', { name: 'Open organization Shared Organization' });
   await expect(organization.locator('xpath=..').locator('.relation')).toHaveText('Engineer');
   await expect(graph).not.toContainText('Message-only Contact');
