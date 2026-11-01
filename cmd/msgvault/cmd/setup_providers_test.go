@@ -1813,9 +1813,17 @@ enabled = true
 `, tc.endpoint, tc.local, tc.model)
 			fixture := newSetupProvidersFixture(t, content)
 			if tc.building {
-				documents, _, _ := documentVectorCommandFixture(t)
-				fixture.store = documents.Store
-				ctx := testInvocationContext(t.Context(), fixture.load(t), invocationOptions{})
+				documents := documentindex.DefaultDocumentsConfig()
+				documents.RetentionPosture = documentindex.RetentionZDR
+				documents.TrainingPosture = documentindex.TrainingOptedOut
+				_, profile, err := documentProfileForConfig(&documents, commandCapabilityManifest(t, documents.MaxPagesPerDocument))
+				require.NoError(err)
+				loaded := fixture.load(t)
+				_, err = fixture.store.EnsureDocumentExtractionProfile(t.Context(), profile)
+				require.NoError(err)
+				_, err = fixture.store.DB().Exec(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`, profile.ID)
+				require.NoError(err)
+				ctx := testInvocationContext(t.Context(), loaded, invocationOptions{})
 				spec, err := desiredDocumentVectorSpec(ctx, fixture.store)
 				require.NoError(err)
 				_, _, err = fixture.store.EnsureDocumentVectorGeneration(ctx, spec)
