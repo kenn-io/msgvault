@@ -460,7 +460,7 @@ export class DirectoryProfileController {
     if (slug !== 'primary_channel') await this.invalidateRow();
     this.completeMutation(draftGeneration, true);
     this.finishMutation(draftGeneration);
-    if (slug === 'contact_frequency') await this.reload();
+    await this.reload(false);
   }
   private prepareMutation(draft: DirectoryProfileDraft): number | DirectoryProfileOperationBlocked {
     if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
