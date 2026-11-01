@@ -85,6 +85,52 @@ function stateWithGroup(): ExploreState {
 }
 
 describe('meeting archive reader navigation', () => {
+  it.each([
+    [false, 'message', false], [false, 'message', true],
+    [false, 'metrics', false], [false, 'metrics', true],
+    [true, 'message', false], [true, 'message', true],
+    [true, 'metrics', false], [true, 'metrics', true]
+  ] as const)('keeps an archived meeting request through Past runs, deep=%s pending=%s close=%s', async (deep, pending, close) => {
+    let finish!: () => void;
+    let pendingRequest!: Request;
+    const { client: baseClient, requests } = handler();
+    const client = createAPIClient(async (input, init) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
+      const response = await baseClient.fetch(input, init);
+      if ((pending === 'message' && path.endsWith('/messages/42')) ||
+        (pending === 'metrics' && path.endsWith('/meetings/metrics') && (await request.clone().json()).scope?.message_ids?.[0] === 42)) {
+        pendingRequest = request;
+        return new Promise<Response>(resolve => { finish = () => resolve(response); });
+      }
+      return response;
+    });
+    const state = stateWithMeetingFilter(deep ? 'archive-meeting:42' : null);
+    const view = render(AppShell, { client, state });
+    try {
+      if (!deep) await fireEvent.click(await screen.findByRole('link', { name: 'Open archived meeting' }));
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      state.openOperationHistory({});
+      const history = await screen.findByRole('dialog', { name: 'Past runs' });
+      await chooseSelectOption(within(history).getByRole('combobox', { name: /^Kind/ }), 'Source sync');
+      if (close) {
+        await fireEvent.click(within(history).getByRole('button', { name: 'Close' }));
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Past runs' })).toBeNull());
+      }
+      expect(pendingRequest.signal.aborted).toBe(false);
+      finish();
+      await waitFor(() => expect(state.current.selectedRow).toBe('archive-meeting:42'));
+      if (!close) state.closeOperationHistory();
+      const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
+      expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
+      expect(requests.filter(request => new URL(request.url).pathname.endsWith('/messages/42'))).toHaveLength(1);
+    } finally {
+      finish?.();
+      view.unmount(); state.destroy();
+    }
+  });
+
   it('preflights detail, opens the real reader, and restores scope and focus through Back/Forward and Close', async () => {
     let resolveDetail!: (response: Response) => void;
     const { client, requests } = handler(() => new Promise<Response>((resolve) => { resolveDetail = resolve; }));
