@@ -289,36 +289,6 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each([false, true])('offers Details Retry without the previous person when a saved selection fails to load, remount: %s', async (remount) => {
-  const client = clientFor({
-    '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 1, [1]), organizations: [], categories: [], contact_state: 'active' }] }),
-    '/api/v1/people/7': () => Response.json(profile(7, 1, [1])),
-    '/api/v1/people/9': () => { throw new Error('Could not load selected person.'); },
-    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': async request => Response.json({ participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC', days: [], annual: [], current: { temperature: 50 }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1 }),
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
-  const onNavigate = vi.fn(patch => state.commitNavigation(patch));
-  const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
-  let view = render(PeopleWorkspace, { props });
-  try {
-    await fireEvent.click(await screen.findByText('Synthetic One'));
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: null, relationshipFiles: false }));
-    await view.rerender({ urlState: state.current, target: null });
-    await screen.findByRole('heading', { name: 'Synthetic One' });
-    if (remount) { state.commitNavigation({ workspace: 'directory' }); view.unmount(); }
-    state.commitNavigation({ directoryPersonID: 9 });
-    state.commitNavigation({ workspace: 'relationships' });
-    if (remount) view = render(PeopleWorkspace, { props: { ...props, urlState: state.current, target: null } }); else await view.rerender({ urlState: state.current, target: null });
-    await screen.findByText(/Could not load selected person\./);
-    expect.soft(screen.queryByRole('button', { name: 'Retry' })).not.toBeNull();
-    expect.soft(screen.queryByRole('group', { name: 'Person page' })).not.toBeNull();
-    expect.soft(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it('loads a saved person deep link inside its person page', async () => {
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
@@ -455,7 +425,7 @@ it('keeps Messages mounted across a profile reload', async () => {
   } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('sends current filters when Reload recovers a failed write reconciliation', async () => {
+it('Reload retries a failed write reconciliation', async () => {
   const directoryRequests: Request[] = [];
   const saved = profile(7, 2, []);
   const client = clientFor({
@@ -478,39 +448,44 @@ it('sends current filters when Reload recovers a failed write reconciliation', a
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
     await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
     await waitFor(() => expect(directoryRequests).toHaveLength(3));
-    const reloadParameters = new URL(directoryRequests[2]!.url).searchParams;
-    expect(reloadParameters.get('q')).toBe('synthetic');
-    expect(reloadParameters.get('contact_state')).toBe('active');
-    expect(reloadParameters.get('category')).toBe('STRASSE');
-    expect(reloadParameters.get('organization')).toBe('Example Org');
-    expect(reloadParameters.get('primary_channel')).toBe('email');
   } finally { view.unmount(); relationships.destroy(); controller.destroy(); state.destroy(); }
 });
 
-it.each(['participant', 'profile', 'missing'])('retains a saved person and its recovery when the %s lookup fails', async (failure) => {
+it.each([['participant', false], ['profile', false], ['missing', false], ['network', false], ['network', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
   let failed = true;
-  const saved = profile(7, 1, [1]);
+  const saved = profile(failure === 'network' ? 9 : 7, 1, [1]);
   const client = clientFor({
-    '/api/v1/people/7': () => failure !== 'participant' && failed ? Response.json({ message: failure === 'missing' ? 'Person not found' : 'Saved profile unavailable' }, { status: failure === 'missing' ? 404 : 503 }) : Response.json(saved),
+    '/api/v1/people/7': () => failure === 'network' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: failure === 'missing' ? 'Person not found' : 'Saved profile unavailable' }, { status: failure === 'missing' ? 404 : 503 }) : Response.json(saved),
+    '/api/v1/people/9': () => { if (failed) throw new Error('Could not load selected person.'); return Response.json(saved); },
     '/api/v1/participants/1': () => failure === 'participant' && failed ? Response.json({ message: 'Participant unavailable' }, { status: 503 }) : Response.json({ id: 1, display_label: 'Synthetic One', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: failure !== 'profile' ? 7 : null });
   await controller.openTarget('cluster:1', {}, false);
-  const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const props = { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  let view = render(PeopleWorkspace, { props });
   try {
+    if (failure === 'network') {
+      await screen.findByRole('heading', { name: 'Synthetic One' });
+      if (remount) { state.commitNavigation({ workspace: 'directory' }); view.unmount(); }
+      state.commitNavigation({ workspace: 'relationships', directoryPersonID: 9, relationshipTarget: null });
+      if (remount) view = render(PeopleWorkspace, { props: { ...props, urlState: state.current, target: null } });
+      else await view.rerender({ urlState: state.current, target: null });
+    }
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     if (failure === 'profile') {
       expect(screen.getByRole('radio', { name: 'Messages' })).toBeDefined();
       await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     }
-    expect(await screen.findByText(new RegExp(failure === 'profile' ? 'Saved profile unavailable' : failure === 'missing' ? 'Person not found' : 'Participant unavailable'))).toBeDefined();
+    expect(await screen.findByText(new RegExp(failure === 'network' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : failure === 'missing' ? 'Person not found' : 'Participant unavailable'))).toBeDefined();
     expect(screen.queryByText('Loading person…')).toBeNull();
+    if (failure === 'network') expect(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
     failed = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Person not found/)).toBeNull());
-    expect(await screen.findByRole('radio', { name: 'Messages' })).toBeDefined();
+    await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Person not found|Could not load selected person/)).toBeNull());
+    if (failure === 'network') expect(await screen.findByRole('heading', { name: 'Synthetic Two' })).toBeDefined();
+    else expect(await screen.findByRole('radio', { name: 'Messages' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

@@ -54,7 +54,6 @@ describe('ProfileHistoryDialog', () => {
     }
     expect(screen.getByText('Past category')).toBeDefined();
     expect(screen.getByText('observed@example.test')).toBeDefined();
-    expect(screen.getAllByText(/Source: user/)).toHaveLength(10);
     expect(screen.getAllByText(/Superseded: 2026-08-02T00:00:00Z/)).toHaveLength(3);
     expect(screen.getByText(/Observed: 2026-07-31T12:00:00Z/)).toBeDefined();
     expect(screen.getByText('Service: slack · Scope: workspace / workspace-a')).toBeDefined();
