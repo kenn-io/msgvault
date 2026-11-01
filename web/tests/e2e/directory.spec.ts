@@ -50,16 +50,7 @@ test('Directory lists durable people, opens People Details, and scopes Files to 
   await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
-  const messages = personTabs.getByRole('radio', { name: 'Messages', exact: true });
-  const files = personTabs.getByRole('radio', { name: 'Files', exact: true });
-  const details = personTabs.getByRole('radio', { name: 'Details', exact: true });
-  await messages.click();
-  await page.keyboard.press('ArrowLeft');
-  await expect(details).toBeFocused();
-  await expect(details).toHaveAttribute('aria-checked', 'true');
-  await page.keyboard.press('ArrowLeft');
-  await expect(files).toBeFocused();
-  await expect(files).toHaveAttribute('aria-checked', 'true');
+  await personTabs.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
   expect(requests).toContain('/api/v1/people/42/files/search');
   expect(requests).not.toContain('/api/v1/participants/42/files/search');

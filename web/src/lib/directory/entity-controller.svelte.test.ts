@@ -600,7 +600,7 @@ describe('DirectoryEntityController', () => {
     expect(controller.createBlocked.employments).toBe(true);
   });
 
-  it('keeps the include-ended relationship mode when a successful create reconciles the collection', async () => {
+  it('keeps the include-ended relationship mode through create reconciliation and explicit refresh', async () => {
     const includeEndedValues: string[] = [];
     let collectionReads = 0;
     const created = relationship(42, 1);
