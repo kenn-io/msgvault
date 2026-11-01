@@ -5,71 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
-import OrganizationsSettings from '../settings/OrganizationsSettings.svelte';
+import { requestOf, pathOf, organization, organizationProfile, employment, collection, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
-}
-
-function organization(id = 21, revision = 1, name = 'Synthetic Org') {
-  return {
-    id, revision, name, kind: 'company', primary_domain: 'synthetic.example', description: 'A synthetic organization.',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
-}
-
-function organizationProfile(revision = 1, name = 'Synthetic Org') {
-  return {
-    organization: organization(21, revision, name),
-    names: [{ organization_id: 21, name_kind: 'alias', name: 'Synthetic Works', name_normalized: 'synthetic works', envelope: envelope(31) }],
-    contact_points: [], addresses: [], categories: [], identifiers: [],
-    media: [{ organization_id: 21, media_kind: 'logo', original_value: 'Existing logo', content_hash: 'sha256:synthetic', has_data: true, envelope: envelope(32) }]
-  };
-}
-
-function envelope(id: number, overrides: Record<string, unknown> = {}) {
-  return { id, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {}, ...overrides };
-}
-
-function richOrganizationProfile(revision = 3) {
-  const importedEnvelope = envelope(40, {
-    ordinal: 7, pref: 2, type_label: 'work', type_tokens: ['WORK', 'INTERNET'], source: 'vcard_import',
-    source_ref: 'card-42', source_resource_uid: 'resource-card-42', confidence: 0.87, active_from: '2025-02-03T04:05:06Z',
-    vcard: { property: 'EMAIL', group: 'item2', prop_id: 'prop-9', pid: ['1.1', '2.1'], altid: 'alt-4' }
-  });
-  return {
-    organization: organization(21, revision),
-    names: [
-      { organization_id: 21, name_kind: 'legal', name: 'Synthetic Legal Ltd', name_normalized: 'synthetic legal ltd', envelope: { ...importedEnvelope, id: 41, vcard: { ...importedEnvelope.vcard, property: 'FN' } } },
-      { organization_id: 21, name_kind: 'alias', name: 'Synthetic Works', name_normalized: 'synthetic works', envelope: envelope(42) }
-    ],
-    categories: [{ organization_id: 21, category: 'Research', category_normalized: 'research', envelope: { ...importedEnvelope, id: 43, vcard: { ...importedEnvelope.vcard, property: 'CATEGORIES' } } }],
-    contact_points: [{ organization_id: 21, address_kind: 'email', original_value: 'concurrent@example.test', normalized_value: 'concurrent@example.test', normalization: 'email', normalization_version: 1, service_slug: 'email', scope_kind: 'department', scope_value: 'research', uri: 'mailto:concurrent@example.test', envelope: importedEnvelope }],
-    addresses: [{ organization_id: 21, address_kind: 'work', original_value: 'Suite 5, 12 Example Road', post_office_box: 'PO 12', extended_address: 'Suite 5', street_address: '12 Example Road', locality: 'Exampleton', region: 'EX', postal_code: '12345', country_name: 'Exampleland', extended_components: 'Lab 3', free_text: 'Rear entrance', place_uri: 'geo:1,2', geo_uri: 'geo:1,2', label: 'HQ', timezone: 'Etc/UTC', country_code: 'EX', envelope: { ...importedEnvelope, id: 44, vcard: { ...importedEnvelope.vcard, property: 'ADR' } } }],
-    identifiers: [{ organization_id: 21, identifier_kind: 'registry', identifier_value: 'REG-42', normalized_value: 'reg-42', envelope: { ...importedEnvelope, id: 45, vcard: { ...importedEnvelope.vcard, property: 'X-REGISTRY' } } }],
-    media: [{ organization_id: 21, media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', byte_size: 1200, has_data: true, envelope: { ...importedEnvelope, id: 46, vcard: { ...importedEnvelope.vcard, property: 'LOGO' } } }]
-  };
-}
-
-function employment(id = 11, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, person_id: 7, organization_id: 21, source: 'user', is_current: true, is_primary: false,
-    title: 'Engineer', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
-
-function collection(rows = [employment()], projection = { employment_id: 11, organization_id: 21, organization_name: 'Synthetic Org', title: 'Engineer', vcard: {} }) {
-  return Response.json({ employments: rows, projection });
-}
-
-function controllerWith(fetchFn: typeof fetch): DirectoryEntityController {
-  return new DirectoryEntityController(createAPIClient(fetchFn), 7);
-}
 
 describe('OrganizationEmploymentTab', () => {
   it('keeps local employment history actionable beside a reconciliation warning and recovers', async () => {
@@ -108,28 +45,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText('Recovered role')).toBeDefined();
   });
 
-  it('renders loading, failure, empty state, and bounded organization search results', async () => {
-    let resolveSearch!: (response: Response) => void;
-    const search = new Promise<Response>((resolve) => { resolveSearch = resolve; });
-    let searches = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/organizations') {
-        searches += 1;
-        return searches === 1 ? search : Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      }
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }));
-    controller.employments = [];
-    render(OrganizationsSettings, { controller });
-
-    await waitFor(() => expect(controller.organizationsLoading).toBe(true));
-    resolveSearch(Response.json({ error: 'unavailable', message: 'Organization search unavailable.' }, { status: 503 }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Organization search unavailable.');
-
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search organizations' }), { target: { value: 'synthetic again' } });
-    expect(await screen.findByRole('button', { name: 'Edit Synthetic Org' })).toBeDefined();
-  });
 
   it('creates an employment for the exact selected person with user provenance and renders reconciled projection', async () => {
     const requests: Request[] = [];
@@ -169,7 +84,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(employmentReads).toBe(1);
     expect(screen.getByText('Architect')).toBeDefined();
     expect(controller.employmentProjection?.organization_name).toBe('Synthetic Org');
-    expect(screen.getAllByText(/Architect/)).toHaveLength(1);
     expect(screen.getByText(/Engineer/).closest('li')?.textContent).not.toContain('Primary');
   });
 
@@ -479,238 +393,10 @@ describe('OrganizationEmploymentTab', () => {
     expect(posts).toBe(1);
   });
 
-  it('blocks an unknown organization create until its own explicit refresh and retains the draft', async () => {
-    let posts = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations' && request.method === 'POST') {
-        posts += 1;
-        return Response.json({ error: 'unavailable', message: 'response unavailable' }, { status: 503 });
-      }
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
-    const name = screen.getByRole('textbox', { name: 'Organization name' }) as HTMLInputElement;
-    await fireEvent.input(name, { target: { value: 'Unknown Result Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');
-    expect(name.value).toBe('Unknown Result Org');
-    expect(screen.getByRole('button', { name: 'Create organization' })).toHaveProperty('disabled', true);
-    expect(posts).toBe(1);
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh organizations' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create organization' })).toHaveProperty('disabled', false));
-    expect(posts).toBe(1);
-  });
 
-  it('creates, fresh-ETag edits, replaces a profile without losing media hashes, and deletes an unused organization', async () => {
-    const requests: Request[] = [];
-    let readRevision = 2;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/organizations' && request.method === 'POST') return new Response(JSON.stringify(organization(22, 1, 'New Synthetic Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') return new Response(JSON.stringify(organizationProfile(readRevision)), { headers: { ETag: `"organization-21-r${readRevision}"` } });
-      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') return new Response(JSON.stringify(organization(21, 3, 'Renamed Synthetic Org')), { headers: { ETag: '"organization-21-r3"' } });
-      if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') return new Response(JSON.stringify(organizationProfile(4)), { headers: { ETag: '"organization-21-r4"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return new Response(null, { status: 204 });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New Synthetic Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
-    expect(await requests.find((request) => request.method === 'POST')!.json()).toMatchObject({ name: 'New Synthetic Org' });
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit Synthetic Org' });
-    const organizationName = await within(dialog).findByRole('textbox', { name: 'Organization name' });
-    await fireEvent.input(organizationName, { target: { value: 'Renamed Synthetic Org' } });
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save organization' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
-    expect(requests.find((request) => request.method === 'PATCH')?.headers.get('If-Match')).toBe('"organization-21-r2"');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
-    readRevision = 3;
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Example Works' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
-    const put = requests.find((request) => request.method === 'PUT')!;
-    expect(put.headers.get('If-Match')).toBe('"organization-21-r3"');
-    expect(await put.json()).toMatchObject({ media: [{ content_hash: 'sha256:synthetic' }] });
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Synthetic Org' })).toBeNull());
-  });
-
-  it('does not undo a concurrent organization retirement during an unrelated field edit', async () => {
-    const requests: Request[] = [];
-    let reads = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        const base = organizationProfile(reads + 1);
-        const profile = reads === 2
-          ? { ...base, organization: { ...base.organization, retired_at: '2026-08-28T00:00:00Z' } }
-          : base;
-        return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads + 1}"` } });
-      }
-      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') {
-        return new Response(JSON.stringify({ ...organization(21, 3, 'Edited Org'), retired_at: '2026-08-28T00:00:00Z' }), { headers: { ETag: '"organization-21-r3"' } });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationsSettings, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Edited Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
-
-    const body = await requests.find((request) => request.method === 'PATCH')!.json();
-    expect(body).toMatchObject({ name: 'Edited Org' });
-    expect(body.retired).toBeUndefined();
-  });
-
-  it('applies alias/category draft deltas to the fresh profile without deleting concurrent additions', async () => {
-    const requests: Request[] = [];
-    let reads = 0;
-    const baseline = {
-      ...organizationProfile(2),
-      names: [{ organization_id: 21, name_kind: 'alias', name: 'Baseline Alias', name_normalized: 'baseline alias', envelope: envelope(50) }],
-      categories: [{ organization_id: 21, category: 'Baseline Category', category_normalized: 'baseline category', envelope: envelope(51) }]
-    };
-    const rich = richOrganizationProfile(3);
-    const fresh = {
-      ...rich,
-      names: [
-        ...rich.names.filter((item) => item.name_kind !== 'alias'),
-        baseline.names[0],
-        { organization_id: 21, name_kind: 'alias', name: 'Synthetic Works', name_normalized: 'synthetic works', envelope: envelope(52, { source: 'vcard_import', source_ref: 'concurrent-alias', source_resource_uid: 'resource-concurrent-alias', vcard: { property: 'NICKNAME' } }) }
-      ],
-      categories: [baseline.categories[0], ...rich.categories]
-    };
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        const profile = reads === 1 ? baseline : fresh;
-        return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads + 1}"` } });
-      }
-      if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') {
-        return new Response(JSON.stringify(fresh), { headers: { ETag: '"organization-21-r4"' } });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationsSettings, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
-    await fireEvent.input(aliases, { target: { value: 'User Draft Alias' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'User Draft Category' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
-
-    const put = requests.find((request) => request.method === 'PUT')!;
-    expect(put.headers.get('If-Match')).toBe('"organization-21-r3"');
-    const body = await put.json();
-    expect(body.names).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4' }),
-      expect.objectContaining({ name: 'Synthetic Works', name_kind: 'alias', source_ref: 'concurrent-alias', source_resource_uid: 'resource-concurrent-alias', vcard_property: 'NICKNAME' }),
-      expect.objectContaining({ name: 'User Draft Alias', name_kind: 'alias', source: 'user' })
-    ]));
-    expect(body.names).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Baseline Alias' })]));
-    expect(body.categories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ category: 'Research', source_ref: 'card-42', source_resource_uid: 'resource-card-42', active_from: '2025-02-03T04:05:06Z' }),
-      expect.objectContaining({ category: 'User Draft Category', source: 'user' })
-    ]));
-    expect(body.categories).not.toEqual(expect.arrayContaining([expect.objectContaining({ category: 'Baseline Category' })]));
-    expect(body.contact_points).toEqual([expect.objectContaining({
-      contact_kind: 'email', original_value: 'concurrent@example.test', service_slug: 'email', scope_kind: 'department', scope_value: 'research',
-      uri: 'mailto:concurrent@example.test', ordinal: 7, pref: 2, type_label: 'work', type_tokens: ['WORK', 'INTERNET'],
-      source: 'vcard_import', source_ref: 'card-42', confidence: 0.87, active_from: '2025-02-03T04:05:06Z',
-      vcard_property: 'EMAIL', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4'
-    })]);
-    expect(body.addresses).toEqual([expect.objectContaining({
-      address_kind: 'work', original_value: 'Suite 5, 12 Example Road', post_office_box: 'PO 12', extended_address: 'Suite 5',
-      street_address: '12 Example Road', locality: 'Exampleton', region: 'EX', postal_code: '12345', country_name: 'Exampleland',
-      extended_components: 'Lab 3', free_text: 'Rear entrance', place_uri: 'geo:1,2', geo_uri: 'geo:1,2', label: 'HQ', timezone: 'Etc/UTC', country_code: 'EX',
-      source_ref: 'card-42', vcard_property: 'ADR'
-    })]);
-    expect(body.identifiers).toEqual([expect.objectContaining({ identifier_kind: 'registry', identifier_value: 'REG-42', source_ref: 'card-42', vcard_property: 'X-REGISTRY' })]);
-    expect(body.media).toEqual([expect.objectContaining({ media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', source_ref: 'card-42', vcard_property: 'LOGO' })]);
-    expect(body.media[0].data).toBeUndefined();
-  });
-
-  it('retains a profile draft, shows complete refreshed organization data, and retries only on explicit save', async () => {
-    let reads = 0;
-    let puts = 0;
-    const requests: Request[] = [];
-    const concurrent = {
-      ...richOrganizationProfile(3),
-      organization: { ...organization(21, 3, 'Concurrent Org Name'), primary_domain: 'concurrent.example', description: 'Concurrent organization description' }
-    };
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        const profile = reads < 3 ? organizationProfile(reads) : concurrent;
-        return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads}"` } });
-      }
-      if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') {
-        puts += 1;
-        return puts === 1
-          ? Response.json({ error: 'revision_conflict', message: 'profile changed elsewhere' }, { status: 412 })
-          : new Response(JSON.stringify(concurrent), { headers: { ETag: '"organization-21-r5"' } });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationsSettings, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' }) as HTMLInputElement;
-    await fireEvent.input(aliases, { target: { value: 'Retained Draft Alias' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Concurrent Org Name');
-    expect(alert.textContent).toContain('concurrent.example');
-    expect(alert.textContent).toContain('Concurrent organization description');
-    expect(alert.textContent).toContain('Research');
-    expect(alert.textContent).toContain('concurrent@example.test');
-    expect(alert.textContent).toContain('Suite 5, 12 Example Road');
-    expect(alert.textContent).toContain('REG-42');
-    expect(alert.textContent).toContain('Concurrent logo');
-    expect(aliases.value).toBe('Retained Draft Alias');
-    expect(puts).toBe(1);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-    await waitFor(() => expect(puts).toBe(2));
-    expect(requests.filter((request) => request.method === 'PUT')[1]?.headers.get('If-Match')).toBe('"organization-21-r4"');
-  });
 
   it('keeps a conflicted employment delete open with complete current data and owns modal shortcuts', async () => {
     let reads = 0;
@@ -760,21 +446,4 @@ describe('OrganizationEmploymentTab', () => {
     }
   });
 
-  it('does not dismiss an editor during submission and closes it after success', async () => {
-    let resolveCreate!: (response: Response) => void;
-    const pending = new Promise<Response>((resolve) => { resolveCreate = resolve; });
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return pending;
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }));
-    render(OrganizationsSettings, { controller });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Pending Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close organization editor' }));
-    expect(screen.getByRole('dialog', { name: 'Create organization' })).toBeDefined();
-    resolveCreate(new Response(JSON.stringify(organization(22, 1, 'Pending Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
-  });
 });

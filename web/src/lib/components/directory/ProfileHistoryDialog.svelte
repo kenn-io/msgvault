@@ -53,9 +53,6 @@
       .filter(Boolean)
       .join(' · ');
   }
-  function historical(envelope: ValueEnvelope): boolean {
-    return !!envelope.active_until || !!envelope.superseded_at;
-  }
   function providerContext(point: { service_slug?: string; scope_kind?: string; scope_value?: string }): string | null {
     const scope =
       point.scope_kind && point.scope_value
@@ -96,56 +93,56 @@
       <section>
         <h3>Names</h3>
         <ul>
-          {#each (history.names ?? []).filter((row) => historical(row.envelope)) as row (row.envelope.id)}
+          {#each (history.names ?? []) as row (row.envelope.id)}
             <li><strong>{row.formatted ?? row.original_value}</strong><small>{provenance(row.envelope)}</small></li>
-          {:else}<li class="empty">No superseded names.</li>{/each}
+          {:else}<li class="empty">No names.</li>{/each}
         </ul>
       </section>
       <section>
         <h3>Contact points</h3>
         <ul>
-          {#each (history.contact_points ?? []).filter((row) => historical(row.envelope)) as row (row.envelope.id)}
+          {#each (history.contact_points ?? []) as row (row.envelope.id)}
             <li>
               <strong>{row.original_value}</strong>{#if providerContext(row)}<small>{providerContext(row)}</small
                 >{/if}<small>{provenance(row.envelope)}</small>
             </li>
-          {:else}<li class="empty">No superseded contact points.</li>{/each}
+          {:else}<li class="empty">No contact points.</li>{/each}
         </ul>
       </section>
       <section>
         <h3>Addresses</h3>
         <ul>
-          {#each (history.addresses ?? []).filter((row) => historical(row.envelope)) as row (row.envelope.id)}
+          {#each (history.addresses ?? []) as row (row.envelope.id)}
             <li><strong>{row.original_value}</strong><small>{provenance(row.envelope)}</small></li>
-          {:else}<li class="empty">No superseded addresses.</li>{/each}
+          {:else}<li class="empty">No addresses.</li>{/each}
         </ul>
       </section>
       <section>
         <h3>Dates</h3>
         <ul>
-          {#each (history.dates ?? []).filter((row) => historical(row.envelope)) as row (row.envelope.id)}
+          {#each (history.dates ?? []) as row (row.envelope.id)}
             <li>
               <strong>{row.label ?? row.date_kind}: {row.date_text ?? row.original_value}</strong><small
                 >{provenance(row.envelope)}</small
               >
             </li>
-          {:else}<li class="empty">No superseded dates.</li>{/each}
+          {:else}<li class="empty">No dates.</li>{/each}
         </ul>
       </section>
       <section>
         <h3>Categories</h3>
         <ul>
-          {#each (history.categories ?? []).filter((row) => historical(row.envelope)) as row (row.envelope.id)}
+          {#each (history.categories ?? []) as row (row.envelope.id)}
             <li><strong>{row.original_value}</strong><small>{provenance(row.envelope)}</small></li>
-          {:else}<li class="empty">No superseded categories.</li>{/each}
+          {:else}<li class="empty">No categories.</li>{/each}
         </ul>
       </section>
       <section>
         <h3>Media metadata</h3>
         <ul>
-          {#each (history.media ?? []).filter((row) => historical(row.envelope)) as row (row.envelope.id)}
+          {#each (history.media ?? []) as row (row.envelope.id)}
             <li><strong>{row.original_value}</strong><small>{provenance(row.envelope)}</small></li>
-          {:else}<li class="empty">No superseded media metadata.</li>{/each}
+          {:else}<li class="empty">No media metadata.</li>{/each}
         </ul>
       </section>
       <section>

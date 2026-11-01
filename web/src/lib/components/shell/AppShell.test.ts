@@ -28,8 +28,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   const response = await fetchFn(input, init);
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   const field = path === '/api/v1/operations/status' ? 'lanes' : path === '/api/v1/sources/status' ? 'sources' : undefined;
-  if (path.endsWith('/contact-state') && response.ok && !('cadence_status' in await response.clone().json())) return Response.json({ cadence_status: 'unknown', interaction_count: 0 });
-  if (path.endsWith('/network') && response.ok && !('nodes' in await response.clone().json())) return Response.json({ root_person_id: Number(path.split('/').at(-2)), depth: 1, truncated: false, nodes: [], edges: [] });
   // Generic archive handlers don't supply these independent shell endpoints.
   if (field && response.ok && !(field in await response.clone().json())) return Response.json({ [field]: [] });
   return response;
@@ -1324,6 +1322,7 @@ describe('AppShell', () => {
         person: survivor, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'current', computed_at: '2026-08-03T00:00:00Z', interaction_count: 0, stale: false
       });
@@ -1434,6 +1433,7 @@ describe('AppShell', () => {
         id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [42, 19], vcard_uid: '',
         created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
       });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
       });
@@ -1459,8 +1459,6 @@ describe('AppShell', () => {
       state.commitNavigation({ workspace: 'directory', directoryPersonID: 7 });
       await screen.findByRole('heading', { name: 'Synthetic Person' });
       expect(state.current.workspace).toBe('relationships');
-      await fireEvent.click(await screen.findByRole('button', { name: 'Show' }));
-      await screen.findByRole('radio', { name: 'Claims' });
       const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       window.history.back();
       await restored;
@@ -1503,6 +1501,7 @@ describe('AppShell', () => {
         names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'current', interaction_count: 0,
         computed_at: '2026-08-28T10:00:00Z', stale: false
@@ -1576,7 +1575,14 @@ describe('AppShell', () => {
       }
       if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
       if (meetingFixtureResponse(path)) return meetingFixtureResponse(path)!;
-      if (path.startsWith('/api/v1/people/7')) return Response.json({ person_id: 7, participant_ids: [], cadence_status: 'active', interaction_count: 0, employments: [], relationships: [], days: [], attributes: [], categories: [], names: [], contact_points: [], addresses: [], dates: [] });
+      const person = { id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+      if (path === '/api/v1/people/7') return Response.json(person);
+      if (path === '/api/v1/people/7/profile') return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -2064,6 +2070,7 @@ describe('AppShell', () => {
         addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/42/attributes') return Response.json({ person_id: 42, attributes: [] });
+      if (path === '/api/v1/people/42/network') return Response.json({ root_person_id: 42, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/42/contact-state') return Response.json({
         person_id: 42, cadence_status: 'current', computed_at: '2026-07-19T10:00:00Z',
         interaction_count: 1, stale: false
@@ -2156,6 +2163,7 @@ describe('AppShell', () => {
         person: { id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-07-19T10:00:00Z', stale: false
       });

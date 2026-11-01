@@ -12,7 +12,7 @@ const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated
 function profile() { return { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } as NonNullable<DirectoryReadBundle['structuredProfile']>; }
 function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[] } = {}) {
   let stored = initial;
-  const writes: Request[] = [];
+  const writes: Request[] = []; const definitionReads: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
@@ -25,12 +25,12 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     }
     if (path.endsWith('/profile')) return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
     if (path.endsWith('/attributes')) return Response.json({ attributes: [] });
-    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: options.definitions ?? [] });
+    if (path.endsWith('/attribute-definitions')) { definitionReads.push(request); return Response.json({ definitions: options.definitions ?? [] }); }
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
   const view = render(PersonFields, { controller });
-  return { controller, writes, view };
+  return { controller, writes, definitionReads, view };
 }
 
 it('keeps a confirmed removal visible and gates other writes until the save succeeds', async () => {
@@ -83,14 +83,17 @@ it('displays every structured address component before its original street value
 it('joins refreshed sensitive and read-only field settings to current values and discards their editor', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: [{ ...definition, label: 'Private note', is_sensitive: true, ui_editable: false, revision: 2 }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
-  const { controller, view } = harness(profile(), options);
+  const options = { definitions: [{ ...definition, label: 'Private note', is_sensitive: true, ui_editable: false, revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
+  const { controller, view, definitionReads } = harness(profile(), options);
   await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
   await act(() => controller.reloadDefinitions());
   expect(screen.queryByDisplayValue('Private example')).toBeNull(); expect(screen.queryByText('Private example')).toBeNull();
   expect(screen.getByText('Private note')).toBeDefined();
   expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
   await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' })); expect(screen.getByText('Private example')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+  expect(screen.getByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
+  expect(new URL(definitionReads.at(-1)!.url).searchParams.has('include_hidden')).toBe(false);
   view.unmount(); controller.destroy();
 });
 
