@@ -217,7 +217,7 @@ it('keeps an open field draft when the saved person activity finishes loading', 
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
-it('keeps the next person merge dialog open when an earlier link finishes', async () => {
+it.each(['next person', 'return to original'] as const)('keeps a new merge dialog open after %s when an earlier link finishes', async journey => {
   let release!: (response: Response) => void;
   const writes: unknown[] = [];
   const client = createAPIClient(async input => {
@@ -246,13 +246,19 @@ it('keeps the next person merge dialog open when an earlier link finishes', asyn
     await controller.openTarget('cluster:2', {}, false);
     await view.rerender({ ...props, target: 'cluster:2' });
     await screen.findByRole('heading', { name: 'Next observed person' });
+    if (journey === 'return to original') {
+      await controller.openTarget('cluster:1', {}, false);
+      await view.rerender(props);
+      await screen.findByRole('heading', { name: 'Original observed person' });
+    }
+    const dialogName = journey === 'next person' ? 'Merge Next observed person' : 'Merge Original observed person';
     await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
-    await screen.findByRole('dialog', { name: 'Merge Next observed person' });
+    await screen.findByRole('dialog', { name: dialogName });
     await act(async () => {
       release(Response.json({ identity_revision: 2, cache_state: 'ready' }));
       await new Promise(resolve => setTimeout(resolve, 0));
     });
     expect(props.onReconcilePersonMerge).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('dialog', { name: 'Merge Next observed person' })).not.toBeNull();
+    expect(screen.queryByRole('dialog', { name: dialogName })).not.toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });

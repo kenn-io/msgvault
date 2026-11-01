@@ -86,9 +86,10 @@ it.each([false, true])('links a saved representative and an observed person with
       changeOrigin();
       finishProfile();
     }
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onReconcile).toHaveBeenCalledOnce());
+    // The unmounted dialog has nothing left to close.
+    expect(onClose).toHaveBeenCalledTimes(savedAnchor ? 1 : 0);
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
-    expect(onReconcile).toHaveBeenCalledOnce();
     expect(onReconcile).toHaveBeenCalledWith(expect.anything(), true);
   } finally { view.unmount(); controller.destroy(); }
 });

@@ -5,7 +5,7 @@
   import { validatePersonMergeRequired, type ValidatedPersonMergeRequired, type PersonMergeSuccess } from '../../directory/person-merge';
   import LinkIdentityDialog from '../relationships/LinkIdentityDialog.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   let { client, controller, personID: currentPersonID, participantID: currentParticipantID, name, onReconcile, onOpenPerson, onLinked, onClose }:
     { client: APIClient; controller: RelationshipsController; personID: number | null; participantID: number | null; name: string;
       onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean) => Promise<void>; onOpenPerson?: (id: number) => void; onLinked?: (a: number, b: number, outcome: LinkOutcome) => void; onClose: () => void } = $props();
@@ -13,8 +13,10 @@
   // The operation keeps the people it opened with, even after navigation disposes the dialog.
   const [personID, participantID] = untrack(() => [currentPersonID, currentParticipantID]);
   const context = untrack(() => controller.personMergeContextSnapshot());
-  // A late completion after navigation belongs to the closed dialog, not the next person's.
-  const close = () => { if (controller.target === context.target) onClose(); };
+  // A late completion after navigation belongs to this closed dialog, not whichever one replaced it.
+  let disposed = false;
+  onDestroy(() => disposed = true);
+  const close = () => { if (!disposed) onClose(); };
   // A successful promotion is retained when reading the profiles needs a retry.
   const promoted = new Map<number, number>();
   async function savedPair(a: number, b: number): Promise<LinkOutcome> {
