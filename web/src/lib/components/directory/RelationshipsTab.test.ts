@@ -1,3 +1,4 @@
+import { requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -5,14 +6,6 @@ import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
-}
 
 function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
   return {

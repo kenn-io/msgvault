@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,10 +14,6 @@ const forbidden = {
   packetSHA: 'forbidden-packet-sha',
   claimKey: 'forbidden-claim-key'
 };
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function structured() {
   return {
