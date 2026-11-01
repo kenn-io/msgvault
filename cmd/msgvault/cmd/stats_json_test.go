@@ -47,6 +47,8 @@ func TestStatsJSON(t *testing.T) {
 		{name: "delegated collection", mode: "delegated", collection: "team", label: "Resolved team", kind: "collection", wantLabel: "Resolved team", deleted: 3, total: 3, sources: 2, scopeSources: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			// HTTP total_messages remains active-only; the CLI must add the
 			// separate source-deleted count. Empty fixtures include no live rows.
 			var threads, attachments, labels int64
@@ -61,15 +63,15 @@ func TestStatsJSON(t *testing.T) {
 				tc.active, tc.deleted, threads, attachments, labels, tc.sources, sizeField, tc.label, tc.scopeSources)
 			cmd, output, requests := statsJSONFixture(t, tc.mode, body, tc.account, tc.collection)
 			cmd.SetArgs([]string{"--json"})
-			require.NoError(t, cmd.Execute())
-			assert.Equal(t, int32(1), requests.Load())
+			require.NoError(cmd.Execute())
+			assert.Equal(int32(1), requests.Load())
 
 			decoder := json.NewDecoder(output)
 			decoder.UseNumber()
 			var got map[string]any
-			require.NoError(t, decoder.Decode(&got))
+			require.NoError(decoder.Decode(&got))
 			var trailing any
-			require.ErrorIs(t, decoder.Decode(&trailing), io.EOF, "exactly one JSON object")
+			require.ErrorIs(decoder.Decode(&trailing), io.EOF, "exactly one JSON object")
 			want := map[string]any{
 				"total_messages": json.Number(fmt.Sprint(tc.total)), "active_messages": json.Number(fmt.Sprint(tc.active)),
 				"source_deleted_messages": json.Number(fmt.Sprint(tc.deleted)), "total_accounts": json.Number(fmt.Sprint(tc.sources)),
@@ -85,25 +87,27 @@ func TestStatsJSON(t *testing.T) {
 				want["database_size_bytes"] = json.Number(fmt.Sprint(tc.size))
 				want["database_size_scope"] = "global"
 			}
-			assert.Equal(t, want, got, "complete JSON contract, including zero fields and no endpoint metadata")
+			assert.Equal(want, got, "complete JSON contract, including zero fields and no endpoint metadata")
 		})
 	}
 }
 
 func TestStatsJSONCommandLocalFlagAndTextFallback(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	// A template flag set by another invocation must not control this command.
 	flag := statsCmd.Flags().Lookup("json")
 	if flag != nil {
 		previous := flag.Value.String()
-		require.NoError(t, flag.Value.Set("true"))
-		t.Cleanup(func() { require.NoError(t, flag.Value.Set(previous)) })
+		require.NoError(flag.Value.Set("true"))
+		t.Cleanup(func() { require.NoError(flag.Value.Set(previous)) })
 	}
 	for _, args := range [][]string{nil, {"--json=false"}} {
 		cmd, output, _ := statsJSONFixture(t, "remote", `{"stats":{"total_messages":8,"source_deleted_messages":3,"total_threads":6,"total_attachments":3,"total_labels":9,"total_accounts":2,"database_size_bytes":1048576},"scope_source_count":2}`, "", "team")
 		cmd.SetArgs(args)
-		require.NoError(t, cmd.Execute())
-		assert.Contains(t, output.String(), "Stats for collection \"team\" (2 accounts):\n")
-		assert.Contains(t, output.String(), "\n  Messages:    11 (8 active, 3 deleted from source)\n")
+		require.NoError(cmd.Execute())
+		assert.Contains(output.String(), "Stats for collection \"team\" (2 accounts):\n")
+		assert.Contains(output.String(), "\n  Messages:    11 (8 active, 3 deleted from source)\n")
 	}
 }
 
