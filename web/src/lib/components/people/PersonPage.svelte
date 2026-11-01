@@ -33,7 +33,6 @@
       details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
       onFiltersChange: (filters: ExploreFilter[]) => void;
       onMessagesTableChange?: (table: MessagesTable | undefined) => void;
-      onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
   const context = $derived(contextPredicate(predicate));
   const domain = $derived(target?.startsWith('domain:') ? target.slice(7) : undefined);
