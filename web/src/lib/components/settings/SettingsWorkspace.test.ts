@@ -596,6 +596,36 @@ it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People
   expect(seen.filter(request => request.path.endsWith('/check')).map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
 });
 
+it('refreshes People profiles and revision after a shared-settings conflict while People lookups stays open', async () => {
+  let revision = '"s1"';
+  const doc = settingsDoc();
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') {
+      if (request.method === 'PATCH') return Response.json({ message: 'Config changed' }, { status: 412 });
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await screen.findByText('model-one');
+  revision = '"s2"';
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('The settings changed on disk. The latest are loaded. Review your changes and save again.');
+  await screen.findByText('model-two');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(seen.find(request => request.path.endsWith('/check'))?.ifMatch).toBe('"s2"');
+});
+
 it('selects a refreshed People profile after saving Server settings and returning', async () => {
   let revision = '"s1"';
   let consented = false;
