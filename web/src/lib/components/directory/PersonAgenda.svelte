@@ -196,9 +196,9 @@
 </script>
 
 <section class="person-agenda" aria-labelledby={`person-${personID}-agenda-heading`}>
-  <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if loading}<span role="status">Loading…</span>{/if}</div>
+  <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if integrationState === 'disabled' && onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Tasks" onclick={onSetUp} />{/if}{#if loading}<span role="status">Loading…</span>{/if}</div>
   {#if error}<p class="notice" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
-  {#if stateMessage}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
+  {#if stateMessage && !(integrationState === 'disabled' && onSetUp)}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
   {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No linked Kata items.</p>{/if}
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
   {#each items as item (item.uid)}

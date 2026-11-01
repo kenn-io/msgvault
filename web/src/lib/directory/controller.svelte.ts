@@ -411,8 +411,8 @@ export class DirectoryController {
       if (!person.data && person.response?.status === 404) {
         this.entity?.destroy();
         this.entity = null;
-        this.selectedPersonID = null;
-        this.detail = null;
+        this.selectedPersonID = shouldCommit ? null : personID;
+        this.detail = shouldCommit ? null : { etags: {}, errors: { person: 'Person not found.' } };
         if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
         return;
       }

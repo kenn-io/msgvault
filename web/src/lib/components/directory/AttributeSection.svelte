@@ -10,7 +10,7 @@
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import AttributeDefinitionDialog from './AttributeDefinitionDialog.svelte';
   import AttributeEditor from './AttributeEditor.svelte';
-  import { displayAttributeValue } from './attribute-value';
+  import { displayAttributeValue, joinDefinitions, isAttributeRevealed, canAddAttribute, canEditAttribute, canCloseAttribute, type JoinedAttribute } from './attribute-value';
 
   type AttributeDefinition = GeneratedAttributeDefinition;
   type AttributeGroup = GeneratedPersonAttributeGroup;
@@ -19,12 +19,6 @@
   interface Props {
     controller: DirectoryProfileController;
     historyOnly?: boolean;
-  }
-
-  interface JoinedAttribute {
-    definition: AttributeDefinition;
-    current: PersonAttributeValue[];
-    history: PersonAttributeValue[];
   }
 
   let { controller, historyOnly = false }: Props = $props();
@@ -58,39 +52,7 @@
     if (controller.createdDefinition) recentlyCreatedID = controller.createdDefinition.universal_id;
   });
 
-  function joinDefinitions(definitions: AttributeDefinition[], groups: AttributeGroup[]): JoinedAttribute[] {
-    const byUniversalID = new Map(groups.map((group) => [group.definition.universal_id, group]));
-    const joined = new Map<string, JoinedAttribute>();
-    for (const definition of definitions) {
-      const group = byUniversalID.get(definition.universal_id);
-      joined.set(definition.universal_id, {
-        definition,
-        current: [...(group?.current ?? [])],
-        history: historical(group?.history ?? []),
-      });
-    }
-    for (const group of groups) {
-      if (joined.has(group.definition.universal_id)) continue;
-      joined.set(group.definition.universal_id, {
-        definition: group.definition,
-        current: [...(group.current ?? [])],
-        history: historical(group.history ?? []),
-      });
-    }
-    return [...joined.values()].sort(
-      (left, right) =>
-        left.definition.display_order - right.definition.display_order ||
-        left.definition.slug.localeCompare(right.definition.slug),
-    );
-  }
-
-  function historical(values: PersonAttributeValue[]): PersonAttributeValue[] {
-    return values.filter((value) => value.active_until !== undefined || value.superseded_at !== undefined);
-  }
-
-  function isRevealed(definition: AttributeDefinition): boolean {
-    return !definition.is_sensitive || revealed[definition.universal_id] === true;
-  }
+  function isRevealed(definition: AttributeDefinition): boolean { return isAttributeRevealed(definition, revealed); }
 
   function toggleReveal(definition: AttributeDefinition): void {
     const next = !revealed[definition.universal_id];
@@ -139,64 +101,9 @@
     return draft.slug === definition.slug ? controller.conflict : null;
   }
 
-  function supported(definition: AttributeDefinition): boolean {
-    if (definition.options?.choices?.length) {
-      return ['text', 'integer', 'real', 'boolean', 'date', 'timestamp'].includes(definition.value_type);
-    }
-    return (
-      definition.value_type === 'boolean' ||
-      definition.value_type === 'integer' ||
-      definition.value_type === 'real' ||
-      definition.value_type === 'date' ||
-      definition.value_type === 'timestamp' ||
-      definition.value_type === 'json' ||
-      definition.value_type === 'text' ||
-      (definition.value_type === 'record_reference' && definition.record_target === 'person')
-    );
-  }
-
-  function canAdd(field: JoinedAttribute): boolean {
-    const definition = field.definition;
-    return (
-      definition.is_active &&
-      definition.api_mutable &&
-      definition.ui_creatable &&
-      supported(definition) &&
-      (!definition.is_sensitive || isRevealed(definition)) &&
-      (definition.cardinality === 'multi' || field.current.length === 0) &&
-      !controller.mutationPending &&
-      !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !operationNeedsReload(definition)
-    );
-  }
-
-  function canEdit(definition: AttributeDefinition): boolean {
-    return (
-      definition.is_active &&
-      definition.api_mutable &&
-      definition.ui_editable &&
-      supported(definition) &&
-      !controller.mutationPending &&
-      !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !operationNeedsReload(definition)
-    );
-  }
-
-  function canClose(definition: AttributeDefinition): boolean {
-    // The store deliberately permits retiring a current value from an
-    // inactive definition, but derived/non-API-mutable definitions remain
-    // non-retractable.
-    return (
-      definition.api_mutable &&
-      definition.ui_editable &&
-      !controller.mutationPending &&
-      !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !operationNeedsReload(definition)
-    );
-  }
+  function canAdd(field: JoinedAttribute): boolean { return canAddAttribute(field, controller, revealed); }
+  function canEdit(definition: AttributeDefinition): boolean { return canEditAttribute(definition, controller); }
+  function canClose(definition: AttributeDefinition): boolean { return canCloseAttribute(definition, controller); }
 
   function openEditor(field: JoinedAttribute, current: PersonAttributeValue | undefined = undefined): void {
     if (current ? !canEdit(field.definition) : !canAdd(field)) return;
@@ -346,7 +253,7 @@
       </ul>
 
       {#if editing?.universalID === field.definition.universal_id}
-        {#key editing.current?.id ?? 'new'}
+        {#key `${field.definition.revision}:${editing.current?.id ?? 'new'}`}
           <AttributeEditor
             {controller}
             definition={field.definition}

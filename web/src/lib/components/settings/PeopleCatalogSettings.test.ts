@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
-import { PendingUndo } from '../../people/pending-undo.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 import PersonFields from '../people/PersonFields.svelte';
 
@@ -32,7 +31,7 @@ it('makes a custom field created in Settings available in More fields', async ()
   expect(screen.getByRole('button', { name: 'Edit Favorite color' })).toBeDefined();
   settings.unmount();
   const controller = new DirectoryProfileController(client, 7, { etags: {}, errors: {} });
-  const fields = render(PersonFields, { controller, pending: new PendingUndo() });
+  const fields = render(PersonFields, { controller });
   await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
   await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Favorite color' })).toBeDefined());
   fields.unmount(); controller.destroy();

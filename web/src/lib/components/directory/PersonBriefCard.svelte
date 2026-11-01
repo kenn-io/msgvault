@@ -150,6 +150,7 @@
           <h3 id={headingID} tabindex="-1">Last time we talked</h3>
 
         </div>
+        {#if onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Briefs" onclick={onSetUp} />{/if}
         {#if busy}
           <span class="working" aria-label="Loading the brief" aria-busy="true">
             <Spinner size={14} label="Loading the brief" />
@@ -169,7 +170,6 @@
         </div>
       {/if}
 
-      {#if onSetUp}<div class="heading-row"><span class="muted">Briefs</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
       {#if controller.enrollment && !onSetUp}
         {@const enrollment = controller.enrollment}
         <div class="enrollment-row">
@@ -196,7 +196,7 @@
       {/if}
 
       {#if controller.enrollment && !controller.enrollment.enrolled}
-        <p class="muted">This person is not enrolled, so no brief is generated or shown.</p>
+        {#if !onSetUp}<p class="muted">This person is not enrolled, so no brief is generated or shown.</p>{/if}
       {:else if controller.enrollment}
         {#if controller.briefError}
           <div class="notice notice--error" role="alert">
