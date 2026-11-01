@@ -14,37 +14,64 @@ import (
 const checkpointV2Fixture = `{"version":2,"source":"app:9:page:100","next_surface":"ads_posts","phases":{"posts":{},"visitor_posts":{},"ads_posts":{}}}`
 
 func TestImportCollectionTurnsSurviveLongPhaseAndDenial(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, f, imp, src := setupImport(t)
-	for _, id := range []string{"100_401", "100_402", "100_403"} {
-		f.comments["100_200"] = append(f.comments["100_200"], *comment(id, "100_200", "synthetic organic history"))
-	}
-	f.denied["100/visitor_posts"] = true
-	f.ads = []Object{{ID: "100_800", Message: "Synthetic ad"}}
-	for _, turn := range []struct {
-		budget int
-		path   string
-		next   PostEdge
-	}{{4, "100/posts", VisitorPosts}, {2, "100/visitor_posts", AdsPosts}, {2, "100/ads_posts", Posts}} {
-		before := len(f.paths)
-		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: turn.budget})
-		if turn.next == AdsPosts {
-			require.ErrorContains(err, "facebook visitor_posts")
-		} else {
-			require.NoError(err)
+	t.Run("unfinished organic collection turns", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st, f, imp, src := setupImport(t)
+		for _, id := range []string{"100_401", "100_402", "100_403"} {
+			f.comments["100_200"] = append(f.comments["100_200"], *comment(id, "100_200", "synthetic organic history"))
 		}
-		require.NotNil(sum)
-		assert.LessOrEqual(len(f.paths)-before, turn.budget)
-		assert.Equal("/v26.0/"+turn.path, f.paths[before+1])
-		run, err := st.GetLatestCheckpointedSync(src.ID)
-		require.NoError(err)
-		var saved syncState
-		require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &saved))
-		assert.Equal(turn.next, saved.NextSurface)
-		assert.False(saved.Phases[Posts].Done)
-		require.NotEmpty(saved.Phases[Posts].Stack)
-	}
-	message(t, st, src.ID, "100_800")
+		f.denied["100/visitor_posts"] = true
+		f.ads = []Object{{ID: "100_800", Message: "Synthetic ad"}}
+		for _, turn := range []struct {
+			budget int
+			path   string
+			next   PostEdge
+		}{{4, "100/posts", VisitorPosts}, {2, "100/visitor_posts", AdsPosts}, {2, "100/ads_posts", Posts}} {
+			before := len(f.paths)
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: turn.budget})
+			if turn.next == AdsPosts {
+				require.ErrorContains(err, "facebook visitor_posts")
+			} else {
+				require.NoError(err)
+			}
+			require.NotNil(sum)
+			assert.LessOrEqual(len(f.paths)-before, turn.budget)
+			assert.Equal("/v26.0/"+turn.path, f.paths[before+1])
+			run, err := st.GetLatestCheckpointedSync(src.ID)
+			require.NoError(err)
+			var saved syncState
+			require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &saved))
+			assert.Equal(turn.next, saved.NextSurface)
+			assert.False(saved.Phases[Posts].Done)
+			require.NotEmpty(saved.Phases[Posts].Stack)
+		}
+		message(t, st, src.ID, "100_800")
+	})
+	t.Run("budget two empty organic visitor denial eventually reaches ad comment", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st, f, imp, src := setupImport(t)
+		f.posts = nil
+		f.denied["100/visitor_posts"] = true
+		f.ads = []Object{{ID: "100_800", Message: "Synthetic ad post"}}
+		f.comments["100_800"] = []Object{*comment("100_801", "100_800", "Synthetic ad comment")}
+		for range 16 {
+			before := f.calls
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+			if err != nil {
+				require.ErrorContains(err, "facebook visitor_posts")
+			}
+			require.NotNil(sum)
+			assert.LessOrEqual(f.calls-before, 2)
+			ids, readErr := st.MessageExistsBatch(src.ID, []string{"100_800", "100_801"})
+			require.NoError(readErr)
+			if ids["100_801"] != 0 {
+				assert.NotZero(ids["100_800"])
+				assert.Equal(message(t, st, src.ID, "100_800").ID, message(t, st, src.ID, "100_801").ReplyToMessageID.Int64)
+				return
+			}
+		}
+		assert.Fail("accessible ad post/comment starved under repeated bounded imports")
+	})
 }
 
 func TestImportContinuationRequiresCollectionAttempt(t *testing.T) {

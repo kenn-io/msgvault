@@ -40,16 +40,18 @@ func (c *Config) ScheduledFacebookCommentsSources() []FacebookCommentsSource {
 }
 
 func (c *Config) validateFacebookCommentsSources() error {
-	labels := map[string]bool{}
 	assets := map[string]bool{}
 	for i := range c.FacebookComments {
 		source := &c.FacebookComments[i]
 		source.Identifier = strings.TrimSpace(source.Identifier)
-		label := strings.ToLower(source.Identifier)
-		if label == "" || labels[label] {
+		if source.Identifier == "" {
 			return fmt.Errorf("facebook_comments[%d].identifier is empty or duplicate", i)
 		}
-		labels[label] = true
+		for _, prior := range c.FacebookComments[:i] {
+			if strings.EqualFold(prior.Identifier, source.Identifier) {
+				return fmt.Errorf("facebook_comments[%d].identifier is empty or duplicate", i)
+			}
+		}
 		if !meta.ValidAccountID(source.AppID) || !meta.ValidAccountID(source.PageID) {
 			return fmt.Errorf("facebook_comments[%d] requires decimal app_id and page_id", i)
 		}

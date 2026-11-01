@@ -25,7 +25,7 @@ type graphFixture struct {
 	comments             map[string][]Object
 	denied               map[string]bool
 	calls                int
-	rejectCursor         bool
+	rejectCursor         string
 	freshCommentReads    int
 	paths                []string
 }
@@ -36,8 +36,8 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		f.calls++
 		f.paths = append(f.paths, r.URL.Path)
-		if f.rejectCursor && r.URL.Query().Get("after") != "" {
-			http.Error(w, "synthetic expired cursor", http.StatusBadRequest)
+		if f.rejectCursor != "" && r.URL.Query().Get("after") != "" {
+			http.Error(w, f.rejectCursor, http.StatusBadRequest)
 			return
 		}
 		if r.URL.Path == "/v26.0/100_200/comments" && r.URL.Query().Get("after") == "" {
@@ -138,51 +138,6 @@ func TestImportPageComments(t *testing.T) {
 	body, err = st.GetMessageBodyText(got.ID)
 	require.NoError(err)
 	assert.Equal("edited example", body)
-}
-
-func TestImportBudgetTwoEventuallyReachesAdsAfterVisitorFailure(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, f, imp, src := setupImport(t)
-	f.posts = nil
-	f.denied["100/visitor_posts"] = true
-	f.ads = []Object{{ID: "100_800", Message: "Synthetic ad post"}}
-	f.comments["100_800"] = []Object{*comment("100_801", "100_800", "Synthetic ad comment")}
-	for range 16 {
-		before := f.calls
-		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
-		if err != nil {
-			require.ErrorContains(err, "facebook visitor_posts")
-		}
-		require.NotNil(sum)
-		assert.LessOrEqual(f.calls-before, 2)
-		ids, readErr := st.MessageExistsBatch(src.ID, []string{"100_800", "100_801"})
-		require.NoError(readErr)
-		if ids["100_801"] != 0 {
-			assert.NotZero(ids["100_800"])
-			assert.Equal(message(t, st, src.ID, "100_800").ID, message(t, st, src.ID, "100_801").ReplyToMessageID.Int64)
-			return
-		}
-	}
-	assert.Fail("accessible ad post/comment starved under repeated bounded imports")
-}
-
-func TestImportNestedReplies(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, f, imp, src := setupImport(t)
-	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "parent")}
-	f.comments["100_201"] = []Object{*comment("100_202", "100_201", "child"), *comment("100_203", "100_201", "second"), *comment("100_204", "100_201", "third")}
-	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(err)
-	parent := message(t, st, src.ID, "100_201")
-	for _, id := range []string{"100_202", "100_203", "100_204"} {
-		child := message(t, st, src.ID, id)
-		assert.Equal(parent.ID, child.ReplyToMessageID.Int64)
-		assert.Equal(parent.ConversationID, child.ConversationID)
-	}
-	f.comments["100_201"][0].Parent.ID = "other-post"
-	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.Error(err)
-	assert.Equal(parent.ID, message(t, st, src.ID, "100_202").ReplyToMessageID.Int64)
 }
 
 func TestImportResumeAfterBudget(t *testing.T) {
@@ -566,15 +521,45 @@ func TestFullRescanRecoversExpiredCursor(t *testing.T) {
 	for i := 1; i <= 4; i++ {
 		f.comments["100_200"] = append(f.comments["100_200"], *comment(strconv.Itoa(700+i), "100_200", "recoverable history"))
 	}
-	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 5})
 	require.NoError(err)
 	require.True(sum.Partial)
 	original := message(t, st, src.ID, "701").ID
-	f.rejectCursor = true
-	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.ErrorContains(err, "--full")
-	assert.Equal(original, message(t, st, src.ID, "701").ID)
-	f.rejectCursor = false
+	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
+	require.NoError(err)
+	var before syncState
+	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &before))
+	frames := before.Phases[Posts].Stack
+	require.NotEmpty(frames)
+	require.NotEmpty(frames[len(frames)-1].After, "fixture must resume an actual saved cursor")
+	provider := &recordingCommentErrorAPI{API: imp.api}
+	imp.api = provider
+	for _, response := range []string{"synthetic unsupported field", "synthetic expired cursor"} {
+		f.rejectCursor = response
+		sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+		require.Error(err)
+		require.ErrorIs(err, provider.err)
+		var apiErr *APIError
+		require.ErrorAs(err, &apiErr)
+		assert.Equal(http.StatusBadRequest, apiErr.Status)
+		assert.Contains(err.Error(), strconv.Quote("100_200"))
+		assert.NotContains(err.Error(), "--full", response)
+		assert.NotContains(err.Error(), "cursor was rejected", response)
+		assert.NotContains(err.Error(), response)
+		assert.True(sum.Partial)
+		assert.Zero(sum.MessagesAdded)
+		checkpoint, err = st.GetLatestCheckpointedSync(src.ID)
+		require.NoError(err)
+		assert.Equal(store.SyncStatusFailed, checkpoint.Status)
+		assert.Positive(checkpoint.ErrorsCount)
+		assert.NotContains(checkpoint.ErrorMessage.String, "--full")
+		assert.NotContains(checkpoint.ErrorMessage.String, "cursor was rejected")
+		var after syncState
+		require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &after))
+		assert.Equal(before.Phases[Posts], after.Phases[Posts], "failed read must preserve its saved cursor and pending traversal")
+		assert.Equal(original, message(t, st, src.ID, "701").ID)
+	}
+	f.rejectCursor = ""
 	reads := f.freshCommentReads
 	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
 	require.NoError(err)
@@ -654,44 +639,54 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 // The provider-declared parent may differ from the edge being traversed only
 // when its archived source, root, and actual conversation are safe to use.
 func TestImportDeclaredParentSelection(t *testing.T) {
-	for _, declared := range []bool{true, false} {
-		name := "provider absent uses traversal frame"
-		if declared {
-			name = "provider selects already archived parent"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, mode := range []string{"provider selects already archived parent", "provider absent uses traversal frame", "three siblings on nested edge"} {
+		t.Run(mode, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st, f, imp, src := setupImport(t)
 			parent := *comment("100_201", "100_200", "synthetic parent")
 			child := *comment("100_202", "100_201", "synthetic child")
 			f.comments["100_200"] = []Object{parent}
-			if declared {
+			ids := []string{"100_202"}
+			switch mode {
+			case "provider selects already archived parent":
 				// The first object is archived before the next object is handled.
 				// Both arrive on the root edge, but the child declares 100_201.
 				f.comments["100_200"] = append(f.comments["100_200"], child)
-			} else {
+			case "provider absent uses traversal frame":
 				child.Parent = nil
 				f.comments["100_201"] = []Object{child}
+			case "three siblings on nested edge":
+				// The fixture returns two objects per page, so the third sibling
+				// requires returning from nested frames and reading the next page.
+				f.comments["100_201"] = []Object{child, *comment("100_203", "100_201", "second"), *comment("100_204", "100_201", "third")}
+				ids = append(ids, "100_203", "100_204")
 			}
 			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.NoError(err)
 			rootRow := message(t, st, src.ID, "100_200")
 			parentRow := message(t, st, src.ID, "100_201")
-			childRow := message(t, st, src.ID, "100_202")
-			assert.Equal(parentRow.ID, childRow.ReplyToMessageID.Int64)
-			assert.Equal(rootRow.ConversationID, childRow.ConversationID)
-			metadata, err := st.GetMessageMetadata(childRow.ID)
-			require.NoError(err)
-			var context struct {
-				Root   string `json:"post_id"`
-				Parent string `json:"parent_id"`
+			originals := make(map[string]int64, len(ids))
+			for _, id := range ids {
+				childRow := message(t, st, src.ID, id)
+				originals[id] = childRow.ID
+				assert.Equal(parentRow.ID, childRow.ReplyToMessageID.Int64)
+				assert.Equal(rootRow.ConversationID, childRow.ConversationID)
+				assert.Equal(parentRow.ConversationID, childRow.ConversationID)
+				metadata, err := st.GetMessageMetadata(childRow.ID)
+				require.NoError(err)
+				var context struct {
+					Root   string `json:"post_id"`
+					Parent string `json:"parent_id"`
+				}
+				require.NoError(json.Unmarshal([]byte(metadata.String), &context))
+				assert.Equal("100_200", context.Root)
+				assert.Equal("100_201", context.Parent)
 			}
-			require.NoError(json.Unmarshal([]byte(metadata.String), &context))
-			assert.Equal("100_200", context.Root)
-			assert.Equal("100_201", context.Parent)
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.NoError(err)
-			assert.Equal(childRow.ID, message(t, st, src.ID, "100_202").ID, "same declared parent replays without a duplicate")
+			for _, id := range ids {
+				assert.Equal(originals[id], message(t, st, src.ID, id).ID, "same declared parent replays without a duplicate")
+			}
 		})
 	}
 }

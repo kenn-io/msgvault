@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strconv"
 	"testing"
 	"testing/synctest"
 
@@ -18,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -80,7 +83,7 @@ func TestFacebookRegistrationRejectsIdentityBeforeWriting(t *testing.T) {
 	assert.Empty(t, sources)
 }
 
-func TestFacebookConfiguredCredentialAndSelection(t *testing.T) {
+func TestFacebookConfiguredCredentialsSelectionDelegationFlagsAndHelp(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "")
 	_, err := configuredFacebookCommentsClient(facebookProfile())
@@ -103,6 +106,54 @@ func TestFacebookConfiguredCredentialAndSelection(t *testing.T) {
 	require.NoError(cmd.Execute())
 	assert.Contains(output.String(), "--max-requests")
 	assert.Contains(output.String(), "Facebook")
+}
+
+func TestFacebookManualPartialWritesRefreshCacheAcrossProfiles(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "synthetic-page-token")
+	facebookHTTPFixture(t, false)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Vector.Enabled = false
+	first, second := facebookProfile(), facebookProfile()
+	first.Identifier, second.Identifier, second.AppID = "first", "second", "99"
+	cfg.FacebookComments = []config.FacebookCommentsSource{first, second}
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	for _, profile := range cfg.FacebookComments {
+		_, err := registerFacebookCommentsProfile(t.Context(), st, profile)
+		require.NoError(err)
+	}
+	original := rebuildFacebookCommentsCacheAfterWrite
+	t.Cleanup(func() { rebuildFacebookCommentsCacheAfterWrite = original })
+	refreshes := 0
+	rebuildFacebookCommentsCacheAfterWrite = func(dsn string, _ *invocation) error {
+		refreshes++
+		assert.Equal(cfg.DatabaseDSN(), dsn)
+		for _, profile := range cfg.FacebookComments {
+			source, err := st.GetSourceByTypeAndIdentifier(meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
+			require.NoError(err)
+			ids, err := st.MessageExistsBatch(source.ID, []string{"100_201"})
+			require.NoError(err)
+			assert.NotZero(ids["100_201"], "refresh must include accepted writes from %s", profile.Identifier)
+			run, err := st.GetLatestSync(source.ID)
+			require.NoError(err)
+			assert.Equal(store.SyncStatusFailed, run.Status)
+			assert.Equal(int64(2), run.MessagesAdded)
+		}
+		return nil
+	}
+	cmd := newSyncFacebookCommentsCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	err := cmd.RunE(cmd, nil)
+	require.Error(err)
+	assert.Contains(err.Error(), "facebook profile first")
+	assert.Contains(err.Error(), "facebook profile second")
+	assert.Contains(output.String(), "Partial coverage")
+	assert.Equal(1, refreshes)
 }
 
 func TestFacebookPartialWritesRefreshScheduledCache(t *testing.T) {

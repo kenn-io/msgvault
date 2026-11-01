@@ -207,7 +207,7 @@ func (r *importRun) request(ctx context.Context, edge PostEdge, after string, re
 	page, err := read()
 	var apiErr *APIError
 	if after != "" && errors.As(err, &apiErr) && apiErr.Status == 400 {
-		return ObjectPage{}, fmt.Errorf("saved Facebook cursor was rejected; restart this source with --full: %w", err)
+		return ObjectPage{}, fmt.Errorf("facebook continuation request failed: %w", err)
 	}
 	return page, err
 }
