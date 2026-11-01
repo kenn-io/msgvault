@@ -142,7 +142,7 @@
       const next = bulkIDs[bulkCompleted + 1]!;
       const result = await controller.linkParticipants(bulkIDs[0]!, next);
       if (result.ok || result.code === 'already_linked') {
-        if (result.ok) staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null;
+        if (result.ok) { staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null; await directory.refreshSelectedPerson(); }
         bulkCompleted += 1; continue;
       }
       bulkPending = false;
@@ -205,7 +205,7 @@
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
-    onRecordDeleted={() => { close(); void controller.loadList(page.predicate); }}
+    onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); void controller.loadList(page.predicate); }}
     onSplitCommitted={async (context) => { await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, TextInput } from '@kenn-io/kit-ui';
-  import { untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
 
   import type {
     PartialDate as GeneratedPartialDate,
@@ -102,6 +102,11 @@
   let mediaLabel = $state(initialSection === 'media' ? (initialCurrent?.original_value ?? '') : '');
   let submitting = $state(false);
   let validationError = $state<string | null>(null);
+  let formElement = $state<HTMLFormElement>();
+
+  onMount(() => {
+    void tick().then(() => formElement?.querySelector<HTMLElement>('input, select')?.focus());
+  });
 
   const ordinal = initialCurrent?.envelope.ordinal ?? 0;
   const supersede = initialCurrent ? [initialCurrent.envelope.id] : [];
@@ -352,7 +357,7 @@
     <div class="editor-actions"><Button label="Cancel" type="button" onclick={onCancel} /></div>
   </div>
 {:else}
-  <form class="profile-editor" onsubmit={save} aria-label={`Edit ${section.replace('_', ' ')}`}>
+  <form class="profile-editor" bind:this={formElement} onsubmit={save} aria-label={`Edit ${section.replace('_', ' ')}`}>
     {#if section === 'names'}
       <label
         >Name kind

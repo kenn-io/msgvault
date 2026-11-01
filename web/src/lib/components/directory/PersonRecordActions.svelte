@@ -14,7 +14,7 @@
     client: APIClient;
     controller: DirectoryProfileController;
     personID: number;
-    onDeleted?: () => void;
+    onDeleted?: (personID: number) => void;
     onOpenPerson?: (id: number) => void;
     onAnnounce?: (text: string) => void;
     onOpenCardDAVConflict?: (id: number) => void;
@@ -48,9 +48,9 @@
     if (result === undefined && controller.draft === null) renaming = false;
   }
   async function deletePerson(): Promise<void> {
-    const activeController = controller;
+    const activeController = controller, deletedID = personID;
     const result = await activeController.deletePerson();
-    if (result === undefined && activeController.draft === null) { confirmingDelete = false; onDeleted?.(); }
+    if (result === undefined && activeController.draft === null) { confirmingDelete = false; onDeleted?.(deletedID); }
   }
 </script>
 
