@@ -27,6 +27,7 @@ type graphFixture struct {
 	calls                int
 	rejectCursor         bool
 	freshCommentReads    int
+	paths                []string
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
@@ -34,8 +35,9 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 	f := &graphFixture{posts: []Object{{ID: "100_200", Message: "Example post", From: &Actor{ID: "100", Name: "Example Page"}}}, comments: map[string][]Object{}, denied: map[string]bool{}}
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		f.calls++
+		f.paths = append(f.paths, r.URL.Path)
 		if f.rejectCursor && r.URL.Query().Get("after") != "" {
-			http.Error(w, "synthetic expired cursor", 400)
+			http.Error(w, "synthetic expired cursor", http.StatusBadRequest)
 			return
 		}
 		if r.URL.Path == "/v26.0/100_200/comments" && r.URL.Query().Get("after") == "" {
@@ -43,7 +45,7 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/v26.0/")
 		if f.denied[path] {
-			http.Error(w, "synthetic denial", 403)
+			http.Error(w, "synthetic denial", http.StatusForbidden)
 			return
 		}
 		if path == "me" {
@@ -61,9 +63,17 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 		default:
 			data = f.comments[strings.TrimSuffix(path, "/comments")]
 		}
-		start, _ := strconv.Atoi(r.URL.Query().Get("after"))
+		after := r.URL.Query().Get("after")
+		start, parseErr := strconv.Atoi(after)
+		if !assert.True(t, (after == "" || parseErr == nil) && start >= 0, "invalid fixture cursor") {
+			http.Error(w, "invalid fixture cursor", http.StatusBadRequest)
+			return
+		}
 		end := min(start+2, len(data))
-		require.LessOrEqual(t, start, end)
+		if !assert.LessOrEqual(t, start, end) {
+			http.Error(w, "fixture cursor exceeds response", http.StatusBadRequest)
+			return
+		}
 		if data == nil {
 			data = []Object{}
 		}
@@ -72,7 +82,10 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			response["paging"] = map[string]any{"cursors": map[string]string{"after": strconv.Itoa(end)}, "next": "https://graph.facebook.com/unused"}
 		}
 		blob, err := json.Marshal(response)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			http.Error(w, "cannot encode fixture response", http.StatusInternalServerError)
+			return
+		}
 		_, _ = w.Write(blob)
 	})
 	return f, c
@@ -100,74 +113,103 @@ func message(t *testing.T, st *store.Store, source int64, id string) *store.Mess
 }
 
 func TestImportPageComments(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "searchable example")}
 	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
-	assert.False(t, sum.Partial)
+	require.NoError(err)
+	assert.False(sum.Partial)
 	got := message(t, st, src.ID, "100_201")
 	body, err := st.GetMessageBodyText(got.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "searchable example", body)
-	assert.Equal(t, SourceType, got.MessageType)
+	require.NoError(err)
+	assert.Equal("searchable example", body)
+	assert.Equal(SourceType, got.MessageType)
 	root := message(t, st, src.ID, "100_200")
-	assert.Equal(t, root.ConversationID, got.ConversationID)
-	assert.Equal(t, root.ID, got.ReplyToMessageID.Int64)
-	assert.True(t, root.IsFromMe)
+	assert.Equal(root.ConversationID, got.ConversationID)
+	assert.Equal(root.ID, got.ReplyToMessageID.Int64)
+	assert.True(root.IsFromMe)
 	var hits int
-	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&hits))
-	assert.Equal(t, 1, hits)
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&hits))
+	assert.Equal(1, hits)
 	f.comments["100_200"][0].Message = "edited example"
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, got.ID, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	assert.Equal(got.ID, message(t, st, src.ID, "100_201").ID)
 	body, err = st.GetMessageBodyText(got.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "edited example", body)
+	require.NoError(err)
+	assert.Equal("edited example", body)
+}
+
+func TestImportBudgetTwoEventuallyReachesAdsAfterVisitorFailure(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.posts = nil
+	f.denied["100/visitor_posts"] = true
+	f.ads = []Object{{ID: "100_800", Message: "Synthetic ad post"}}
+	f.comments["100_800"] = []Object{*comment("100_801", "100_800", "Synthetic ad comment")}
+	for range 16 {
+		before := f.calls
+		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+		if err != nil {
+			require.ErrorContains(err, "facebook visitor_posts")
+		}
+		require.NotNil(sum)
+		assert.LessOrEqual(f.calls-before, 2)
+		ids, readErr := st.MessageExistsBatch(src.ID, []string{"100_800", "100_801"})
+		require.NoError(readErr)
+		if ids["100_801"] != 0 {
+			assert.NotZero(ids["100_800"])
+			assert.Equal(message(t, st, src.ID, "100_800").ID, message(t, st, src.ID, "100_801").ReplyToMessageID.Int64)
+			return
+		}
+	}
+	assert.Fail("accessible ad post/comment starved under repeated bounded imports")
 }
 
 func TestImportNestedReplies(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "parent")}
 	f.comments["100_201"] = []Object{*comment("100_202", "100_201", "child"), *comment("100_203", "100_201", "second"), *comment("100_204", "100_201", "third")}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	parent := message(t, st, src.ID, "100_201")
 	for _, id := range []string{"100_202", "100_203", "100_204"} {
 		child := message(t, st, src.ID, id)
-		assert.Equal(t, parent.ID, child.ReplyToMessageID.Int64)
-		assert.Equal(t, parent.ConversationID, child.ConversationID)
+		assert.Equal(parent.ID, child.ReplyToMessageID.Int64)
+		assert.Equal(parent.ConversationID, child.ConversationID)
 	}
 	f.comments["100_201"][0].Parent.ID = "other-post"
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.Error(t, err)
-	assert.Equal(t, parent.ID, message(t, st, src.ID, "100_202").ReplyToMessageID.Int64)
+	require.Error(err)
+	assert.Equal(parent.ID, message(t, st, src.ID, "100_202").ReplyToMessageID.Int64)
 }
 
 func TestImportResumeAfterBudget(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	for i := 1; i <= 5; i++ {
-		f.comments["100_200"] = append(f.comments["100_200"], *comment(fmt.Sprint(400+i), "100_200", "budget"))
+		f.comments["100_200"] = append(f.comments["100_200"], *comment(strconv.Itoa(400+i), "100_200", "budget"))
 	}
 	completed := false
 	for range 15 {
 		before := f.calls
 		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
-		require.NoError(t, err)
-		assert.LessOrEqual(t, f.calls-before, 4)
-		assert.Equal(t, f.calls-before, sum.Requests)
+		require.NoError(err)
+		assert.LessOrEqual(f.calls-before, 4)
+		assert.Equal(f.calls-before, sum.Requests)
 		if !sum.Partial {
 			completed = true
 			break
 		}
 	}
-	assert.True(t, completed)
+	assert.True(completed)
 	for i := 1; i <= 5; i++ {
-		message(t, st, src.ID, fmt.Sprint(400+i))
+		message(t, st, src.ID, strconv.Itoa(400+i))
 	}
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
-	assert.Equal(t, 6, count)
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	assert.Equal(6, count)
 }
 
 func TestImportLateCommentOnOldPost(t *testing.T) {
@@ -181,119 +223,124 @@ func TestImportLateCommentOnOldPost(t *testing.T) {
 }
 
 func TestImportOrganicAdDedup(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.ads = f.posts
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "shared organic and ad")}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
-	assert.Equal(t, 2, count)
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	assert.Equal(2, count)
 	got := message(t, st, src.ID, "100_201")
 	meta, err := st.GetMessageMetadata(got.ID)
-	require.NoError(t, err)
-	assert.Contains(t, meta.String, `"organic":true`)
-	assert.Contains(t, meta.String, `"ad":true`)
+	require.NoError(err)
+	assert.Contains(meta.String, `"organic":true`)
+	assert.Contains(meta.String, `"ad":true`)
 }
 
 func TestImportScopedIdentityAndPersonLink(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "example identity")}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	first := message(t, st, src.ID, "100_201").SenderID.Int64
 	secondSource, err := imp.Register(t.Context(), "99", "100")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = imp.Import(t.Context(), "99", "100", ImportOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	second := message(t, st, secondSource.ID, "100_201").SenderID.Int64
-	assert.NotEqual(t, first, second)
+	assert.NotEqual(first, second)
 	email, err := st.EnsureParticipant("example@example.com", "Example Customer", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(email)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.LinkParticipants(email, first)
-	require.NoError(t, err)
+	require.NoError(err)
 	linked, err := st.PersonForParticipants([]int64{first})
-	require.NoError(t, err)
-	assert.Equal(t, person.ID, linked.ID)
-	assert.Equal(t, "facebook_comments:1:9:3:100:3:300", ActorIdentifier("9", "100", "300"))
+	require.NoError(err)
+	assert.Equal(person.ID, linked.ID)
+	assert.Equal("facebook_comments:1:9:3:100:3:300", ActorIdentifier("9", "100", "300"))
 	observations, err := st.FindObservationsByProviderUserIDContext(t.Context(), "facebook_comments:1:9:3:100:3:300", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, observations)
-	assert.Equal(t, first, observations[0].ParticipantID)
+	require.NoError(err)
+	require.NotEmpty(observations)
+	assert.Equal(first, observations[0].ParticipantID)
 }
 
 func TestImportMissingAuthor(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	c := comment("100_201", "100_200", "anonymous")
 	c.From = nil
 	f.comments["100_200"] = []Object{*c}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
-	assert.False(t, message(t, st, src.ID, c.ID).SenderID.Valid)
+	require.NoError(err)
+	assert.False(message(t, st, src.ID, c.ID).SenderID.Valid)
 	c.From = &Actor{ID: "300", Name: "Example Customer"}
 	f.comments["100_200"] = []Object{*c}
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	known := message(t, st, src.ID, c.ID).SenderID
-	require.True(t, known.Valid)
+	require.True(known.Valid)
 	c.From = nil
 	f.comments["100_200"] = []Object{*c}
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, known, message(t, st, src.ID, c.ID).SenderID)
+	require.NoError(err)
+	assert.Equal(known, message(t, st, src.ID, c.ID).SenderID)
 }
 
 func TestImportFailureKeepsCheckpoint(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "retained on failure")}
 	f.denied["100_201/comments"] = true
 	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.Error(t, err)
-	assert.True(t, sum.Partial)
+	require.Error(err)
+	assert.True(sum.Partial)
 	got := message(t, st, src.ID, "100_201")
 	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
-	require.NoError(t, err)
-	assert.Contains(t, checkpoint.CursorBefore.String, "100_201")
-	assert.NotContains(t, checkpoint.CursorBefore.String, "synthetic-page-secret")
-	assert.Equal(t, store.SyncStatusFailed, checkpoint.Status)
+	require.NoError(err)
+	assert.Contains(checkpoint.CursorBefore.String, "100_201")
+	assert.NotContains(checkpoint.CursorBefore.String, "synthetic-page-secret")
+	assert.Equal(store.SyncStatusFailed, checkpoint.Status)
 	delete(f.denied, "100_201/comments")
 	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
-	assert.False(t, sum.Partial)
-	assert.Equal(t, got.ID, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	assert.False(sum.Partial)
+	assert.Equal(got.ID, message(t, st, src.ID, "100_201").ID)
 }
 
 func TestAdPermissionFailureDoesNotStarveOrganic(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.denied["100/ads_posts"] = true
 	f.denied["601/comments"] = true
 	f.posts = append(f.posts, Object{ID: "100_900"}, Object{ID: "100_901"})
 	for i := 1; i <= 3; i++ {
-		f.comments["100_200"] = append(f.comments["100_200"], *comment(fmt.Sprint(600+i), "100_200", "new organic"))
+		f.comments["100_200"] = append(f.comments["100_200"], *comment(strconv.Itoa(600+i), "100_200", "new organic"))
 	}
 	// Repeated provider errors must retain the unfinished multi-page organic
 	// response and nested traversal, while completed independent phases rescan.
 	for range 2 {
 		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-		require.ErrorContains(t, err, "Facebook ads_posts")
-		assert.True(t, sum.Partial)
+		require.ErrorContains(err, "facebook ads_posts")
+		assert.True(sum.Partial)
 		checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
-		require.NoError(t, err)
+		require.NoError(err)
 		var state syncState
-		require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+		require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
 		organic := state.Phases[Posts]
-		assert.False(t, organic.Done)
-		assert.False(t, organic.Rescan)
-		assert.Equal(t, "2", organic.After)
-		require.Len(t, organic.Posts, 1)
-		assert.Equal(t, "100_900", organic.Posts[0].ID)
-		require.Len(t, organic.Stack, 2)
-		assert.Equal(t, "601", organic.Stack[1].Parent)
-		assert.Equal(t, "2", organic.Stack[0].Next)
-		require.Len(t, organic.Stack[0].Pending, 1)
-		assert.Equal(t, "602", organic.Stack[0].Pending[0].ID)
+		assert.False(organic.Done)
+		assert.False(organic.Rescan)
+		assert.Equal("2", organic.After)
+		require.Len(organic.Posts, 1)
+		assert.Equal("100_900", organic.Posts[0].ID)
+		require.Len(organic.Stack, 2)
+		assert.Equal("601", organic.Stack[1].Parent)
+		assert.Equal("2", organic.Stack[0].Next)
+		require.Len(organic.Stack[0].Pending, 1)
+		assert.Equal("602", organic.Stack[0].Pending[0].ID)
 	}
 	delete(f.denied, "601/comments")
 	for _, target := range []string{"100_901", "604"} {
@@ -304,26 +351,36 @@ func TestAdPermissionFailureDoesNotStarveOrganic(t *testing.T) {
 		for range 12 {
 			before := f.calls
 			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
-			assert.LessOrEqual(t, f.calls-before, 4)
-			assert.True(t, sum.Partial)
+			assert.LessOrEqual(f.calls-before, 4)
+			assert.True(sum.Partial)
 			if err != nil {
-				require.ErrorContains(t, err, "Facebook ads_posts")
+				require.ErrorContains(err, "facebook ads_posts")
 			}
 			ids, readErr := st.MessageExistsBatch(src.ID, []string{target})
-			require.NoError(t, readErr)
+			require.NoError(readErr)
 			if ids[target] != 0 && err != nil {
 				foundDuringDenial = true
 				break
 			}
 		}
-		require.True(t, foundDuringDenial, "bounded organic progress must reach %s despite ongoing ad denial", target)
+		require.True(foundDuringDenial, "bounded organic progress must reach %s despite ongoing ad denial", target)
 	}
-	assert.Equal(t, message(t, st, src.ID, "100_200").ID, message(t, st, src.ID, "604").ReplyToMessageID.Int64)
+	assert.Equal(message(t, st, src.ID, "100_200").ID, message(t, st, src.ID, "604").ReplyToMessageID.Int64)
 }
 
 type yieldingAPI struct {
 	API
-	cancel context.CancelCauseFunc
+
+	cancel                context.CancelCauseFunc
+	yieldBeforeCollection bool
+}
+
+func (a yieldingAPI) VerifyPage(ctx context.Context, page string) (Page, error) {
+	result, err := a.API.VerifyPage(ctx, page)
+	if a.yieldBeforeCollection {
+		a.cancel(jobctx.ErrYieldedToWaiter)
+	}
+	return result, err
 }
 
 func (a yieldingAPI) Posts(ctx context.Context, page string, edge PostEdge, after string) (ObjectPage, error) {
@@ -338,6 +395,7 @@ func (a yieldingAPI) Posts(ctx context.Context, page string, edge PostEdge, afte
 func TestImportSchedulerYieldHandoff(t *testing.T) {
 	for _, outcome := range []string{"pure yield", "yield joined with provider failure"} {
 		t.Run(outcome, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st, f, imp, src := setupImport(t)
 			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "archived before handoff")}
 			providerFailure := outcome != "pure yield"
@@ -347,35 +405,35 @@ func TestImportSchedulerYieldHandoff(t *testing.T) {
 			base := imp.api
 			imp.api = yieldingAPI{API: base, cancel: cancel}
 			sum, err := imp.Import(ctx, "9", "100", ImportOptions{})
-			require.ErrorIs(t, err, context.Canceled)
-			assert.True(t, sum.Partial)
+			require.ErrorIs(err, context.Canceled)
+			assert.True(sum.Partial)
 			run, readErr := st.GetLatestCheckpointedSync(src.ID)
-			require.NoError(t, readErr)
+			require.NoError(readErr)
 			var state syncState
-			require.NoError(t, json.Unmarshal([]byte(run.CursorBefore.String), &state))
-			assert.True(t, state.Phases[Posts].Done)
+			require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &state))
+			assert.True(state.Phases[Posts].Done)
 			if providerFailure {
 				var providerErr *APIError
-				require.ErrorAs(t, jobctx.ErrorAfterYield(ctx, err), &providerErr)
-				assert.Equal(t, http.StatusForbidden, providerErr.Status)
-				assert.Equal(t, store.SyncStatusFailed, run.Status)
-				assert.Positive(t, run.ErrorsCount)
-				assert.Contains(t, run.ErrorMessage.String, "HTTP 403")
+				require.ErrorAs(jobctx.ErrorAfterYield(ctx, err), &providerErr)
+				assert.Equal(http.StatusForbidden, providerErr.Status)
+				assert.Equal(store.SyncStatusFailed, run.Status)
+				assert.Positive(run.ErrorsCount)
+				assert.Contains(run.ErrorMessage.String, "HTTP 403")
 				return
 			}
-			assert.NoError(t, jobctx.ErrorAfterYield(ctx, err))
-			assert.Equal(t, store.SyncStatusCancelled, run.Status)
-			assert.Zero(t, run.ErrorsCount)
-			assert.Empty(t, run.ErrorMessage.String)
-			assert.False(t, state.Phases[Posts].Rescan)
+			require.NoError(jobctx.ErrorAfterYield(ctx, err))
+			assert.Equal(store.SyncStatusCancelled, run.Status)
+			assert.Zero(run.ErrorsCount)
+			assert.Empty(run.ErrorMessage.String)
+			assert.False(state.Phases[Posts].Rescan)
 			archived := message(t, st, src.ID, "100_201")
 			reads := f.freshCommentReads
 			imp.api = base
 			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.NoError(t, err)
-			assert.False(t, sum.Partial)
-			assert.Equal(t, reads, f.freshCommentReads, "handoff must resume without rescanning completed organic history")
-			assert.Equal(t, archived.ID, message(t, st, src.ID, "100_201").ID)
+			require.NoError(err)
+			assert.False(sum.Partial)
+			assert.Equal(reads, f.freshCommentReads, "handoff must resume without rescanning completed organic history")
+			assert.Equal(archived.ID, message(t, st, src.ID, "100_201").ID)
 		})
 	}
 }
@@ -394,83 +452,88 @@ func TestImportRejectsCrossConversationReuse(t *testing.T) {
 }
 
 func TestImportCheckpointRejectsDifferentSource(t *testing.T) {
+	require := require.New(t)
 	st, f, imp, src := setupImport(t)
 	run, err := st.StartSync(src.ID, SourceType)
-	require.NoError(t, err)
-	require.NoError(t, st.FailSyncWithCheckpoint(run, "synthetic interruption", &store.Checkpoint{PageToken: `{"version":1,"source":"app:99:page:100","phases":{"posts":{},"visitor_posts":{},"ads_posts":{}}}`}))
+	require.NoError(err)
+	require.NoError(st.FailSyncWithCheckpoint(run, "synthetic interruption", &store.Checkpoint{PageToken: `{"version":2,"source":"app:99:page:100","next_surface":"posts","phases":{"posts":{},"visitor_posts":{},"ads_posts":{}}}`}))
 	before := f.calls
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.Error(t, err)
+	require.Error(err)
 	assert.Equal(t, before, f.calls, "validate checkpoint binding before provider reads")
 }
 
 func TestImportRetiredSourceNeverCallsProvider(t *testing.T) {
+	require := require.New(t)
 	st, f, imp, src := setupImport(t)
 	other, err := st.GetOrCreateSource("facebook_comments", "app:99:page:100")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: other.ID})
-	require.NoError(t, err)
+	require.NoError(err)
 	before := f.calls
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.ErrorIs(t, err, store.ErrSourceRetired)
+	require.ErrorIs(err, store.ErrSourceRetired)
 	assert.Equal(t, before, f.calls)
 }
 
 func TestImportVisitorPostComments(t *testing.T) {
+	assert := assert.New(t)
 	st, f, imp, src := setupImport(t)
 	f.visitors = []Object{{ID: "100_900", Message: "Visitor post", From: &Actor{ID: "301", Name: "Example Page"}}}
 	f.comments["100_900"] = []Object{*comment("100_901", "100_900", "visitor conversation")}
 	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(t, err)
-	assert.False(t, sum.Partial)
+	assert.False(sum.Partial)
 	root := message(t, st, src.ID, "100_900")
-	assert.False(t, root.IsFromMe, "matching Page display name is not ownership")
+	assert.False(root.IsFromMe, "matching Page display name is not ownership")
 	child := message(t, st, src.ID, "100_901")
-	assert.Equal(t, root.ConversationID, child.ConversationID)
-	assert.Equal(t, root.ID, child.ReplyToMessageID.Int64)
+	assert.Equal(root.ConversationID, child.ConversationID)
+	assert.Equal(root.ID, child.ReplyToMessageID.Int64)
 }
 
 func TestFullRescanRecoversExpiredCursor(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	for i := 1; i <= 4; i++ {
-		f.comments["100_200"] = append(f.comments["100_200"], *comment(fmt.Sprint(700+i), "100_200", "recoverable history"))
+		f.comments["100_200"] = append(f.comments["100_200"], *comment(strconv.Itoa(700+i), "100_200", "recoverable history"))
 	}
 	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
-	require.NoError(t, err)
-	require.True(t, sum.Partial)
+	require.NoError(err)
+	require.True(sum.Partial)
 	original := message(t, st, src.ID, "701").ID
 	f.rejectCursor = true
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.ErrorContains(t, err, "--full")
-	assert.Equal(t, original, message(t, st, src.ID, "701").ID)
+	require.ErrorContains(err, "--full")
+	assert.Equal(original, message(t, st, src.ID, "701").ID)
 	f.rejectCursor = false
 	reads := f.freshCommentReads
 	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
-	require.NoError(t, err)
-	assert.False(t, sum.Partial)
-	assert.Greater(t, f.freshCommentReads, reads, "explicit full restarts enumeration without saved cursors")
-	assert.Equal(t, original, message(t, st, src.ID, "701").ID)
+	require.NoError(err)
+	assert.False(sum.Partial)
+	assert.Greater(f.freshCommentReads, reads, "explicit full restarts enumeration without saved cursors")
+	assert.Equal(original, message(t, st, src.ID, "701").ID)
 	for i := 1; i <= 4; i++ {
-		message(t, st, src.ID, fmt.Sprint(700+i))
+		message(t, st, src.ID, strconv.Itoa(700+i))
 	}
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
-	assert.Equal(t, 5, count)
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	assert.Equal(5, count)
 }
 
 func TestImportWritesMetadataFormatVersion(t *testing.T) {
+	require := require.New(t)
 	st, f, imp, src := setupImport(t)
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "versioned comment")}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, nativeID := range []string{"100_200", "100_201"} {
 		row := message(t, st, src.ID, nativeID)
 		saved, err := st.GetMessageMetadata(row.ID)
-		require.NoError(t, err)
+		require.NoError(err)
 		var metadata struct {
 			Version int `json:"version"`
 		}
-		require.NoError(t, json.Unmarshal([]byte(saved.String), &metadata))
+		require.NoError(json.Unmarshal([]byte(saved.String), &metadata))
 		assert.Equal(t, 1, metadata.Version, "persisted object %s must declare its metadata format", nativeID)
 	}
 }
@@ -479,38 +542,39 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 	for _, target := range []string{"100_200", "100_201"} {
 		for _, version := range []string{"missing", "future"} {
 			t.Run(target+"/"+version, func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
 				st, f, imp, src := setupImport(t)
 				f.comments["100_200"] = []Object{*comment("100_201", "100_200", "original comment")}
 				_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-				require.NoError(t, err)
+				require.NoError(err)
 				row := message(t, st, src.ID, target)
 				originalBody, err := st.GetMessageBodyText(row.ID)
-				require.NoError(t, err)
+				require.NoError(err)
 				saved, err := st.GetMessageMetadata(row.ID)
-				require.NoError(t, err)
+				require.NoError(err)
 				var metadata map[string]any
-				require.NoError(t, json.Unmarshal([]byte(saved.String), &metadata))
+				require.NoError(json.Unmarshal([]byte(saved.String), &metadata))
 				if version == "future" {
 					metadata["version"] = 99
 				} else {
 					delete(metadata, "version")
 				}
 				encoded, err := json.Marshal(metadata)
-				require.NoError(t, err)
-				require.NoError(t, st.SetMessageMetadata(row.ID, sql.NullString{String: string(encoded), Valid: true}))
+				require.NoError(err)
+				require.NoError(st.SetMessageMetadata(row.ID, sql.NullString{String: string(encoded), Valid: true}))
 				f.posts[0].Message = "replacement post must not overwrite an unknown format"
 				f.comments["100_200"][0].Message = "replacement comment must not overwrite an unknown format"
 				sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
-				assert.Error(t, err)
+				require.Error(err)
 				if sum != nil {
-					assert.True(t, sum.Partial)
+					assert.True(sum.Partial)
 				}
 				body, readErr := st.GetMessageBodyText(row.ID)
-				require.NoError(t, readErr)
-				assert.Equal(t, originalBody, body, "unknown metadata must be refused before changing that object")
+				require.NoError(readErr)
+				assert.Equal(originalBody, body, "unknown metadata must be refused before changing that object")
 				after, readErr := st.GetMessageMetadata(row.ID)
-				require.NoError(t, readErr)
-				assert.JSONEq(t, string(encoded), after.String, "refusal must preserve the stored metadata")
+				require.NoError(readErr)
+				assert.JSONEq(string(encoded), after.String, "refusal must preserve the stored metadata")
 			})
 		}
 	}
@@ -526,6 +590,7 @@ func TestImportDeclaredParentSelection(t *testing.T) {
 			name = "provider selects already archived parent"
 		}
 		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st, f, imp, src := setupImport(t)
 			parent := *comment("100_201", "100_200", "synthetic parent")
 			child := *comment("100_202", "100_201", "synthetic child")
@@ -539,24 +604,24 @@ func TestImportDeclaredParentSelection(t *testing.T) {
 				f.comments["100_201"] = []Object{child}
 			}
 			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.NoError(t, err)
+			require.NoError(err)
 			rootRow := message(t, st, src.ID, "100_200")
 			parentRow := message(t, st, src.ID, "100_201")
 			childRow := message(t, st, src.ID, "100_202")
-			assert.Equal(t, parentRow.ID, childRow.ReplyToMessageID.Int64)
-			assert.Equal(t, rootRow.ConversationID, childRow.ConversationID)
+			assert.Equal(parentRow.ID, childRow.ReplyToMessageID.Int64)
+			assert.Equal(rootRow.ConversationID, childRow.ConversationID)
 			metadata, err := st.GetMessageMetadata(childRow.ID)
-			require.NoError(t, err)
+			require.NoError(err)
 			var context struct {
 				Root   string `json:"post_id"`
 				Parent string `json:"parent_id"`
 			}
-			require.NoError(t, json.Unmarshal([]byte(metadata.String), &context))
-			assert.Equal(t, "100_200", context.Root)
-			assert.Equal(t, "100_201", context.Parent)
+			require.NoError(json.Unmarshal([]byte(metadata.String), &context))
+			assert.Equal("100_200", context.Root)
+			assert.Equal("100_201", context.Parent)
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.NoError(t, err)
-			assert.Equal(t, childRow.ID, message(t, st, src.ID, "100_202").ID, "same declared parent replays without a duplicate")
+			require.NoError(err)
+			assert.Equal(childRow.ID, message(t, st, src.ID, "100_202").ID, "same declared parent replays without a duplicate")
 		})
 	}
 }
@@ -577,9 +642,10 @@ func TestImportDeclaredParentRefusesUnsafeTargets(t *testing.T) {
 		{name: "self parent", parentID: "100_202"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st, f, imp, src := setupImport(t)
 			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.NoError(t, err)
+			require.NoError(err)
 			root := message(t, st, src.ID, "100_200")
 			if tt.seed {
 				// Seed real Store rows to distinguish source scoping, metadata
@@ -587,12 +653,12 @@ func TestImportDeclaredParentRefusesUnsafeTargets(t *testing.T) {
 				sourceID, conversationID, app := src.ID, root.ConversationID, "9"
 				if tt.foreignSource {
 					other, err := st.GetOrCreateSource(SourceType, "app:99:page:100")
-					require.NoError(t, err)
+					require.NoError(err)
 					sourceID, app = other.ID, "99"
 				}
 				if tt.foreignSource || tt.otherConversation {
 					conversationID, err = st.EnsureConversationWithTypeContext(t.Context(), sourceID, "100_900", "public_comments", "synthetic other conversation")
-					require.NoError(t, err)
+					require.NoError(err)
 				}
 				metadataRoot := "100_200"
 				if tt.metadataNamesOtherRoot {
@@ -603,14 +669,14 @@ func TestImportDeclaredParentRefusesUnsafeTargets(t *testing.T) {
 					Message:  &store.Message{SourceID: sourceID, ConversationID: conversationID, SourceMessageID: tt.parentID, MessageType: SourceType},
 					Metadata: &metadata, BodyText: sql.NullString{String: "synthetic parent boundary", Valid: true},
 				})
-				require.NoError(t, err)
+				require.NoError(err)
 			}
 			f.comments["100_200"] = []Object{*comment("100_202", tt.parentID, "must not link outside the selected root")}
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-			assert.Error(t, err)
+			require.Error(err)
 			ids, readErr := st.MessageExistsBatch(src.ID, []string{"100_202"})
-			require.NoError(t, readErr)
-			assert.Zero(t, ids["100_202"], "unsafe declared parent must be rejected before persisting the new child")
+			require.NoError(readErr)
+			assert.Zero(ids["100_202"], "unsafe declared parent must be rejected before persisting the new child")
 		})
 	}
 }
@@ -618,6 +684,7 @@ func TestImportDeclaredParentRefusesUnsafeTargets(t *testing.T) {
 func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 	for _, target := range []string{"existing comment", "root post"} {
 		t.Run(target, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st, f, imp, src := setupImport(t)
 			f.comments["100_200"] = []Object{
 				*comment("100_201", "100_200", "first parent"),
@@ -625,7 +692,7 @@ func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 			}
 			f.comments["100_201"] = []Object{*comment("100_202", "100_201", "original child")}
 			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.NoError(t, err)
+			require.NoError(err)
 			id := "100_202"
 			if target == "root post" {
 				id = "100_200"
@@ -637,15 +704,15 @@ func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 			}
 			before := message(t, st, src.ID, id)
 			body, err := st.GetMessageBodyText(before.ID)
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-			assert.Error(t, err)
+			require.Error(err)
 			after := message(t, st, src.ID, id)
-			assert.Equal(t, before.ReplyToMessageID, after.ReplyToMessageID)
-			assert.Equal(t, before.ConversationID, after.ConversationID)
+			assert.Equal(before.ReplyToMessageID, after.ReplyToMessageID)
+			assert.Equal(before.ConversationID, after.ConversationID)
 			afterBody, err := st.GetMessageBodyText(before.ID)
-			require.NoError(t, err)
-			assert.Equal(t, body, afterBody)
+			require.NoError(err)
+			assert.Equal(body, afterBody)
 		})
 	}
 }

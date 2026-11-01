@@ -18,7 +18,7 @@ func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	// Category is Page-only evidence in the pinned SDK, not a token-type
 	// attestation. Missing evidence is unavailable, never successful validation.
 	if page.ID != id || strings.TrimSpace(page.Category) == "" {
-		return Page{}, errors.New("Page identity mismatch or Page-only identity evidence unavailable")
+		return Page{}, errors.New("page identity mismatch or Page-only identity evidence unavailable")
 	}
 	return page, nil
 }
@@ -63,7 +63,7 @@ func (c *Client) objects(ctx context.Context, path, after string, q url.Values) 
 		return ObjectPage{}, err
 	}
 	if wire.Data == nil || len(wire.Data) > pageLimit {
-		return ObjectPage{}, errors.New("Graph response missing or oversized data page")
+		return ObjectPage{}, errors.New("graph response missing or oversized data page")
 	}
 	next := ""
 	if wire.Paging.Next != "" {

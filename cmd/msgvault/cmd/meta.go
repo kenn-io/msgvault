@@ -37,7 +37,7 @@ func resolveFacebookCommentsProfiles(args []string, cfg *config.Config) ([]confi
 func configuredFacebookCommentsClient(source config.FacebookCommentsSource) (*meta.Client, error) {
 	token := os.Getenv(source.TokenEnv)
 	if strings.TrimSpace(token) == "" {
-		return nil, fmt.Errorf("Facebook profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv)
+		return nil, fmt.Errorf("facebook profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv)
 	}
 	return meta.NewClient(token)
 }
@@ -108,7 +108,7 @@ func newAddFacebookCommentsCmd() *cobra.Command {
 			for _, profile := range profiles {
 				source, err := registerFacebookCommentsProfile(cmd.Context(), st, profile)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("Facebook profile %s: %w", profile.Identifier, err))
+					errs = append(errs, fmt.Errorf("facebook profile %s: %w", profile.Identifier, err))
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Facebook Page %s for %s (source %d)\n", profile.PageID, profile.Identifier, source.ID)
@@ -159,7 +159,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 					}
 				}
 				if err != nil {
-					errs = append(errs, fmt.Errorf("Facebook profile %s: %w", profile.Identifier, err))
+					errs = append(errs, fmt.Errorf("facebook profile %s: %w", profile.Identifier, err))
 				}
 			}
 			// Refresh accepted partial writes even after cancellation/provider errors.

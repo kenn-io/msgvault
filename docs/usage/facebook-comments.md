@@ -55,19 +55,24 @@ becomes one conversation; comments and separately paginated nested replies
 retain their exact parent relationships. Organic, visitor, and ad discovery
 of the same object updates the existing archive row.
 
-Each surface keeps independent progress. A denied ad edge does not prevent
-later scans from collecting new organic comments. Missing or inaccessible
-objects never delete archived data. A budget pause keeps unfinished work for
+Each surface keeps independent progress. The next run starts after the last
+surface that attempted a collection request, including a denied request. This
+rotation gives accessible surfaces turns during persistent denial elsewhere.
+Completed surfaces rescan after real provider failures so later runs can find
+new comments on old organic posts. Missing or inaccessible objects never
+delete archived data. A budget pause keeps unfinished work for
 the next run. Provider errors retain partial writes and report a failure.
 
 The default budget is **1,000 API reads per Page per run**, including identity
-validation and nested reply reads. `--max-requests` must be positive. Finished
-scans restart from the beginning so new comments on old posts can be found.
+validation and nested reply reads. `--max-requests` must be positive. A budget
+of 1 permits identity validation only; collection needs at least 2. After a
+complete scan, each surface uses fresh cursors to find new comments on old posts.
 Large histories can therefore require many runs and repeated reads. This is
 bounded polling, not a webhook service or a guarantee of immediate capture.
 
-If a saved cursor expires or the checkpoint is invalid, restart that selected
-source explicitly:
+If a saved cursor expires or the checkpoint is incompatible or invalid,
+restart that selected source explicitly. Checkpoints from the earlier private
+version 1 format are rejected rather than silently upgraded:
 
 ```bash
 msgvault sync-facebook-comments example-page --full --max-requests 1000

@@ -51,7 +51,7 @@ func newClient(token, origin string, h *http.Client) (*Client, error) {
 		return nil, errors.New("missing Graph HTTP client")
 	}
 	clone := *h
-	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("Graph redirects are not allowed") }
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("graph redirects are not allowed") }
 	clone.Timeout = 30 * time.Second
 	return &Client{token: token, origin: origin, http: &clone}, nil
 }
@@ -59,7 +59,7 @@ func newClient(token, origin string, h *http.Client) (*Client, error) {
 // APIError retains no provider text, URLs, request headers or token.
 type APIError struct{ Status int }
 
-func (e *APIError) Error() string { return fmt.Sprintf("Graph request failed (HTTP %d)", e.Status) }
+func (e *APIError) Error() string { return fmt.Sprintf("graph request failed (HTTP %d)", e.Status) }
 
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+"/"+graphVersion+"/"+path+"?"+q.Encode(), nil)
@@ -73,7 +73,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 			return ctx.Err()
 		}
 		// net/http errors may embed the entire URL or a transport's credentials.
-		return errors.New("Graph request could not complete")
+		return errors.New("graph request could not complete")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -81,7 +81,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil || len(data) > maxResponseBytes {
-		return errors.New("Graph response unreadable or too large")
+		return errors.New("graph response unreadable or too large")
 	}
 	var envelope struct {
 		Error jsontext.Value `json:"error"`

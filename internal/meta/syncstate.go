@@ -12,9 +12,10 @@ import (
 // The checkpoint contains only fixed edges, opaque cursors and at most one
 // bounded response per active depth. Completed history is never accumulated.
 type syncState struct {
-	Version int                      `json:"version"`
-	Source  string                   `json:"source"`
-	Phases  map[PostEdge]*phaseState `json:"phases"`
+	Version     int                      `json:"version"`
+	Source      string                   `json:"source"`
+	NextSurface PostEdge                 `json:"next_surface"`
+	Phases      map[PostEdge]*phaseState `json:"phases"`
 }
 
 type phaseState struct {
@@ -36,7 +37,7 @@ type commentFrame struct {
 }
 
 func freshState(source string) *syncState {
-	s := &syncState{Version: 1, Source: source, Phases: map[PostEdge]*phaseState{}}
+	s := &syncState{Version: 2, Source: source, NextSurface: Posts, Phases: map[PostEdge]*phaseState{}}
 	for _, edge := range postEdges {
 		s.Phases[edge] = &phaseState{}
 	}
@@ -81,7 +82,9 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		return nil, errors.New("invalid Facebook checkpoint; restart this source with --full")
 	}
 	if state.complete() {
-		return freshState(src.Identifier), nil
+		fresh := freshState(src.Identifier)
+		fresh.NextSurface = state.NextSurface
+		return fresh, nil
 	}
 	// A successful independent surface is rechecked after another surface's
 	// failure. A budget-only pause retains all finished surfaces until the
@@ -96,7 +99,7 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 }
 
 func (st *syncState) valid(source string) bool {
-	if st.Version != 1 || st.Source != source || len(st.Phases) != len(postEdges) {
+	if st.Version != 2 || st.Source != source || !st.NextSurface.valid() || len(st.Phases) != len(postEdges) {
 		return false
 	}
 	cursorOK := func(s string) bool { return len(s) <= 4096 && !strings.ContainsAny(s, "\r\n\x00") }

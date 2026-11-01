@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +45,7 @@ func facebookHTTPFixture(t *testing.T, wrongIdentity bool) {
 		case "/v26.0/100/visitor_posts":
 			_, _ = fmt.Fprint(w, `{"data":[]}`)
 		case "/v26.0/100/ads_posts":
-			http.Error(w, "synthetic denial", 403)
+			http.Error(w, "synthetic denial", http.StatusForbidden)
 		default:
 			assert.Fail(t, "unexpected Graph request", r.URL.Path)
 		}
@@ -57,7 +58,7 @@ func facebookHTTPFixture(t *testing.T, wrongIdentity bool) {
 	// Intercept the external boundary only; client, importer and Store remain real.
 	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Host != "graph.facebook.com" {
-			return nil, fmt.Errorf("unexpected fixture host")
+			return nil, errors.New("unexpected fixture host")
 		}
 		clone := r.Clone(r.Context())
 		uri := *r.URL
@@ -80,27 +81,28 @@ func TestFacebookRegistrationRejectsIdentityBeforeWriting(t *testing.T) {
 }
 
 func TestFacebookConfiguredCredentialAndSelection(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "")
 	_, err := configuredFacebookCommentsClient(facebookProfile())
-	require.ErrorContains(t, err, "daemon environment")
+	require.ErrorContains(err, "daemon environment")
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.FacebookComments = []config.FacebookCommentsSource{facebookProfile()}
 	_, err = resolveFacebookCommentsProfiles([]string{"missing"}, cfg)
-	require.Error(t, err)
+	require.Error(err)
 	for _, command := range []string{"add-facebook-comments", "sync-facebook-comments"} {
-		assert.False(t, agentDelegatedCommand(command))
+		assert.False(agentDelegatedCommand(command))
 	}
 	cmd := newSyncFacebookCommentsCmd()
 	cmd.SetArgs([]string{"--max-requests", "0"})
-	require.ErrorContains(t, cmd.Execute(), "positive")
+	require.ErrorContains(cmd.Execute(), "positive")
 	var output bytes.Buffer
 	cmd = newSyncFacebookCommentsCmd()
 	cmd.SetOut(&output)
 	cmd.SetArgs([]string{"--help"})
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, output.String(), "--max-requests")
-	assert.Contains(t, output.String(), "Facebook")
+	require.NoError(cmd.Execute())
+	assert.Contains(output.String(), "--max-requests")
+	assert.Contains(output.String(), "Facebook")
 }
 
 func TestFacebookPartialWritesRefreshScheduledCache(t *testing.T) {
@@ -130,34 +132,36 @@ func TestFacebookPartialWritesRefreshScheduledCache(t *testing.T) {
 }
 
 func TestFacebookSchedulerUsesExactConfiguredJob(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	fixture := newAttachmentMaintenanceFixture(t)
-	sched := scheduler.New(func(context.Context, string) error { return fmt.Errorf("account dispatcher must not run") }).WithLogger(fixture.maintenance.logger)
+	sched := scheduler.New(func(context.Context, string) error { return errors.New("account dispatcher must not run") }).WithLogger(fixture.maintenance.logger)
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	calls := 0
-	require.NoError(t, registerScheduledFacebookCommentsJob(sched, facebookProfile(), fixture.maintenance, func(context.Context) error { calls++; return nil }))
+	require.NoError(registerScheduledFacebookCommentsJob(sched, facebookProfile(), fixture.maintenance, func(context.Context) error { calls++; return nil }))
 	name, ok := api.SchedulerJobNameForSource("facebook_comments", "app:9:page:100")
-	require.True(t, ok)
-	require.True(t, sched.IsJobScheduled(name))
-	require.NoError(t, sched.TriggerJob(name))
-	assert.Equal(t, 1, calls)
-	assert.Error(t, sched.TriggerJob("facebook_comments:example-page"))
+	require.True(ok)
+	require.True(sched.IsJobScheduled(name))
+	require.NoError(sched.TriggerJob(name))
+	assert.Equal(1, calls)
+	require.Error(sched.TriggerJob("facebook_comments:example-page"))
 }
 
 func TestFacebookScheduledTextSyncDoesNotWaitForAttachmentMaintenance(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
 		// Real coordinator and job registration: a text-only job must run
 		// while blob maintenance owns its exclusive lease. No archive or blob
 		// directory is needed to exercise this scheduler boundary.
 		maintenance := &attachmentMaintenance{coordinator: packstore.NewCoordinator()}
 		lease, err := maintenance.coordinator.AcquireMaintenance(t.Context())
-		require.NoError(t, err)
+		require.NoError(err)
 		sched := scheduler.New(func(context.Context, string) error {
-			return fmt.Errorf("unexpected account dispatch")
+			return errors.New("unexpected account dispatch")
 		})
 		defer func() { <-sched.Stop().Done() }()
 		entered := make(chan struct{})
 		done := make(chan error, 1)
-		require.NoError(t, registerScheduledFacebookCommentsJob(sched, facebookProfile(), maintenance, func(context.Context) error {
+		require.NoError(registerScheduledFacebookCommentsJob(sched, facebookProfile(), maintenance, func(context.Context) error {
 			close(entered)
 			return nil
 		}))
@@ -170,8 +174,8 @@ func TestFacebookScheduledTextSyncDoesNotWaitForAttachmentMaintenance(t *testing
 		default:
 		}
 		// Release and join even in RED, so the regression cannot strand a job.
-		require.NoError(t, lease.Release())
-		require.NoError(t, <-done)
+		require.NoError(lease.Release())
+		require.NoError(<-done)
 		assert.True(t, ranBeforeRelease, "text-only scheduled sync waited for an unrelated attachment lease")
 	})
 }

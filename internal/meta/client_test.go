@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,18 +51,19 @@ func TestPageIdentity(t *testing.T) {
 }
 
 func TestPageCommentsPagination(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/v26.0/100_200/comments", r.URL.Path)
-		assert.Equal(t, "chronological", r.URL.Query().Get("order"))
-		assert.Equal(t, "toplevel", r.URL.Query().Get("filter"))
-		assert.Equal(t, "opaque+/=", r.URL.Query().Get("after"))
+		assert.Equal("/v26.0/100_200/comments", r.URL.Path)
+		assert.Equal("chronological", r.URL.Query().Get("order"))
+		assert.Equal("toplevel", r.URL.Query().Get("filter"))
+		assert.Equal("opaque+/=", r.URL.Query().Get("after"))
 		_, _ = fmt.Fprint(w, `{"data":[{"id":"100_201","message":"Hello","from":{"id":"300","name":"Example"}}],"paging":{"cursors":{"after":"next-cursor"},"next":"https://evil.example/?access_token=secret"}}`)
 	})
 	got, err := c.Comments(context.Background(), "100_200", "opaque+/=")
-	require.NoError(t, err)
-	require.Len(t, got.Data, 1)
-	assert.Equal(t, "100_201", got.Data[0].ID)
-	assert.Equal(t, "next-cursor", got.After)
+	require.NoError(err)
+	require.Len(got.Data, 1)
+	assert.Equal("100_201", got.Data[0].ID)
+	assert.Equal("next-cursor", got.After)
 }
 
 func TestFinalCursorDoesNotContinue(t *testing.T) {
@@ -92,7 +94,7 @@ func TestFixedPostEdges(t *testing.T) {
 
 func TestGraphTokenRedaction(t *testing.T) {
 	for _, code := range []int{200, 400, 429, 500} {
-		t.Run(fmt.Sprint(code), func(t *testing.T) {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
 			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(code)
 				_, _ = fmt.Fprint(w, `{"error":{"message":"synthetic-page-secret"}}`)
@@ -137,10 +139,11 @@ func (graphErrorTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestGraphTransportErrorDoesNotReflectToken(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	c, err := newClient("synthetic-page-secret", "https://graph.facebook.com", &http.Client{Transport: graphErrorTransport{}})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = c.VerifyPage(context.Background(), "100")
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "synthetic-page-secret")
-	assert.NotContains(t, err.Error(), "access_token")
+	require.Error(err)
+	assert.NotContains(err.Error(), "synthetic-page-secret")
+	assert.NotContains(err.Error(), "access_token")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/jobctx"
@@ -13,7 +14,7 @@ import (
 
 const DefaultMaxRequests = 1000
 
-var errRequestBudget = errors.New("Facebook request budget exhausted")
+var errRequestBudget = errors.New("facebook request budget exhausted")
 
 type ImportOptions struct {
 	MaxRequests int
@@ -110,7 +111,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 		return nil, store.ErrSourceRetired
 	}
 	if source.SourceType != SourceType || source.Identifier != SourceIdentifier(app, page) {
-		return nil, errors.New("Facebook source identity changed")
+		return nil, errors.New("facebook source identity changed")
 	}
 	state, err := loadState(ctx, imp.store, source, opts.Full)
 	if err != nil {
@@ -156,12 +157,15 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 		return sum, err
 	}
 	var errs []error
-	for _, edge := range postEdges {
+	// Collection attempts update continuation for the next run, not this order.
+	start := slices.Index(postEdges[:], state.NextSurface)
+	for offset := range postEdges {
+		edge := postEdges[(start+offset)%len(postEdges)]
 		if err = run.phase(ctx, edge); err != nil {
 			if errors.Is(err, errRequestBudget) {
 				break
 			}
-			errs = append(errs, fmt.Errorf("Facebook %s: %w", edge, err))
+			errs = append(errs, fmt.Errorf("facebook %s: %w", edge, err))
 			if ctx.Err() != nil {
 				break
 			}
@@ -194,7 +198,7 @@ func (r *importRun) save(ctx context.Context) error {
 	return r.imp.store.UpdateSyncCheckpointContext(ctx, r.syncID, cp)
 }
 
-func (r *importRun) request(ctx context.Context, after string, read func() (ObjectPage, error)) (ObjectPage, error) {
+func (r *importRun) request(ctx context.Context, edge PostEdge, after string, read func() (ObjectPage, error)) (ObjectPage, error) {
 	if err := ctx.Err(); err != nil {
 		return ObjectPage{}, err
 	}
@@ -202,6 +206,7 @@ func (r *importRun) request(ctx context.Context, after string, read func() (Obje
 		return ObjectPage{}, errRequestBudget
 	}
 	r.sum.Requests++
+	r.state.NextSurface = postEdges[(slices.Index(postEdges[:], edge)+1)%len(postEdges)]
 	page, err := read()
 	var apiErr *APIError
 	if after != "" && errors.As(err, &apiErr) && apiErr.Status == 400 {
@@ -230,7 +235,7 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 		} else if p.Exhausted {
 			p.Done = true
 		} else {
-			page, err := r.request(ctx, p.After, func() (ObjectPage, error) { return r.imp.api.Posts(ctx, r.page, edge, p.After) })
+			page, err := r.request(ctx, edge, p.After, func() (ObjectPage, error) { return r.imp.api.Posts(ctx, r.page, edge, p.After) })
 			if err != nil {
 				return err
 			}
@@ -249,7 +254,7 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
 	if !f.Loaded {
-		page, err := r.request(ctx, f.After, func() (ObjectPage, error) { return r.imp.api.Comments(ctx, f.Parent, f.After) })
+		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.imp.api.Comments(ctx, f.Parent, f.After) })
 		if err != nil {
 			return err
 		}
@@ -264,7 +269,7 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 			}
 		}
 		if len(p.Stack) >= 128 {
-			return errors.New("Facebook reply traversal exceeds bounded depth")
+			return errors.New("facebook reply traversal exceeds bounded depth")
 		}
 		if err := r.persist(ctx, child, f.Root, f.Parent, edge); err != nil {
 			return err

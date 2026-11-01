@@ -18,12 +18,13 @@ schedule="*/30 * * * *"
 `
 
 func TestFacebookCommentsProfiles(t *testing.T) {
+	assert := assert.New(t)
 	cfg := loadConfigText(t, facebookProfile)
 	require.Len(t, cfg.FacebookComments, 1)
-	assert.Equal(t, "100", cfg.FacebookComments[0].PageID)
-	assert.Equal(t, cfg.FacebookComments[0], *cfg.GetFacebookCommentsSource("EXAMPLE-PAGE"))
-	assert.Nil(t, cfg.GetFacebookCommentsSource("missing"))
-	assert.Len(t, cfg.ScheduledFacebookCommentsSources(), 1)
+	assert.Equal("100", cfg.FacebookComments[0].PageID)
+	assert.Equal(cfg.FacebookComments[0], *cfg.GetFacebookCommentsSource("EXAMPLE-PAGE"))
+	assert.Nil(cfg.GetFacebookCommentsSource("missing"))
+	assert.Len(cfg.ScheduledFacebookCommentsSources(), 1)
 }
 
 func TestFacebookCommentsRejectsInvalidProfiles(t *testing.T) {

@@ -48,7 +48,7 @@ type ObjectPage struct {
 // API reads one page per call. Import's budget covers every call, including
 // identity validation. Implementations must never follow arbitrary paging URLs.
 type API interface {
-	VerifyPage(context.Context, string) (Page, error)
-	Posts(context.Context, string, PostEdge, string) (ObjectPage, error)
-	Comments(context.Context, string, string) (ObjectPage, error)
+	VerifyPage(ctx context.Context, pageID string) (Page, error)
+	Posts(ctx context.Context, pageID string, edge PostEdge, after string) (ObjectPage, error)
+	Comments(ctx context.Context, parentID string, after string) (ObjectPage, error)
 }
