@@ -33,7 +33,7 @@ async function installTallDirectory(page: Page): Promise<void> {
   }));
 }
 
-test('Directory lists durable people, opens People Details, and scopes Files to the durable person', async ({ page }) => {
+test('Directory lists durable people, opens People Files, and scopes files to the durable person', async ({ page }) => {
   const requests: string[] = [];
   page.on('request', (request) => requests.push(new URL(request.url()).pathname));
   await installMixedArchive(page);
