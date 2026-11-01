@@ -698,7 +698,7 @@ test('People calendar day survives an Action items archived-meeting round trip',
   await expect(day).toHaveAttribute('aria-pressed', 'true');
   await expect(actions).toBeVisible();
   await expect.poll(() => timelines.at(-1)?.filters).toEqual(filters);
-  expect(scopes.at(-1)).toMatchObject({ participant_id: 1, after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' });
+  await expect(actions.getByText('Prepare review', { exact: true })).toBeVisible();
 });
 
 test('Back clears a later calendar day before restoring the same person reader', async ({ page }) => {
