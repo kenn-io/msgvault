@@ -238,7 +238,7 @@
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
-    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, peopleDuplicates: false, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
