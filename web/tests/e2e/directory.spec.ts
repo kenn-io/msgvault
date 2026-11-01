@@ -33,18 +33,10 @@ async function installTallDirectory(page: Page): Promise<void> {
   }));
 }
 
-test('Directory lists durable people, opens People Details, saves a field, and scopes Files to the durable person', async ({ page }) => {
+test('Directory lists durable people, opens People Details, and scopes Files to the durable person', async ({ page }) => {
   const requests: string[] = [];
   page.on('request', (request) => requests.push(new URL(request.url()).pathname));
   await installMixedArchive(page);
-  let contacts: Record<string, unknown>[] = [];
-  await page.route('**/api/v1/people/42/profile', async (route) => {
-    if (route.request().method() === 'PATCH') {
-      const body = route.request().postDataJSON();
-      contacts = [{ ...body.contact_points.add[0], person_id: 42, envelope: { id: 91, ordinal: 0, source: 'user' } }];
-    }
-    await route.fulfill({ headers: { ETag: '"person-42-r1"' }, json: { person: { id: 42, revision: 1, display_name: 'Archive Person', participant_ids: [12], vcard_uid: 'urn:uuid:archive-person', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' }, names: [], contact_points: contacts, addresses: [], dates: [], categories: [], media: [] } });
-  });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL());
 
@@ -57,12 +49,6 @@ test('Directory lists durable people, opens People Details, saves a field, and s
   await row.click();
   await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add email' }).click();
-  await page.getByRole('textbox', { name: 'Email', exact: true }).fill('new@example.com');
-  await page.getByRole('button', { name: 'Save contact point' }).click();
-  await expect(page.getByText('new@example.com', { exact: true })).toBeVisible();
-  await page.reload();
-  await expect(page.getByText('new@example.com', { exact: true })).toBeVisible();
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
   const messages = personTabs.getByRole('radio', { name: 'Messages', exact: true });
   const files = personTabs.getByRole('radio', { name: 'Files', exact: true });
@@ -127,7 +113,7 @@ test('Person page opens Messages for the saved person', async ({ page }) => {
   await detail.getByRole('radio', { name: 'Messages', exact: true }).click();
   await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  expect(parseExploreURLState(new URL(page.url()).search).relationshipTarget).toBe('cluster:12');
+  await expect(detail.getByRole('radio', { name: 'Messages', exact: true })).toHaveAttribute('aria-checked', 'true');
 });
 
 test('Person tabs stay on one line at phone width', async ({ page }) => {

@@ -18,7 +18,7 @@ describe('OrganizationsSettings', () => {
     }));
     render(OrganizationsSettings, { controller });
 
-    await waitFor(() => expect(controller.organizationsLoading).toBe(true));
+    expect((await screen.findByRole('status')).textContent).toContain('Loading organizations');
     resolveSearch(Response.json({ error: 'unavailable', message: 'Organization search unavailable.' }, { status: 503 }));
     expect((await screen.findByRole('alert')).textContent).toContain('Organization search unavailable.');
 
@@ -82,6 +82,7 @@ describe('OrganizationsSettings', () => {
     await fireEvent.input(organizationName, { target: { value: 'Renamed Synthetic Org' } });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save organization' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
+    expect(requests.find((request) => request.method === 'PATCH')!.headers.get('If-Match')).toBe('"organization-21-r2"');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
@@ -101,6 +102,7 @@ describe('OrganizationsSettings', () => {
     const rich = richOrganizationProfile(3);
     const fresh = {
       ...rich,
+      media: [...baseline.media, ...rich.media],
       names: [
         ...rich.names.filter((item) => item.name_kind !== 'alias'),
         baseline.names[0],
@@ -158,8 +160,8 @@ describe('OrganizationsSettings', () => {
       source_ref: 'card-42', vcard_property: 'ADR'
     })]);
     expect(body.identifiers).toEqual([expect.objectContaining({ identifier_kind: 'registry', identifier_value: 'REG-42', source_ref: 'card-42', vcard_property: 'X-REGISTRY' })]);
-    expect(body.media).toEqual([expect.objectContaining({ media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', source_ref: 'card-42', vcard_property: 'LOGO' })]);
-    expect(body.media[0].data).toBeUndefined();
+    expect(body.media).toEqual(expect.arrayContaining([expect.objectContaining({ content_hash: 'sha256:synthetic' }), expect.objectContaining({ media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', source_ref: 'card-42', vcard_property: 'LOGO' })]));
+    for (const media of body.media) expect(media.data).toBeUndefined();
   });
 
   it('retains a profile draft, shows complete refreshed organization data, and retries only on explicit save', async () => {
