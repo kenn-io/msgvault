@@ -210,8 +210,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE WHEN ` + listExcluded + `=1 OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
  FROM message_flags e
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,source_id,message_id) AS copy_rank,
- COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT)) ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT))") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,source_id,message_id) AS copy_rank,
+ COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT))") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
  FROM scored e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
