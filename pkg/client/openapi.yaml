@@ -13347,8 +13347,6 @@ components:
         - peak_relationship_temperature
         - peak_relationship_year
         - source_counts
-        - first_at
-        - last_at
         - cache_revision
       type: object
     PersonTierExplanation:
@@ -16689,7 +16687,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.34.0
+  version: 3.35.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

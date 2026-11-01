@@ -13,6 +13,7 @@ All notable changes to msgvault, grouped by release.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
+- Opening a person you've only drafted to shows them with no sent or received messages instead of "not found" and hides the relationship calendar; the API omits `first_at` and `last_at` for a person with no sent or received messages, and `pkg/client` declares them as `*time.Time`. A person ID that doesn't exist reads "Person not found." in the web view.
 - Gmail full sync now includes Spam and Trash. Existing archives need an
   explicit unfiltered, unlimited `sync-full` to discover older messages omitted
   by earlier full syncs; that backfill can increase Gmail API use, transfer, and

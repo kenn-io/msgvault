@@ -553,7 +553,7 @@
                   detail={controller.detail}
                   loading={controller.timelineLoading}
                   {filesOpen}
-                  missing={controller.detailMissing}
+                  headerState={controller.headerState}
                   {onFilesToggle}
                   {client}
                   {onOpenDirectory}
@@ -565,7 +565,7 @@
                   onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                   onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
                 />
-                {#if target !== null && domainOf(target) === undefined && !controller.detailMissing}
+                {#if target !== null && domainOf(target) === undefined && controller.headerState === 'normal'}
                   <RelationshipCalendar
                     calendar={controller.relationshipCalendar}
                     loading={controller.relationshipCalendarLoading}
