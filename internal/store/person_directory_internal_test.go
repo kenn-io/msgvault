@@ -25,19 +25,20 @@ func TestDirectoryPeopleAddressLookupBoundsInput(t *testing.T) {
 }
 
 func TestDirectoryPeopleAddressLookupCancellationDuringStream(t *testing.T) {
+	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-address-cancel.db")
 	writer, err := OpenForTest(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, writer.Close()) })
-	require.NoError(t, writer.InitSchema())
+	require.NoError(writer.InitSchema())
 	_, err = writer.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('cancel-address-person', 'Cancel Example')`)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = writer.AddPersonContactPointContext(t.Context(), 1, PersonContactPointInput{
 		AddressKind: ContactAddressUsername, OriginalValue: "cancel-handle",
 		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
 	})
-	require.NoError(t, err)
-	require.NoError(t, writer.RefreshDirectoryProjectionContext(t.Context()))
+	require.NoError(err)
+	require.NoError(writer.RefreshDirectoryProjectionContext(t.Context()))
 	gate := newDirectorySnapshotGate("FROM person_contact_points cp")
 	gate.release()
 	reader := newDirectorySnapshotGateStore(t, path, gate, true)

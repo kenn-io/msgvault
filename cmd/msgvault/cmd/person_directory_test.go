@@ -148,6 +148,8 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 }
 
 func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var lookups atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -161,12 +163,12 @@ func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	output, err := runPersonDirectoryCommand(ctx, t, "--address", "alex@example.test", "--json")
-	require.ErrorContains(t, err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
-	assert.Empty(t, output)
-	assert.Zero(t, lookups.Load())
+	require.ErrorContains(err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
+	assert.Empty(output)
+	assert.Zero(lookups.Load())
 	_, err = runPersonDirectoryCommand(ctx, t, "--query", "Alex")
-	require.NoError(t, err, "existing lexical query does not require a new daemon")
-	assert.Equal(t, int32(1), lookups.Load())
+	require.NoError(err, "existing lexical query does not require a new daemon")
+	assert.Equal(int32(1), lookups.Load())
 }
 
 func TestPersonDirectoryCommandForwardsCursorAndPrintsNextCursor(t *testing.T) {

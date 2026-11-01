@@ -149,6 +149,8 @@ func TestMCPListDirectoryPeopleAddressCapability(t *testing.T) {
 		{name: "current daemon keeps private failure redacted", version: "3.29.0", wantLookups: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var lookups atomic.Int32
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -165,24 +167,24 @@ func TestMCPListDirectoryPeopleAddressCapability(t *testing.T) {
 			}))
 			t.Cleanup(daemon.Close)
 			engine, err := daemonclient.NewEngine(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, engine.Close()) })
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(engine.Close()) })
 			browser := daemonclient.NewPeopleBrowser(engine)
 			response, raw := task4RawRequest(t,
 				newMCPHTTPServer(directoryToolOptions(browser), HTTPOptions{}).Handler,
 				"tools/call", map[string]any{
 					"name": ToolListDirectoryPeople, "arguments": map[string]any{"address": "alex@example.test"},
 				}, nil)
-			assert.Equal(t, test.wantLookups, lookups.Load())
-			assert.NotContains(t, raw, privateMessage)
+			assert.Equal(test.wantLookups, lookups.Load())
+			assert.NotContains(raw, privateMessage)
 			if test.wantLookups == 0 {
-				require.Empty(t, response.Error, "response: %s", raw)
-				assert.Equal(t, true, response.Result["isError"])
-				assert.Contains(t, toolErrorTextFromResult(t, response.Result),
+				require.Empty(response.Error, "response: %s", raw)
+				assert.Equal(true, response.Result["isError"])
+				assert.Contains(toolErrorTextFromResult(t, response.Result),
 					"requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 			} else {
-				assert.InDelta(t, -32603, response.Error["code"], 0, "response: %s", raw)
-				assert.Equal(t, "internal server error", response.Error["message"])
+				assert.InDelta(-32603, response.Error["code"], 0, "response: %s", raw)
+				assert.Equal("internal server error", response.Error["message"])
 			}
 		})
 	}
