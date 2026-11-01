@@ -73,7 +73,7 @@ describe('PersonNetwork', () => {
     const controller = new DirectoryEntityController(client, 7);
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    const target = await screen.findByRole('button', { name: 'Open person Depth Three Person' });
+    const target = await screen.findByRole('button', { name: /^Open person Depth Three Person(?:$|:)/ });
     const node = target.closest<HTMLElement>('.node')!;
     const graph = node.closest<HTMLElement>('.graph')!;
     expect(parseFloat(graph.style.width)).toBeGreaterThanOrEqual(parseFloat(node.style.left) + parseFloat(node.style.maxWidth));
@@ -105,25 +105,28 @@ describe('PersonNetwork', () => {
     render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
 
     await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    const peer = await screen.findByRole('button', { name: 'Open person Curated Peer' });
+    const peer = await screen.findByRole('button', { name: /^Open person Curated Peer(?:$|:)/ });
     const region = screen.getByRole('region', { name: 'Network graph' });
     expect(region.tabIndex).toBe(0);
     expect(document.querySelector('.graph > svg')?.getAttribute('aria-hidden')).toBe('true');
     expect(screen.getByRole('list', { name: 'Network connections' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Open organization Shared Organization' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Open person Second Hop Person' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Open person Selected Person' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Open organization Shared Organization(?:$|:)/ })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Open person Second Hop Person(?:$|:)/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /^Open person Selected Person(?:$|:)/ })).toBeNull();
     const relationOf = (button: HTMLElement) => button.parentElement?.querySelector('.relation')?.textContent;
     expect(relationOf(peer)).toBe('Selected Person works with');
-    expect(relationOf(screen.getByRole('button', { name: 'Open organization Shared Organization' }))).toBe('Engineer');
-    expect(relationOf(screen.getByRole('button', { name: 'Open person Second Hop Person' }))).toBe('Curated Peer mentors, Third Person sibling of');
-    expect(relationOf(screen.getByRole('button', { name: 'Open person Third Person' }))).toBe('mentors Curated Peer');
+    expect(relationOf(screen.getByRole('button', { name: /^Open organization Shared Organization(?:$|:)/ }))).toBe('Engineer');
+    expect(relationOf(screen.getByRole('button', { name: /^Open person Second Hop Person(?:$|:)/ }))).toBe('Curated Peer mentors, Third Person sibling of');
+    expect(relationOf(screen.getByRole('button', { name: /^Open person Third Person(?:$|:)/ }))).toBe('mentors Curated Peer');
+    const secondHop = screen.getByRole('button', { name: /^Open person Second Hop Person(?:$|:)/ });
+    expect(secondHop.closest<HTMLElement>('.node')?.title).toBe('Second Hop Person: Curated Peer mentors, Third Person sibling of');
+    expect(screen.getByRole('button', { name: 'Open person Second Hop Person: Curated Peer mentors, Third Person sibling of' })).toBe(secondHop);
     const links = within(screen.getByRole('list', { name: 'Network connections' })).getAllByRole('listitem').map(item => item.textContent);
     expect(links).toContain('Third Person sibling of Second Hop Person');
     expect(links).toHaveLength(5);
 
     await fireEvent.click(peer);
-    await fireEvent.click(screen.getByRole('button', { name: 'Open organization Shared Organization' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Open organization Shared Organization(?:$|:)/ }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(onOpenOrganization).toHaveBeenCalledWith(21);
   });
@@ -194,6 +197,6 @@ describe('PersonNetwork', () => {
     expect((await screen.findAllByText('Curated Peer')).length).toBeGreaterThan(0);
     depthTwo.resolve(Response.json(connected(2)));
     await waitFor(() => expect(screen.getByText(/bounded prefix/).textContent).toContain('at most 250 nodes and 500 connections at depth 3'));
-    expect(screen.getByRole('button', { name: 'Open person Second Hop Person' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Open person Second Hop Person(?:$|:)/ })).toBeDefined();
   });
 });

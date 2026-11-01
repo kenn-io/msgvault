@@ -131,12 +131,12 @@
           {#if at}
             {@const person = node.kind === 'person'}
             {@const root = node.hop === 0}
-            <div class="node" class:node--root={root} style:left={`${at.x - AVATAR / 2}px`} style:top={`${at.y}px`} style:max-width={`${NAME + AVATAR}px`} title={node.label} bind:clientWidth={widths[node.id]}>
+            <div class="node" class:node--root={root} style:left={`${at.x - AVATAR / 2}px`} style:top={`${at.y}px`} style:max-width={`${NAME + AVATAR}px`} title={relation(node) ? `${node.label}: ${relation(node)}` : node.label} bind:clientWidth={widths[node.id]}>
               <IdentityAvatar label={node.label} seed={node.id} shape={person ? 'person' : 'domain'} size={AVATAR} />
               {#if !root}
                 <span class="text">
                   <!-- kit-ui-check-ignore: a name in the graph that opens the person, styled as a link. -->
-                  <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}`} onclick={() => person ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
+                  <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}${relation(node) ? `: ${relation(node)}` : ''}`} onclick={() => person ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
                   {#if relation(node)}<span class="relation">{relation(node)}</span>{/if}
                 </span>
               {:else}
