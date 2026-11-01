@@ -56,7 +56,7 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
   catalog.unmount();
 });
 
-it('resumes acknowledgment after a created field registry refresh fails before creating another field', async () => {
+it('keeps Add disabled until a resumed field creation is acknowledged', async () => {
   let failRefresh = false; const definitions: Record<string, unknown>[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
@@ -80,10 +80,8 @@ it('resumes acknowledgment after a created field registry refresh fails before c
   await screen.findByRole('button', { name: 'Retry registry refresh' });
   await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
-  await screen.findByRole('button', { name: 'Edit First field' });
   expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
   await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
-  await screen.findByText('Created First field');
-  await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
   expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', false);
 });

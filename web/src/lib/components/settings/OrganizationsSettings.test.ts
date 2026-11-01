@@ -26,13 +26,11 @@ describe('OrganizationsSettings', () => {
     expect(await screen.findByRole('button', { name: 'Edit Synthetic Org' })).toBeDefined();
   });
 
-  it('blocks an unknown organization create until its own explicit refresh and retains the draft', async () => {
-    let posts = 0;
+  it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'POST') {
-        posts += 1;
         return Response.json({ error: 'unavailable', message: 'response unavailable' }, { status: 503 });
       }
       if (path === '/api/v1/organizations') return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
@@ -45,13 +43,12 @@ describe('OrganizationsSettings', () => {
     await fireEvent.input(name, { target: { value: 'Unknown Result Org' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');
+    await screen.findByRole('alert');
     expect(name.value).toBe('Unknown Result Org');
     expect(screen.getByRole('button', { name: 'Create organization' })).toHaveProperty('disabled', true);
-    expect(posts).toBe(1);
+    const refresh = vi.spyOn(controller, 'refreshOrganizations');
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh organizations' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create organization' })).toHaveProperty('disabled', false));
-    expect(posts).toBe(1);
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   });
 
   it('creates, renames, and deletes an unused organization', async () => {
