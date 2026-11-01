@@ -3,12 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { lanes } from '../../../test/operations';
 import { createAPIClient } from '../../api/client';
 import type { MeetingMetricsRequest } from '../../api/generated/models';
-import type { DirectoryReadBundle } from '../../directory/models';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import PersonDetails from '../people/PersonDetails.svelte';
 import { DirectoryController } from '../../directory/controller.svelte';
-import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import AppShell from '../shell/AppShell.svelte';
 
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [3, 7], vcard_uid: 'person-7', created_at: '', updated_at: '' };
@@ -24,12 +22,23 @@ function ancillary(path: string): Response {
 
 describe('meeting panel surfaces', () => {
   it('refreshes same Details person revisions and ignores delayed evidence', async () => {
+    let revision = 1;
     const metrics: MeetingMetricsRequest[] = [];
     let resolveOld!: (response: Response) => void;
     let oldSignal!: AbortSignal;
     const client = createAPIClient(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      const current = { ...person, participant_ids: [], revision };
+      if (path === '/api/v1/people/7') return Response.json(current, { headers: { ETag: `"person-7-r${revision}"` } });
+      if (path.endsWith('/profile')) return Response.json({ person: current, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: `"profile-7-r${revision}"` } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/employments')) return Response.json({ employments: [] });
+      if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
+      if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+      if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: '2026-08-01T00:00:00Z', stale: false });
       if (path.endsWith('/meetings/metrics')) {
         metrics.push(await request.clone().json());
         if (metrics.length === 1) { oldSignal = request.signal; return new Promise<Response>((resolve) => { resolveOld = resolve; }); }
@@ -38,14 +47,13 @@ describe('meeting panel surfaces', () => {
       if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
       return ancillary(path);
     });
-    const bundle: DirectoryReadBundle = { person: { ...person, participant_ids: [] }, etags: {}, errors: {} };
     const directory = new DirectoryController(client);
-    directory.selectedPersonID = 7; directory.detail = bundle;
-    directory.profile = new DirectoryProfileController(client, 7, bundle);
+    await directory.loadSelection(7);
     const view = render(PersonDetails, { client, personID: 7, directory });
     try {
       await waitFor(() => expect(resolveOld).toBeDefined());
-      await act(() => { directory.profile!.person = { ...person, revision: 2, participant_ids: [] }; });
+      revision = 2;
+      await act(async () => { await directory.profile!.reload(); });
       expect(await screen.findByText('4 meetings')).toBeDefined();
       expect(metrics).toEqual([{ scope: { person_id: 7 } }, { scope: { person_id: 7 } }]);
       expect(oldSignal.aborted).toBe(true);

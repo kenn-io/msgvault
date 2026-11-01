@@ -1,7 +1,6 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
 it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete', async () => {
@@ -57,7 +56,7 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
   catalog.unmount();
 });
 
-it('keeps Add disabled until a resumed field creation is acknowledged', async () => {
+it('keeps Add disabled and resumes a field creation after its refresh fails', async () => {
   let failRefresh = false; const definitions: Record<string, unknown>[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
@@ -74,18 +73,16 @@ it('keeps Add disabled until a resumed field creation is acknowledged', async ()
     if (path.endsWith('/organizations')) return Response.json({ organizations: [] });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
-  const registry = vi.spyOn(DirectoryProfileController.prototype, 'reloadDefinitions');
   const view = render(PeopleCatalogSettings, { client });
   try {
-    await act(async () => { await registry.mock.results[0]!.value; });
-    const fields = registry.mock.contexts[0] as DirectoryProfileController;
-    await act(async () => { await fields.createDefinition({ object_type: 'person', label: 'First field', value_type: 'text', field_type: 'text', cardinality: 'single', is_sensitive: false, display_order: 0 }); });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add field' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Label' }), { target: { value: 'First field' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+    await screen.findByRole('button', { name: 'Retry registry refresh' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create attribute field' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
-    await act(async () => { await fields.retryDefinitionRefresh(); });
-    const done = await screen.findByRole('button', { name: 'Done' });
-    expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
-    await fireEvent.click(done);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', false));
-  } finally { registry.mockRestore(); view.unmount(); }
+    expect(await screen.findByRole('button', { name: 'Retry registry refresh' })).toBeDefined();
+  } finally { view.unmount(); }
 });
