@@ -242,25 +242,13 @@ describe('OrganizationEmploymentTab', () => {
     expect(await requests.find((request) => request.method === 'PATCH')!.json()).toMatchObject({ organization_id: 21 });
   });
 
-  it('offers Make primary only for current non-primary employments', () => {
+  it('reads a row as title at organization with period, department, and ordered actions', () => {
     const controller = controllerWith(vi.fn<typeof fetch>());
-    controller.employments = [
-      employment(11, 1, { is_current: false, is_primary: false, title: 'Historical role' }),
-      employment(12, 1, { is_current: true, is_primary: false, title: 'Current role' })
-    ];
+    controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false }), employment(12, 1, { is_current: false, is_primary: false, title: 'Historical role' })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     const historical = screen.getByText(/Historical role/).closest('.detail-row') as HTMLElement;
-    const current = screen.getByText(/Current role/).closest('.detail-row') as HTMLElement;
     expect(within(historical).queryByRole('button', { name: 'Make primary employment' })).toBeNull();
-    expect(within(current).getByRole('button', { name: 'Make primary employment' })).toBeDefined();
-  });
-
-  it('reads a row as title at organization with period, department, and ordered actions', () => {
-    const controller = controllerWith(vi.fn<typeof fetch>());
-    controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false })];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
-
     const row = screen.getByText(/Engineer/).closest('.detail-row') as HTMLElement;
     expect(row.textContent).toContain('Engineer at');
     expect(row.textContent).toContain('Mar 2024 – present · Platform');

@@ -21,7 +21,7 @@ function rootOnly(depth = 1): PersonNetworkProjection {
 }
 
 function connected(depth = 2, truncated = false): PersonNetworkProjection {
-  return {
+  const projection: PersonNetworkProjection = {
     root_person_id: 7,
     depth,
     truncated,
@@ -37,6 +37,9 @@ function connected(depth = 2, truncated = false): PersonNetworkProjection {
       { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'mentor', label: 'mentors' }
     ]
   };
+  const nodes = projection.nodes.filter(node => node.hop <= depth);
+  const ids = new Set(nodes.map(node => node.id));
+  return { ...projection, nodes, edges: projection.edges.filter(edge => ids.has(edge.source_node_id) && ids.has(edge.target_node_id)) };
 }
 
 function depthThree(): PersonNetworkProjection {
@@ -88,13 +91,14 @@ describe('PersonNetwork', () => {
   });
 
   it('draws every typed relationship and employment with its relation label and makes both entity kinds actionable', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(connected())));
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => Response.json(connected(Number(new URL(requestOf(input).url).searchParams.get('depth'))))));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
 
     render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
 
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     const peer = await screen.findByRole('button', { name: 'Open person Curated Peer' });
     const region = screen.getByRole('region', { name: 'Network graph' });
     expect(region.tabIndex).toBe(0);
@@ -121,9 +125,10 @@ describe('PersonNetwork', () => {
       { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' },
       { id: 'relationship:34', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:9', relationship_type_slug: 'sibling', label: 'sibling of' },
     );
-    const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async () => Response.json(projection))), 7);
+    const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async input => Response.json(Number(new URL(requestOf(input).url).searchParams.get('depth')) === 1 ? connected(1) : projection))), 7);
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
 
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     const relationOf = async (name: string) => (await screen.findByRole('button', { name })).parentElement?.querySelector('.relation')?.textContent;
     // Curated Peer mentors Second Hop Person; Third Person mentors Curated Peer. The same verb reads differently by direction.
     expect(await relationOf('Open person Second Hop Person')).toBe('Curated Peer mentors, Third Person sibling of');
