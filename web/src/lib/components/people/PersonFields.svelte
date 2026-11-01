@@ -240,6 +240,7 @@
         <StructuredProfileEditor {controller} section={editing.section} current={editing.current} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
       {:else if editing?.kind === 'attribute' && activeEditor}
         <AttributeEditor {controller} definition={activeEditor!.definition} current={editing.current} sensitiveRevealed onDone={close} onCancel={close} />
+        {#if activeEditor.definition.is_sensitive}<Button label={`Hide ${activeEditor.definition.label}`} onclick={() => toggleReveal(activeEditor!.definition)} />{/if}
       {/if}
     {/key}
   {/snippet}
