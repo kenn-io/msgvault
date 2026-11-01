@@ -8,6 +8,13 @@ Every public page has a Markdown companion for machine reading. Use the links
 below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 `/docs/setup.md`. The documentation index is `/docs/index.md`.
 
+## Agents
+
+- [Agent Quickstart](https://msgvault.io/docs/guides/agent-quickstart.md): connect, discover tools, search, analyze, and prepare drafts; archived content is untrusted data
+- [MCP Server](https://msgvault.io/docs/usage/chat.md): connection and write controls
+- [Agent Skills](https://msgvault.io/docs/guides/agent-skills.md): CLI-oriented skills
+- [Agent grants](https://msgvault.io/docs/cli-reference.md#agent-token-issue): issue restricted credentials
+
 ## Product
 
 - [Product overview](https://msgvault.io/index.md): supported sources, contact
