@@ -11,6 +11,8 @@ import { ExploreState, serializeExploreURLState } from '../../explore/state.svel
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import AppShell from './AppShell.svelte';
+import App from '../../../App.svelte';
+import { createSessionController } from '../../api/session.svelte';
 import { ShellData } from './shell-data.svelte';
 import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
 import type { CardDAVSettingsRequest } from '../../carddav/navigation';
@@ -1271,7 +1273,7 @@ describe('AppShell', () => {
     await vi.waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.includes('fact'))).toHaveLength(10));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open person profile' }));
-    expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 42 });
+    expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 42 });
     rendered.unmount();
     state.destroy();
   });
@@ -1322,12 +1324,12 @@ describe('AppShell', () => {
         person: survivor, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'current', computed_at: '2026-08-03T00:00:00Z', interaction_count: 0, stale: false
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
       if (path === '/api/v1/people/7/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {} });
       return Response.json(exploreResponse());
     });
@@ -1341,7 +1343,7 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
 
-    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 7 }));
     expect(screen.getByRole('status', { name: 'Operation status' }).textContent)
       .toContain('People merged into Synthetic One. Identity cache stale.');
     expect(requests.some((request) => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7')).toBe(true);
@@ -1428,39 +1430,40 @@ describe('AppShell', () => {
         id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active',
         categories: [], organizations: []
       }] });
-      if (path === '/api/v1/people/7') return Response.json({
-        id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [42, 19], vcard_uid: '',
-        created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-      });
+      const one = { id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [42, 19], vcard_uid: '', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+      if (path === '/api/v1/people/7') return Response.json(one);
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
-        person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
+        person_id: 7, cadence_status: 'ok', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
       });
+      if (/\/api\/v1\/participants\/(42|19)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic Person', profile: one, identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: '2026-08-01T00:00:00Z', last_at: '2026-08-01T00:00:00Z' });
+      if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
+      if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
       return Response.json(exploreResponse());
     });
   }
 
-  it.each([
-    {
-      action: 'Review facts',
-      expected: { workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 7 }
-    },
-    {
-      action: 'Open relationship',
-      expected: { workspace: 'relationships', relationshipTarget: 'cluster:19' }
-    }
-  ])('leaves a Directory person through $action', async ({ action, expected }) => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryPersonID: 7
-    }))}`);
+  it('returns to Files after replacing an old Directory person route', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
     const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(directoryPersonFetch()), state, enabled: false });
+    const fetchPerson = directoryPersonFetch();
+    const client = createAPIClient(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      return fetchPerson(input, init);
+    });
+    const rendered = render(AppShell, { client, state, enabled: false });
     try {
-      await fireEvent.click(await screen.findByRole('button', { name: action }));
-      expect(state.current).toMatchObject(expected);
-    } finally {
-      rendered.unmount();
-      state.destroy();
-    }
+      await screen.findByRole('main', { name: 'Files' });
+      state.commitNavigation({ workspace: 'directory', directoryPersonID: 7 });
+      await screen.findByRole('heading', { name: 'Synthetic Person' });
+      expect(state.current.workspace).toBe('relationships');
+      const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await restored;
+      await waitFor(() => expect(state.current.workspace).toBe('files'));
+      expect(screen.getByRole('main', { name: 'Files' })).toBeDefined();
+    } finally { rendered.unmount(); state.destroy(); }
   });
 
   it('owns an ephemeral CardDAV conflict handoff and Browser Back restores the prior Directory person', async () => {
@@ -1497,13 +1500,13 @@ describe('AppShell', () => {
         names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'current', interaction_count: 0,
         computed_at: '2026-08-28T10:00:00Z', stale: false
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
       if (path === '/api/v1/people/7/files/search') return Response.json({
         files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {}
       });
@@ -1520,7 +1523,8 @@ describe('AppShell', () => {
       client: createAPIClient(fetchFn), state, enabled: false, settings: settings as never
     });
 
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'carddav' });
     expect(settingsHandoffs.at(-1)?.request).toMatchObject({ conflictID: 41 });
@@ -1530,12 +1534,14 @@ describe('AppShell', () => {
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 7 }));
     expect(await screen.findByRole('heading', { name: 'Synthetic Person' })).toBeDefined();
     expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
-    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
     await waitFor(() => expect(restoredPublicationSignal).toBeDefined());
 
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Publish to address book' })).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(restoredPublicationSignal?.aborted).toBe(true);
     resolveRestoredPublication(Response.json({
@@ -1551,7 +1557,7 @@ describe('AppShell', () => {
 
   it('does not reset Directory page one for ordinary selection and filter commits', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryQuery: '', directoryPersonID: null
+      workspace: 'relationships', relationshipSaved: true, directoryPersonID: null
     }))}`);
     const directoryRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1566,20 +1572,26 @@ describe('AppShell', () => {
         }] });
       }
       if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
-      if (path.startsWith('/api/v1/people/7')) return Response.json({ person_id: 7, participant_ids: [], cadence_status: 'active', interaction_count: 0, employments: [], relationships: [], days: [], attributes: [], categories: [], names: [], contact_points: [], addresses: [], dates: [] });
+      if (meetingFixtureResponse(path)) return meetingFixtureResponse(path)!;
+      const person = { id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+      if (path === '/api/v1/people/7') return Response.json(person);
+      if (path === '/api/v1/people/7/profile') return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'ok', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
 
     await screen.findByText('Synthetic Person');
-    await fireEvent.click(screen.getByRole('row', { name: /Synthetic Person/ }));
+    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Person'));
     await Promise.resolve();
     expect(directoryRequests).toHaveLength(1);
 
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search directory' }), {
-      target: { value: 'refined' }
-    });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter people' }), { target: { value: 'refined' } });
     await waitFor(() => expect(screen.getByText('Refined Person')).toBeDefined());
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(directoryRequests).toHaveLength(2);
@@ -2019,7 +2031,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each([200, 201])('hands a selected relationship participant to Directory promotion on %i', async (status) => {
+  it('keeps a promoted participant saved after Back and reselecting it', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
     }))}`);
@@ -2031,9 +2043,13 @@ describe('AppShell', () => {
       if (meetingResponse) return meetingResponse;
       requests.push(request);
       const path = new URL(request.url).pathname;
-      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
+      if (path === '/api/v1/relationships') return Response.json({ rows: [{
+        canonical_id: 11, display_label: 'Synthetic Candidate', member_ids: [11], score: 1, last_at: '2026-07-19T10:00:00Z',
+        signals: { last_interaction_at: '2026-07-19T10:00:00Z', sent_count: 1, sent_to_them: 1, received_from_them: 0, meeting_count: 0, meetings_together: 0, modalities: 1 }
+      }] });
       if (path === '/api/v1/participants/11') return Response.json({
         id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
+        ...(promoted ? { profile: { id: 42, display_name: 'Synthetic Candidate', revision: 1 } } : {}),
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
@@ -2048,7 +2064,7 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people' && request.method === 'POST') {
         promoted = true;
-        return Response.json({ id: 42, revision: 1 }, { status });
+        return Response.json({ id: 42, revision: 1 }, { status: 201 });
       }
       if (path === '/api/v1/people/42') return Response.json({ id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11] });
       if (path === '/api/v1/people/42/profile') return Response.json({
@@ -2056,13 +2072,13 @@ describe('AppShell', () => {
         addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/42/attributes') return Response.json({ person_id: 42, attributes: [] });
+      if (path === '/api/v1/people/42/network') return Response.json({ root_person_id: 42, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/42/contact-state') return Response.json({
         person_id: 42, cadence_status: 'current', computed_at: '2026-07-19T10:00:00Z',
         interaction_count: 1, stale: false
       });
       if (path === '/api/v1/people/42/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/42/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/42/days') return Response.json({ person_id: 42, days: [], total_count: 0 });
       if (path === '/api/v1/people/42/files/search') return Response.json({
         files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {}
       });
@@ -2073,116 +2089,64 @@ describe('AppShell', () => {
 
     expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Promote to person' }));
+    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(state.current.directoryPersonID).toBe(42));
-    expect(state.current.workspace).toBe('directory');
+    expect(state.current.workspace).toBe('relationships');
     expect(new URL(window.location.href).searchParams.get('explore')).toContain('directoryPersonID');
     const promotion = requests.find((request) =>
       new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST'
     );
     expect(promotion).toBeDefined();
-    await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
-    expect(requests.filter((request) => new URL(request.url).pathname === '/api/v1/people/directory').length)
-      .toBeGreaterThanOrEqual(2);
+    await expect(promotion!.clone().json()).resolves.toMatchObject({ participant_id: 11 });
+    await screen.findByRole('button', { name: 'More actions' });
+
+    window.history.back();
+    await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
+    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Candidate'));
+    expect(screen.getByRole('button', { name: 'More actions' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
 
     rendered.unmount();
     state.destroy();
   });
 
-  it.each(['sidebar', 'global search'] as const)(
-    'drops the relationship promotion when leaving Directory by %s and going back',
-    async (exit) => {
-      window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-        workspace: 'relationships', relationshipTarget: 'cluster:11'
-      }))}`);
-      const fetchFn = vi.fn<typeof fetch>(async (input) => {
-        const request = input instanceof Request ? input : new Request(input);
-        const path = new URL(request.url).pathname;
-        const meetingResponse = meetingFixtureResponse(path);
-        if (meetingResponse) return meetingResponse;
-        if (path === '/api/v1/relationships') return Response.json({ rows: [] });
-        if (path === '/api/v1/participants/11') return Response.json({
-          id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
-          activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
-          last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
-        });
-        if (path === '/api/v1/participants/11/timeline') return Response.json({
-          cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
-        });
-        if (path === '/api/v1/people/directory') return Response.json({ people: [] });
-        return Response.json(exploreResponse());
-      });
-      const state = new ExploreState(window);
-      const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
-      expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-      expect(await screen.findByRole('button', { name: 'Promote to person' })).toBeDefined();
-
-      if (exit === 'sidebar') {
-        await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' }))
-          .getByRole('button', { name: 'Messages' }));
-      } else {
-        await fireEvent.input(screen.getByRole('searchbox', { name: 'Search messages' }), {
-          target: { value: 'pipeline' }
-        });
-        await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
+  it('refreshes filtered Saved results after renaming their organization in Settings', async () => {
+    let renamed = false;
+    const organization = () => ({ id: 21, revision: renamed ? 2 : 1, name: renamed ? 'New Org' : 'Old Org', kind: 'company', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' });
+    const session = createSessionController(async input => {
+      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
+      if (path === '/api/v1/settings') return Response.json({ settings: [], groups: [], pending_restart: false }, { headers: { ETag: '"settings"' } });
+      if (path === '/api/v1/people/directory') return Response.json({ people: new URL(request.url).searchParams.get('organization') !== organization().name ? [] : [{ id: 7, revision: 1, display_name: 'Synthetic Person', organizations: [organization().name], categories: [], contact_state: 'active' }] });
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      if (path === '/api/v1/organizations/21') {
+        if (request.method === 'PATCH') { renamed = true; return Response.json(organization(), { headers: { ETag: '"organization-21-r2"' } }); }
+        return Response.json({ organization: organization(), names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] }, { headers: { ETag: '"organization-21-r1"' } });
       }
-      expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
-
-      const restored = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-      window.history.back();
-      await restored;
-      expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
-      expect(screen.queryByRole('button', { name: 'Promote to person' })).toBeNull();
-
-      rendered.unmount();
-      state.destroy();
-    }
-  );
-
-  it('renders actionable Directory guidance for a relationship promotion conflict', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', relationshipTarget: 'cluster:11'
-    }))}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
+      if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });
       if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
-      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
-      if (path === '/api/v1/participants/11') return Response.json({
-        id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
-        activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
-        last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
-      });
-      if (path === '/api/v1/participants/11/timeline') return Response.json({
-        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
-      });
-      if (path === '/api/v1/people/directory') return Response.json({ people: [] });
-      if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
-        error: 'person_binding_conflict', message: 'This identity is already bound to another person'
-      }, { status: 409 });
-      return Response.json(exploreResponse());
+      return Response.json({ rows: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
     });
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
-    expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
-
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('already bound to another person');
-    expect(alert.textContent).toContain('resolve that binding before promoting');
-    expect(state.current.directoryPersonID).toBeNull();
-
-    rendered.unmount();
-    state.destroy();
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryOrganization: 'Old Org' }))}`);
+    const view = render(App, { session });
+    try {
+      await session.bootstrap();
+      await screen.findByText('Synthetic Person');
+      await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+      await fireEvent.click(await within(screen.getByRole('main', { name: 'Settings' })).findByRole('button', { name: 'People' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Edit Old Org' }));
+      await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'New Org' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+      await screen.findByRole('button', { name: 'Edit New Org' });
+      await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'People' }));
+      await screen.findByRole('main', { name: 'People' });
+      await waitFor(() => expect(screen.queryByText('Synthetic Person')).toBeNull());
+    } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
   it('clears prior Directory selection and promotion state before opening a new relationship candidate', async () => {
@@ -2203,13 +2167,12 @@ describe('AppShell', () => {
         person: { id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-07-19T10:00:00Z', stale: false
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
-      if (path === '/api/v1/people/7/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {} });
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
       if (path === '/api/v1/participants/11' || path === '/api/v1/participants/12') {
         const id = Number(path.split('/').at(-1));
@@ -2230,16 +2193,14 @@ describe('AppShell', () => {
     state.commitNavigation(relationshipDestination(11));
     expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
     expect((await screen.findByRole('alert')).textContent).toContain('already bound to another person');
 
     state.commitNavigation(relationshipDestination(12));
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
 
-    expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(state.current.directoryPersonID).toBeNull();

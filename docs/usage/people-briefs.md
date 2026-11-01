@@ -47,8 +47,8 @@ Running `person brief generate` again bypasses that delay.
 
 ## Read and manage briefs
 
-In the Web UI, open **Directory**, select the person, and find **Last time we
-talked** on the Overview tab. Enroll or generate there, expand a sentence to see
+In the Web UI, open the person's **Details** tab in **People**, and find **Last time we
+talked**. Enroll or generate there, expand a sentence to see
 its sources, and use the history to inspect version dates and status. To read
 earlier paragraphs and sources, run `msgvault person brief history 7 --json`.
 If a source cannot be tied to an individual sentence, the card labels it as a source for the whole
