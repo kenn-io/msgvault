@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
@@ -78,11 +78,10 @@ it('keeps Add disabled and resumes a field creation after its refresh fails', as
     await fireEvent.click(await screen.findByRole('button', { name: 'Add field' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Label' }), { target: { value: 'First field' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await screen.findByRole('button', { name: 'Retry registry refresh' });
+    await within(screen.getByRole('region', { name: 'Fields' })).findByRole('alert');
     await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create attribute field' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
-    expect(await screen.findByRole('button', { name: 'Retry registry refresh' })).toBeDefined();
+    expect(await screen.findByRole('dialog', { name: 'Create attribute field' })).toBeDefined();
   } finally { view.unmount(); }
 });

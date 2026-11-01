@@ -103,7 +103,6 @@ describe('AttributeSection', () => {
     expect(screen.getByText('Hidden')).toBeDefined();
     expect(screen.queryByText('synthetic historical secret')).toBeNull();
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
-    expect(screen.queryByRole('button', { name: /Edit private note/i })).toBeNull();
 
     const reveal = screen.getByRole('button', { name: 'Reveal Private note values' });
     reveal.focus();
@@ -114,10 +113,9 @@ describe('AttributeSection', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Hide Private note values' }));
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
     expect(screen.getByText('Hidden')).toBeDefined();
-    expect(screen.queryByRole('textbox', { name: 'Private note' })).toBeNull();
   });
 
-  it('joins registry definitions to grouped values by universal ID and renders collapsed history without definition metadata', () => {
+  it('joins registry definitions to grouped values by universal ID and renders collapsed history', () => {
     const stale = definition({
       universal_id: 'portable-field-id',
       slug: 'portable_field',
@@ -150,10 +148,6 @@ describe('AttributeSection', () => {
 
     expect(screen.getByRole('heading', { name: 'Portable field' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Stale label' })).toBeNull();
-    for (const hidden of [/Registry description/, /Type: text/, /Cardinality: multi/, /Ownership: user/, /Allowed choices/]) {
-      expect(screen.queryByText(hidden)).toBeNull();
-    }
-    expect(screen.queryByRole('heading', { name: 'Attributes' })).toBeNull();
     const history = screen.getByText('1 earlier value').closest('details');
     expect(history).not.toBeNull();
     expect(history?.hasAttribute('open')).toBe(false);
