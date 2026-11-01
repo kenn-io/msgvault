@@ -1085,6 +1085,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	}
 
 	var declined []string
+	reader := bufio.NewReader(command.InOrStdin())
 	gates := plan.gates()
 	if options.dryRun {
 		if !options.jsonOutput {
@@ -1101,7 +1102,6 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 			return fmt.Errorf("setup providers needs one consent per hosted provider (%s); review the plan with --dry-run, then re-run with --yes",
 				strings.Join(gates, ", "))
 		}
-		reader := bufio.NewReader(command.InOrStdin())
 		for _, gate := range gates {
 			if !slices.Contains(plan.gates(), gate) {
 				continue
@@ -1126,34 +1126,47 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		}
 	}
 
-	for _, lane := range plan.Lanes {
+	for i, lane := range plan.Lanes {
 		if !lane.local || lane.Action != planActionEnable {
 			continue
 		}
-		dir, err := localEmbeddingsDir()
+		err := installSetupLocalEmbeddings(command, deps, options, reader)
 		if err != nil {
-			return fmt.Errorf("local embedding directory: %w", err)
-		}
-		_, err = deps.localInstall(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
-			if !options.jsonOutput {
-				_, _ = fmt.Fprintf(out, "Download approximately %d bytes for local embeddings.\n", size)
-			}
-			if options.yes {
-				return true, nil
-			}
-			if deps.isTerminal == nil || !deps.isTerminal(command) || options.jsonOutput {
-				return false, errors.New("local embedding download needs confirmation; re-run with --yes")
-			}
-			return confirmEmbed(command, "Download? "), nil
-		}})
-		if err != nil {
-			return err
+			plan.Lanes[i].Action, plan.Lanes[i].Reason = planActionPending, err.Error()
+			plan.Lanes[i].edits = nil
+			plan.Lanes[i].next = []string{"msgvault setup providers --local-embeddings"}
+			plan.refreshDependencies(loaded, detection, options, now)
 		}
 	}
 	if err := applySetupProvidersPlan(command, deps, before, &plan, options.jsonOutput); err != nil {
 		return err
 	}
 	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
+}
+
+func installSetupLocalEmbeddings(command *cobra.Command, deps setupProvidersDeps, options setupProvidersOptions, reader *bufio.Reader) error {
+	if !options.localEmbeddings && (options.yes || options.jsonOutput || deps.isTerminal == nil || !deps.isTerminal(command)) {
+		return errors.New("local embeddings need an explicit selection; run msgvault setup providers --local-embeddings")
+	}
+	dir, err := localEmbeddingsDir()
+	if err != nil {
+		return fmt.Errorf("local embedding directory: %w", err)
+	}
+	_, err = deps.localInstall(command.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
+		if options.yes {
+			return true, nil
+		}
+		if options.jsonOutput || deps.isTerminal == nil || !deps.isTerminal(command) {
+			return false, errors.New("local embedding download needs confirmation; run msgvault setup providers --local-embeddings --yes")
+		}
+		_, _ = fmt.Fprintf(command.OutOrStdout(), "Download approximately %d bytes for local embeddings.\nDownload? [y/N]: ", size)
+		answer, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, fmt.Errorf("read download answer: %w", err)
+		}
+		return isYesAnswer(strings.ToLower(strings.TrimSpace(answer))), nil
+	}})
+	return err
 }
 
 func setupPosture(saved, proposed string, override bool) string {
@@ -1258,6 +1271,15 @@ func writeSetupProvidersResult(
 		env.consent = deps.consentState(ctx, loaded)
 	}
 	report := buildLaneReport(loaded, env)
+	for _, lane := range plan.Lanes {
+		if lane.local && lane.Action == planActionPending {
+			for i := range report.Lanes {
+				if report.Lanes[i].Lane == lane.Lane {
+					report.Lanes[i].State, report.Lanes[i].Reason, report.Lanes[i].Next = laneStatePending, lane.Reason, lane.next
+				}
+			}
+		}
+	}
 	followUps := setupFollowUps(ctx, deps, loaded, plan, applied)
 	if options.jsonOutput {
 		encoder := jsontext.NewEncoder(command.OutOrStdout(), jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
