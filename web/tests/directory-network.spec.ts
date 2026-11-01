@@ -43,13 +43,14 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 
-  const graph = page.getByRole('region', { name: 'Network graph' });
-  await expect(graph.locator('svg')).toHaveAttribute('aria-hidden', 'true');
-  const peer = graph.getByRole('button', { name: 'Open person Curated Peer' });
-  await expect(peer).toBeVisible();
-  await expect(graph).not.toContainText('Message-only Contact');
+  const list = page.getByRole('list', { name: 'Directory network connections' });
+  await expect(list).toContainText('Archive Person works with Curated Peer');
+  await page.getByRole('combobox', { name: /^Network depth:/ }).click();
+  await page.getByRole('option', { name: '2 hops', exact: true }).click();
+  await expect(list).toContainText('Curated Peer Engineer Shared Organization');
+  await expect(list).not.toContainText('Message-only Contact');
+  await expect(page.locator('.person-network > .projection > svg')).toHaveAttribute('aria-hidden', 'true');
 
-  await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   await page.getByRole('button', { name: 'Open organization Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Edit Shared Organization' });
   await expect(organizationEditor).toBeVisible();
