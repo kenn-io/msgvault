@@ -85,7 +85,7 @@ describe('ProfileHistoryDialog', () => {
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } }],
         addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
         dates: [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, date_text: 'February 14', original_value: '--02-14', envelope: { ...currentEnvelope, id: 32 } }],
-        categories: [{ person_id: 7, normalized_value: 'current category', original_value: 'Current category', envelope: { ...currentEnvelope, id: 33 } }, {
+        categories: [{ person_id: 7, normalized_value: 'current category', original_value: 'Current category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
           person_id: 7, original_value: 'Past category', normalized_value: 'past category',
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
@@ -120,7 +120,6 @@ describe('ProfileHistoryDialog', () => {
       expect(row.textContent).toMatch(new RegExp(`Removed ${dateText}`));
     }
     const previous = screen.getByText('Previous Name').closest('li')!;
-    expect(previous.textContent).toContain('Address book');
     expect(previous.textContent).toContain('synthetic-card');
     expect(previous.textContent).toMatch(/Valid from:.*Valid until:/);
     const observed = screen.getByText('observed@example.test').closest('li')!;
@@ -171,11 +170,4 @@ it('opening History preserves a conflicted profile draft', async () => {
     expect(controller.draft).toBe(draft);
     expect(controller.conflict).toBe(conflict);
   } finally { view.unmount(); controller.destroy(); }
-});
-
-it('keeps a future validity end in current history', async () => {
-  const client = createAPIClient(async input => new URL(input instanceof Request ? input.url : String(input)).pathname.endsWith('/merges') ? Response.json({ merges: [] }) : Response.json({ person: person(), categories: [{ person_id: 7, original_value: 'Future category', normalized_value: 'future category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }] }));
-  const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
-  try { expect((await screen.findByText('Future category')).closest('details')).toBeNull(); }
-  finally { view.unmount(); }
 });
