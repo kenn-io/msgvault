@@ -25,7 +25,6 @@
   const imports = new RelationshipReviewController(untrack(() => client));
   $effect(() => { if (!catalogOnly) imports.applyPerson(personID); });
   onDestroy(() => imports.destroy());
-  const importedConnections = $derived(imports.rows.filter(row => row.status === 'accepted' && row.matched_person_id !== undefined));
   let relationshipEditor = $state<PersonRelationshipView | null | undefined>(undefined);
   let relationshipTypeEditor = $state<RelationshipType | null | undefined>(undefined);
   let deletingRelationship = $state<PersonRelationshipView>();

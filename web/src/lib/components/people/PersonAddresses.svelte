@@ -183,7 +183,7 @@
     {#if isPersonDetail(detail)}
       {#key detail.id}
       <div class="identities">
-        <div class="identifiers" aria-label="Linked identities">
+        <div class="identifiers" role="group" aria-label="Linked identities">
         {#each detail.identifiers ?? [] as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
           {@const isOtherMember = !!detail.cluster && identifier.participant_id !== detail.id}
           {@const opaque = identifier.type !== 'email' && identifier.type !== 'phone'}

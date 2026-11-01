@@ -58,13 +58,13 @@
   const predicateKey = $derived(JSON.stringify(page.predicate));
   $effect(() => {
     controller.facet = facet; controller.showAll = showAll; controller.query = query;
-    controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
+    controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'last_contact_asc' ? { field: 'latest_at', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
     void predicateKey;
     if (!directoryMode && !urlState.peopleDuplicates) untrack(() => void controller.loadList(page.predicate));
   });
   $effect(() => {
     if (!directoryMode || urlState.peopleDuplicates) return;
-    const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
+    const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'last_contact_asc' ? 'last_contact_asc' : sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
     untrack(() => directory.applyURLState(filters, false, false));
   });
   $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
@@ -106,7 +106,7 @@
   $effect(() => {
     const id = selectedProfileID;
     if (id === null) void target;
-    untrack(() => { if (directory.selectedPersonID !== id) void directory.loadSelection(id); });
+    untrack(() => { if (id === null || directory.selectedPersonID !== id) void directory.loadSelection(id); });
   });
   $effect(() => {
     const id = soloPerson, person = directory.detail?.person;
@@ -176,7 +176,7 @@
       const next = bulkIDs[bulkCompleted + 1]!;
       const result = await controller.linkParticipants(bulkIDs[0]!, next);
       if (result.ok || result.code === 'already_linked') {
-        if (result.ok) { staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null; await directory.refreshSelectedPerson(); }
+        if (result.ok) { onDuplicatesChanged(); staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null; await directory.refreshSelectedPerson(); }
         bulkCompleted += 1; continue;
       }
       bulkPending = false;
@@ -187,6 +187,7 @@
     bulkMessage = staleLink ? 'People linked. The identity cache needs a retry.' : 'People are now treated as the same person.';
   }
   async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+    onDuplicatesChanged();
     await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
     if (directory.selectedPersonID === selectedProfileID) await directory.refreshSelectedPerson();
     else await directory.loadSelection(selectedProfileID);
@@ -226,7 +227,7 @@
         countLabel={`${(directoryMode ? rows.length : controller.listTotalCount ?? rows.length).toLocaleString()}${hasMore && directoryMode ? '+' : ''} ${facet === 'domains' ? (rows.length === 1 && !hasMore ? 'domain' : 'domains') : (rows.length === 1 && !hasMore ? 'person' : 'people')}`}
         error={directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={directoryMode ? null : controller.degraded}
         {facet} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}
-        sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }]}
+        sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }, ...(directoryMode || sort === 'last_contact_asc' ? [{ value: 'last_contact_asc', label: 'Least recently contacted' }] : [])]}
         canDelete={selectedSaved.length > 0 && selectedSaved.length === selection.count} onDelete={() => confirmDelete = true}
         canMerge={selection.count >= 2 && [...selection.explicitKeys].every((key) => key.startsWith('cluster:'))}
         onFacetChange={(value) => onNavigate({ relationshipFacet: value, directoryPersonID: null, relationshipTarget: null, relationshipFiles: false })} onSortChange={(value) => onNavigate({ relationshipSort: value as ExploreURLState['relationshipSort'] })} onOpen={(key) => void open(key)}

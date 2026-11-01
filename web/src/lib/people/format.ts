@@ -1,26 +1,3 @@
-const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
-
-function plural(count: number, unit: string): string {
-  return `${count} ${unit}${count === 1 ? '' : 's'} ago`;
-}
-
-/** "3 days ago", "2 months ago". Unparseable input passes through so raw API values stay visible. */
-export function relativeDate(value: string | null | undefined, now: Date = new Date()): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value;
-  const elapsed = now.getTime() - date.getTime();
-  if (elapsed < HOUR_MS) return elapsed < MINUTE_MS ? 'just now' : plural(Math.floor(elapsed / MINUTE_MS), 'minute');
-  if (elapsed < DAY_MS) return plural(Math.floor(elapsed / HOUR_MS), 'hour');
-  const days = Math.floor(elapsed / DAY_MS);
-  if (days < 14) return days === 1 ? 'yesterday' : plural(days, 'day');
-  if (days < 60) return plural(Math.floor(days / 7), 'week');
-  if (days < 730) return plural(Math.max(2, Math.floor(days / 30.4)), 'month');
-  return plural(Math.floor(days / 365.25), 'year');
-}
-
 export function messageCount(count: number): string {
   return `${count.toLocaleString()} ${count === 1 ? 'message' : 'messages'}`;
 }

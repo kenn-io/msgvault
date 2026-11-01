@@ -366,7 +366,7 @@
     (patch) => commitNavigation(patch),
     result => {
       if (!result.ok && result.kind !== 'merge_required') announceOperation(result.message);
-      if (result.ok) void Promise.all([shellData.refreshDuplicates(), directoryController.refreshSelectedPerson(), relationshipsController.loadList(exploreState.predicate())]);
+      if (result.ok) void Promise.all([shellData.refreshDuplicates(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
     },
   );
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
@@ -518,13 +518,10 @@
     const active = exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates;
     const identityState = exploreState.current.identityState;
     untrack(() => {
-      void settleDuplicate();
+      void directoryReviewController.settleDecision();
       if (active) directoryReviewController.applyURLState({ reviewKind: 'identity', identityState }, historyRestoration);
     });
   });
-  async function settleDuplicate(): Promise<void> {
-    await directoryReviewController.settleDecision();
-  }
   $effect(() => {
     const mode = getThemeMode();
     if (mode === appearance.current.theme) return;
@@ -1506,7 +1503,7 @@
 {/if}
 <FlashBanner />
 {#if directoryReviewController.pending}
-  {#key directoryReviewController.pending.candidate.id}<UndoToast message={directoryReviewController.pending.decision === 'accept' ? 'Pair merged' : 'Pair kept separate'} onUndo={async () => { const id = directoryReviewController.pending?.candidate.id; directoryReviewController.undoDecision(); await tick(); document.getElementById(`duplicate-${id}`)?.focus(); }} onExpire={() => void settleDuplicate()} />{/key}
+  {#key directoryReviewController.pending.candidate.id}<UndoToast message={directoryReviewController.pending.decision === 'accept' ? 'Merge queued' : 'Keep separate queued'} onUndo={async () => { const id = directoryReviewController.pending?.candidate.id; directoryReviewController.undoDecision(); await tick(); document.getElementById(`duplicate-${id}`)?.focus(); }} onExpire={() => void directoryReviewController.settleDecision()} />{/key}
 {/if}
 {#if shellData.pending}
   {#key shellData.pending.id}<UndoToast message={`Deleted ${shellData.pending.name}`} onUndo={() => shellData.undoDelete()} onExpire={() => void flashViewError(shellData.expireDelete())} />{/key}

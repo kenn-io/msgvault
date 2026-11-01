@@ -46,7 +46,7 @@ function relationshipType(overrides: Record<string, unknown> = {}) {
 }
 
 function controllerWith(fetchFn: typeof fetch, personID = 7): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
-  const client = createAPIClient(fetchFn);
+  const client = createAPIClient((input, init) => pathOf(requestOf(input)) === '/api/v1/person-relationship-reviews' ? Promise.resolve(Response.json({ reviews: [] })) : fetchFn(input, init));
   return { client, controller: new DirectoryEntityController(client, personID) };
 }
 
@@ -125,7 +125,7 @@ describe('RelationshipsTab', () => {
 
     expect(screen.queryByRole('button', { name: 'Refresh relationships' })).toBeNull();
     void controller.refreshRelationships();
-    expect((await screen.findByRole('status')).textContent).toContain('Loading relationships');
+    expect((await screen.findByText('Loading relationships…')).textContent).toContain('Loading relationships');
     resolveFirst(Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 }));
 
     const alert = await screen.findByRole('alert');

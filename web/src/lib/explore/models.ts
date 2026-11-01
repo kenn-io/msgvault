@@ -159,7 +159,7 @@ export interface ExploreURLState {
   relationshipFiles: boolean;
   relationshipSaved: boolean;
   peopleDuplicates: boolean;
-  relationshipSort: 'closest' | 'recent' | 'name';
+  relationshipSort: 'closest' | 'recent' | 'name' | 'last_contact_asc';
   operationHistory: boolean;
   operationLane: '' | OperationLane;
   operationKind: '' | OperationKind;

@@ -511,7 +511,7 @@ function normalize(value: unknown): ExploreURLState {
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
     relationshipSaved: value.relationshipSaved === true || value.workspace === 'directory',
-    relationshipSort: value.relationshipSort === 'name' || value.relationshipSort === 'recent' ? value.relationshipSort : 'closest',
+    relationshipSort: value.workspace === 'directory' ? value.directorySort === 'last_contact_asc' ? 'last_contact_asc' : value.directorySort === 'last_contact_desc' ? 'recent' : 'name' : value.relationshipSort === 'name' || value.relationshipSort === 'recent' || value.relationshipSort === 'last_contact_asc' ? value.relationshipSort : 'closest',
     operationHistory: value.operationHistory === true || (value.operationHistory === undefined && value.workspace === 'operations' &&
       !!(operationRunID(value.operationRunID) || operationStatus || operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore)),
     operationLane,

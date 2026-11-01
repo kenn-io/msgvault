@@ -7,7 +7,8 @@
     type EndpointSummary,
     endpointKey,
   } from '../../people/duplicates.svelte';
-  import { basisLine, blockerLine, joinParts, messageCount, relativeDate } from '../../people/format';
+  import { formatRelativeTime } from '../../util/format';
+  import { basisLine, blockerLine, joinParts, messageCount } from '../../people/format';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import IdentityCandidateCard from '../directory/IdentityCandidateCard.svelte';
@@ -64,7 +65,7 @@
   </div>
 
   {#if controller.error}
-    <EmptyState title={controller.error}  />
+    <EmptyState title={controller.error} /><Button label="Retry" onclick={() => void controller.retryPage()} />
   {:else if controller.loading && controller.rows.length === 0}
     <p class="status" role="status">Loading…</p>
   {:else if controller.rows.filter(row => !controller.hidden.has(row.id)).length === 0}
@@ -83,7 +84,7 @@
                   <span class="name">{nameOf(id)}</span>
                   {#if summary && summary !== 'failed'}
                     <span class="detail">{summary.address}</span>
-                    <span class="detail" data-mono>{joinParts([relativeDate(summary.lastAt), messageCount(summary.count)])}</span>
+                    <span class="detail" data-mono>{joinParts([summary.lastAt ? formatRelativeTime(summary.lastAt) : '', messageCount(summary.count)])}</span>
                   {:else if !summary}
                     <span class="detail">Loading…</span>
                   {:else}<Button label="Retry person" size="sm" onclick={() => controller.retrySummary(id)} />
@@ -95,7 +96,7 @@
           <div class="footer">
             <span class="basis">
               {#if history}
-                {decidedLabel[candidate.state] ?? candidate.state} · {relativeDate(candidate.decided_at ?? candidate.updated_at)}
+                {decidedLabel[candidate.state] ?? candidate.state} · {formatRelativeTime(candidate.decided_at ?? candidate.updated_at)}
               {:else if conflicted(candidate)}
                 {basisLine(candidate)}. {blockerLine(candidate.blocker)}
               {:else}
@@ -118,16 +119,15 @@
           </div>
           {#if !history && controller.lastMerge?.candidateID === candidate.id}<p role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
           <details><summary>Evidence and notes</summary>
-            <IdentityCandidateCard {candidate} pending={true} onAccept={() => undefined} onReject={() => undefined} showActions={false} />
+            <IdentityCandidateCard {candidate} pending={controller.isDecisionPending(candidate.id)} onAccept={() => undefined} onReject={() => undefined} showActions={false} />
             {#if !history}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}
           </details>
         </li>
       {/each}
     </ul>
   {/if}
-  {#if controller.staleDecision}<p role="alert">Identity saved; the cache refresh failed.<Button label="Retry identity cache" onclick={() => void controller.retryCache()} /></p>{/if}
   {#if controller.decisionError}<p role="alert">{controller.decisionError}</p>{/if}
-  {#if controller.status}<p role="status">{controller.status}</p>{/if}
+  {#if controller.status && !controller.rows.some(row => row.id === controller.lastMerge?.candidateID)}<p role="status">{controller.status}</p>{/if}
   {#if controller.pageError}<p role="alert">{controller.pageError}<Button label="Retry page" onclick={() => void controller.retryPage()} /></p>{/if}
   <nav aria-label="Duplicate pages"><Button label="Previous" disabled={controller.loading || !controller.hasPreviousPage} onclick={() => void controller.loadPreviousPage()} /><span>Page {controller.offset / 10 + 1}</span><Button label="Next" disabled={controller.loading || !controller.hasNextPage} onclick={() => void controller.loadNextPage()} /></nav>
 </div>
@@ -208,7 +208,7 @@
     display: flex;
     align-items: center;
     gap: var(--control-gap);
-    padding-top: var(--divider-gap);
+    padding-top: var(--control-gap);
     border-top: 1px solid var(--border-muted);
   }
 
@@ -226,6 +226,8 @@
   }
 
   @media (max-width: 640px) {
+    .footer { flex-wrap: wrap; justify-content: flex-end; }
+    .basis { flex-basis: 100%; }
     .people {
       grid-template-columns: 1fr;
     }
