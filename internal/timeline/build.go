@@ -242,6 +242,15 @@ type readResult[T any] struct {
 func readWithin[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) readResult[T] {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if store.HasReadSnapshotContext(ctx) {
+		// Finish the reader before another task or snapshot release uses its
+		// transaction. Store operations honor this context's deadline.
+		value, err := fn(ctx)
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return readResult[T]{value, err}
+	}
 	done := make(chan readResult[T], 1)
 	go func() { value, err := fn(ctx); done <- readResult[T]{value, err} }()
 	select {
@@ -251,7 +260,13 @@ func readWithin[T any](ctx context.Context, timeout time.Duration, fn func(conte
 		return readResult[T]{err: ctx.Err()}
 	}
 }
-func parallel(tasks ...func()) {
+func parallel(ctx context.Context, tasks ...func()) {
+	if store.HasReadSnapshotContext(ctx) {
+		for _, task := range tasks {
+			task()
+		}
+		return
+	}
 	var wg sync.WaitGroup
 	for _, task := range tasks {
 		wg.Go(task)

@@ -324,3 +324,80 @@ func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal([]int64{note}, owner)
 }
+
+func TestSnapshotReadsPreserveScopedDayAndAnchor(t *testing.T) {
+	f := newTimelineFixture(t)
+	id := f.add(f.now.Add(-time.Hour), false)
+	f.calendar("hidden-calendar", singleDayEvent)
+	f.project()
+	for _, tc := range []struct {
+		name string
+		req  Request
+	}{
+		{"day", dayRequest()},
+		{"anchor", anchorRequest(fmt.Sprintf("msg:%d", id))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+			ctx, release, err := f.Store.BeginReadSnapshotContext(ctx)
+			requirements.NoError(err)
+			defer release()
+			req := tc.req
+			req.Scope.Owner = false
+			got, err := Build(ctx, f.src, req)
+			requirements.NoError(err)
+			for _, gap := range got.Gaps {
+				assertions.NotEqual("unavailable", gap.Code, gap.Section)
+				assertions.NotEqual("timeout", gap.Code, gap.Section)
+			}
+			if req.Around != "" {
+				requirements.NotNil(got.Anchor)
+				assertions.False(got.Anchor.Filtered)
+			} else {
+				entries := allDayEntries(got)
+				requirements.Len(entries, 1)
+				requirements.NotNil(entries[0].Burst)
+				assertions.Equal([]int64{id}, entries[0].Burst.LatestMessageIDs)
+			}
+		})
+	}
+}
+
+func TestSnapshotReadWaitsForCanceledReaderAndPreservesTimeout(t *testing.T) {
+	f := newTimelineFixture(t)
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+		want   error
+	}{
+		{"canceled", true, context.Canceled},
+		{"deadline", false, context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+			requirements.NoError(err)
+			defer release()
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			timeout := time.Duration(0)
+			if tc.cancel {
+				cancel()
+				timeout = time.Minute
+			}
+			type completion struct {
+				finished bool
+				queryErr error
+			}
+			got := readWithin(ctx, timeout, func(ctx context.Context) (completion, error) {
+				_, queryErr := f.Store.GetSourceByIDContext(ctx, f.Source.ID)
+				// A driver may report its own cancellation error during cleanup.
+				return completion{finished: true, queryErr: queryErr}, errors.New("driver canceled its read")
+			})
+			assertions.True(got.value.finished, "the reader must finish before releasing its snapshot")
+			requirements.ErrorIs(got.value.queryErr, tc.want)
+			requirements.ErrorIs(got.err, tc.want)
+		})
+	}
+}
