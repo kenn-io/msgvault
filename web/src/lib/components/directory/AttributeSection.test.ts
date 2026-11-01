@@ -155,5 +155,4 @@ describe('AttributeSection', () => {
     expect(row.textContent).toMatch(/Removed (Jul|Aug) \d{1,2}, 2026/);
     expect(row.textContent).not.toMatch(/Source:|Reference:|vcard_import|synthetic-source/);
   });
-
 });
