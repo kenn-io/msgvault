@@ -33,6 +33,7 @@ PUBLIC_MARKDOWN = {
     "configuration.md",
     "development.md",
     "faq.md",
+    "guides/agent-quickstart.md",
     "guides/agent-skills.md",
     "guides/daemon-migration.md",
     "guides/oauth-setup.md",
