@@ -125,7 +125,7 @@
       {#each controller.relationships as view (view.relationship.id)}
         <li>
           <div>
-            <strong>{view.counterpart_label} · {#if onOpenPerson}<button class="person-link" type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}</strong>
+            <strong>{#if onOpenPerson}<button class="person-link" type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if} · {view.counterpart_label}</strong>
             <small>{view.direction}{#if view.relationship.start_date} · from {dateText(view.relationship.start_date)}{/if}{#if view.relationship.end_date} · ended {dateText(view.relationship.end_date)}{/if}</small>
             {#if view.relationship.notes}<p>{view.relationship.notes}</p>{/if}
           </div>

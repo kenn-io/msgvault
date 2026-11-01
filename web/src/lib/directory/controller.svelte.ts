@@ -241,8 +241,9 @@ export class DirectoryController {
       if (!this.isCurrentPromotion(generation, controller)) return stalePromotionResult();
       if (response.data && (response.response.status === 200 || response.response.status === 201)) {
         const personID = response.data.id;
-        await Promise.all([this.selectPerson(personID), this.loadFirstPage()]);
+        await this.loadFirstPage();
         if (!this.isCurrentPromotion(generation, controller)) return stalePromotionResult();
+        this.commit({ directoryPersonID: personID }, 'push');
         const result = { ok: true, personID } satisfies DirectoryPromotionResult;
         this.promotionResult = result;
         return result;

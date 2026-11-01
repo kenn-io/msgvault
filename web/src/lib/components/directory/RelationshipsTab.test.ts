@@ -68,9 +68,9 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
-    expect(screen.getByText('mentors · Synthetic Learner')).toBeDefined();
-    expect(screen.getByText('is mentored by · Synthetic Guide')).toBeDefined();
-    expect(screen.getByText('works with · Synthetic Peer')).toBeDefined();
+    expect(screen.getByText('Synthetic Learner · mentors')).toBeDefined();
+    expect(screen.getByText('Synthetic Guide · is mentored by')).toBeDefined();
+    expect(screen.getByText('Synthetic Peer · works with')).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
@@ -194,7 +194,7 @@ describe('RelationshipsTab', () => {
         notes: 'Synthetic note'
       });
       expect((await post.clone().json()).source).toBeUndefined();
-      expect(screen.getByText('is mentored by · Synthetic Counterpart')).toBeDefined();
+      expect(screen.getByText('Synthetic Counterpart · is mentored by')).toBeDefined();
     } finally {
       vi.useRealTimers();
     }
@@ -276,7 +276,7 @@ describe('RelationshipsTab', () => {
       target_person_id: 9,
       relationship_type_slug: 'mentor'
     });
-    expect(screen.getByText('mentors · Synthetic Colleague')).toBeDefined();
+    expect(screen.getByText('Synthetic Colleague · mentors')).toBeDefined();
   });
 
   it('retains an edge draft on conflict and uses the fresh individual ETag without auto-retry', async () => {
