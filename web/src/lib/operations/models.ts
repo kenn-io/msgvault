@@ -24,7 +24,14 @@ export type OperationStatusResponse = GeneratedOperationStatusResponse;
 export type OperationState = GeneratedOperationState;
 export type OperationUnavailableKind = GeneratedOperationUnavailableKind;
 
-export type OperationsURLState = Pick<ExploreURLState, 'operationLane' | 'operationKind' | 'operationState' | 'operationStartedFrom' | 'operationStartedBefore' | 'operationRunID' | 'operationStatus'>;
+export type OperationsURLState = Pick<ExploreURLState,
+  | 'operationLane'
+  | 'operationKind'
+  | 'operationState'
+  | 'operationStartedFrom'
+  | 'operationStartedBefore'
+  | 'operationRunID'
+  | 'operationStatus'>;
 
 export interface OperationStatusLane {
   readonly lane: OperationLane;
