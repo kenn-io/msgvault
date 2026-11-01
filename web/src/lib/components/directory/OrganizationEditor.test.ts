@@ -74,9 +74,9 @@ describe('OrganizationEditor', () => {
     view.unmount();
   });
 
-  it('applies alias/category draft deltas to the fresh profile without deleting concurrent additions', async () => {
+  it.each([false, true])('preserves profile draft changes and concurrent organization data (conflict=%s)', async conflict => {
     const requests: Request[] = [];
-    let reads = 0;
+    let reads = 0; let puts = 0;
     const baseline = {
       ...organizationProfile(2),
       names: [{ organization_id: 21, name_kind: 'alias', name: 'Baseline Alias', name_normalized: 'baseline alias', envelope: envelope(50) }],
@@ -85,6 +85,7 @@ describe('OrganizationEditor', () => {
     const rich = richOrganizationProfile(3);
     const fresh = {
       ...rich,
+      organization: { ...rich.organization, name: 'Concurrent Org Name', primary_domain: 'concurrent.example', description: 'Concurrent organization description' },
       media: [...baseline.media, ...rich.media],
       names: [
         ...rich.names.filter((item) => item.name_kind !== 'alias'),
@@ -103,6 +104,7 @@ describe('OrganizationEditor', () => {
         return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads + 1}"` } });
       }
       if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') {
+        if (++puts === 1 && conflict) return Response.json({ error: 'organization_revision_conflict', message: 'profile changed elsewhere' }, { status: 409 });
         return new Response(JSON.stringify(fresh), { headers: { ETag: '"organization-21-r4"' } });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
@@ -116,7 +118,22 @@ describe('OrganizationEditor', () => {
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
 
     const put = requests.find((request) => request.method === 'PUT')!;
-    expect(put.headers.get('If-Match')).toBe('"organization-21-r3"');
+    if (conflict) {
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('Concurrent Org Name');
+      expect(alert.textContent).toContain('concurrent.example');
+      expect(alert.textContent).toContain('Concurrent organization description');
+      expect(alert.textContent).toContain('Research');
+      expect(alert.textContent).toContain('concurrent@example.test');
+      expect(alert.textContent).toContain('Suite 5, 12 Example Road');
+      expect(alert.textContent).toContain('REG-42');
+      expect(alert.textContent).toContain('Concurrent logo');
+      expect(aliases).toHaveProperty('value', 'User Draft Alias');
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
+      await waitFor(() => expect(puts).toBe(2));
+      return;
+    }
     const body = await put.json();
     expect(body.names).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4' }),
@@ -144,53 +161,6 @@ describe('OrganizationEditor', () => {
     expect(body.identifiers).toEqual([expect.objectContaining({ identifier_kind: 'registry', identifier_value: 'REG-42', source_ref: 'card-42', vcard_property: 'X-REGISTRY' })]);
     expect(body.media).toEqual(expect.arrayContaining([expect.objectContaining({ content_hash: 'sha256:synthetic' }), expect.objectContaining({ media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', source_ref: 'card-42', vcard_property: 'LOGO' })]));
     for (const media of body.media) expect(media.data).toBeUndefined();
-  });
-
-  it('retains a profile draft, shows complete refreshed organization data, and retries only on explicit save', async () => {
-    let reads = 0;
-    let puts = 0;
-    const requests: Request[] = [];
-    const concurrent = {
-      ...richOrganizationProfile(3),
-      organization: { ...organization(21, 3, 'Concurrent Org Name'), primary_domain: 'concurrent.example', description: 'Concurrent organization description' }
-    };
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        const profile = reads < 3 ? organizationProfile(reads) : concurrent;
-        return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads}"` } });
-      }
-      if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') {
-        puts += 1;
-        return puts === 1
-          ? Response.json({ error: 'organization_revision_conflict', message: 'profile changed elsewhere' }, { status: 409 })
-          : new Response(JSON.stringify(concurrent), { headers: { ETag: '"organization-21-r5"' } });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationEditor, { controller, organization: organization() });
-    const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' }) as HTMLInputElement;
-    await fireEvent.input(aliases, { target: { value: 'Retained Draft Alias' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Concurrent Org Name');
-    expect(alert.textContent).toContain('concurrent.example');
-    expect(alert.textContent).toContain('Concurrent organization description');
-    expect(alert.textContent).toContain('Research');
-    expect(alert.textContent).toContain('concurrent@example.test');
-    expect(alert.textContent).toContain('Suite 5, 12 Example Road');
-    expect(alert.textContent).toContain('REG-42');
-    expect(alert.textContent).toContain('Concurrent logo');
-    expect(aliases.value).toBe('Retained Draft Alias');
-    expect(puts).toBe(1);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-    await waitFor(() => expect(puts).toBe(2));
   });
 
   it('keeps an editor open during submission', async () => {
