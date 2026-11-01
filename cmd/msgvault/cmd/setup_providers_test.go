@@ -1785,6 +1785,7 @@ func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
 		{name: "different model", endpoint: "http://127.0.0.1:11434/v1", model: "other-model", wantRecovery: true},
 		{name: "custom provider with disabled document vectors", endpoint: "https://embeddings.example.com/v1", model: "other-model", vectorsDisabled: true, wantRecovery: true},
 		{name: "custom provider with disabled document vectors and stopped daemon", endpoint: "https://embeddings.example.com/v1", model: "other-model", vectorsDisabled: true, daemonStopped: true, wantRecovery: true},
+		{name: "custom provider with disabled document vectors and building generation", endpoint: "https://embeddings.example.com/v1", model: "other-model", vectorsDisabled: true, daemonStopped: true, building: true, wantRecovery: true},
 		{name: "same local identity", local: true},
 		{name: "configured local identity", endpoint: "http://local-embeddings.invalid/v1"},
 		{name: "failed switch", endpoint: "http://127.0.0.1:11434/v1", fail: true},
@@ -1824,6 +1825,8 @@ enabled = %t
 				_, profile, err := documentProfileForConfig(&documents, commandCapabilityManifest(t, documents.MaxPagesPerDocument))
 				require.NoError(err)
 				loaded := fixture.load(t)
+				// The unfinished generation predates disabling document vectors.
+				loaded.Attachments.Documents.Index.Embeddings.Enabled = true
 				_, err = fixture.store.EnsureDocumentExtractionProfile(t.Context(), profile)
 				require.NoError(err)
 				_, err = fixture.store.DB().Exec(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`, profile.ID)

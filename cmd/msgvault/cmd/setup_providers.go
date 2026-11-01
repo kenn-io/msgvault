@@ -774,6 +774,8 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 			"msgvault documents vectors consent --yes",
 			"msgvault documents vectors consent --purpose queries --yes",
 			"msgvault daemon restart",
+			"msgvault documents vectors status --json",
+			"If status.building exists and its fingerprint differs from status.configured_spec.fingerprint, run msgvault documents vectors retire --generation-id <status.building.id> --yes",
 			"Repeat msgvault documents vectors build until its JSON output reports converged=true",
 		}
 	}
