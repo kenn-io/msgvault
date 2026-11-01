@@ -221,14 +221,14 @@ it('refreshes jobs on the timer and deletions on explicit refresh', async () => 
   } finally { data.stop(); vi.useRealTimers(); }
 });
 
-it('counts one waiting page and retains its badge after an offline read', async () => {
+it('counts waiting matches and retains its badge after an offline read', async () => {
   const count = 4;
   const queries: string[] = [];
   const data = new ShellData(createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     queries.push(new URL(request.url).search);
     if (queries.length > 1) return Response.json({ error: 'unavailable' }, { status: 503 });
-    return Response.json({ candidates: Array.from({ length: count }, (_, id) => ({ ...pair, id })) });
+    return Response.json({ candidates: Array.from({ length: count }, (_, id) => ({ ...pair, id: id + 1 })) });
   }));
   try {
     await data.refreshDuplicates();

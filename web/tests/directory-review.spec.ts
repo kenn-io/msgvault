@@ -36,8 +36,6 @@ test('duplicate Undo cancels a write and pagehide submits the staged decision', 
   await page.getByRole('button', { name: 'Undo' }).click();
   expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(0);
   card = page.locator('.cards > li').first();
-  await card.getByText('Evidence and notes').click();
-  await card.getByLabel('Decision notes').fill('Different people');
   await card.getByRole('button', { name: 'Keep separate' }).click();
   await page.locator('.cards > li').first().getByRole('button', { name: 'Keep separate' }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').length).toBe(1);

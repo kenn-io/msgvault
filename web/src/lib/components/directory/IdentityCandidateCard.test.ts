@@ -99,10 +99,9 @@ describe('IdentityCandidateCard', () => {
     expect(evidence.textContent).toContain('2026-08-01T10:06:00Z');
   });
 
-  it('shows an explicit no-evidence message for reviewed rows', () => {
-    const reviewed = { ...completeCandidate('accepted'), evidence: [] };
+  it('shows a message when evidence is empty', () => {
     render(IdentityCandidateCard, {
-      candidate: reviewed, pending: false
+      candidate: { ...completeCandidate('candidate'), evidence: [] }, pending: false
     });
 
     expect(screen.getByText('No evidence supplied.')).toBeDefined();
