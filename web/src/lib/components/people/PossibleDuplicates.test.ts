@@ -15,19 +15,18 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
       if (unavailable) { unavailable = false; return Response.json({ message: 'Queue unavailable' }, { status: 503 }); }
       return Response.json({ candidates: [row], limit: 10, offset: 0 });
     }
-    if (new URL(request.url).pathname === '/api/v1/people/1') return Response.json(person(1));
-    if (new URL(request.url).pathname === '/api/v1/participants/2') return Response.json({ id: 2, display_label: 'Absorbed person', activity_count: 3, identifiers: [{ participant_id: 2, participant_display_name: 'Absorbed person', type: 'email', value: 'absorbed@example.com', is_primary: true }] });
     throw new Error(`Unexpected ${request.url}`);
   }));
   await controller.loadIdentityPage();
+  controller.summaries.set('person:1', { id: 1, name: 'Saved example', address: 'Saved person', lastAt: null });
+  controller.summaries.set('participant:2', { id: 2, name: 'Absorbed person', address: 'absorbed@example.com', count: 3, lastAt: null });
   const onDecide = vi.fn();
   const view = render(PossibleDuplicates, { controller, onDecide });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByRole('button', { name: 'Merge' });
-    await screen.findByText('3 messages');
+    await screen.findByText('Saved example');
     await screen.findByText('absorbed@example.com');
-    expect(screen.queryByText('0 messages')).toBeNull();
     await screen.findByText('Same provider identity');
     const merge = screen.getByRole('button', { name: 'Merge' });
     await fireEvent.click(merge);

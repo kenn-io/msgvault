@@ -503,7 +503,7 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each([false, true])('keeps the split receipt visible after source binding changes: saved=%s', async savedEntry => {
+it.each([false, true])('refreshes duplicates and keeps the split receipt after source binding changes: saved=%s', async savedEntry => {
   let split = false;
   const saved = () => profile(7, split ? 5 : 4, split ? [] : [1]);
   const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 3, absorbed_revision_before: 2, survivor_revision_after: 4, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };

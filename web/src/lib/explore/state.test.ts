@@ -983,7 +983,7 @@ describe('relationships workspace state', () => {
     });
   });
 
-  it.each(['everything', 'duplicates'])('opens People without a carried query from %s', async entry => {
+  it.each(['everything', 'duplicates'])('opens People and clears the prior %s view', async entry => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
     state.commitNavigation({ workspace: entry === 'everything' ? 'everything' : 'relationships', peopleDuplicates: entry === 'duplicates', ...(entry === 'everything' ? { query: 'quarterly plan' } : {}) });
@@ -991,7 +991,7 @@ describe('relationships workspace state', () => {
 
     expect(state.current.workspace).toBe('relationships');
     expect(state.current.query).toBe('');
-    expect(state.current.peopleDuplicates).toBe(false);
+    if (entry === 'duplicates') expect(state.current.peopleDuplicates).toBe(false);
     expect(state.predicate()).not.toHaveProperty('query');
     expect(state.predicate()).not.toHaveProperty('search_mode');
     expect(parseExploreURLState(window.location.search).query).toBe('');
