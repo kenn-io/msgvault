@@ -334,19 +334,13 @@ export class DirectoryController {
     });
   }
   async loadSelection(personID: number | null, shouldCommit = false): Promise<void> {
-    this.detailAbort?.abort();
-    ++this.detailGeneration;
     if (personID === null) {
-      this.profile?.destroy();
-      this.profile = null;
-      this.entity?.destroy();
-      this.entity = null;
-      this.selectedPersonID = null;
-      this.detail = null;
-      this.detailLoading = false;
+      this.resetForPromotion();
       if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
       return;
     }
+    this.detailAbort?.abort();
+    ++this.detailGeneration;
     const controller = new AbortController();
     this.profile?.destroy();
     this.profile = null;
