@@ -76,7 +76,7 @@
 </script>
 
 {#snippet files()}
-  <div class="files"><FilesWorkspace {onConfigureVisualSearch} {client} embedded showHeader={false} predicate={context} identityScope={durablePersonID === null ? scope : { kind: 'durable-person', id: durablePersonID }} {sort} {filenameQuery} {mimeFamilies}
+  <div class="files"><FilesWorkspace {onConfigureVisualSearch} {client} embedded showHeader={false} predicate={context} identityScope={profileID === null ? scope : { kind: 'durable-person', id: profileID }} {sort} {filenameQuery} {mimeFamilies}
     personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
     onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
     onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}

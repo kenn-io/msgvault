@@ -243,9 +243,9 @@
     {/key}
   {/snippet}
   {#each rows as row, index (row.id)}
-    <!-- An edited value's row gives way to its editor in place. If Reload replaces or removes the row, the editor moves below the list. -->
+    <!-- An edited value's row gives way to the editor below the list, which outlives the row when Reload replaces or removes it. -->
     {#if editingRow(row)}
-      {@render editor()}
+      {#if row.kind === 'add'}{@render editor()}{/if}
     {:else if row.kind === 'add'}
       <!-- kit-ui-check-ignore: an add row in the field list, styled like a contact card's add rows. -->
       <button type="button" class="add-row" disabled={!controller.canWriteProfile} onclick={() => startAdd(row.target, row.id)}>
@@ -288,7 +288,7 @@
     {/if}
   {/each}
 
-  {#if (editing?.current && !rows.some((row) => row.kind !== 'add' && editingRow(row))) || (editing && addingAt === 'more')}{@render editor()}{/if}
+  {#if editing?.current || (editing && addingAt === 'more')}{@render editor()}{/if}
   {@render summary?.()}
 
   <div class="add">

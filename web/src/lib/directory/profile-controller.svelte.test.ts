@@ -64,6 +64,7 @@ describe('DirectoryProfileController', () => {
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"profile-7-r4"' } });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       if (pathOf(request) === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
+      if (pathOf(request) === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: '2026-08-20T00:00:00Z', stale: false });
       throw new Error(`unexpected ${request.url}`);
     });
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
@@ -77,7 +78,7 @@ describe('DirectoryProfileController', () => {
     expect(requests(fetchFn)).toHaveLength(1);
 
     await controller.reload();
-    expect(requests(fetchFn)).toHaveLength(5);
+    expect(requests(fetchFn)).toHaveLength(6);
     expect(controller.draft).toBeNull();
     expect(controller.conflict).toBeNull();
     expect(controller.structuredProfileETag).toBe('"profile-7-r4"');
