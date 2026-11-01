@@ -33,7 +33,7 @@ import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
-import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../relationships/reader-history';
+import { relationshipHistoryState } from '../relationships/reader-history';
 import {
   normalizeSettingsNavigationAuthority,
   settingsNavigationTarget,
@@ -1009,8 +1009,7 @@ export class ExploreState {
   }
 
   private relationshipReaderHistoryState(state: ExploreURLState): Record<string, unknown> | null {
-    const snapshot = relationshipReaderHistory(this.browser.history.state, state.workspace, state.relationshipTarget);
-    return snapshot ? { [RELATIONSHIP_READER_HISTORY_KEY]: snapshot } : null;
+    return relationshipHistoryState(this.browser.history.state, state.workspace, state.relationshipTarget);
   }
 
   private operationHistoryDepth(): number {

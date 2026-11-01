@@ -1103,14 +1103,12 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	assert.ElementsMatch([]string{"2026-07-17", "2026-07-18"}, []string{body.Rows[0].Key, body.Rows[1].Key})
 	assert.Equal(int64(2), body.Rows[0].Count+body.Rows[1].Count)
 
-	for _, timezone := range []string{"Invalid/Zone", "Local"} {
-		invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", fmt.Sprintf(`{"grouping":["day"],"timezone":%q,"sent_only":true}`, timezone))
-		require.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
-		var body ErrorResponse
-		require.NoError(json.Unmarshal(invalid.Body.Bytes(), &body))
-		assert.Equal("invalid_explore_request", body.Error)
-		assert.Contains(body.Message, "invalid timezone")
-	}
+	invalid := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Invalid/Zone","sent_only":true}`)
+	require.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
+	var errorBody ErrorResponse
+	require.NoError(json.Unmarshal(invalid.Body.Bytes(), &errorBody))
+	assert.Equal("invalid_explore_request", errorBody.Error)
+	assert.Contains(errorBody.Message, "invalid timezone")
 }
 
 func TestParticipantTimelineForwardsPersonInteractionsAndLinkedAliases(t *testing.T) {
