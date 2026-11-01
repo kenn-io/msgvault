@@ -21,14 +21,15 @@ const (
 	syncItemKindMessageGone     = "message_gone"
 	syncItemKindIngestError     = "ingest_error"
 	syncItemKindDeleteError     = "delete_error"
+	syncItemKindAcquired        = "acquired"
 )
 
-// isFetchReplayCandidate reports whether a durable run item names a raw fetch
-// that never reached the archive and still carries a usable Gmail ID.
-func isFetchReplayCandidate(item store.SyncRunItem) bool {
-	return item.Status == store.SyncRunItemStatusError &&
-		item.Phase == syncItemPhaseFetch &&
-		(item.ErrorKind == syncItemKindFetchError || item.ErrorKind == syncItemKindBatchFetchError) &&
+// isAcquisitionReplayCandidate reports whether a failed fetch or ingest names
+// a usable Gmail message ID.
+func isAcquisitionReplayCandidate(item store.SyncRunItem) bool {
+	return ((item.Phase == syncItemPhaseFetch &&
+		(item.ErrorKind == syncItemKindFetchError || item.ErrorKind == syncItemKindBatchFetchError)) ||
+		(item.Phase == syncItemPhaseIngest && item.ErrorKind == syncItemKindIngestError)) &&
 		item.SourceMessageID != "" && item.SourceMessageID != "(unknown)"
 }
 
@@ -115,51 +116,66 @@ func (s *Syncer) getMessagesRawBatchWithIdentityValidation(
 	return results, nil
 }
 
-// pendingFetchReplayIDs returns the raw-fetch failures the latest completed
-// incremental run left behind. Only that one run is eligible: a filtered or
-// limited full run never establishes complete Gmail coverage, and a failed or
-// interrupted run stays with normal checkpoint and history recovery. Reading it
-// before a new run starts keeps a ledger error outside the new run and leaves
-// the prior completed run visible.
-//
-// Older versions did not persist the run type. Completed legacy Gmail runs
-// cannot reliably be distinguished from full syncs, so untyped runs are excluded
-// rather than classified as incremental from their cursors or message counts.
-func (s *Syncer) pendingFetchReplayIDs(sourceID int64) ([]string, error) {
-	run, err := s.store.GetLastSuccessfulSyncByType(sourceID, "incremental")
-	if errors.Is(err, store.ErrSyncRunNotFound) {
-		return nil, nil
-	}
+// pendingAcquisitionReplayIDs returns the Gmail messages whose latest fetch or
+// ingest outcome since the latest completed incremental run is an error.
+func (s *Syncer) pendingAcquisitionReplayIDs(ctx context.Context, sourceID int64) ([]string, error) {
+	items, err := s.store.ListUnresolvedSyncItemErrors(ctx, sourceID)
 	if err != nil {
-		return nil, fmt.Errorf("get latest completed incremental sync: %w", err)
+		return nil, fmt.Errorf("list unresolved acquisition errors: %w", err)
 	}
 
-	count, err := s.store.CountSyncRunItems(run.ID, store.SyncRunItemStatusError)
-	if err != nil {
-		return nil, fmt.Errorf("count sync %d errors: %w", run.ID, err)
-	}
-	if count == 0 {
-		return nil, nil
-	}
-	items, err := s.store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, int(count))
-	if err != nil {
-		return nil, fmt.Errorf("list sync %d errors: %w", run.ID, err)
-	}
-
-	seen := make(map[string]struct{}, len(items))
 	ids := make([]string, 0, len(items))
 	for _, item := range items {
-		if !isFetchReplayCandidate(item) {
+		if !isAcquisitionReplayCandidate(item) {
 			continue
 		}
-		if _, ok := seen[item.SourceMessageID]; ok {
-			continue
-		}
-		seen[item.SourceMessageID] = struct{}{}
 		ids = append(ids, item.SourceMessageID)
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+// initAcquisitionReplay snapshots earlier failures for this run.
+func (s *Syncer) initAcquisitionReplay(ctx context.Context, sourceID, syncID int64) error {
+	ids, err := s.pendingAcquisitionReplayIDs(ctx, sourceID)
+	if err != nil {
+		return err
+	}
+	s.setAcquisitionReplay(syncID, ids)
+	return nil
+}
+
+func (s *Syncer) setAcquisitionReplay(syncID int64, ids []string) {
+	s.acquisitionSyncID = syncID
+	s.acquisitionRecordErr = nil
+	s.pendingAcquisitions = make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		s.pendingAcquisitions[id] = struct{}{}
+	}
+}
+
+func (s *Syncer) acquisitionResolution(messageID string) *store.SyncRunItem {
+	if _, pending := s.pendingAcquisitions[messageID]; !pending {
+		return nil
+	}
+	return &store.SyncRunItem{
+		SyncRunID:       s.acquisitionSyncID,
+		SourceMessageID: messageID,
+		Phase:           syncItemPhaseFetch,
+		Status:          store.SyncRunItemStatusResolved,
+		ErrorKind:       syncItemKindAcquired,
+		ErrorMessage:    syncItemKindAcquired,
+	}
+}
+
+func (s *Syncer) resolveAcquisition(messageID string) error {
+	if item := s.acquisitionResolution(messageID); item != nil {
+		if err := s.store.RecordSyncRunItem(*item); err != nil {
+			return fmt.Errorf("resolve acquisition %q: %w", messageID, err)
+		}
+		delete(s.pendingAcquisitions, messageID)
+	}
+	return nil
 }
 
 func isGmailNotFound(err error) bool {
@@ -191,6 +207,11 @@ func syncItemErrorMessage(err error, fallback string) string {
 }
 
 func (s *Syncer) recordSyncItem(syncID int64, sourceMessageID, phase, status, kind string, err error) {
+	retryable := s.pendingAcquisitions != nil && syncID == s.acquisitionSyncID && status == store.SyncRunItemStatusError &&
+		isAcquisitionReplayCandidate(store.SyncRunItem{SourceMessageID: sourceMessageID, Phase: phase, ErrorKind: kind})
+	if retryable {
+		s.pendingAcquisitions[sourceMessageID] = struct{}{}
+	}
 	if sourceMessageID == "" {
 		sourceMessageID = "(unknown)"
 	}
@@ -203,6 +224,9 @@ func (s *Syncer) recordSyncItem(syncID int64, sourceMessageID, phase, status, ki
 		ErrorKind:       kind,
 		ErrorMessage:    errMsg,
 	}); recErr != nil {
+		if retryable && s.acquisitionRecordErr == nil {
+			s.acquisitionRecordErr = fmt.Errorf("record retry for Gmail message %q: %w", sourceMessageID, recErr)
+		}
 		s.logger.Warn("failed to record sync item",
 			"sync_id", syncID,
 			"source_message_id", sourceMessageID,

@@ -776,6 +776,11 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
+			if err := s.settlePurgedAcquisitionDebt(ctx, tx,
+				"m.delete_batch_id = ? AND m.deleted_at IS NOT NULL", batchID,
+			); err != nil {
+				return fmt.Errorf("settle dedup batch %q: %w", batchID, err)
+			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -795,6 +800,41 @@ func (s *Store) DeleteDedupedBatchesContext(
 		return 0, err
 	}
 	return deleted, nil
+}
+
+// settlePurgedAcquisitionDebt resolves the outstanding sync acquisition
+// failures of messages a dedup purge is about to delete. Without it, the next
+// Gmail incremental sync would see the purged message as never archived and
+// download it again. messageFilter selects the purged rows through alias m.
+func (s *Store) settlePurgedAcquisitionDebt(
+	ctx context.Context, tx *loggedTx, messageFilter string, args ...any,
+) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO sync_run_items (
+			sync_run_id, source_message_id, phase, status,
+			error_kind, error_message, created_at
+		)
+		SELECT i.sync_run_id, i.source_message_id, 'fetch', '%s',
+		       'purged', 'purged', %s
+		FROM sync_run_items i
+		WHERE i.status = '%s' AND i.id IN (
+			SELECT MAX(j.id)
+			FROM sync_run_items j
+			JOIN sync_runs r ON r.id = j.sync_run_id
+			WHERE j.phase IN ('fetch', 'ingest') AND EXISTS (
+				SELECT 1 FROM messages m
+				WHERE m.source_id = r.source_id
+				  AND m.source_message_id = j.source_message_id
+				  AND %s
+			)
+			GROUP BY r.source_id, j.source_message_id
+		)
+	`, SyncRunItemStatusResolved, s.dialect.Now(), SyncRunItemStatusError, messageFilter),
+		args...,
+	); err != nil {
+		return fmt.Errorf("settle purged acquisition debt: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountDedupedBatches(batchIDs []string) ([]DedupedBatchCount, int64, error) {
@@ -885,6 +925,11 @@ func (s *Store) DeleteAllDedupedContext(
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
 
+		if err := s.settlePurgedAcquisitionDebt(ctx, tx,
+			"m.deleted_at IS NOT NULL AND m.delete_batch_id IS NOT NULL",
+		); err != nil {
+			return fmt.Errorf("delete all dedup-hidden: %w", err)
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM messages
 			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
