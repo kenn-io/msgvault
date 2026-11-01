@@ -1,12 +1,11 @@
 <script lang="ts">
   import { Button } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import type { OperationStatusLane } from '../../operations/models';
-  import { OPERATION_SETUP } from '../../operations/labels';
+  import { getSettingsPeopleInference } from '../../api/generated/api/api';
   import { formatContactDate } from '../../directory/labels';
-  import { PendingUndo } from '../../people/pending-undo.svelte';
   import PersonFields from './PersonFields.svelte';
   import PersonFacts from './PersonFacts.svelte';
   import OrganizationEmploymentTab from '../directory/OrganizationEmploymentTab.svelte';
@@ -14,20 +13,29 @@
   import PersonNetwork from '../directory/PersonNetwork.svelte';
   import PersonAgenda from '../directory/PersonAgenda.svelte';
   import PersonBriefCard from '../directory/PersonBriefCard.svelte';
-  import UndoToast from '../common/UndoToast.svelte';
   let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, operationLanes = [] }:
     { client: APIClient; directory: DirectoryController; personID: number; onOpenPerson?: (id: number) => void;
       onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void; operationLanes?: readonly OperationStatusLane[] } = $props();
-  const pending = new PendingUndo();
   let organizationRequest = $state<{ id: number; key: number }>();
   let requestKey = 0;
   const profile = $derived(directory.selectedPersonID === personID ? directory.profile : null);
   const entity = $derived(directory.selectedPersonID === personID ? directory.entity : null);
   const bundle = $derived(directory.selectedPersonID === personID ? directory.detail : null);
-  const factsOff = $derived(operationLanes.flatMap((lane) => lane.kinds).find((kind) => kind.kind === 'person_sweep')?.configured === false);
-  const setup = OPERATION_SETUP.person_sweep;
+  let providerEnabled = $state<boolean>();
+  let providerError = $state('');
+  let providerReload = $state(0);
+  $effect(() => {
+    void providerReload;
+    const abort = new AbortController();
+    providerError = '';
+    void getSettingsPeopleInference({ ...client, signal: abort.signal }).then(({ data, error }) => {
+      if (abort.signal.aborted) return;
+      if (data && typeof data.running_enabled === 'boolean') providerEnabled = data.running_enabled;
+      else providerError = error?.message ?? 'Could not load facts and briefs setup.';
+    }).catch((cause) => { if (!abort.signal.aborted) providerError = cause instanceof Error ? cause.message : 'Could not load facts and briefs setup.'; });
+    return () => abort.abort();
+  });
   $effect(() => { const owner = profile; if (owner) untrack(() => void owner.reloadDefinitions()); });
-  onDestroy(() => { void pending.flush(); });
 </script>
 
 <div class="details">
@@ -38,7 +46,7 @@
     {/each}
   {/if}
   {#if profile}
-    <PersonFields controller={profile} {pending} overdue={bundle?.contactState?.cadence_status === 'overdue'} />
+    <PersonFields controller={profile} overdue={bundle?.contactState?.cadence_status === 'overdue'} />
     {#if bundle?.contactState}
       <p class="activity">{bundle.contactState.interaction_count} interactions{#if bundle.contactState.last_contact_at} · last contact {formatContactDate(bundle.contactState.last_contact_at)}{/if}</p>
     {/if}
@@ -48,13 +56,11 @@
       <PersonNetwork controller={entity} {onOpenPerson} onOpenOrganization={(id) => organizationRequest = { id, key: ++requestKey }} />
     {/if}
     <PersonAgenda {client} {personID} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
-    <PersonFacts {client} {personID} onSetUp={factsOff && setup?.kind === 'settings' ? () => onOpenSettings?.(setup.target.settingsCategory) : undefined} />
-    <PersonBriefCard {client} {personID} {onAnnounce} onSetUp={factsOff ? () => onOpenSettings?.('enrichment') : undefined} />
+    {#if providerError}<p role="alert">{providerError}<Button label="Retry setup" onclick={() => providerReload += 1} /></p>{/if}
+    <PersonFacts {client} {personID} onSetUp={providerEnabled === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    <PersonBriefCard {client} {personID} {onAnnounce} onSetUp={providerEnabled === false ? () => onOpenSettings?.('enrichment') : undefined} />
   {/if}
 </div>
-{#if pending.current}
-  {#key pending.current.id}<UndoToast message={pending.current.message} onUndo={() => pending.undo()} onExpire={() => void pending.flush()} />{/key}
-{/if}
 <style>
   .details { display: flex; max-width: 720px; min-width: 0; flex-direction: column; gap: var(--section-gap); }
   .activity { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }

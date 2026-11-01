@@ -37,6 +37,8 @@
     controller: DirectoryProfileController;
     section: StructuredProfileSectionName;
     current?: StructuredProfileRecord;
+    contactKind?: string;
+    nameKind?: string;
     onDone?: () => void;
     onCancel?: () => void;
   }
@@ -45,6 +47,8 @@
     controller,
     section,
     current = undefined,
+    contactKind: presetContactKind,
+    nameKind: presetNameKind,
     onDone = () => undefined,
     onCancel = () => undefined,
   }: Props = $props();
@@ -60,11 +64,11 @@
   const currentDate = initialCurrent as GeneratedPersonDate | undefined;
   const currentMedia = initialCurrent as GeneratedPersonMedia | undefined;
 
-  let nameKind = $state(currentName?.name_kind ?? 'formatted');
+  let nameKind = $state(currentName?.name_kind ?? untrack(() => presetNameKind) ?? 'formatted');
   let formattedName = $state(currentName?.formatted ?? initialCurrent?.original_value ?? '');
   let givenName = $state(currentName?.given_name ?? '');
   let familyName = $state(currentName?.family_name ?? '');
-  let contactKind = $state(currentContact?.address_kind ?? 'email');
+  let contactKind = $state(currentContact?.address_kind ?? untrack(() => presetContactKind) ?? 'email');
   let contactValue = $state(initialSection === 'contact_points' ? (initialCurrent?.original_value ?? '') : '');
   let serviceSlug = $state(currentContact?.service_slug ?? '');
   let scopeKind = $state(currentContact?.scope_kind ?? '');
@@ -184,7 +188,7 @@
   function patch(): PersonProfilePatchRequest {
     switch (section) {
       case 'names': {
-        const formatted = formattedName.trim();
+        const formatted = nameKind === 'phonetic' ? [givenName.trim(), familyName.trim()].filter(Boolean).join(' ') : formattedName.trim();
         return {
           names: {
             add: [
@@ -357,7 +361,7 @@
           ><option value="phonetic">Phonetic</option><option value="sort">Sort</option>
         </select>
       </label>
-      <label
+      {#if nameKind !== 'phonetic'}<label
         >Formatted name<TextInput
           bind:value={formattedName}
           ariaLabel="Formatted name"
@@ -366,8 +370,9 @@
           disabled={submitting}
         /></label
       >
-      <label>Given name<TextInput bind:value={givenName} ariaLabel="Given name" block disabled={submitting} /></label>
-      <label>Family name<TextInput bind:value={familyName} ariaLabel="Family name" block disabled={submitting} /></label
+      {/if}
+      <label>{nameKind === 'phonetic' ? 'First name, said as' : 'Given name'}<TextInput bind:value={givenName} ariaLabel={nameKind === 'phonetic' ? 'First name, said as' : 'Given name'} block disabled={submitting} /></label>
+      <label>{nameKind === 'phonetic' ? 'Last name, said as' : 'Family name'}<TextInput bind:value={familyName} ariaLabel={nameKind === 'phonetic' ? 'Last name, said as' : 'Family name'} block disabled={submitting} /></label
       >
     {:else if section === 'contact_points'}
       <label
@@ -392,6 +397,7 @@
           disabled={submitting}
         /></label
       >
+      {#if ['username', 'impp', 'social'].includes(contactKind) || serviceSlug || scopeKind || scopeValue}
       <label>Service<TextInput bind:value={serviceSlug} ariaLabel="Service" block disabled={submitting} /></label>
       <label
         >Service scope kind<TextInput
@@ -409,6 +415,7 @@
           disabled={submitting}
         /></label
       >
+      {/if}
     {:else if section === 'addresses'}
       <label
         >Address kind
@@ -528,14 +535,17 @@
 
 <style>
   .profile-editor {
-    display: grid;
-    gap: var(--space-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--field-gap);
     padding: var(--space-3);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);
     background: var(--bg-inset);
   }
   label {
+    flex: 1 1 180px;
+    min-width: 0;
     display: grid;
     gap: var(--space-1);
     color: var(--text-secondary);
@@ -552,6 +562,7 @@
     font: inherit;
   }
   .editor-actions {
+    flex-basis: 100%;
     display: flex;
     justify-content: flex-end;
     gap: var(--space-2);

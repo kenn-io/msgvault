@@ -6,7 +6,9 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import type { DirectoryURLState } from '../../directory/models';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { chooseSelectOption } from '../../../test/kit-ui';
-import DirectoryDetails from './DirectoryDetails.test-support.svelte';
+import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
+import { RelationshipsController } from '../../relationships/controller.svelte';
+import { ExploreState } from '../../explore/state.svelte';
 import DirectoryWorkspace from './DirectoryWorkspace.svelte';
 
 const state: DirectoryURLState = {
@@ -25,6 +27,12 @@ function directoryResponse() {
       categories: ['friend'], organizations: ['Example Org'], primary_channel: 'email'
     }]
   });
+}
+
+function renderPeople(client: ReturnType<typeof createAPIClient>, directory: DirectoryController, selected: DirectoryURLState) {
+  const state = new ExploreState(null); state.commitNavigation({ ...selected, workspace: 'relationships', identityQuery: selected.directoryQuery, relationshipSaved: true });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  return render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
 }
 
 describe('DirectoryWorkspace', () => {
@@ -471,7 +479,7 @@ describe('DirectoryWorkspace', () => {
     }));
     const controller = new DirectoryController(client);
 
-    render(DirectoryDetails, { client, controller, state: selectedState });
+    renderPeople(client, controller, selectedState);
 
     expect(await screen.findByRole('button', { name: 'Add phone' })).toHaveProperty('disabled', false);
     expect(controller.profile).not.toBeNull();
@@ -503,7 +511,7 @@ describe('DirectoryWorkspace', () => {
       return Response.json({ error: 'unavailable', message: 'not rendered' }, { status: 503 });
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
-    render(DirectoryDetails, { client: createAPIClient(fetchFn), controller, state: selectedState });
+    renderPeople(createAPIClient(fetchFn), controller, selectedState);
 
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -559,23 +567,20 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryDetails, { client, controller, state: selectedState });
+    renderPeople(client, controller, selectedState);
 
     await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'VIP' } });
-    await fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
-    await waitFor(() => expect(row.textContent).toContain('Friend · VIP'));
+    await waitFor(() => expect(controller.rows[0]?.categories).toEqual(['Friend', 'VIP']));
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
 
-    vi.useFakeTimers();
     await fireEvent.click(screen.getAllByRole('button', { name: 'Remove Category' })[1]!);
-    await vi.advanceTimersByTimeAsync(8000);
-    vi.useRealTimers();
-    await waitFor(() => expect(row.textContent).not.toContain('VIP'));
-    expect(row.textContent).toContain('Friend');
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
+    await waitFor(() => expect(controller.rows[0]?.categories).toEqual(['Friend']));
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
   });
 
@@ -619,15 +624,15 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryDetails, { client, controller, state: selectedState });
+    renderPeople(client, controller, selectedState);
 
     await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
-    await fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
-    await waitFor(() => expect(row.textContent).toContain('Straße'));
+    await waitFor(() => expect(controller.rows[0]?.categories).toEqual(['Straße']));
     expect(directoryRead).toBe(2);
     expect(controller.category).toBe('STRASSE');
     expect(controller.selectedPersonID).toBe(7);
@@ -688,20 +693,20 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryDetails, { client, controller, state: selectedState });
+    renderPeople(client, controller, selectedState);
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
     await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
-    await fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
 
     expect(await screen.findByText('Directory reconciliation unavailable.')).toBeDefined();
-    expect(row.textContent).not.toContain('Straße');
+    expect(controller.rows[0]?.categories).toEqual([]);
     expect(await screen.findByRole('button', { name: 'Remove Category' })).toBeDefined();
     expect(controller.profile?.conflict).toBeNull();
     expect(controller.selectedPersonID).toBe(7);
-    expect(screen.getByRole('button', { name: 'Reload directory' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Load more people' })).toBeNull();
 
     await controller.loadNextPage();
@@ -709,9 +714,9 @@ describe('DirectoryWorkspace', () => {
     expect(controller.pageError).toBe('Directory reconciliation unavailable.');
     expect(controller.pageRecovery).toBe('reload');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload directory' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
 
-    await waitFor(() => expect(row.textContent).toContain('Straße'));
+    await waitFor(() => expect(controller.rows[0]?.categories).toEqual(['Straße']));
     expect(controller.pageError).toBeNull();
     expect(controller.pageRecovery).toBeNull();
     expect(controller.cursor).toBe('recovered-next');
@@ -771,7 +776,7 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryDetails, { client, controller, state: selectedState });
+    renderPeople(client, controller, selectedState);
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary channel' }));
     await fireEvent.change(screen.getByRole('combobox', { name: 'Primary channel' }), { target: { value: 'chat' } });
@@ -781,15 +786,13 @@ describe('DirectoryWorkspace', () => {
     await waitFor(() => expect(
       controller.profile?.attributes?.attributes?.[0]?.current?.[0]?.value
     ).toEqual({ type: 'text', text: 'chat' }));
-    expect(row.textContent).toContain('Email · Active');
+    expect(controller.rows[0]).toMatchObject({ primary_channel: 'email', contact_state: 'active' });
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
 
-    vi.useFakeTimers();
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Primary channel' }));
-    await vi.advanceTimersByTimeAsync(8000);
-    vi.useRealTimers();
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
     await waitFor(() => expect(controller.profile?.attributes?.attributes?.[0]?.current).toEqual([]));
-    expect(row.textContent).toContain('Email · Active');
+    expect(controller.rows[0]).toMatchObject({ primary_channel: 'email', contact_state: 'active' });
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
   });
 

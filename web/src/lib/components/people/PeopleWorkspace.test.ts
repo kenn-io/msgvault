@@ -13,7 +13,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    return routes[path]?.(request) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/settings/people-inference') ? Response.json({ running_enabled: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
@@ -354,5 +354,19 @@ it('ignores a completed saved profile lookup after an observed person supersedes
     await act(async () => { release(Response.json(saved)); await pending; await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(state.current).toMatchObject({ directoryPersonID: null, relationshipTarget: 'cluster:1' });
     expect(onNavigate.mock.calls).toEqual([[{ directoryPersonID: 92, relationshipTarget: null, relationshipFiles: false }], [{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('ends a missing saved-person URL with recovery instead of a loading screen', async () => {
+  const client = clientFor({ '/api/v1/people/91': () => Response.json({ error: 'not_found' }, { status: 404 }) });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 91 });
+  const onNavigate = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Person not found.');
+    expect(screen.queryByText('Loading person…')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
+    expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
