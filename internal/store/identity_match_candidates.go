@@ -809,8 +809,13 @@ func checkSystemAcceptanceTxContext(ctx context.Context, tx *loggedTx, current *
 		strings.TrimSpace(*current.NormalizedValue) == "" {
 		return ErrIdentityMatchNotAcceptable
 	}
-	// A Telegram pair the user rejected under any key stays apart, even when
-	// the importer checked the pair before that rejection landed.
+	return checkTelegramPairRejectionTxContext(ctx, tx, current)
+}
+
+// checkTelegramPairRejectionTxContext keeps a Telegram pair the user rejected
+// under any key apart, even when the importer checked the pair before that
+// rejection landed. The caller holds the identity-mutation lock.
+func checkTelegramPairRejectionTxContext(ctx context.Context, tx *loggedTx, current *IdentityMatchCandidate) error {
 	if current.LeftKind != IdentityMatchParticipant || current.RightKind != IdentityMatchParticipant ||
 		current.ServiceSlug == nil || *current.ServiceSlug != "telegram" {
 		return nil
