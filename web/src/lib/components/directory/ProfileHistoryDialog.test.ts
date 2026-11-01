@@ -127,6 +127,48 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
+  it('refreshes structured history after split reconciliation while keeping the split receipt open', async () => {
+    let reconciled = false;
+    const source = { ...person(), participant_ids: [1, 2] };
+    const remaining = { ...source, revision: 4, participant_ids: [2] };
+    const restored = { ...source, id: 9, revision: 1, display_name: 'Restored Person', participant_ids: [1], vcard_uid: 'person-9' };
+    const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'person-7', absorbed_vcard_uid: 'person-9', survivor_revision_before: 2, absorbed_revision_before: 1, survivor_revision_after: 3, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/profile/history')) return Response.json({
+        person: reconciled ? remaining : source,
+        names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, ...(reconciled ? [] : [{ person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }])],
+        contact_points: reconciled ? [] : [{ person_id: 7, address_kind: 'email', original_value: 'moved@example.com', normalized_value: 'moved@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }],
+        observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
+        addresses: [], dates: [], categories: [], media: [],
+      });
+      if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] });
+      if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
+      if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'web', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } });
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    const onSplitCommitted = vi.fn(async () => { reconciled = true; });
+    const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
+    try {
+      for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
+      await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Split merged profile' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'Participant 1' }));
+      await fireEvent.click(screen.getByRole('checkbox', { name: /I confirm splitting/ }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
+      const receipt = await screen.findByRole('heading', { name: 'Split completed' });
+      expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 });
+      await waitFor(() => {
+        expect(screen.getByText('Retained name')).toBeDefined();
+        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
+      });
+      expect(screen.getByRole('heading', { name: 'Split completed' })).toBe(receipt);
+      expect(screen.getByRole('dialog', { name: 'Split merged profile' })).toBeDefined();
+    } finally { view.unmount(); }
+  });
+
   it('keeps the dialog open and reports a failed history read', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);

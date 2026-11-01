@@ -139,7 +139,7 @@
       <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
       <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />
     {:else if controller}<AttributeSection {controller} />{/if}
-    <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} {onSplitCommitted} />
+    <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
   </div>
   {#snippet footer()}
     <Button label="Close" onclick={onClose} />
