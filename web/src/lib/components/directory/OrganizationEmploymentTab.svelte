@@ -40,7 +40,7 @@
   });
 
   function organizationName(id: number): string {
-    return controller.organizations.find((item) => item.id === id)?.name
+    return controller.organizationRecords.get(id)?.organization.name ?? controller.organizations.find((item) => item.id === id)?.name
       ?? (controller.employmentProjection?.organization_id === id ? controller.employmentProjection.organization_name : undefined)
       ?? `Organization ${id}`;
   }
