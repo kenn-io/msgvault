@@ -268,12 +268,34 @@ it('shows a repeated label once, the editor after the list, and the summary befo
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('reloads More fields choices, reveals a hidden field, and opens its form', async () => {
+it('reloads More fields choices, reveals a hidden field, and hides its new draft during a pending save', async () => {
   const definition = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
-  const { controller, view } = harness(profile(), { definitions: [definition], bundle: { definitions: { definitions: [] } } });
+  let resolveSave!: (response: Response) => void;
+  const pendingSave = new Promise<Response>(resolve => { resolveSave = resolve; });
+  const writes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [definition] });
+    if (request.method === 'PUT' && path === '/api/v1/people/7/attributes/religion') { writes.push(request.clone()); return pendingSave; }
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
-    expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Religion' }), { target: { value: 'Private new value' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide Religion' }));
+    expect(screen.queryByRole('textbox', { name: 'Religion' })).toBeNull();
+    expect(view.container.innerHTML).not.toContain('Private new value');
+    expect(controller.draft).toBeNull();
+  } finally {
+    await act(() => resolveSave(Response.json({ message: 'Save unavailable' }, { status: 503 })));
+    await waitFor(() => expect(controller.mutationPending).toBe(false));
+    view.unmount(); controller.destroy();
+  }
 });
