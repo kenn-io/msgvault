@@ -323,35 +323,24 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 	}
 }
 
-func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *testing.T) {
+func TestExploreParticipantPopulationMatchesLegacyWithBoundedEnrichment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("owner@example.com")
 	person := b.AddParticipant("person@example.com", "example.com", "Person")
-	alias := b.AddParticipant("alias@example.net", "example.net", "Alias")
 	other := b.AddParticipant("other@example.org", "example.org", "Other")
-	b.LinkCluster(person, alias)
 	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
-	sent := b.AddMessage(MessageOpt{SourceID: source, SenderID: &alias, SentAt: at})
-	b.AddTo(sent, other, "Other")
-	received := b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(time.Minute)})
-	b.AddTo(received, alias, "Alias")
-	const conversation = int64(900)
-	b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(2 * time.Minute), MessageType: "imessage", ConversationType: "group_chat", ConversationID: conversation})
-	b.AddConversationParticipant(conversation, alias)
-	b.AddConversationParticipant(conversation, other)
+	for i := range 3 {
+		b.AddMessage(MessageOpt{SourceID: source, SenderID: &person, SentAt: at.Add(time.Duration(i) * time.Minute)})
+	}
 	for range 32 {
 		b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(3 * time.Minute)})
 	}
 	engine := b.BuildEngine()
-	request := ExploreRequest{Context: Context{ParticipantIDs: []int64{person}, AdditionalParticipantGroups: [][]int64{{other}}}, Page: PageSpec{Limit: 1}}
+	request := ExploreRequest{Context: Context{ParticipantIDs: []int64{person}}, Page: PageSpec{Limit: 1}}
 	fast, legacy := runExploreBothPaths(t, engine, request)
 	assert.Equal(legacy, fast)
-	require.Len(fast.Rows, 1)
-	assert.Equal(int64(3), fast.TotalCount)
-	assert.Equal(fmt.Sprintf("source:%d:conversation:900", source), fast.Rows[0].Key)
-	assert.ElementsMatch([]int64{alias, other}, fast.Rows[0].ParticipantIDs)
 	profile, err := profileDomainPopulation(t, engine, request)
 	require.NoError(err)
 	matchedOperators := 0

@@ -1055,16 +1055,16 @@ describe('relationships workspace state', () => {
     const state: ExploreURLState = {
       ...defaultExploreURLState,
       workspace: 'relationships',
-      relationshipFacet: 'domains',
-      relationshipTarget: 'domain:example.com',
+      relationshipFacet: 'people',
+      relationshipTarget: 'cluster:91',
       relationshipShowAll: true,
       relationshipFiles: true, relationshipSaved: true, relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91
     };
 
     expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({
       workspace: 'relationships',
-      relationshipFacet: 'domains',
-      relationshipTarget: 'domain:example.com',
+      relationshipFacet: 'people',
+      relationshipTarget: 'cluster:91',
       relationshipShowAll: true,
       relationshipFiles: true, relationshipSaved: true, relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91
     });
