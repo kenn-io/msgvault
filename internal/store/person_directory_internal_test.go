@@ -24,7 +24,9 @@ func TestDirectoryPeopleAddressLookupBoundsInput(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidDirectoryQuery)
 }
 
-func TestDirectoryPeopleAddressLookupCancellationDuringStream(t *testing.T) {
+// This checks that the address query receives ctx and surfaces cancellation
+// from its row stream.
+func TestDirectoryPeopleAddressLookupPropagatesContextAndSurfacesStreamCancellation(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-address-cancel.db")
 	writer, err := OpenForTest(path)

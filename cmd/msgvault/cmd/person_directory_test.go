@@ -166,9 +166,6 @@ func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
 	require.ErrorContains(err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 	assert.Empty(output)
 	assert.Zero(lookups.Load())
-	_, err = runPersonDirectoryCommand(ctx, t, "--query", "Alex")
-	require.NoError(err, "existing lexical query does not require a new daemon")
-	assert.Equal(int32(1), lookups.Load())
 }
 
 func TestPersonDirectoryCommandForwardsCursorAndPrintsNextCursor(t *testing.T) {

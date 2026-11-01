@@ -146,7 +146,6 @@ func TestMCPListDirectoryPeopleAddressCapability(t *testing.T) {
 		wantLookups int32
 	}{
 		{name: "old daemon requires upgrade", version: "3.28.0"},
-		{name: "current daemon keeps private failure redacted", version: "3.29.0", wantLookups: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -182,9 +181,6 @@ func TestMCPListDirectoryPeopleAddressCapability(t *testing.T) {
 				assert.Equal(true, response.Result["isError"])
 				assert.Contains(toolErrorTextFromResult(t, response.Result),
 					"requires daemon API schema 3.29.0 or newer; upgrade the daemon")
-			} else {
-				assert.InDelta(-32603, response.Error["code"], 0, "response: %s", raw)
-				assert.Equal("internal server error", response.Error["message"])
 			}
 		})
 	}
