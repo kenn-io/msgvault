@@ -69,13 +69,12 @@ test('Show as Files opens the Files workspace with the same context, and Back re
     return route.fulfill({ json: { saved_views: savedViews } });
   });
 
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', presentation: 'timeline' }))}`);
   const everything = page.getByRole('grid', { name: 'Messages results' });
   await expect(everything).toBeVisible();
   await page.getByRole('searchbox', { name: 'Search messages' }).fill('pasta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
 
-  await selectKitOption(page, 'Show as', 'Timeline');
   const timeline = page.getByRole('region', { name: 'Canonical activity timeline' });
   await expect(timeline).toBeVisible();
   await expect(timeline.getByText('Presentation message 1')).toBeVisible();

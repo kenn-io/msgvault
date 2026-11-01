@@ -316,3 +316,28 @@ func TestConversationWindowRejectsAnchorOutsideTimeRange(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 	assert.Equal(t, "conversation_anchor_outside_range", response.Error)
 }
+
+func TestConversationWindowCarriesExactParticipantIdentities(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv := NewServer(&config.Config{}, &participantConversationStore{mockStore: &mockStore{}}, nil, testLogger())
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/7?anchor=42", nil))
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var result struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(result.Messages, 2)
+	assert.JSONEq(`11`, string(result.Messages[0]["from_participant_id"]))
+	assert.JSONEq(`[{"participant_id":22,"display":"Blair Example <blair@example.com>"}]`, string(result.Messages[0]["to_participants"]))
+	assert.NotContains(result.Messages[1], "from_participant_id")
+	assert.NotContains(result.Messages[1], "to_participants")
+}
+
+type participantConversationStore struct{ *mockStore }
+
+func (*participantConversationStore) ConversationExists(int64) (bool, error) { return true, nil }
+func (*participantConversationStore) GetConversationWindow(int64, int64, int, int) (*store.ConversationWindow, error) {
+	return &store.ConversationWindow{Messages: []store.APIMessage{{ID: 42, ConversationID: 7, From: "Alex Example <alex@example.com>", FromParticipantID: 11, To: []string{"Blair Example <blair@example.com>"}, ToParticipants: []store.ParticipantDisplay{{ParticipantID: 22, Display: "Blair Example <blair@example.com>"}}}, {ID: 43, ConversationID: 7}}, Total: 2}, nil
+}
