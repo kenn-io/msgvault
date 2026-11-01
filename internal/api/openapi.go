@@ -380,10 +380,11 @@ import (
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
 // 3.28.0 adds the typed calendar projection to calendar event message details.
-// 3.28.0 adds exact sender and To participant identities to conversation windows,
+// 3.29.0 adds literal address filtering to the durable people Directory.
+// 3.30.0 adds exact sender and To participant identities to conversation windows,
 // timezone-aware daily message grouping, and sent_only group filtering.
 // Participant timelines include events and meetings only when the owner attended.
-const APISchemaVersion = "3.28.0"
+const APISchemaVersion = "3.30.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

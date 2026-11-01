@@ -34,9 +34,11 @@ const (
 )
 
 // DirectoryPeopleQuery selects durable people for the Directory read surface.
-// All text fields are case- and whitespace-normalized before matching.
+// Address preserves internal whitespace and matches literal substrings;
+// other text fields use the Directory's lexical normalization.
 type DirectoryPeopleQuery struct {
 	Query             string     `json:"query,omitempty"`
+	Address           string     `json:"address,omitempty"`
 	Cursor            string     `json:"cursor,omitempty"`
 	Limit             int        `json:"limit,omitzero"`
 	ContactState      string     `json:"contact_state,omitempty"`
@@ -72,6 +74,7 @@ type DirectoryPeoplePage struct {
 
 type normalizedDirectoryPeopleQuery struct {
 	query             string
+	address           string
 	terms             []string
 	cursor            string
 	limit             int
@@ -110,8 +113,8 @@ type directoryRawCandidateCursor struct {
 }
 
 // DirectoryPeoplePageContext returns a deterministic, cursor-paginated page
-// over promoted people. Its SQL uses only portable normalization and matching
-// so SQLite and PostgreSQL share lexical, filtering, and cursor semantics.
+// over promoted people. Indexed candidates are verified in Go so SQLite and
+// PostgreSQL share lexical, filtering, and cursor semantics.
 func (s *Store) DirectoryPeoplePageContext(
 	ctx context.Context,
 	query DirectoryPeopleQuery,
@@ -126,6 +129,7 @@ func (s *Store) DirectoryPeoplePageContext(
 func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirectoryPeopleQuery, error) {
 	normalized := normalizedDirectoryPeopleQuery{
 		query:          normalizeDirectoryText(query.Query),
+		address:        strings.ToLower(strings.TrimSpace(query.Address)),
 		cursor:         strings.TrimSpace(query.Cursor),
 		contactState:   normalizeDirectoryText(query.ContactState),
 		category:       normalizeDirectoryText(query.Category),
@@ -151,6 +155,9 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 	if utf8.RuneCountInString(normalized.query) > maxDirectoryQueryRunes {
 		return normalized, fmt.Errorf("%w: query is too long", ErrInvalidDirectoryQuery)
 	}
+	if utf8.RuneCountInString(normalized.address) > maxDirectoryQueryRunes {
+		return normalized, fmt.Errorf("%w: address is too long", ErrInvalidDirectoryQuery)
+	}
 	if normalized.contactState != "" && normalized.contactState != "active" && normalized.contactState != "inactive" {
 		return normalized, fmt.Errorf("%w: unknown contact state", ErrInvalidDirectoryQuery)
 	}
@@ -165,6 +172,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 	}
 	encoded, err := json.Marshal(struct {
 		Query             string `json:"query"`
+		Address           string `json:"address,omitempty"`
 		ContactState      string `json:"contact_state"`
 		Category          string `json:"category"`
 		Organization      string `json:"organization"`
@@ -173,7 +181,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 		LastContactBefore string `json:"last_contact_before"`
 		Sort              string `json:"sort"`
 	}{
-		Query: normalized.query, ContactState: normalized.contactState,
+		Query: normalized.query, Address: normalized.address, ContactState: normalized.contactState,
 		Category: normalized.category, Organization: normalized.organization,
 		PrimaryChannel:   normalized.primaryChannel,
 		LastContactAfter: normalized.lastContactAfter, LastContactBefore: normalized.lastContactBefore,
@@ -268,11 +276,9 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 			return nil, errors.New("directory raw candidate cursor repeated")
 		}
 		lastRaw := raw[len(raw)-1]
-		if len(query.terms) > 0 {
-			raw, err = s.verifyDirectoryCandidateTokensTx(ctx, tx, raw, query.terms)
-			if err != nil {
-				return nil, err
-			}
+		raw, err = s.verifyDirectoryCandidatesTx(ctx, tx, raw, query)
+		if err != nil {
+			return nil, err
 		}
 		verified = append(verified, raw...)
 		if len(verified) >= target || rawCount < chunkSize {
@@ -343,11 +349,9 @@ func (s *Store) directoryCursorAnchorTx(
 	if err != nil {
 		return directoryPersonCandidate{}, err
 	}
-	if len(query.terms) > 0 {
-		candidates, err = s.verifyDirectoryCandidateTokensTx(ctx, tx, candidates, query.terms)
-		if err != nil {
-			return directoryPersonCandidate{}, err
-		}
+	candidates, err = s.verifyDirectoryCandidatesTx(ctx, tx, candidates, query)
+	if err != nil {
+		return directoryPersonCandidate{}, err
 	}
 	if len(candidates) != 1 {
 		return directoryPersonCandidate{}, ErrInvalidDirectoryCursor
@@ -403,6 +407,77 @@ func directoryRawCandidateFollows(candidate directoryPersonCandidate, after dire
 		return candidate.orderName > after.orderName
 	}
 	return candidate.summary.ID > after.personID
+}
+
+func (s *Store) verifyDirectoryCandidatesTx(ctx context.Context, tx *loggedTx, candidates []directoryPersonCandidate, query normalizedDirectoryPeopleQuery) ([]directoryPersonCandidate, error) {
+	if len(query.terms) > 0 {
+		var err error
+		candidates, err = s.verifyDirectoryCandidateTokensTx(ctx, tx, candidates, query.terms)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if query.address == "" || len(candidates) == 0 {
+		return candidates, nil
+	}
+	return s.verifyDirectoryCandidateAddressesTx(ctx, tx, candidates, query.address)
+}
+
+// Address matching uses the same Go lowercase rules on both backends. Values
+// are streamed for one bounded candidate chunk under the serving snapshot.
+func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *loggedTx, candidates []directoryPersonCandidate, address string) ([]directoryPersonCandidate, error) {
+	ids := make([]any, len(candidates))
+	for index, candidate := range candidates {
+		ids[index] = candidate.summary.ID
+	}
+	in := ` IN (` + directoryPlaceholders(len(ids)) + `)`
+	points := ` FROM person_contact_points cp WHERE cp.person_id` + in + `
+		AND cp.active_until IS NULL AND cp.superseded_at IS NULL AND cp.address_kind <> 'language'`
+	members := ` FROM person_participants pp JOIN participants p ON p.id = pp.participant_id WHERE pp.person_id` + in
+	parts := []string{
+		`SELECT cp.person_id, cp.original_value` + points,
+		`SELECT cp.person_id, cp.normalized_value` + points,
+		`SELECT pp.person_id, COALESCE(p.email_address, '')` + members,
+		`SELECT pp.person_id, COALESCE(p.phone_number, '')` + members,
+		`SELECT pp.person_id, identifier.identifier_value FROM person_participants pp
+			JOIN participant_identifiers identifier ON identifier.participant_id = pp.participant_id WHERE pp.person_id` + in,
+	}
+	args := make([]any, 0, len(ids)*len(parts))
+	for range parts {
+		args = append(args, ids...)
+	}
+	rows, err := tx.QueryContext(ctx, strings.Join(parts, ` UNION ALL `), args...)
+	if err != nil {
+		return nil, fmt.Errorf("load directory candidate addresses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	matched := make(map[int64]bool, len(candidates))
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var id int64
+		var value string
+		if err := rows.Scan(&id, &value); err != nil {
+			return nil, fmt.Errorf("scan directory candidate address: %w", err)
+		}
+		if !matched[id] && strings.Contains(strings.ToLower(value), address) {
+			matched[id] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate directory candidate addresses: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close directory candidate addresses: %w", err)
+	}
+	verified := candidates[:0]
+	for _, candidate := range candidates {
+		if matched[candidate.summary.ID] {
+			verified = append(verified, candidate)
+		}
+	}
+	return verified, nil
 }
 
 // verifyDirectoryCandidateTokensTx treats delete-key hits as an indexed

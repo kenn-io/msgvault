@@ -42,6 +42,12 @@
   const customTypes = $derived(controller.relationshipTypes.filter((type) => type.ownership !== 'system').sort(byLabel));
   const builtInTypes = $derived(controller.relationshipTypes.filter((type) => type.ownership === 'system').sort(byLabel));
 
+  // The editor picks from the type list, so a failed load retries when it opens.
+  function openEditor(view: PersonRelationshipView | null): void {
+    if (controller.errors.relationshipTypes) void controller.refreshRelationshipTypes();
+    relationshipEditor = view;
+  }
+
   function counterpart(view: PersonRelationshipView): string {
     return view.counterpart_display_name?.trim() || view.counterpart_vcard_uid || `Person ${view.counterpart_person_id}`;
   }
@@ -115,7 +121,7 @@
       <h3>Connections</h3>
       <div class="actions">
         <Checkbox checked={controller.relationshipsIncludeEnded} label="Show ended" ariaLabel="Include ended relationships" onchange={(checked) => void changeHistoryMode(checked)} />
-        <Button size="sm" label="Add connection" onclick={() => { relationshipEditor = null; }} />
+        <Button size="sm" label="Add connection" onclick={() => openEditor(null)} />
       </div>
     </header>
 
@@ -134,7 +140,7 @@
           <DetailRow description={[sentenceCase(view.counterpart_label), view.relationship.start_date ? `since ${dateText(view.relationship.start_date)}` : '', view.relationship.end_date ? `ended ${dateText(view.relationship.end_date)}` : '', view.relationship.notes ?? ''].filter(Boolean).join(' · ')}>
             {#if onOpenPerson}<button class="person-link" type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}
             {#snippet actions()}
-              <IconButton size="sm" ariaLabel="Edit relationship" onclick={() => { relationshipEditor = view; }}><Pencil size={14} /></IconButton>
+              <IconButton size="sm" ariaLabel="Edit relationship" onclick={() => openEditor(view)}><Pencil size={14} /></IconButton>
               <IconButton size="sm" ariaLabel="Delete relationship" onclick={() => { deletingRelationship = view; }}><X size={14} /></IconButton>
             {/snippet}
           </DetailRow>
