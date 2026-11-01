@@ -45,7 +45,7 @@ func TestStatsJSON(t *testing.T) {
 		{name: "grant", mode: "delegated", label: "agent grant", kind: "agent_grant", wantLabel: "agent grant", active: 8, deleted: 3, total: 11, sources: 2, scopeSources: 2},
 		{name: "empty grant", mode: "delegated", label: "agent grant", kind: "agent_grant", wantLabel: "agent grant"},
 		{name: "delegated account", mode: "delegated", account: "reader@example.test", label: "Resolved account", kind: "account", wantLabel: "Resolved account", sources: 2, scopeSources: 2},
-		{name: "delegated collection", mode: "delegated", collection: "team", label: "agent grant", kind: "collection", wantLabel: "agent grant", deleted: 3, total: 3, sources: 2, scopeSources: 2},
+		{name: "delegated collection", mode: "delegated", collection: "team", label: "team", kind: "collection", wantLabel: "team", deleted: 3, total: 3, sources: 2, scopeSources: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
