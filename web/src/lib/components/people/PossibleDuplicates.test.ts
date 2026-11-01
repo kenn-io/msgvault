@@ -27,9 +27,29 @@ it('renders endpoint summaries and wires Retry, Merge, and History', async () =>
     await screen.findByText('Same provider identity');
     const merge = screen.getByRole('button', { name: 'Merge' });
     await fireEvent.click(merge);
-    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'after-profile-merge' }), 'accept', ['Synthetic person', 'Absorbed person']);
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'after-profile-merge' }), 'accept');
     accepted = true;
     await fireEvent.click(screen.getByRole('radio', { name: 'History' }));
     await screen.findByText(/Merged ·/);
   } finally { view.unmount(); controller.destroy(); }
+});
+
+const pair = { id: 17, left_id: 1, left_kind: 'participant', right_id: 2, right_kind: 'participant', basis: 'email', source: 'user', state: 'candidate', actionable: true, application_pending: false, review_token: 'review-17', evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+
+it('waits for refreshed evidence before enabling the post-merge decision', async () => {
+  let finish!: (response: Response) => void;
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    if (new URL(request.url).pathname.endsWith('/match-candidates')) return new Promise<Response>(resolve => { finish = resolve; });
+    return Response.json({ id: 1, display_label: 'Alpha Example', identifiers: [] });
+  }));
+  controller.rows = [pair];
+  const view = render(PossibleDuplicates, { controller, onDecide: (candidate, decision) => void controller.queueDecision(candidate, decision) });
+  const refresh = controller.completePersonMerge(17, controller.reviewContextSnapshot(), { survivor: { id: 7, display_name: 'Alpha Example' }, result: { cache_state: 'ready' } } as never);
+  try {
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true));
+    await controller.queueDecision(pair, 'accept');
+    expect(controller.pending).toBeUndefined();
+    await expect(controller.acceptIdentity(17)).resolves.toMatchObject({ ok: false });
+  } finally { finish(Response.json({ candidates: [{ ...pair, review_token: 'refreshed-17' }], offset: 0, limit: 11 })); await refresh; view.unmount(); controller.destroy(); }
 });

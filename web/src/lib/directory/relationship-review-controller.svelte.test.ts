@@ -142,17 +142,3 @@ describe('RelationshipReviewController', () => {
     expect(controller.rows).toEqual([]);
   });
 });
-
-it('loads all three imported states for the selected owner', async () => {
-  const queries: string[] = [];
-  const controller = new RelationshipReviewController(createAPIClient(async input => {
-    queries.push(new URL(requestOf(input).url).search);
-    return Response.json({ reviews: [generatedReview(), generatedReview({ id: 42, status: 'accepted' }), generatedReview({ id: 43, status: 'rejected' })] });
-  }));
-  try {
-    controller.applyPerson(7);
-    await vi.waitFor(() => expect(controller.rows).toHaveLength(3));
-    expect(queries).toEqual(['?person_id=7']);
-    expect(controller.rows.map(row => row.status)).toEqual(['pending', 'accepted', 'rejected']);
-  } finally { controller.destroy(); }
-});

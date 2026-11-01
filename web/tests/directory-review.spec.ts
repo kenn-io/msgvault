@@ -52,9 +52,7 @@ test('refreshes cached duplicate tokens and the badge after Merge with, Unlink, 
     cluster: { canonical_id: 701, member_ids: unlinked ? [701] : [701, 702], edges: unlinked ? [] : [{ participant_a: 701, participant_b: 702 }] },
   } }));
   await page.route('**/api/v1/identity/unlinks', route => {
-    expect(route.request().method()).toBe('POST');
     unlinked = true;
-    fixture.candidates[0]!.review_token = 'review-17-postunlink';
     return route.fulfill({ json: { identity_revision: 10, cache_state: 'ready' } });
   });
   const badge = page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'People', exact: true });

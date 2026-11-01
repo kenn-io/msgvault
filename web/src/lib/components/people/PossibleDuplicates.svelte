@@ -16,7 +16,7 @@
   interface Props {
     controller: DirectoryReviewController;
     /** Hides the card for the Undo window, then makes the decision. */
-    onDecide: (candidate: IdentityMatchCandidate, decision: 'accept' | 'reject', names: [string, string]) => void;
+    onDecide: (candidate: IdentityMatchCandidate, decision: 'accept' | 'reject') => void;
   }
 
   let { controller, onDecide }: Props = $props();
@@ -108,14 +108,14 @@
               <Button
                 label="Keep separate"
                 disabled={controller.submitting}
-                onclick={() => onDecide(candidate, 'reject', [nameOf(pair[0]), nameOf(pair[1])])}
+                onclick={() => onDecide(candidate, 'reject')}
               />
               <Button
                 tone="info"
                 surface="solid"
                 label="Merge"
                 disabled={blocked(candidate) || controller.submitting}
-                onclick={() => onDecide(candidate, 'accept', [nameOf(pair[0]), nameOf(pair[1])])}
+                onclick={() => onDecide(candidate, 'accept')}
               />
             {/if}
           </div>

@@ -63,3 +63,7 @@ export function collection(rows = [employment()], projection = { employment_id: 
 export function controllerWith(fetchFn: typeof fetch): DirectoryEntityController {
   return new DirectoryEntityController(createAPIClient(fetchFn), 7);
 }
+
+export function person(id: number, revision = id === 7 ? 4 : 2, participant_ids: number[] = id === 7 ? [] : [2]) {
+  return { id, revision, participant_ids, organizations: [], categories: [], contact_state: 'active', display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z', vcard_uid: `synthetic-${id}` };
+}
