@@ -67,7 +67,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			return err
 		}
 		if !daemonclient.APISchemaVersionAtLeast(version, calendarEventsMinAPISchemaVersion) {
-			return errors.New("calendar events require daemon API schema 3.28.0 or newer")
+			return fmt.Errorf("calendar events require daemon API schema %s or newer", calendarEventsMinAPISchemaVersion)
 		}
 		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), bounds[0], bounds[1])
 		if err != nil {
