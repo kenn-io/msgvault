@@ -407,10 +407,6 @@ func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 
 		// Fake time advances during the slow writes, after the in-process probe finishes.
 		start := time.Now()
-		f.mu.Lock()
-		quiet.LastActivity = start.Add(-48 * time.Hour)
-		active.LastActivity = start
-		f.mu.Unlock()
 		_, err = imp.Import(t.Context(), opts)
 		requirements.NoError(err)
 		assertions.Greater(time.Since(start), routeProbeTimeout, "roster writes outlast the provider probe timeout")
