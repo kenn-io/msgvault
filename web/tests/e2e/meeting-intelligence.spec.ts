@@ -62,9 +62,9 @@ async function downloadContext(page: Page, info: TestInfo, label: string) {
   return JSON.parse(content);
 }
 
-// Regressions caught here include missing production projections, loss of raw
-// provider field presence, synthetic zero durations, and source-deletion loss.
-test("production imports expose archived actions, duration evidence, and exact context downloads", async ({
+// Regressions caught here include missing archived actions, incorrect summary
+// totals, context selection errors, and source-deletion loss.
+test("production imports expose archived actions, summary totals, and exact context downloads", async ({
   page,
   daemon,
 }, info) => {

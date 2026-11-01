@@ -95,7 +95,7 @@ it('identifies row actions and confirmations by value and service scope without 
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('blocks attribute additions after a failed read and retries loading values', async () => {
+it('blocks attribute additions after a failed read and routes Retry attributes to the profile controller', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
   const client = createAPIClient(async input => {
@@ -108,7 +108,7 @@ it('blocks attribute additions after a failed read and retries loading values', 
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: { attributes: 'Attributes unavailable' } });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   const reload = vi.spyOn(controller, 'reload');
   const view = render(PersonFields, { controller });
   try {

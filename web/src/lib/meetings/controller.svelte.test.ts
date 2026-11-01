@@ -76,7 +76,7 @@ describe('MeetingsController', () => {
     expect(transport.metrics).toHaveBeenCalledTimes(3);
   });
 
-  it('clears pagination when source status or exact assignee email changes', async () => {
+  it('reloads only actions and clears pagination when source status or exact assignee email changes', async () => {
     const transport = api(); const controller = new MeetingsController(transport);
     vi.mocked(transport.actions).mockResolvedValue(meetingActions({ next_cursor: 'next' }));
     await controller.setScope(person);

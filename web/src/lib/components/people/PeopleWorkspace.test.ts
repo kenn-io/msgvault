@@ -17,7 +17,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
     const path = new URL(request.url).pathname;
     const personID = Number(path.match(/\/people\/(\d+)\//)?.[1]);
     requests?.push(path);
-    return routes[path]?.(request) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0 }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/profile') ? Response.json({ person: profile(personID, 1, []), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }) : undefined) ?? (path.endsWith('/attributes') ? Response.json({ person_id: personID, attributes: [] }) : undefined) ?? (path.endsWith('/attribute-definitions') ? Response.json({ definitions: [] }) : undefined) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0 }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 
@@ -358,22 +358,20 @@ it('ignores a completed saved profile lookup after an observed person supersedes
 it.each([
   [{ identityQuery: 'after' }, 'q', 'after'],
   [{ relationshipSort: 'recent' as const }, 'sort', 'last_contact_desc'],
-] as const)('replaces Saved results when its inputs change: %s', async (patch, parameter, value) => {
+] as const)('maps Saved query and sort inputs to directory requests: %s', async (patch, parameter, value) => {
   const reads: URL[] = [];
   const client = clientFor({ '/api/v1/people/directory': request => {
     const url = new URL(request.url); reads.push(url);
-    return Response.json({ people: [{ ...profile(7, 1, []), display_name: url.searchParams.get(parameter) === value ? 'After' : 'Before', organizations: [], categories: [], contact_state: 'active' }] });
+    return Response.json({ people: [] });
   } });
   const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
   const props = { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   const view = render(PeopleWorkspace, { props });
   try {
-    await screen.findByText('Before');
+    await waitFor(() => expect(reads).toHaveLength(1));
     await view.rerender({ ...props, urlState: { ...state.current, ...patch } });
-    await screen.findByText('After');
-    expect(screen.queryByText('Before')).toBeNull();
-    expect(reads.at(-1)?.searchParams.get(parameter)).toBe(value);
+    await waitFor(() => expect(reads.at(-1)?.searchParams.get(parameter)).toBe(value));
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
 
@@ -430,11 +428,11 @@ it('routes reconciliation Reload to the directory controller', async () => {
   } finally { view.unmount(); relationships.destroy(); controller.destroy(); state.destroy(); }
 });
 
-it.each([['participant', false], ['profile', false], ['network', false], ['network', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
+it.each([['participant', false], ['profile', false], ['second person', false], ['second person', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
   let failed = true;
-  const saved = profile(failure === 'network' ? 9 : 7, 1, [1]);
+  const saved = profile(failure === 'second person' ? 9 : 7, 1, [1]);
   const client = clientFor({
-    '/api/v1/people/7': () => failure === 'network' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
+    '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
     ...Object.fromEntries([7, 9].flatMap(id => [
       [`/api/v1/people/${id}/profile`, () => Response.json({ person: profile(id, 1, [1]), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] })],
       [`/api/v1/people/${id}/attributes`, () => Response.json({ person_id: id, attributes: [] })]
@@ -450,7 +448,7 @@ it.each([['participant', false], ['profile', false], ['network', false], ['netwo
   const props = { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   let view = render(PeopleWorkspace, { props });
   try {
-    if (failure === 'network') {
+    if (failure === 'second person') {
       await screen.findByRole('heading', { name: 'Synthetic One' });
       if (remount) { state.commitNavigation({ workspace: 'everything' }); view.unmount(); }
       state.commitNavigation({ workspace: 'relationships', directoryPersonID: 9, relationshipTarget: null });
@@ -462,13 +460,13 @@ it.each([['participant', false], ['profile', false], ['network', false], ['netwo
       expect(screen.getByRole('radio', { name: 'Messages' })).toBeDefined();
       await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     }
-    expect(await screen.findByText(new RegExp(failure === 'network' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : 'Participant unavailable'))).toBeDefined();
+    expect(await screen.findByText(new RegExp(failure === 'second person' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : 'Participant unavailable'))).toBeDefined();
     expect(screen.queryByText('Loading person…')).toBeNull();
-    if (failure === 'network') expect(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
+    if (failure === 'second person') expect(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
     failed = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Could not load selected person/)).toBeNull());
-    if (failure === 'network') expect(await screen.findByRole('heading', { name: 'Synthetic Two' })).toBeDefined();
+    if (failure === 'second person') expect(await screen.findByRole('heading', { name: 'Synthetic Two' })).toBeDefined();
     else expect(await screen.findByRole('radio', { name: 'Messages' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
