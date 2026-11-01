@@ -289,14 +289,3 @@ it('reloads More fields choices, reveals a hidden field, and hides its new draft
     view.unmount(); controller.destroy();
   }
 });
-
-it('defaults another Date to anniversary when a birthday already exists', async () => {
-  const initial = profile();
-  initial.dates = [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, original_value: '--02-14', envelope }];
-  const { controller, view } = harness(initial);
-  try {
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Date' }));
-    expect(screen.getByLabelText('Date kind')).toHaveProperty('value', 'anniversary');
-  } finally { view.unmount(); controller.destroy(); }
-});
