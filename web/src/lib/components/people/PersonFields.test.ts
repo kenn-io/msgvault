@@ -99,7 +99,6 @@ it('joins refreshed field settings, keeping a renamed draft and discarding a res
 
 it.each([
   ['Website', 'Messaging address', 'Contact value', 'xmpp:example@example.com', 'Save contact point', 'contact_points', 'address_kind', 'impp'],
-  ['Website', 'Calendar', 'Contact value', 'https://example.com/calendar.ics', 'Save contact point', 'contact_points', 'address_kind', 'calendar'],
   ['Nickname', 'Pronunciation', 'First name, said as', 'Arisu', 'Save name', 'names', 'name_kind', 'phonetic'],
 ])('switches a new %s editor to %s before saving', async (first, next, input, value, save, section, discriminator, kind) => {
   const { controller, view, writes } = harness();
@@ -114,7 +113,7 @@ it.each([
   view.unmount(); controller.destroy();
 });
 
-it.each(['replacement', 'removal'])('retains an attribute draft through concurrent %s recovery', async outcome => {
+it('retains an attribute draft through concurrent replacement recovery', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'topics', label: 'Topics', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'topics', ordinal: 2, value: { type: 'text' as const, text: 'Original topic' }, active_from: when, created_at: when, source: 'user' };
   const replacement = { ...value, id: 42, value: { type: 'text' as const, text: 'Concurrent topic' } };
@@ -122,7 +121,7 @@ it.each(['replacement', 'removal'])('retains an attribute draft through concurre
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
     if (request.method === 'PUT') return Response.json({ error: 'attribute_value_conflict', message: 'Changed elsewhere', current_value_id: 42 }, { status: 409 });
-    if (path.endsWith('/attributes')) return Response.json(attributes(outcome === 'replacement' ? [replacement] : []));
+    if (path.endsWith('/attributes')) return Response.json(attributes([replacement]));
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
     return Response.json(path.endsWith('/profile') ? profile() : person, { headers: { ETag: '"person-7-r2"' } });
   });

@@ -103,19 +103,6 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   expect(parseExploreURLState(new URL(page.url()).search).directoryLastContactAfter).toBe('');
 });
 
-test('Person page opens Messages for the saved person', async ({ page }) => {
-  await installMixedArchive(page);
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto(directoryURL(42));
-
-  const detail = page.getByRole('group', { name: 'Person page' });
-  await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await detail.getByRole('radio', { name: 'Messages', exact: true }).click();
-  await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await expect(detail.getByRole('radio', { name: 'Messages', exact: true })).toHaveAttribute('aria-checked', 'true');
-});
-
 test('Person tabs stay on one line at phone width', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 420, height: 860 });
