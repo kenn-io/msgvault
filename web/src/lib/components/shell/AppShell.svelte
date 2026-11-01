@@ -361,7 +361,7 @@
   const directoryController = new DirectoryController(
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
-    () => { void relationshipsController.loadList(exploreState.predicate()); },
+    () => { void relationshipsController.loadList(exploreState.predicate()); directoryReviewController.invalidateSummaries(); },
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),

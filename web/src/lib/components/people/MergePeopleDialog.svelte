@@ -13,6 +13,8 @@
   // The operation keeps the people it opened with, even after navigation disposes the dialog.
   const [personID, participantID] = untrack(() => [currentPersonID, currentParticipantID]);
   const context = untrack(() => controller.personMergeContextSnapshot());
+  // A late completion after navigation belongs to the closed dialog, not the next person's.
+  const close = () => { if (controller.target === context.target) onClose(); };
   // A successful promotion is retained when reading the profiles needs a retry.
   const promoted = new Map<number, number>();
   async function savedPair(a: number, b: number): Promise<LinkOutcome> {
@@ -56,13 +58,13 @@
     } catch { return { ok: false, code: 'error', message: 'Could not read the selected person.' }; }
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
-    onClose();
+    close();
     onOpenPerson?.(success.survivor.id);
     await onReconcile(context);
   }
 </script>
 {#if conflict}
-  <PersonBindingConflictModal {client} {conflict} onOpenProfile={(id) => { onClose(); onOpenPerson?.(id); }} onSuccess={merged} {onClose} />
+  <PersonBindingConflictModal {client} {conflict} onOpenProfile={(id) => { close(); onOpenPerson?.(id); }} onSuccess={merged} onClose={close} />
 {:else}
-  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || promoted.size > 0) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || promoted.size > 0) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} {onClose} />
+  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || promoted.size > 0) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || promoted.size > 0) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} onClose={close} />
 {/if}
