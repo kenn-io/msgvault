@@ -166,7 +166,7 @@
     void [statusRevision, Object.keys(building)];
     const controller = new AbortController();
     void createExploreAPI(client).coverage([], controller.signal)
-      .catch(() => coverage ?? { status: 'unavailable' as const, actions: [] })
+      .catch(() => ({ status: 'unavailable' as const, actions: [] }))
       .then(value => { if (!controller.signal.aborted) coverage = value; });
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
