@@ -65,9 +65,7 @@ export class DirectoryReviewController {
   status = $state<string | null>(null);
   mergeRequired = $state<{
     candidateID: number;
-    candidate: IdentityMatchCandidate | undefined;
     conflict: PersonMergeRequiredError;
-    context: DirectoryReviewContextSnapshot;
   } | null>(null);
   lastMerge = $state<DirectoryReviewMergeCompletion | null>(null);
   readonly summaries = new SvelteMap<string, EndpointSummary | 'failed'>();
@@ -232,7 +230,6 @@ export class DirectoryReviewController {
   }
   async completePersonMerge(
     candidateID: number,
-    context: DirectoryReviewContextSnapshot,
     success: PersonMergeSuccess,
   ): Promise<void> {
     if (this.disposed) return;
@@ -260,7 +257,7 @@ export class DirectoryReviewController {
     if (!pending) return Promise.resolve(undefined);
     this.pending = undefined;
     const { candidate, decision, context, notes } = pending;
-    this.settlement = this.decideIdentity(candidate.id, decision, notes, context, candidate.review_token, candidate).finally(() => { this.settlement = undefined; });
+    this.settlement = this.decideIdentity(candidate.id, decision, notes, context, candidate.review_token).finally(() => { this.settlement = undefined; });
     return this.settlement;
   }
   async invalidate(active: boolean): Promise<void> {
@@ -362,7 +359,6 @@ export class DirectoryReviewController {
     notes: string | undefined,
     context: DirectoryReviewContextSnapshot,
     displayedToken?: string,
-    submittedCandidate = this.rows.find(row => row.id === candidateID),
   ): Promise<IdentityDecisionResult> {
     if (!displayedToken && !this.isReviewContextCurrent(context)) {
       return { ok: false, kind: 'error', status: 0, message: 'The review context changed.' };
@@ -413,7 +409,7 @@ export class DirectoryReviewController {
       const mergeConflict =
         decision === 'accept' && response.response.status === 409 ? validatePersonMergeRequired(response.error) : null;
       if (mergeConflict) {
-        this.mergeRequired = { candidateID, candidate: submittedCandidate, conflict: mergeConflict, context };
+        this.mergeRequired = { candidateID, conflict: mergeConflict };
         return result = { ok: false, kind: 'merge_required', conflict: mergeConflict };
       }
       if (response.response.status === 409 && response.error?.error === 'identity_match_review_stale') {

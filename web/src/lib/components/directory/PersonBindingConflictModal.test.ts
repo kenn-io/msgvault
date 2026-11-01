@@ -1,4 +1,4 @@
-import { requestOf } from '../../directory/entity-fixtures.test-support';
+import { mergeResult, requestOf } from '../../directory/entity-fixtures.test-support';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -39,29 +39,6 @@ function conflict(): ValidatedPersonMergeRequired {
   };
 }
 
-function mergeResult(survivor: Person, cacheState: 'ready' | 'stale' = 'ready') {
-  return {
-    cache_state: cacheState,
-    identity_revision: 8,
-    merge: {
-      id: 41,
-      survivor_person_id: survivor.id,
-      absorbed_person_id: survivor.id === 7 ? 9 : 7,
-      current_person_id: survivor.id,
-      survivor_vcard_uid: survivor.vcard_uid,
-      absorbed_vcard_uid: survivor.id === 7 ? 'synthetic-9' : 'synthetic-7',
-      survivor_revision_before: survivor.revision - 1,
-      absorbed_revision_before: 2,
-      survivor_revision_after: survivor.revision,
-      actor: 'web',
-      snapshot_version: 1,
-      snapshot_sha256: 'synthetic-digest',
-      created_at: '2026-08-03T00:00:00Z',
-    },
-    person: survivor,
-    review_candidates: [],
-  } as const;
-}
 
 function renderModal(
   fetchFn: typeof fetch,

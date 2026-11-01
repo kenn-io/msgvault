@@ -13,7 +13,6 @@ export function joinParts(parts: Array<string | null | undefined | false>): stri
 export function basisLine(candidate: {
   basis: string;
   normalized_value?: string;
-  service_slug?: string;
 }): string {
   const basis = identityBasisLabel(candidate.basis);
   const label = basis.replace(/^./, letter => letter.toUpperCase());

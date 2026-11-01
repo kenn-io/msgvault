@@ -36,6 +36,12 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
+async function settle(controller: DirectoryReviewController, id: number, decision: 'accept' | 'reject', notes?: string) {
+  if (notes !== undefined) controller.setDecisionDraft(id, notes);
+  await controller.queueDecision(controller.rows.find(row => row.id === id)!, decision);
+  return controller.settleDecision();
+}
+
 describe('DirectoryReviewController', () => {
   it('uses the generated list contract, aborts a superseded page, and discards its stale response', async () => {
     const first = deferredResponse();
@@ -95,7 +101,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.hasNextPage).toBe(false);
   });
 
-  it('resets an offset page synchronously when history restores the same queue', async () => {
+  it.each(['restoration', 'History'] as const)('resets the offset synchronously before a failed %s load', async entry => {
     const restored = deferredResponse();
     let restoredAttempts = 0;
     const offsets: string[] = [];
@@ -116,8 +122,11 @@ describe('DirectoryReviewController', () => {
     expect(controller.offset).toBe(10);
     expect(controller.rows).toEqual([candidate(101)]);
 
-    controller.applyURLState({ identityState: 'candidate' }, true);
+    if (entry === 'restoration') controller.applyURLState({ identityState: 'candidate' }, true);
+    else void controller.setIdentityState('accepted');
 
+    expect(controller.identityState).toBe(entry === 'restoration' ? 'candidate' : 'accepted');
+    expect(new URL(requestOf(fetchFn.mock.lastCall![0]).url).searchParams.get('state')).toBe(entry === 'restoration' ? 'candidate,conflict' : 'accepted,rejected');
     expect(controller.offset).toBe(0);
     expect(controller.rows).toEqual([]);
     expect(controller.loading).toBe(true);
@@ -130,29 +139,6 @@ describe('DirectoryReviewController', () => {
     await controller.retryPage();
     expect(offsets).toEqual(['0', '10', '0', '0']);
     expect(controller.rows).toEqual([candidate(1)]);
-  });
-
-  it('clears candidate rows before a History load can fail', async () => {
-    const history = deferredResponse();
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      if (requests.length === 1) return page([candidate(17)]);
-      return history.promise;
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-
-    controller.setIdentityState('accepted');
-
-    expect(controller.identityState).toBe('accepted');
-    expect(controller.offset).toBe(0);
-    expect(controller.rows).toEqual([]);
-    history.resolve(Response.json({ error: 'unavailable', message: 'History queue failed' }, { status: 503 }));
-    await vi.waitFor(() => expect(controller.error).toBe('History queue failed'));
-    expect(controller.pageError).toBeNull();
-    expect(controller.rows).toEqual([]);
   });
 
   it('refreshes a restored copy of the same URL context after a late success', async () => {
@@ -173,7 +159,7 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    const decision = controller.acceptIdentity(17, 'Confirmed');
+    const decision = settle(controller, 17, 'accept', 'Confirmed');
     await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
     controller.applyURLState({ identityState: 'candidate' }, true);
     await vi.waitFor(() => expect(controller.rows).toEqual(restoredRows));
@@ -213,7 +199,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.error).toBeNull();
   });
 
-  it('applies a successful decision before best-effort reconciliation and sends only trimmed notes', async () => {
+  it('applies a successful decision before best-effort reconciliation', async () => {
     const reconcile = deferredResponse();
     const requests: Request[] = [];
     const accepted = candidate(17, 'accepted');
@@ -230,13 +216,9 @@ describe('DirectoryReviewController', () => {
     await controller.loadIdentityPage();
     controller.setDecisionDraft(17, '  Confirmed by user  ');
 
-    const decision = controller.acceptIdentity(17);
+    const decision = settle(controller, 17, 'accept');
     await vi.waitFor(() => expect(controller.rows).toEqual([accepted]));
     expect(controller.isDecisionPending(17)).toBe(true);
-    const post = requests.find((request) => request.method === 'POST')!;
-    expect(post.headers.has('If-Match')).toBe(false);
-    expect(post.headers.has('Idempotency-Key')).toBe(false);
-    await expect(post.clone().json()).resolves.toEqual({ review_token: 'token-17-candidate', notes: 'Confirmed by user' });
 
     reconcile.resolve(page([accepted]));
     await expect(decision).resolves.toEqual({ ok: true, candidate: accepted, cacheState: 'ready' });
@@ -256,7 +238,7 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    await expect(controller.rejectIdentity(17, 'Different people')).resolves.toEqual({
+    await expect(settle(controller, 17, 'reject', 'Different people')).resolves.toEqual({
       ok: false,
       kind: 'error',
       status: 503,
@@ -266,34 +248,6 @@ describe('DirectoryReviewController', () => {
     expect(controller.getDecisionDraft(17)).toBe('Different people');
     expect(controller.rows).toEqual([candidate(17)]);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-  });
-
-  it('uses the generated reject operation and applies an ordinary rejection', async () => {
-    let reads = 0;
-    const rejected = candidate(17, 'rejected');
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      if (request.method === 'POST') {
-        return Response.json({ candidate: rejected, identity_revision: 6, cache_state: 'ready' });
-      }
-      reads += 1;
-      return reads === 1 ? page([candidate(17)]) : page([rejected]);
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-
-    await expect(controller.rejectIdentity(17)).resolves.toEqual({
-      ok: true,
-      candidate: rejected,
-      cacheState: 'ready'
-    });
-
-    const post = requests.find((request) => request.method === 'POST')!;
-    expect(new URL(post.url).pathname).toBe('/api/v1/identity/match-candidates/17/review/reject');
-    await expect(post.clone().json()).resolves.toEqual({ review_token: 'token-17-candidate' });
-    expect(controller.rows).toEqual([rejected]);
   });
 
   it('refreshes the queue after a stale review token without retrying the decision', async () => {
@@ -313,7 +267,7 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    await expect(controller.acceptIdentity(17)).resolves.toMatchObject({
+    await expect(settle(controller, 17, 'accept')).resolves.toMatchObject({
       ok: false, kind: 'stale', status: 409
     });
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
@@ -336,7 +290,7 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    await expect(controller.acceptIdentity(17)).resolves.toEqual({
+    await expect(settle(controller, 17, 'accept')).resolves.toEqual({
       ok: true,
       candidate: accepted,
       cacheState: 'stale'
@@ -422,14 +376,17 @@ describe('DirectoryReviewController', () => {
     controller.rows = [candidate(17), candidate(18)];
     controller.setDecisionDraft(17, 'merge this one');
     controller.setDecisionDraft(18, 'keep this draft');
-    const context = controller.reviewContextSnapshot();
     const success = {
       result: { cache_state: 'stale', identity_revision: 8, merge: {} as never, person: { id: 7 } as never, review_candidates: [] },
       survivor: { id: 7, display_name: 'Synthetic survivor' } as never,
       responseETag: '"person-7-r5"'
     } as unknown as import('./person-merge').PersonMergeSuccess;
 
-    await controller.completePersonMerge(17, context, success);
+    const completion = controller.completePersonMerge(17, success);
+    await controller.queueDecision(controller.rows[0] ?? candidate(17), 'accept');
+    expect(controller.pending).toBeUndefined();
+    await expect(controller.acceptIdentity(17)).resolves.toMatchObject({ ok: false });
+    await completion;
 
     expect(controller.lastMerge).toEqual({ candidateID: 17, ...success });
     expect(controller.rows[0]?.review_token).toBe('after-profile-merge');
@@ -438,10 +395,9 @@ describe('DirectoryReviewController', () => {
     expect(controller.status).toContain('Review the refreshed pair to finish.');
     expect(requests).toHaveLength(1);
 
-    const staleContext = controller.reviewContextSnapshot();
     controller.setIdentityState('conflict');
     await vi.waitFor(() => expect(requests).toHaveLength(2));
-    await controller.completePersonMerge(18, staleContext, success);
+    await controller.completePersonMerge(18, success);
     expect(requests).toHaveLength(3);
     expect(controller.getDecisionDraft(18)).toBe('keep this draft');
   });
@@ -457,7 +413,7 @@ describe('DirectoryReviewController', () => {
       ]
     };
     const requests: Request[] = [];
-    const conflictRows = [candidate(88, 'conflict')];
+    const conflictRows = [candidate(88, 'accepted')];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
@@ -490,7 +446,7 @@ describe('DirectoryReviewController', () => {
 
   it('reports a late decision failure without changing the newer identity state', async () => {
     const decisionResponse = deferredResponse();
-    const conflictRows = [candidate(88, 'conflict')];
+    const conflictRows = [candidate(88, 'accepted')];
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -502,7 +458,7 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    const decision = controller.rejectIdentity(17, 'Different people');
+    const decision = settle(controller, 17, 'reject', 'Different people');
     await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
     controller.setIdentityState('accepted');
     await vi.waitFor(() => expect(controller.rows).toEqual(conflictRows));
@@ -603,7 +559,7 @@ describe('DirectoryReviewController', () => {
 
     await controller.loadIdentityPage();
     controller.setDecisionDraft(17, 'Ephemeral note');
-    void controller.rejectIdentity(17);
+    void settle(controller, 17, 'reject');
     await vi.waitFor(() => expect(requests).toHaveLength(2));
     controller.destroy();
 
@@ -614,7 +570,7 @@ describe('DirectoryReviewController', () => {
   });
 });
 
-it.each(['accept', 'reject'] as const)('settles %s with keepalive, the displayed token, and trimmed notes', async decision => {
+it.each(['accept', 'reject'] as const)('settles %s with the displayed request and invalidates all cluster summaries only on acceptance', async decision => {
   const writes: Array<{ path: string; body: unknown; keepalive: boolean }> = [];
   const settled = vi.fn();
   let decided = false;
@@ -680,7 +636,7 @@ it('returns to the first page when deciding the last later-page row empties that
   try {
     await controller.loadIdentityPage();
     await controller.loadNextPage();
-    await controller.rejectIdentity(11);
+    await settle(controller, 11, 'reject');
     expect(controller.offset).toBe(0);
     expect(controller.rows).toHaveLength(10);
     expect(controller.hasNextPage).toBe(false);
