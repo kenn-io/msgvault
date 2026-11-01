@@ -468,7 +468,7 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState, workspace: 'everything', settingsCategory: 'search'
     });
     expect(elsewhere).not.toContain('settingsCategory');
-    for (const [category, expected] of [['<script>', 'overview'], [42, 'overview'], ['', 'overview'], ['Search', 'overview'], ['toString', 'overview'], ['people', 'people']]) {
+    for (const [category, expected] of [['<script>', 'overview'], [42, 'overview'], ['', 'overview'], ['Search', 'overview'], ['toString', 'overview'], ['people', 'enrichment']]) {
       expect(parseExploreURLState(serializeExploreURLState({
         ...defaultExploreURLState, workspace: 'settings', settingsCategory: category
       } as unknown as ExploreURLState)).settingsCategory).toBe(expected);

@@ -73,6 +73,7 @@
   }
   .list li {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--control-gap);
     min-height: var(--control-h-lg);
@@ -83,7 +84,8 @@
   }
   .name {
     flex: 1;
-    min-width: 0;
+    min-width: min(12rem, 100%);
+    overflow-wrap: anywhere;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
   }

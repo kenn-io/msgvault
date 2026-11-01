@@ -601,7 +601,7 @@
           {:else}
             <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
-        {:else if activeId === 'people'}
+        {:else if activeId === 'people_catalog'}
           <PeopleCatalogSettings {client} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace

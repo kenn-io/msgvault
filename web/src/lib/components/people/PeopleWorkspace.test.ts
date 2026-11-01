@@ -14,7 +14,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     requests?.push(path);
-    return routes[path]?.(request) ?? (path.endsWith('/settings/people-inference') ? Response.json({ running_enabled: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
@@ -375,4 +375,69 @@ it('ends a missing saved-person URL with recovery instead of a loading screen', 
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
     expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each([
+  [{ identityQuery: 'after' }, 'q', 'after'],
+  [{ relationshipSort: 'recent' as const }, 'sort', 'last_contact_desc'],
+  [{ directoryCategory: 'cycling' }, 'category', 'cycling'],
+] as const)('replaces Saved results when its inputs change: %s', async (patch, parameter, value) => {
+  const reads: URL[] = [];
+  const client = clientFor({ '/api/v1/people/directory': request => {
+    const url = new URL(request.url); reads.push(url);
+    return Response.json({ people: [{ ...profile(7, 1, []), display_name: url.searchParams.get(parameter) === value ? 'After' : 'Before', organizations: [], categories: [], contact_state: 'active' }] });
+  } });
+  const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
+  const props = { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  const view = render(PeopleWorkspace, { props });
+  try {
+    await screen.findByText('Before');
+    await view.rerender({ ...props, urlState: { ...state.current, ...patch } });
+    await screen.findByText('After');
+    expect(screen.queryByText('Before')).toBeNull();
+    expect(reads.at(-1)?.searchParams.get(parameter)).toBe(value);
+  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
+});
+
+
+it('refreshes the same selected person after editing a connection type in Settings', async () => {
+  let label = 'mentors';
+  const type = () => ({ id: 31, revision: 1, slug: 'mentor', forward_label: label, reverse_label: 'is mentored by', is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'mentor-type', created_at: when, updated_at: when });
+  const client = clientFor({
+    '/api/v1/people/7': () => Response.json(profile(7, 1, [])),
+    '/api/v1/people/7/relationships': () => Response.json({ relationships: [{ counterpart_person_id: 8, counterpart_display_name: 'Peer', counterpart_label: label, counterpart_vcard_uid: 'peer-8', direction: 'outgoing', relationship: { id: 41, source_person_id: 7, target_person_id: 8, relationship_type_id: 31, type_slug: 'mentor', forward_label: label, reverse_label: 'is mentored by', is_symmetric: false, status: 'active', revision: 1, source: 'user', created_at: when, updated_at: when } }] }),
+    '/api/v1/people/7/network': () => Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: 'Synthetic One', hop: 0 }, { id: 'person:8', kind: 'person', entity_id: 8, label: 'Peer', hop: 1 }], edges: [{ id: 'relationship:41', source_node_id: 'person:7', target_node_id: 'person:8', label }] }),
+    '/api/v1/relationship-types': () => Response.json({ relationship_types: [type()] }),
+
+  });
+  const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
+  const props = { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  let view = render(PeopleWorkspace, { props });
+  try {
+    await waitFor(() => expect(screen.getByRole('list', { name: 'Directory network connections' }).textContent).toContain('mentors'));
+    view.unmount();
+    label = 'guides';
+    view = render(PeopleWorkspace, { props });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Peer' }).closest('strong')?.textContent).toContain('guides'));
+    await waitFor(() => expect(screen.getByRole('list', { name: 'Directory network connections' }).textContent).toContain('guides'));
+  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
+});
+
+it.each([false, true, undefined])('offers shared setup only when sweep configuration is explicitly disabled: %s', async sweepConfigured => {
+  const client = clientFor({ '/api/v1/people/7': () => Response.json(profile(7, 1, [])) });
+  const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
+  const onOpenSettings = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, sweepConfigured, onOpenSettings, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await screen.findByRole('heading', { name: 'Last time we talked' });
+    for (const name of ['Set up Facts', 'Set up Briefs']) {
+      const button = screen.queryByRole('button', { name });
+      if (sweepConfigured === false) { expect(button).not.toBeNull(); await fireEvent.click(button!); }
+      else expect(button).toBeNull();
+    }
+    if (sweepConfigured === false) expect(onOpenSettings.mock.calls).toEqual([['enrichment'], ['enrichment']]);
+  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });

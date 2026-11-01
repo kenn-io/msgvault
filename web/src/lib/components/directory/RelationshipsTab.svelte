@@ -101,20 +101,20 @@
   {#if !catalogOnly}<header>
     <h3>Connections</h3>
     <div class="actions">
-      <Button label="Add connection" onclick={() => { relationshipEditor = null; }} />
+      <Button size="sm" label="Add connection" onclick={() => { relationshipEditor = null; }} />
 
     </div>
   </header>
 
   <div class="filters">
     <Checkbox checked={controller.relationshipsIncludeEnded} label="Include ended relationships" onchange={(checked) => void changeHistoryMode(checked)} />
-    <Button label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
+    <Button size="sm" label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
   </div>
 
   {#if controller.errors.relationships}
     <div class="refresh-error" role="alert">
       <p>{controller.errors.relationships}</p>
-      <Button label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
+      <Button size="sm" label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
     </div>
   {/if}
   {#if controller.relationshipsLoading}<p role="status">Loading relationships…</p>{/if}
@@ -140,7 +140,7 @@
 
   {/if}
   {#if catalogOnly}<section aria-label="Connection types">
-    <div class="section-heading"><h3>Connection types</h3><Button label="Add type" onclick={() => relationshipTypeEditor = null} /><Button label="Refresh relationship types" disabled={controller.relationshipTypesLoading} onclick={() => void controller.refreshRelationshipTypes()} /></div>
+    <div class="section-heading"><h3>Connection types</h3><div class="actions"><Button size="sm" label="Add type" onclick={() => relationshipTypeEditor = null} /><Button size="sm" label="Refresh relationship types" disabled={controller.relationshipTypesLoading} onclick={() => void controller.refreshRelationshipTypes()} /></div></div>
     {#if controller.relationshipTypesLoading}<p role="status">Loading relationship types…</p>
     {:else if controller.errors.relationshipTypes}<p role="alert">{controller.errors.relationshipTypes}</p>
     {:else if controller.relationshipTypes.length === 0}<p class="muted">No relationship types are available.</p>
