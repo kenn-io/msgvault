@@ -96,7 +96,7 @@
 <section class="related-status" aria-label={labels[authority]}>
   <header>
     <h1>{labels[authority]}</h1>
-    <Button size="sm" surface="soft" label="Back to operations" onclick={onClose} />
+    <Button size="sm" surface="soft" label="Back" onclick={onClose} />
   </header>
 
   {#if loading}

@@ -9,7 +9,7 @@ or connect [Beeper](/docs/usage/beeper/), [Slack](/docs/usage/slack/),
 [Microsoft Teams](/docs/usage/teams/), or [Discord](/docs/usage/discord/) for
 ongoing sync.
 
-The [Web UI](/docs/web-ui/) groups chats into conversations in Everything;
+The [Web UI](/docs/web-ui/) groups chats into conversations in Messages;
 open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 `m` to switch to Texts mode.
 
@@ -394,7 +394,7 @@ msgvault sync-synctech-sms phone-backups
 
 Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to search email, chats,
 calendar events, and meeting notes together. Chat results stay grouped as
-conversations so short message fragments do not overwhelm Everything. Open a
+conversations so short message fragments do not overwhelm Messages. Open a
 conversation to inspect its matching messages in context.
 
 For terminal browsing, launch the TUI and press `m` to cycle from Email to

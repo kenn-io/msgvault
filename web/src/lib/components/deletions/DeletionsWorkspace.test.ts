@@ -62,7 +62,7 @@ describe('DeletionsWorkspace', () => {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ manifests: [] }))),
     });
     expect(screen.getByText('Nothing selected for deletion')).toBeDefined();
-    expect(screen.getByText('Select items in Everything, then choose Review for deletion…')).toBeDefined();
+    expect(screen.getByText('Select items in Messages, then choose Review for deletion…')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Review selection' })).toBeNull();
     expect(await screen.findByText('No staged deletions')).toBeDefined();
     expect(screen.getByText('msgvault delete-staged').tagName).toBe('CODE');
