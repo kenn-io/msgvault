@@ -108,6 +108,45 @@ describe('AppShell', () => {
   }
 
 
+  it.each([false, true])('continues deep Messages restoration after opening and closing Past runs with a later page pending, filtered=%s', async filtered => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ selectedRow: 'message:3', activeRow: 'message:1', scrollAnchor: { key: 'message:1', offset: 4 } }))}`);
+    let finishPage!: (response: Response) => void;
+    const cursors: Array<string | undefined> = [];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore')) {
+        const { cursor } = await request.clone().json();
+        cursors.push(cursor);
+        if (cursor === 'page:1') return new Promise<Response>(resolve => { finishPage = resolve; });
+        return Response.json(exploreResponse({ rows: [entry(cursor ? 3 : 1)], total_count: 3,
+          ...(!cursor ? { next_cursor: 'page:1' } : {}) }));
+      }
+      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+      return Response.json({});
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state });
+    try {
+      await waitFor(() => expect(cursors).toEqual([undefined, 'page:1']));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Idle' }));
+      await fireEvent.click(await screen.findByRole('menuitem', { name: /^Past runs/ }));
+      const dialog = await screen.findByRole('dialog', { name: 'Past runs' });
+      if (filtered) await chooseSelectOption(within(dialog).getByRole('combobox', { name: /^Kind/ }), 'Source sync');
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Past runs' })).toBeNull());
+      expect(screen.queryByText('The selected entry is no longer available in this context.')).toBeNull();
+      finishPage(Response.json(exploreResponse({ rows: [entry(2)], total_count: 3, next_cursor: 'page:2' })));
+      await waitFor(() => expect(screen.getByRole('complementary', { name: /^Reading pane:/ }).textContent).toContain('Synthetic subject 3'));
+      expect(cursors).toEqual([undefined, 'page:1', 'page:2']);
+    } finally {
+      rendered.unmount(); state.destroy();
+    }
+  });
+
   it.each([{ query: 'needle', cache: false }, { query: '', cache: true }])('labels an Everything load failure for $query with cache=$cache', async ({ query, cache }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
     const client = createAPIClient(async (input) => {
