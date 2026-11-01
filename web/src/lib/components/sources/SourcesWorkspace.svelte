@@ -348,8 +348,8 @@
     }
   }
   async function syncContacts(connection: CardDAVConnectionResponse): Promise<void> {
-    await contactControllers.get(connection.connection)?.sync();
-    if (!disposed) onStatusChange();
+    contactsRequest?.abort();
+    await contactControllers.get(connection.connection)?.sync().then(() => { if (!disposed) onStatusChange(); });
   }
   function staleLastResult(source: Source): boolean {
     const resultAt = source.latest_sync?.completed_at ?? source.latest_sync?.started_at;

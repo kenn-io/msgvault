@@ -287,6 +287,52 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
+  it('keeps the newer contacts sync result in the row and panel after an older connections refresh resolves', async () => {
+    vi.useFakeTimers();
+    let finishRefresh!: (response: Response) => void;
+    let connectionsReads = 0;
+    const older = { ...contact, status: { ...contact.status, latest: { ...contact.status.latest,
+      state: 'failed', error_code: 'upstream_failed', error_message: 'Previous sync failed.' } } };
+    const latest = { ...contact.status.latest, id: 2, created: 7,
+      started_at: '2026-07-20T10:00:00Z', finished_at: '2026-07-20T10:00:05Z' };
+    const fetch = api([], (url, request) => {
+      if (url.pathname.endsWith('/carddav/connections') && ++connectionsReads === 2) {
+        return new Promise<Response>(resolve => { finishRefresh = resolve; });
+      }
+      if (url.pathname.endsWith('/carddav/sync') && request.method === 'POST') return Response.json({ status: 'succeeded' });
+      if (url.pathname.endsWith('/carddav/status')) return Response.json({ ...contact.status, latest, latest_successful: latest });
+    }, [older]);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
+      const row = screen.getByRole('row', { name: /user-a/ });
+      const panel = screen.getByRole('dialog', { name: 'user-a' });
+      expect(within(panel).getByText('Previous sync failed.')).toBeDefined();
+
+      const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      hidden.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(connectionsReads).toBe(2);
+
+      await fireEvent.click(within(row).getByRole('button', { name: 'Sync now user-a' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(within(row).getByText('Succeeded')).toBeDefined();
+      expect(within(panel).getByText(/7 new/)).toBeDefined();
+
+      finishRefresh(Response.json({ connections: [older] }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(within(row).getByText('Succeeded')).toBeDefined();
+      expect(within(row).getByTitle(formatDateTime('2026-07-20T10:00:05Z', 'long'))).toBeDefined();
+      expect(within(panel).getByText('Succeeded')).toBeDefined();
+      expect(within(panel).getByText(/Last good sync/).textContent).toContain(formatDateTime('2026-07-20T10:00:05Z'));
+      expect(within(panel).getByText(/7 new/)).toBeDefined();
+      expect(within(panel).queryByText('Previous sync failed.')).toBeNull();
+    } finally { view.unmount(); }
+  });
+
   it('offers contacts sync-state retry in the row and panel', async () => {
     let statusReads = 0;
     const fetch = api([], url => {
