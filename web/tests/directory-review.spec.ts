@@ -21,6 +21,11 @@ test('People Filter opens duplicate cards, evidence, and browser-restored Histor
   expect(parseExploreURLState(new URL(page.url()).search).identityState).toBe('accepted');
   await page.goBack();
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
+  await page.getByRole('radio', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to People' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByText('Possible duplicates', { exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
 test('duplicate Undo cancels a write and pagehide submits the staged decision', async ({ page }) => {
@@ -110,3 +115,42 @@ test('refreshes cached duplicate tokens and the badge after Merge with, Unlink, 
   await expect.poll(() => fixture.requests.find(request => request.path.endsWith('/17/review/reject'))?.body).toEqual({ review_token: 'review-17-postsplit' });
   await expect(badge).toContainText('1');
 });
+
+for (const bulk of [false, true]) {
+  test(`deleting a saved person through ${bulk ? 'bulk Delete' : 'More actions'} refreshes the badge and cached duplicates`, async ({ page }) => {
+    const fixture = await installDirectoryReviewArchive(page);
+    Object.assign(fixture.candidates[0]!, { left_kind: 'person', left_id: 7 });
+    let deleted = false;
+    await page.route('**/api/v1/people/directory*', route => route.fulfill({ json: { people: [7, 9].filter(id => !deleted || id !== 7).map(id => ({ id, revision: id === 7 ? 4 : 2, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', categories: [], organizations: [], primary_channel: 'email', contact_state: 'active' })) } }));
+    await page.route(/\/api\/v1\/people\/7$/, route => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      deleted = true;
+      fixture.candidates.splice(0, 1);
+      return route.fulfill({ status: 204 });
+    });
+    await page.goto(duplicatesURL);
+    await expect(page.locator('#duplicate-17')).toBeVisible();
+    await page.getByRole('button', { name: 'Back to People' }).click();
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByText('Saved', { exact: true }).click();
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    if (bulk) {
+      await page.getByRole('checkbox', { name: 'Select Synthetic One', exact: true }).check();
+      await page.getByRole('button', { name: 'Delete', exact: true }).click();
+      await page.getByRole('button', { name: 'Confirm delete', exact: true }).click();
+      await expect(page.getByText('1 deleted.', { exact: true })).toBeVisible();
+    } else {
+      await page.getByRole('grid', { name: 'People results' }).getByText('Synthetic One', { exact: true }).click();
+      await page.getByRole('button', { name: 'More actions', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+      await page.getByRole('button', { name: 'Confirm delete person', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'Delete person' })).toBeHidden();
+    }
+    await expect.poll(() => deleted).toBe(true);
+    await expect.soft(page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'People', exact: true })).toContainText('2');
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByText('Possible duplicates', { exact: true }).click();
+    await expect(page.locator('#duplicate-17')).toHaveCount(0);
+    await expect(page.locator('#duplicate-18')).toBeVisible();
+  });
+}

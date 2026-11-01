@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
@@ -52,4 +52,25 @@ it('waits for refreshed evidence before enabling the post-merge decision', async
     expect(controller.pending).toBeUndefined();
     await expect(controller.acceptIdentity(17)).resolves.toMatchObject({ ok: false });
   } finally { finish(Response.json({ candidates: [{ ...pair, review_token: 'refreshed-17' }], offset: 0, limit: 11 })); await refresh; view.unmount(); controller.destroy(); }
+});
+
+it('refreshes another endpoint in the changed cluster after accepting a pair', async () => {
+  let accepted = false;
+  const aliasPair = { ...pair, id: 18, left_id: 3, right_id: 4, review_token: 'review-18' };
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'POST') { accepted = true; return Response.json({ candidate: { ...pair, state: 'accepted' }, cache_state: 'ready', identity_revision: 2 }); }
+    if (path.endsWith('/match-candidates')) return Response.json({ candidates: accepted ? [aliasPair] : [pair, aliasPair], offset: 0, limit: 11 });
+    const id = Number(path.split('/').at(-1));
+    return Response.json({ id, display_label: id === 3 ? 'Alias Example' : `Participant ${id}`, identifiers: [{ participant_id: id, type: 'email', value: `person-${id}@example.com`, is_primary: true }], activity_count: accepted && id === 3 ? 5 : 1, cluster: { canonical_id: id === 3 ? 2 : id, member_ids: id === 3 ? [2, 3] : [id] } });
+  }));
+  await controller.loadIdentityPage();
+  const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
+  try {
+    await screen.findByText('Participant 4');
+    await controller.acceptIdentity(17);
+    const alias = (await screen.findByText('Alias Example')).closest('li')!;
+    expect(await within(alias).findByText('5 messages')).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
 });

@@ -98,15 +98,8 @@
   $effect(() => {
     if (narrow && activeKey) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
   });
-  let observedProfileID = $state<number | null>(null);
-  let observedProfileTarget: string | null = null;
-  $effect(() => {
-    const current = target, detail = controller.target === current ? controller.detail : null;
-    if (observedProfileTarget !== current) { observedProfileTarget = current; observedProfileID = null; }
-    if (detail && 'identifiers' in detail) observedProfileID = (detail as PersonSummary).profile?.id ?? null;
-    else if (controller.target === current && controller.detailMissing) observedProfileID = null;
-  });
-  const selectedProfileID = $derived(soloPerson ?? observedProfileID);
+  const observed = $derived(controller.target === target ? controller.detail : null);
+  const selectedProfileID = $derived(soloPerson ?? (observed && 'identifiers' in observed ? (observed as PersonSummary).profile?.id ?? null : null));
   $effect(() => {
     const id = selectedProfileID;
     if (id === null) void target;
@@ -135,7 +128,7 @@
   }
   function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
   const filterSections = $derived<FilterDropdownSection[]>([{ items: [
-    { id: 'duplicates', active: false, label: 'Possible duplicates', onSelect: () => onNavigate({ peopleDuplicates: true }) },
+    { id: 'duplicates', active: false, label: 'Possible duplicates', onSelect: () => onNavigate({ peopleDuplicates: true, identityState: 'candidate' }) },
     { id: 'saved', label: 'Saved', active: saved, closeOnSelect: false, onSelect: () => onNavigate({ relationshipSaved: !saved }) },
     ...(rankedList ? [{ id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) }] : []),
     { id: 'profile', label: 'Profile filters', active: profileFilters, onSelect: () => filterOpen = !filterOpen },
@@ -162,10 +155,14 @@
       } catch (cause) { failures.push(`Person ${id}: ${cause instanceof Error ? cause.message : 'Could not delete.'}`); }
     }
     await directory.removeDeletedPeople(deleted);
-    await controller.loadList(page.predicate);
-    if (selectedProfileID !== null && deleted.includes(selectedProfileID)) close();
+    await peopleDeleted(deleted);
     bulkMessage = `${deleted.length} deleted.${failures.length ? ` ${failures.join(' ')}` : ''}`;
     bulkPending = false; confirmDelete = false;
+  }
+  async function peopleDeleted(ids: number[]): Promise<void> {
+    onDuplicatesChanged();
+    if (selectedProfileID !== null && ids.includes(selectedProfileID)) close();
+    await controller.loadList(page.predicate);
   }
   async function startBulk(): Promise<void> {
     const ids = [...selection.explicitKeys].map((key) => /^cluster:([1-9][0-9]*)$/.exec(key)?.[1]).filter((id): id is string => id !== undefined).map(Number);
@@ -250,7 +247,7 @@
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
-    onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); }}
+    onRecordDeleted={(deletedID) => { onDuplicatesChanged(); if (deletedID === selectedProfileID) close(); }}
     onIdentityChanged={onDuplicatesChanged}
     onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
