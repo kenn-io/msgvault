@@ -25,8 +25,6 @@ export function blockerLine(blocker: string | undefined): string {
   switch (blocker) {
     case 'person_merge_required':
       return 'Both are saved as different people, so merging needs a choice of which to keep.';
-    case 'rejected':
-      return 'Marked as different people before.';
     case undefined:
     case '':
       return 'This match needs a decision first.';

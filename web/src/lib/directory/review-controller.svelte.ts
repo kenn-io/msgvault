@@ -243,7 +243,7 @@ export class DirectoryReviewController {
     this.status = `Profiles merged into ${name}. Review the refreshed pair to finish. Identity cache ${success.result.cache_state}.`;
     await this.loadIdentityPage(this.offset, this.identityState);
   }
-  get submitting(): boolean { return this.pendingDecisions.size > 0 || this.mergeRequired !== null; }
+  get submitting(): boolean { return this.loading || this.pendingDecisions.size > 0 || this.mergeRequired !== null; }
   async queueDecision(candidate: IdentityMatchCandidate, decision: 'accept' | 'reject'): Promise<void> {
     if (this.pending || this.settlement) await this.settleDecision();
     if (this.disposed || this.submitting) return;
@@ -316,7 +316,7 @@ export class DirectoryReviewController {
         const response = await generatedGetPersonProfile({ id }, { ...this.client, signal });
         if (this.disposed || signal.aborted) return;
         const name = response.data?.display_name?.trim();
-        this.summaries.set(key, response.data ? { id, name: name || `Person ${id}`, address: 'Saved person', lastAt: null, personID: id } : 'failed');
+        this.summaries.set(key, response.data ? { id, name: name || `Person ${id}`, address: 'Saved person', lastAt: null } : 'failed');
       } catch {
         if (!this.disposed && !signal.aborted) this.summaries.set(key, 'failed');
       }
@@ -339,7 +339,6 @@ export class DirectoryReviewController {
         address: primary?.value || member?.email || member?.phone || '',
         lastAt: person.last_at ?? null,
         count: person.activity_count ?? 0,
-        personID: person.profile?.id,
       });
     } catch {
       if (!this.disposed && !signal.aborted) this.summaries.set(key, 'failed');
@@ -370,7 +369,7 @@ export class DirectoryReviewController {
     if (!displayedToken && !this.isReviewContextCurrent(context)) {
       return { ok: false, kind: 'error', status: 0, message: 'The review context changed.' };
     }
-    if (this.disposed || this.pendingDecisions.size > 0 || this.mergeRequired !== null) {
+    if (this.disposed || this.submitting) {
       return { ok: false, kind: 'error', status: 0, message: 'A decision is already pending.' };
     }
     if (notes !== undefined) this.setDecisionDraft(candidateID, notes);

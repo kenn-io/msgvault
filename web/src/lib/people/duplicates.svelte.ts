@@ -17,6 +17,4 @@ export interface EndpointSummary {
   address: string;
   lastAt: string | null;
   count?: number;
-  /** The saved person this address already belongs to, when there is one. */
-  personID?: number;
 }

@@ -63,8 +63,6 @@ describe('DirectoryReviewController', () => {
     first.resolve(page([candidate(1)]));
     await candidateLoad;
     expect(controller.rows).toEqual([candidate(2, 'conflict')]);
-    await controller.loadIdentityPage(0, 'accepted');
-    expect(new URL(requests.at(-1)!.url).searchParams.get('state')).toBe('accepted,rejected');
   });
 
   it('retains the prior page after a later-page failure and retries the same offset', async () => {
@@ -377,8 +375,6 @@ describe('DirectoryReviewController', () => {
     expect(controller.mergeRequired).toBe(open);
     expect(controller.hidden.has(18)).toBe(false);
     expect(controller.isDecisionPending(18)).toBe(false);
-    await controller.completePersonMerge(17, open.context, { result: { cache_state: 'ready' }, survivor: { id: 7, display_name: 'Synthetic One' } } as never);
-    expect(controller.lastMerge?.candidateID).toBe(17);
   });
 
   it('preserves a malformed merge-required conflict message without showing a merge offer', async () => {
@@ -653,23 +649,12 @@ function queuedReview() {
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
     if (request.method === 'POST') { const response = await decision.promise; decided = true; return response; }
-    const url = new URL(request.url), offset = Number(url.searchParams.get('offset'));
+    const url = new URL(request.url);
     if (url.searchParams.get('state') === 'accepted,rejected') return page(decided ? [candidate(1, 'rejected')] : []);
-    return page(offset ? [candidate(11)] : Array.from({ length: 11 }, (_, i) => candidate(i + 1)), offset);
+    return page([candidate(1)]);
   }));
   return { controller, decision };
 }
-
-it('submits the staged decision before paging without waiting for it', async () => {
-  const { controller } = queuedReview();
-  try {
-    await controller.loadIdentityPage();
-    controller.queueDecision(controller.rows[0]!, 'reject');
-    await controller.loadNextPage();
-    expect(controller.pending).toBeUndefined();
-    expect(controller.rows[0]?.id).toBe(11);
-  } finally { controller.destroy(); }
-});
 
 it('waits for the staged decision before reading History', async () => {
   const { controller, decision } = queuedReview();

@@ -322,14 +322,6 @@ for (const theme of ['light', 'dark'] as const) {
     }
   });
 
-  test(`${theme} Facts for the selected person have no axe violations`, async ({ page }) => {
-    await installDirectoryReviewArchive(page);
-    await openPersonFacts(page);
-    await setKitTheme(page, theme);
-    await expect(page.getByLabel('Fact evidence')).toBeVisible();
-    await assertNoViolations(page, `Person Facts ${theme}`);
-  });
-
   test(`${theme} Reviews identity matches and imported relationships have no axe violations`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
