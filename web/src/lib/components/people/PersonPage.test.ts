@@ -98,6 +98,25 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
+it('keeps the domain summary on Details without an Identities heading', async () => {
+  vi.stubEnv('TZ', 'UTC');
+  const summary = { domain: 'example.com', activity_count: 9, file_count: 2, person_count: 3, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-domain' };
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    if (new URL(request.url).pathname === '/api/v1/domains/example.com') return Response.json(summary);
+    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-domain', search_provenance: {} });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const directory = new DirectoryController(client);
+  await controller.openTarget('domain:example.com', {}, false);
+  const view = render(PersonPage, { props: { client, directory, controller, target: 'domain:example.com', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  try {
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+    expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
+});
+
 it('reports a filtered summary failure while retaining the loaded person', async () => {
   const predicate = { filters: [{ dimension: 'source' as const, values: ['2'] }] };
   const client = createAPIClient(async input => {

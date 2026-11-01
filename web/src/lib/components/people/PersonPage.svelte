@@ -143,7 +143,7 @@
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
-      <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} title="Identities" {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
+      <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} title={person ? 'Identities' : undefined} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
         onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
     {/if}
