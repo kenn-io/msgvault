@@ -233,6 +233,7 @@
 <div class="fields">
   {#if !controller.structuredProfileETag}<p role="status">Profile revision unavailable<Button label="Reload profile" disabled={!controller.canReload} onclick={() => void controller.reload()} /></p>{/if}
   {#if controller.definitionsError}<p role="alert">{controller.definitionsError}<Button label="Retry fields" onclick={() => void controller.reloadDefinitions()} /></p>{/if}
+  {#if !controller.attributes || controller.attributesError}<p role="alert">{controller.attributesError ?? 'Unable to load attributes'}<Button label="Retry attributes" disabled={!controller.canReload} onclick={() => void controller.reload()} /></p>{/if}
   {#snippet editor()}
     {#key editorKey(editing)}
       {#if editing?.kind === 'profile'}
@@ -301,7 +302,7 @@
           {#each addableAttributes as field (field.definition.universal_id)}
             {@const definition = field.definition}
             <!-- Choosing a hidden field reveals it, then opens its form. -->
-            <MenuItem textValue={definition.label} disabled={isAttributeRevealed(definition, revealed) && !canAddAttribute(field, controller, revealed)}
+            <MenuItem textValue={definition.label} disabled={!controller.attributes || !!controller.attributesError || (isAttributeRevealed(definition, revealed) && !canAddAttribute(field, controller, revealed))}
               onselect={() => { if (!isAttributeRevealed(definition, revealed)) toggleReveal(definition); if (canAddAttribute(field, controller, revealed)) startAdd({ kind: 'attribute', universalID: definition.universal_id }, 'more'); }}>{definition.label}</MenuItem>
           {/each}
           <MenuSeparator />
