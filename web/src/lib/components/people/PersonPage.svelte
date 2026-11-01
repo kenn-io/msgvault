@@ -160,7 +160,7 @@
     {#if detail && !controller.detailMissing}
       <PersonAddresses {detail} {onAnnounce} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
       {#if 'domain' in detail}
-        <p>{detail.activity_count.toLocaleString()} items{#if detail.activity_count > 0} · {formatContactDate(detail.first_at)} – {formatContactDate(detail.last_at)}{/if} · {detail.person_count.toLocaleString()} people</p>
+        <p>{detail.activity_count.toLocaleString()} items{#if detail.activity_count > 0} · {formatContactDate(detail.first_at)} – {formatContactDate(detail.last_at)}{/if} · {(detail as DomainSummary).person_count.toLocaleString()} people</p>
       {/if}
     {/if}
   </div>
