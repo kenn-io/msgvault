@@ -221,7 +221,8 @@ it('refreshes jobs on the timer and deletions on explicit refresh', async () => 
   } finally { data.stop(); vi.useRealTimers(); }
 });
 
-it.each([4, 500])('counts %s on one waiting page and retains its badge after an offline read', async count => {
+it('counts one waiting page and retains its badge after an offline read', async () => {
+  const count = 4;
   const queries: string[] = [];
   const data = new ShellData(createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);

@@ -23,7 +23,7 @@ test('People Filter opens duplicate cards, evidence, and browser-restored Histor
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('duplicate Undo restores the pair and the next decision settles exact evidence and notes', async ({ page }) => {
+test('duplicate Undo sends no write and the next decision sends one', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
   await page.goto(duplicatesURL);
   let card = page.locator('.cards > li').first();
