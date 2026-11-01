@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DirectoryController } from '../../directory/controller.svelte';
 import { createAPIClient } from '../../api/client';
@@ -156,4 +156,34 @@ it('keeps Back to People available after an observed person fails to load', asyn
     await fireEvent.click(await screen.findByRole('button', { name: 'Back to People' }));
     expect(onBack).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); }
+});
+
+it('keeps an open field draft when the saved person activity finishes loading', async () => {
+  const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: [1], vcard_uid: 'saved-7', created_at: when, updated_at: when };
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => release = resolve);
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+    if (path === '/api/v1/participants/1') return pending;
+    if (path === '/api/v1/people/7') return Response.json(person);
+    if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0 });
+    if (path.endsWith('/employments')) return Response.json({ employments: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
+    if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
+    if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
+  await directory.loadSelection(7);
+  const opening = controller.openTarget('cluster:1', {}, false);
+  const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target: 'cluster:1', details: true, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add phone' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+1 202 555 0199' } });
+    await act(async () => { release(Response.json({ id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })); await opening; });
+    expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });

@@ -89,7 +89,7 @@
     {#if controller.timelineLoading}<p role="status">Loading…</p>{/if}
     {#if controller.timelineError}<div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>{/if}
     <div class="tabs"><SegmentedControl ariaLabel="Person tabs" value={filesOpen && !details ? 'files' : 'details'} options={[{ value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]} onchange={(value) => { details = value === 'details'; onFilesToggle(value === 'files'); }} /></div>
-    {#if filesOpen && !details}{@render files()}{:else}<div class="details"><PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} /></div>{/if}
+    {#if filesOpen && !details}{@render files()}{/if}
   {:else if controller.detailMissing}
     <EmptyState title="Person or domain not found" />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
@@ -119,12 +119,6 @@
         options={[{ value: 'messages', label: 'Messages' }, { value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]}
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
-      <div class="details" hidden={!details}>
-        {#if details && profileID !== null}{#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}{/if}
-        <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
-          capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
-          onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
-      </div>
     {#if !details && scope}
       {#key `${target}:${controller.activityRevision}`}
         {#if filesOpen}
@@ -135,6 +129,16 @@
       {/key}
     {/if}
   {/if}
+  <div class="details" hidden={!(details || (durablePersonID !== null && (!detail || controller.detailMissing) && !filesOpen))}>
+    {#if profileID !== null && (details || (durablePersonID !== null && (!detail || controller.detailMissing) && !filesOpen))}
+      {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
+    {/if}
+    {#if detail && !controller.detailMissing}
+      <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
+        capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
+        onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+    {/if}
+  </div>
 </section>
 
 <style>
