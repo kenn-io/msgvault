@@ -7,7 +7,7 @@ description: Find people across your archive, keep their details together, and u
 Find someone across email, chats, and meetings, then keep their contact details
 and the things you want to remember in one profile. Start in the Web UI's
 **People** workspace to explore contacts already in your archive, then
-save selected people in **Directory**. You can also use the
+choose **Save** in their **Details** tab. You can also use the
 [TUI People browser](/docs/usage/tui/#people).
 
 | I want to… | Start here |
@@ -24,8 +24,7 @@ save selected people in **Directory**. You can also use the
 
 Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
-need separate provider configuration and consent. You can use the Directory
-without enabling them.
+need separate provider configuration and consent. You can edit saved profiles without enabling them.
 
 ## Understand the records
 
@@ -124,7 +123,7 @@ for exact settings and routes.
 
 ## Promote a durable person
 
-Directory starts empty until you save profiles or import contacts. In
+The **Saved** filter starts empty until you save profiles or import contacts. In
 **People**, select a person, and choose **Save** in the header. This creates a saved profile from the contact already
 observed in your archive. The profile starts with the first nonblank observed
 name in the linked cluster, ordered by participant ID. A contact without an

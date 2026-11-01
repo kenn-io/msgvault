@@ -339,7 +339,7 @@ without publishing or resolving the conflict. Then run
 `POST /api/v1/carddav/conflicts/{id}/resolve` and `{"choice":"keep_local"}`.
 
 The preview route is the one CardDAV response that returns a raw vCard, and
-it can include Private Notes. The Directory UI directs you to the CLI review
+it can include Private Notes. The person’s **Publish to address book** action directs you to the CLI review
 commands when approval is required.
 
 ### Recover a connection removed from config
