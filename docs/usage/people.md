@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-20"
+last_edited: "2026-11-01"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -176,8 +176,16 @@ Use `person directory` to browse promoted people, most recent contact first. It 
 msgvault person directory --last-contact-after 2026-06-01
 msgvault person directory --sort last_contact_asc
 msgvault person directory --sort name
+msgvault person directory --query "Alex Example"
+msgvault person directory --address alex@example.test
 msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 2026-07-01 --json
 ```
+
+`--query` uses the Directory's lexical search over current curated names, contact points, and organizations. It works without semantic search. `--address` matches a literal, case-insensitive substring of addresses and identifiers on the person's currently bound participants, or current curated contact points. `%`, `_`, and backslash are ordinary characters. Superseded contact points and observed participants without a saved person are excluded. A cleared saved display name stays cleared; observed names do not replace it.
+
+Combine flags to narrow results, for example `person directory --query Alex --address example.test`. Address filtering requires an up-to-date daemon; the CLI reports an upgrade error if the selected daemon cannot apply it. Lookup does not create profiles or change identity links.
+
+Address-only lookups can scan all saved people when matches are sparse or absent. A remote PostgreSQL database can make these database round trips slower. Combine `--query` with `--address` when you know a name or organization to narrow the candidates first.
 
 `--last-contact-after` and `--last-contact-before` are inclusive. Both accept `YYYY-MM-DD` or RFC3339 timestamps with offsets and fractional seconds. A date alone means midnight UTC, so an upper bound of `2026-07-01` includes the start of that day. The default sort is `last_contact_desc`. Use `last_contact_asc` for oldest contact first or `name` for name order.
 
@@ -185,7 +193,7 @@ Drafts and unsent messages don't set last contact or cadence.
 
 The table shows ID, display name, and last contact in UTC. Missing names and timestamps show `-`. JSON returns the Directory envelope with a `people` array and optional `next_cursor`. It preserves the daemon's fields and omits `last_contact_at` when no timestamp exists.
 
-When output includes `Next cursor`, pass it unchanged with the same date bounds and sort to read the next page. For JSON, use the `next_cursor` value.
+When output includes `Next cursor`, pass it unchanged with the same query, address, date bounds, and sort to read the next page. For JSON, use the `next_cursor` value.
 
 ```bash
 msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor>"
