@@ -59,7 +59,8 @@
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
   const soloPerson = $derived(urlState.directoryPersonID);
   const predicateKey = $derived(JSON.stringify(page.predicate));
-  let appliedRestorationEpoch = untrack(() => restorationEpoch);
+  // The directory outlives this view, so a new mount reloads its retained rows once.
+  let appliedRestorationEpoch: number | undefined;
   $effect(() => {
     controller.facet = facet; controller.showAll = showAll; controller.query = query;
     controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'last_contact_asc' ? { field: 'latest_at', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };

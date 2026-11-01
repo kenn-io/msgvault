@@ -1557,7 +1557,7 @@
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
-    onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
+    onSuccess={async success => { if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
 

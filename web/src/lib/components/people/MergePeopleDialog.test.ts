@@ -89,3 +89,29 @@ it('leaves both people unchanged when the saved profile cannot be read', async (
     expect(onClose).not.toHaveBeenCalled();
   } finally { view.unmount(); controller.destroy(); }
 });
+
+
+it.each([false, true])('reconciles a committed promotion before a later profile read fails, saved anchor=%s', async savedAnchor => {
+  let promoted = false;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [profile(7, 4, [])] });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 2, display_label: 'Synthetic Observed' }] : [] });
+    if (path === '/api/v1/people' && request.method === 'POST') { promoted = true; return Response.json(profile(9, 2, [savedAnchor ? 2 : 1])); }
+    if (path === '/api/v1/people/7') return Response.json(profile(7, 4, []), { headers: { ETag: '"person-7-r4"' } });
+    if (path === '/api/v1/people/9') return Response.json({ error: 'unavailable' }, { status: 503 });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const onReconcile = vi.fn(async () => undefined);
+  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic', onReconcile, onClose: vi.fn() });
+  try {
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Observed/ : /Synthetic One/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await screen.findByText('Could not read both people. Retry the merge.');
+    expect(promoted).toBe(true);
+    expect(onReconcile).toHaveBeenCalled();
+  } finally { view.unmount(); controller.destroy(); }
+});

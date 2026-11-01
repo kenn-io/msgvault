@@ -2933,7 +2933,8 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
     if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
-    if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
+    if (/\/people\/(7|9)\/profile$/.test(path)) { const id = Number(path.split('/').at(-2)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json({ person: profile(id), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); }
+    if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
     if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? 'Synthetic One' : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
@@ -2946,7 +2947,8 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
   const view = render(AppShell, { client, state });
   try {
     const grid = await screen.findByRole('grid', { name: 'People results' });
-    await within(grid).findByText('Synthetic Two');
+    await fireEvent.click(await within(grid).findByText('Synthetic Two'));
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(9));
     await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
     await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
@@ -2961,6 +2963,8 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
     const savedGrid = await screen.findByRole('grid', { name: 'People results' });
     await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
+    expect(screen.queryByRole('heading', { name: 'Synthetic Two' })).toBeNull();
+    expect(state.current.directoryPersonID).not.toBe(9);
   } finally { view.unmount(); state.destroy(); }
 });
 
@@ -3000,7 +3004,7 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it('refreshes Saved rows when browser Back restores unchanged filters', async () => {
+it.each([false, true])('refreshes Saved rows when browser Back restores unchanged filters, remount=%s', async remount => {
   let synced = false;
   const saved = () => ({ ...person(7, 1, []), display_name: synced ? 'After sync' : 'Before sync', organizations: [], categories: [], contact_state: 'active' });
   const client = createAPIClient(async input => {
@@ -3016,14 +3020,22 @@ it('refreshes Saved rows when browser Back restores unchanged filters', async ()
   const view = render(AppShell, { client, state });
   try {
     const grid = await screen.findByRole('grid', { name: 'People results' });
-    await fireEvent.click(await within(grid).findByText('Before sync'));
-    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
+    await within(grid).findByText('Before sync');
+    if (!remount) {
+      await fireEvent.click(within(grid).getByText('Before sync'));
+      await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
+    }
+    if (remount) {
+      await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
+      await waitFor(() => expect(screen.queryByRole('grid', { name: 'People results' })).toBeNull());
+    }
     synced = true;
     const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
     window.history.back();
     await restored;
     await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
-    expect(await within(grid).findByText('After sync')).toBeDefined();
-    expect(within(grid).queryByText('Before sync')).toBeNull();
+    const restoredGrid = await screen.findByRole('grid', { name: 'People results' });
+    expect(await within(restoredGrid).findByText('After sync')).toBeDefined();
+    expect(within(restoredGrid).queryByText('Before sync')).toBeNull();
   } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
 });

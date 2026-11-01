@@ -217,3 +217,40 @@ it('keeps an open field draft when the saved person activity finishes loading', 
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
+
+it('links the original observed person when navigation disposes a saved-profile lookup', async () => {
+  let release!: (response: Response) => void;
+  let profileRequested = false;
+  const links: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (/\/participants\/[12]$/.test(path)) {
+      const id = Number(path.split('/').at(-1));
+      return Response.json({ id, display_label: id === 1 ? 'Original observed person' : 'Next observed person', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when });
+    }
+    if (path === '/api/v1/people/directory') return Response.json({ people: [{ id: 7, display_name: 'Saved counterpart', participant_ids: [77] }] });
+    if (path === '/api/v1/participants/search') return Response.json({ rows: [] });
+    if (path === '/api/v1/people/7') { profileRequested = true; return new Promise<Response>(resolve => { release = resolve; }); }
+    if (path === '/api/v1/identity/links') { links.push(await request.json()); return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [], total_count: 0, cache_revision: 'cache-example', search_provenance: {} });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const directory = new DirectoryController(client);
+  await controller.openTarget('cluster:1', {}, false);
+  const props = { client, directory, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: vi.fn(async () => undefined) };
+  const view = render(PersonPage, { props });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Saved counterpart' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Saved counterpart/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(profileRequested).toBe(true));
+    await controller.openTarget('cluster:2', {}, false);
+    await view.rerender({ ...props, target: 'cluster:2' });
+    await screen.findByRole('heading', { name: 'Next observed person' });
+    expect(screen.queryByRole('dialog', { name: 'Merge Original observed person' })).toBeNull();
+    release(Response.json({ id: 7, display_name: 'Saved counterpart', participant_ids: [77] }));
+    await waitFor(() => expect(links).toEqual([{ participant_a: 1, participant_b: 77 }]));
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
+});

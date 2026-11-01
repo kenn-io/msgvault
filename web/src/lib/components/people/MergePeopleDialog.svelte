@@ -6,10 +6,12 @@
   import LinkIdentityDialog from '../relationships/LinkIdentityDialog.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import { untrack } from 'svelte';
-  let { client, controller, personID, participantID, name, onReconcile, onOpenPerson, onLinked, onClose }:
+  let { client, controller, personID: currentPersonID, participantID: currentParticipantID, name, onReconcile, onOpenPerson, onLinked, onClose }:
     { client: APIClient; controller: RelationshipsController; personID: number | null; participantID: number | null; name: string;
       onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean) => Promise<void>; onOpenPerson?: (id: number) => void; onLinked?: (a: number, b: number, outcome: LinkOutcome) => void; onClose: () => void } = $props();
   let conflict = $state<ValidatedPersonMergeRequired>();
+  // The operation keeps the people it opened with, even after navigation disposes the dialog.
+  const [personID, participantID] = untrack(() => [currentPersonID, currentParticipantID]);
   const context = untrack(() => controller.personMergeContextSnapshot());
   // A successful promotion is retained when reading the profiles needs a retry.
   const promoted = new Map<number, number>();
@@ -62,5 +64,5 @@
 {#if conflict}
   <PersonBindingConflictModal {client} {conflict} onOpenProfile={(id) => { onClose(); onOpenPerson?.(id); }} onSuccess={merged} {onClose} />
 {:else}
-  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok) await onReconcile(context, true); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok) await onReconcile(context, true); return result; }} onMergeRequired={(value) => conflict = value} {onClose} />
+  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || (promoted.size > 0 && result.code === 'error')) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || (promoted.size > 0 && result.code === 'error')) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} {onClose} />
 {/if}
