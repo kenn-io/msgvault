@@ -596,6 +596,50 @@ it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People
   expect(seen.filter(request => request.path.endsWith('/check')).map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
 });
 
+it('uses the saved People revision when opening People lookups during a settings save', async () => {
+  let revision = '"s1"';
+  let saveStarted = false;
+  let finishSave!: () => void;
+  const pendingSave = new Promise<void>(resolve => { finishSave = resolve; });
+  let finishRead!: (response: Response) => void;
+  const pendingRead = new Promise<Response>(resolve => { finishRead = resolve; });
+  const doc = settingsDoc();
+  const oldStatus = {
+    profiles: [inferenceProfile], configured_enabled: false, running_enabled: false, pending_restart: false,
+  };
+  const { client, seen } = fixture(doc, async request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' && request.method === 'PATCH') {
+      saveStarted = true;
+      await pendingSave;
+      revision = '"s2"';
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      if (saveStarted && revision === '"s1"') return pendingRead;
+      return Response.json({
+        ...oldStatus, profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'server' });
+  await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(saveStarted).toBe(true));
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  await screen.findByRole('heading', { name: 'People lookups' });
+  finishSave();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull());
+  finishRead(Response.json(oldStatus, { headers: { ETag: '"s1"' } }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Check provider' }).matches(':disabled')).toBe(false));
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await waitFor(() => expect(seen.find(request => request.path.endsWith('/check'))?.ifMatch).toBe('"s2"'));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(screen.getByText('model-two')).toBeDefined();
+});
+
 it('refreshes People profiles and revision after a shared-settings conflict while People lookups stays open', async () => {
   let revision = '"s1"';
   const doc = settingsDoc();

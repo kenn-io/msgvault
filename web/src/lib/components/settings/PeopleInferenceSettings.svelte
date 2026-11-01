@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { Button, Checkbox, RadioGroup, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
@@ -18,8 +17,6 @@
   let retentionPosture = $state('');
   let trainingPosture = $state('');
   let removeConfirmationName = $state('');
-
-  onMount(() => { void controller.load(); });
 
   async function createProfile(): Promise<void> {
     const stableName = name.trim();
