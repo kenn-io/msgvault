@@ -36,7 +36,9 @@ const (
 	planActionSkip    = "skip"
 	planActionOnboard = "onboard"
 
-	// Consent gates: one explicit answer per hosted provider.
+	// Consent gates: one explicit answer per hosted provider, plus a local
+	// switch that leaves semantic search down until a full rebuild.
+	gateLocal      = "local"
 	gateVoyage     = "voyage"
 	gateMistral    = "mistral"
 	gateOpenAI     = "openai"
@@ -364,7 +366,7 @@ func (p *setupProvidersPlan) gates() []string {
 		}
 	}
 	ordered := []string{}
-	for _, gate := range []string{gateVoyage, gateMistral, gateOpenAI, gateOpenRouter, gateVenice} {
+	for _, gate := range []string{gateLocal, gateVoyage, gateMistral, gateOpenAI, gateOpenRouter, gateVenice} {
 		if seen[gate] {
 			ordered = append(ordered, gate)
 		}
@@ -588,7 +590,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			if embeddings.LocalCompatible() {
 				lane.Reason += "; keeps the message index when its Nomic recipe matches"
 			} else {
-				lane.Reason += "; different model: run `msgvault embeddings build --full-rebuild --yes`"
+				lane.Reason, lane.Gate = lane.Reason+"; different model: run `msgvault embeddings build --full-rebuild --yes`", gateLocal
 			}
 		}
 		values := map[string]any{
@@ -877,7 +879,7 @@ func planPeopleInference(
 // gateDisclosure states plainly what each hosted provider receives once the
 // operator answers yes.
 func gateDisclosure(gate string, plan *setupProvidersPlan) string {
-	var lines []string
+	lines := localSwitchDisclosure(gate)
 	switch gate {
 	case gateVoyage:
 		lines = append(lines, "Voyage AI ("+setupVoyageEndpoint+") receives:")
@@ -938,6 +940,14 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// localSwitchDisclosure states what a different-model local switch costs.
+func localSwitchDisclosure(gate string) []string {
+	if gate != gateLocal {
+		return nil
+	}
+	return []string{"Semantic search stays unavailable until `msgvault embeddings build --full-rebuild --yes` finishes."}
 }
 
 func textLaneProvider(plan *setupProvidersPlan) string {
@@ -1117,7 +1127,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	}
 	if len(gates) > 0 && !options.yes {
 		if deps.isTerminal == nil || !deps.isTerminal(command) || options.jsonOutput {
-			return fmt.Errorf("setup providers needs one consent per hosted provider (%s); review the plan with --dry-run, then re-run with --yes",
+			return fmt.Errorf("setup providers needs one consent per provider (%s); review the plan with --dry-run, then re-run with --yes",
 				strings.Join(gates, ", "))
 		}
 		for _, gate := range gates {

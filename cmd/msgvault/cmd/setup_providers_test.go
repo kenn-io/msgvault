@@ -1741,6 +1741,34 @@ func TestSetupProvidersExplicitLocalSwitch(t *testing.T) {
 	}
 }
 
+func TestSetupProvidersDifferentModelLocalSwitchNeedsConfirmation(t *testing.T) {
+	for _, tty := range []bool{true, false} {
+		t.Run(fmt.Sprintf("terminal=%t", tty), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:11434/v1"
+model = "other-model"
+dimension = 768
+`)
+			fixture.tty = tty
+			fixture.input = strings.NewReader("n\n")
+			before := fixture.readConfig(t)
+			output, err := fixture.run(t, "providers", "--local-embeddings")
+			if tty {
+				require.NoError(err, output)
+				assert.Contains(output, "Semantic search stays unavailable until `msgvault embeddings build --full-rebuild --yes` finishes.")
+				assert.Contains(output, "Enable the local lanes? [y/N]:")
+			} else {
+				require.ErrorContains(err, "--yes")
+			}
+			assert.Equal(before, fixture.readConfig(t))
+		})
+	}
+}
+
 func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint, model string
