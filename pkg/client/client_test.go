@@ -1593,3 +1593,50 @@ func TestGeneratedTimelineDecodesPrimitiveBudgetOmissions(t *testing.T) {
 	require.NoError(err)
 	assert.JSONEq(t, `{"history":2,"open_loops":"more"}`, string(budget))
 }
+
+func TestGeneratedTimelinePreservesNullableNumbers(t *testing.T) {
+	for _, value := range []string{"null", "0"} {
+		t.Run(value, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			body := fmt.Sprintf(`{"mode":"day","history":[{"call":{"duration_seconds":%s}}],"freshness":{"sources":[{"source_id":%s}]}}`, value, value)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertions.Equal("/api/v1/timeline", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(body))
+				assertions.NoError(err)
+			}))
+			t.Cleanup(srv.Close)
+			client, err := New(srv.URL)
+			requirements.NoError(err)
+			response, err := client.GetTimelineWithResponse(t.Context(), &generated.GetTimelineRequestOptions{})
+			requirements.NoError(err)
+			requirements.NotNil(response.JSON200)
+			requirements.Len(response.JSON200.History, 1)
+			requirements.NotNil(response.JSON200.History[0].Call)
+			requirements.Len(response.JSON200.Freshness.Sources, 1)
+			duration := response.JSON200.History[0].Call.DurationSeconds
+			sourceID := response.JSON200.Freshness.Sources[0].SourceID
+			if value == "null" {
+				assertions.Nil(duration)
+				assertions.Nil(sourceID)
+			} else {
+				zeroDuration, zeroSource := float64(0), int64(0)
+				assertions.Equal(&zeroDuration, duration)
+				assertions.Equal(&zeroSource, sourceID)
+			}
+			for _, model := range []struct {
+				value any
+				field string
+			}{
+				{response.JSON200.History[0].Call, "duration_seconds"},
+				{response.JSON200.Freshness.Sources[0], "source_id"},
+			} {
+				encoded, err := json.Marshal(model.value)
+				requirements.NoError(err)
+				var fields map[string]json.RawMessage
+				requirements.NoError(json.Unmarshal(encoded, &fields))
+				assertions.Equal(value, string(fields[model.field]))
+			}
+		})
+	}
+}

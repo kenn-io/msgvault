@@ -173,6 +173,17 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
 	if truncated {
 		result = result[:limit]
 	}
+	calendarIDs, calendarMore, err := s.calendarAttendedTranscriptIDs(ctx, q, filters, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	result = append(result, calendarIDs...)
+	slices.Sort(result)
+	result = slices.Compact(result)
+	truncated = truncated || calendarMore || len(result) > limit
+	if len(result) > limit {
+		result = result[:limit]
+	}
 	return result, truncated, nil
 }
 

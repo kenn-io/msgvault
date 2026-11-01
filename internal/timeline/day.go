@@ -68,7 +68,7 @@ func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
 	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Filters: c.filters(), Limit: maxBursts}
 	var r dayRead
-	parallel(
+	parallel(c.ctx,
 		func() {
 			if c.src.Activity != nil {
 				r.activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {

@@ -224,7 +224,7 @@ func TestColdAdapterMatchesSpineCopyNoiseAndDateRules(t *testing.T) {
 	}
 	at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
 	rep := f.add(t, room, f.Source.ID, at, false, "<same@example.com>")
-	f.add(t, copyRoom, other.ID, at, false, "<same@example.com>")
+	f.add(t, copyRoom, other.ID, at, false, "same@example.com")
 	for i := range 6 {
 		f.add(t, room, f.Source.ID, at.Add(time.Duration(i+1)*time.Minute), i%2 == 0, "")
 	}
@@ -379,8 +379,7 @@ func TestColdAdapterMatchesSavedPersonRoles(t *testing.T) {
 	assertions.Equal(1, filtered.NoiseOmitted)
 }
 
-// Reapplying strongest projected roles for an explicit limit loses the raw
-// addressed evidence that the spine deliberately reclassifies for that limit.
+// Explicit limits retain the classifier's strongest role in both readers.
 func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 	for _, limit := range []int{1, 25} {
 		t.Run(strconv.Itoa(limit), func(t *testing.T) {
@@ -397,10 +396,11 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			projectColdTimeline(t, f, "UTC")
 			q := timelineBurstQuery()
 			q.Filters.MaxDirect = limit
+			q.Filters.IncludeNoise = true
 			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(warm.Bursts, 1)
-			assertions.Equal(1, warm.Bursts[0].Outbound)
+			assertions.Zero(warm.Bursts[0].Outbound)
 			assertions.Zero(warm.NoiseOmitted)
 
 			setTimelineConversationTier(t, f, f.Source.ID, "custom-limit-authors", conversationpolicy.Cold)
@@ -408,7 +408,7 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(cold.Bursts, 1)
-			assertions.Equal(1, cold.Bursts[0].Outbound)
+			assertions.Zero(cold.Bursts[0].Outbound)
 			warm.Bursts[0].Cold = true
 			warm.Bursts[0].FirstAt = warm.Bursts[0].FirstAt.UTC()
 			warm.Bursts[0].LastAt = warm.Bursts[0].LastAt.UTC()
@@ -416,6 +416,14 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(1, count)
+			q.Filters.IncludeNoise = false
+			quiet, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Empty(quiet.Bursts)
+			assertions.Equal(1, quiet.NoiseOmitted)
+			count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Zero(count)
 		})
 	}
 }
@@ -629,6 +637,52 @@ func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
 			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(2, count)
+		})
+	}
+}
+
+func TestColdEmailCopiesCanonicalMessageIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		count               int
+	}{
+		{"clean brackets", "<copy@example.com>", "copy@example.com", 1},
+		{"distinct IDs", "first@example.com", "second@example.com", 2},
+		{"missing IDs", "", "", 2},
+		{"empty brackets", "<>", "", 2},
+		{"inner whitespace", "< copy@example.com >", "copy@example.com", 2},
+		{"outer whitespace", " <copy@example.com> ", "copy@example.com", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
+			requirements.NoError(err)
+			requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			firstRoom := coldTimelineRoom(t, f, f.Source.ID, "first-copy")
+			secondRoom := coldTimelineRoom(t, f, source.ID, "second-copy")
+			for _, room := range []int64{firstRoom, secondRoom} {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='email_thread' WHERE id=?`), room)
+				requirements.NoError(err)
+			}
+			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			f.add(t, firstRoom, f.Source.ID, at, false, tc.first)
+			f.add(t, secondRoom, source.ID, at, false, tc.second)
+			projectColdTimeline(t, f, "UTC")
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), timelineBurstQuery())
+			requirements.NoError(err)
+			assertions.Len(page.Bursts, tc.count)
+			for _, burst := range page.Bursts {
+				assertions.Equal(1, burst.Inbound)
+				assertions.Equal(3-tc.count, burst.CopyCounts[burst.AnchorMessageID])
+			}
+			for _, sourceID := range []int64{f.Source.ID, source.ID} {
+				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{sourceID})
+				page, err := f.Store.ListColdActivityBurstsContext(ctx, timelineBurstQuery())
+				requirements.NoError(err)
+				requirements.Len(page.Bursts, 1)
+				assertions.Equal(1, page.Bursts[0].CopyCounts[page.Bursts[0].AnchorMessageID])
+			}
 		})
 	}
 }

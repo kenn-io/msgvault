@@ -380,7 +380,8 @@ import (
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
 // 3.28.0 adds the typed calendar projection to calendar event message details.
-// 3.29.0 adds archived calendar occurrence listing, paging, detail and source scope.
+// 3.29.0 adds archived calendar occurrence listing, paging, detail and source scope,
+// plus literal address filtering to the durable people Directory.
 // 3.30.0 adds owner meeting link decisions and suggestions.
 // 3.31.0 adds stored hidden text flags to message details and search rows.
 // 3.32.0 adds owner-only call evidence import, inspection and person summaries.
@@ -1505,6 +1506,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schemaName + "AllowedResolutionsKeepLocal",
 			schemaName + "AllowedResolutionsKeepRemote",
 		})
+	}
+	// Nullable numbers must retain unknown values separately from numeric zero.
+	if call := schemas["TimelineCallEntry"]; call != nil {
+		if duration := call.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+	}
+	if source := schemas["TimelineSourceFreshness"]; source != nil {
+		if sourceID := source.Properties["source_id"]; sourceID != nil {
+			setCodegenGoType(sourceID, "*int64")
+		}
 	}
 	// Openers contain primitive arguments, including numeric IDs and string refs.
 	// Empty-schema map values otherwise generate struct{} and reject those values.
