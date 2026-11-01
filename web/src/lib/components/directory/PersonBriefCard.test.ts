@@ -289,6 +289,13 @@ describe('PersonBriefCard', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('switch')));
   });
 
+  it('keeps unenrollment available when sweep setup is required', async () => {
+    render(PersonBriefCard, { client: createAPIClient(enrolledArchive()), personID: 7, onSetUp: vi.fn() });
+    await screen.findByRole('button', { name: sentenceTexts[0] });
+    expect(screen.getByRole('switch', { name: 'Enroll this person in briefs' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Set up Briefs' })).toBeDefined();
+  });
+
   it('resets "also track" after unenrolling so a later enrollment does not retrack them', async () => {
     const bodies: Array<{ enrolled: boolean; track: boolean }> = [];
     let enrolled = false;
