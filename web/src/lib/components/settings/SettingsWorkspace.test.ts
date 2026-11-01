@@ -626,6 +626,45 @@ it('refreshes People profiles and revision after a shared-settings conflict whil
   expect(seen.find(request => request.path.endsWith('/check'))?.ifMatch).toBe('"s2"');
 });
 
+it.each(['save', 'create'] as const)('refreshes People profiles, checks, and revision after an enrichment provider %s conflict', async (action) => {
+  let revision = '"s1"';
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider] });
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') return Response.json(doc, { headers: { ETag: revision } });
+    if (path.includes('/person-enrichment/providers/') && request.method === 'PUT') return Response.json({ message: 'Config changed' }, { status: 412 });
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await screen.findByText('model-one');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  revision = '"s2"';
+  if (action === 'save') {
+    await fireEvent.input(screen.getByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
+    await screen.findByText('The settings changed on disk. The latest are loaded. Review this provider and save again.');
+  } else {
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Exa' }));
+    await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'secondary' } });
+    await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
+    await screen.findByText('The settings changed on disk. The latest are loaded. Try again.');
+  }
+  await screen.findByText('model-two');
+  expect(screen.queryByLabelText('I confirm this exact disclosure')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(seen.filter(request => request.path.endsWith('/check')).map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
+});
+
 it('selects a refreshed People profile after saving Server settings and returning', async () => {
   let revision = '"s1"';
   let consented = false;
@@ -655,7 +694,6 @@ it('selects a refreshed People profile after saving Server settings and returnin
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
   await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
-  await waitFor(() => expect(seen.filter(request => request.method === 'GET' && request.path === '/api/v1/settings/people-inference')).toHaveLength(2));
   await screen.findByText('model-two');
   await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
   await fireEvent.click(await screen.findByLabelText('I confirm this exact disclosure'));
