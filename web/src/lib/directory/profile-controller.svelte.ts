@@ -2,6 +2,7 @@ import {
   clearPersonAttribute as generatedClearPersonAttribute,
   createAttributeDefinition as generatedCreateAttributeDefinition,
   deletePerson as generatedDeletePerson,
+  getPersonContactState as generatedGetPersonContactState,
   getPersonProfile as generatedGetPersonProfile,
   getPersonStructuredProfile as generatedGetPersonStructuredProfile,
   listAttributeDefinitions as generatedListAttributeDefinitions,
@@ -148,27 +149,12 @@ export class DirectoryProfileController {
     const profileRequiresFreshETag = this.requiresReload('profile');
     const requestOptions = { ...this.client, signal: abort.signal };
     try {
-      const [person, structuredProfile, attributes, definitions] = await Promise.all([
+      const [person, structuredProfile, attributes, definitions, contactState] = await Promise.all([
         settle(generatedGetPersonProfile({ id: this.personID }, requestOptions)),
         settle(generatedGetPersonStructuredProfile({ id: this.personID }, requestOptions)),
-        settle(
-          generatedListPersonAttributes(
-            { id: this.personID },
-            { history: true },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
-        settle(
-          generatedListAttributeDefinitions(
-            { object_type: 'person', include_hidden: true },
-            {
-              ...this.client,
-              signal: abort.signal,
-            },
-          ),
-        ),
+        settle(generatedListPersonAttributes({ id: this.personID }, { history: true }, requestOptions)),
+        settle(generatedListAttributeDefinitions({ object_type: 'person', include_hidden: true }, requestOptions)),
+        settle(generatedGetPersonContactState({ id: this.personID }, requestOptions)),
       ]);
       if (this.disposed || abort.signal.aborted || generation !== this.generation)
         return { ok: false, code: 'reload_in_progress' };
@@ -206,6 +192,13 @@ export class DirectoryProfileController {
       } else {
         this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
       }
+      const errors = { ...this.bundle.errors };
+      if (contactState.data) {
+        this.bundle = { ...this.bundle, contactState: contactState.data };
+        delete errors.contactState;
+        refreshed = true;
+      } else errors.contactState = failureMessage(contactState.error, contactState.response?.status ?? 0);
+      this.bundle = { ...this.bundle, errors };
       this.resolveReloadDraft(
         { person, structuredProfile, attributes, definitions },
         { personReady, structuredProfileReady, attributesReady, definitionsReady },

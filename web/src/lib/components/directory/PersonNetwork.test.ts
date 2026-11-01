@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -112,6 +112,19 @@ describe('PersonNetwork', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open organization Shared Organization' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(onOpenOrganization).toHaveBeenCalledWith(21);
+  });
+
+  it('names a link between two people at the same distance, visibly and for screen readers', async () => {
+    const projection = connected();
+    projection.edges.push({ id: 'relationship:33', kind: 'relationship', source_node_id: 'organization:21', target_node_id: 'person:9', relationship_type_slug: 'sponsor', label: 'sponsors' });
+    const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async () => Response.json(projection))), 7);
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+
+    const second = await screen.findByRole('button', { name: 'Open person Second Hop Person' });
+    expect(second.parentElement?.querySelector('.relation')?.textContent).toBe('mentors, Shared Organization sponsors');
+    const links = within(screen.getByRole('list', { name: 'Network connections' })).getAllByRole('listitem').map((item) => item.textContent);
+    expect(links).toContain('Shared Organization sponsors Second Hop Person');
+    expect(links).toHaveLength(4);
   });
 
   it('sends exact depth and ended-data queries and retains the last projection through loading, error, and retry', async () => {

@@ -1116,7 +1116,7 @@ describe('DirectoryController', () => {
 
   it('keeps the selected split source and permits its next field write', async () => {
     let reads = 0; let split = false;
-    const person = () => ({ id: 12, revision: split ? 4 : 3, display_name: 'Synthetic Source', participant_ids: [701], vcard_uid: 'synthetic-12', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
+    const person = () => ({ id: 12, revision: split ? 4 : 3, display_name: 'Synthetic Source', participant_ids: split ? [701] : [701, 702], vcard_uid: 'synthetic-12', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
     const profile = () => ({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1126,6 +1126,7 @@ describe('DirectoryController', () => {
         return Response.json({ people: reads === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
       }
       if (path === '/api/v1/people/12/profile' && request.method === 'PATCH' && request.headers.get('If-Match') !== '"person-12-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
+      if (path === '/api/v1/people/12/contact-state') return Response.json({ person_id: 12, interaction_count: split ? 1 : 3, last_contact_at: split ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: split ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
       if (path === '/api/v1/people/12') return Response.json(person(), { headers: { ETag: `"person-12-r${person().revision}"` } });
       if (path === '/api/v1/people/12/profile') return Response.json(profile(), { headers: { ETag: `"person-12-r${person().revision}"` } });
       return detailResponse(path, 12);
@@ -1134,12 +1135,15 @@ describe('DirectoryController', () => {
     await controller.loadFirstPage();
     await controller.selectPerson(12);
     const owner = controller.profile;
+    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 3, last_contact_at: '2026-08-15T00:00:00Z', cadence_status: 'ok' });
     split = true;
     await controller.reconcilePersonSplit({ sourcePersonID: 12, newPersonID: 19 });
+    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
 
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Friend', envelope: { source: 'user' } }] } });
     expect(controller.profile?.conflict).toBeNull();
     expect(controller.profile).toBe(owner);
+    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
   });
 
   it('reconciles a committed split without fetching an unselected profile', async () => {

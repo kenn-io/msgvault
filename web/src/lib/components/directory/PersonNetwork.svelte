@@ -82,11 +82,13 @@
   const hasLinks = $derived((network?.edges.length ?? 0) > 0);
 
   // How a node relates to the node one step closer, such as "Designer" or "guides".
+  // A link between two nodes the same distance away shows under its target, with the source's name.
   function relation(node: NetworkNode): string {
-    const hop = (id: string) => network?.nodes.find((each) => each.id === id)?.hop ?? 0;
+    const find = (id: string) => network?.nodes.find((each) => each.id === id);
+    const hop = (id: string) => find(id)?.hop ?? 0;
     return (network?.edges ?? [])
-      .filter((edge) => (edge.target_node_id === node.id && hop(edge.source_node_id) < node.hop) || (edge.source_node_id === node.id && hop(edge.target_node_id) < node.hop))
-      .map((edge) => edge.label)
+      .filter((edge) => (edge.target_node_id === node.id && hop(edge.source_node_id) <= node.hop) || (edge.source_node_id === node.id && hop(edge.target_node_id) < node.hop))
+      .map((edge) => edge.target_node_id === node.id && hop(edge.source_node_id) === node.hop ? `${find(edge.source_node_id)?.label} ${edge.label}` : edge.label)
       .filter((label, index, all) => label && all.indexOf(label) === index)
       .join(', ');
   }
@@ -105,6 +107,14 @@
     {#if controller.networkLoading}<p role="status">Loading network…</p>{/if}
     {#if network?.truncated}<p role="status">Showing a bounded prefix of at most 250 nodes and 500 connections at depth {depth}.</p>{/if}
     {#if network && !hasLinks}<p class="muted">No connections at this depth</p>{/if}
+    {#if network && hasLinks}
+      <!-- The drawn lines are decorative; this list names every link for screen readers. -->
+      <ul class="kit-sr-only" aria-label="Network connections">
+        {#each network.edges as edge (edge.id)}
+          <li>{network.nodes.find((node) => node.id === edge.source_node_id)?.label} {edge.label} {network.nodes.find((node) => node.id === edge.target_node_id)?.label}</li>
+        {/each}
+      </ul>
+    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     {#if hasLinks}<div class="scroll" tabindex="0" role="region" aria-label="Network graph">
       <div class="graph" style:width={`${layout.width}px`} style:height={`${layout.height}px`}>
