@@ -26,7 +26,7 @@ describe('OrganizationEmploymentTab', () => {
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     expect(screen.getByRole('alert').textContent).toContain('reconciliation failed');
-    expect(screen.getByText('Locally updated role')).toBeDefined();
+    expect(screen.getByText(/Locally updated role/)).toBeDefined();
     expect(screen.getByRole('button', { name: 'Edit employment' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'End employment' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Delete employment' })).toBeDefined();
@@ -35,14 +35,14 @@ describe('OrganizationEmploymentTab', () => {
 
     await waitFor(() => expect(reads).toBe(1));
     expect(screen.getByRole('status').textContent).toContain('Loading employment records');
-    expect(screen.getByText('Locally updated role')).toBeDefined();
+    expect(screen.getByText(/Locally updated role/)).toBeDefined();
     expect(screen.getByRole('button', { name: 'Edit employment' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'End employment' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Delete employment' })).toBeDefined();
 
     resolveRefresh(collection([employment(12, 2, { title: 'Recovered role' })], undefined));
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(await screen.findByText('Recovered role')).toBeDefined();
+    expect(await screen.findByText(/Recovered role/)).toBeDefined();
   });
 
 
@@ -81,8 +81,8 @@ describe('OrganizationEmploymentTab', () => {
     expect(postedBody).toMatchObject({ person_id: 7, organization_id: 21, source: 'user', title: 'Architect' });
     expect(postedBody.source_ref).toBeUndefined();
     expect(employmentReads).toBe(1);
-    expect(screen.getByText('Architect')).toBeDefined();
-    expect(screen.getByText(/Engineer/).closest('li')?.textContent).not.toContain('Primary');
+    expect(screen.getByText(/Architect/).closest('.detail-row')?.textContent).toContain('Primary');
+    expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).not.toContain('Primary');
   });
 
   it('finds an employer beyond the first fifty and retains the selected employer after another search', async () => {
@@ -250,10 +250,24 @@ describe('OrganizationEmploymentTab', () => {
     ];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
-    const historical = screen.getByText('Historical role').closest('li')!;
-    const current = screen.getByText('Current role').closest('li')!;
+    const historical = screen.getByText(/Historical role/).closest('.detail-row') as HTMLElement;
+    const current = screen.getByText(/Current role/).closest('.detail-row') as HTMLElement;
     expect(within(historical).queryByRole('button', { name: 'Make primary employment' })).toBeNull();
     expect(within(current).getByRole('button', { name: 'Make primary employment' })).toBeDefined();
+  });
+
+  it('reads a row as title at organization with period, department, and ordered actions', () => {
+    const controller = controllerWith(vi.fn<typeof fetch>());
+    controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false })];
+    render(OrganizationEmploymentTab, { controller, personID: 7 });
+
+    const row = screen.getByText(/Engineer/).closest('.detail-row') as HTMLElement;
+    expect(row.textContent).toContain('Engineer at');
+    expect(row.textContent).toContain('Mar 2024 – present · Platform');
+    expect(within(row).queryByText('Current')).toBeNull();
+    expect(within(row).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim()).slice(-4)).toEqual(
+      ['Make primary employment', 'End employment', 'Edit employment', 'Delete employment']
+    );
   });
 
   it('makes a current employment primary', async () => {
@@ -271,7 +285,7 @@ describe('OrganizationEmploymentTab', () => {
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Make primary employment' }));
-    await waitFor(() => expect(screen.getByText('Primary', { selector: 'small' })).toBeDefined());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Make primary employment' })).toBeNull());
     expect(requests.find((request) => pathOf(request) === '/api/v1/employments/11/primary')?.headers.get('If-Match')).toBe('"employment-11-r1"');
   });
 

@@ -131,6 +131,12 @@ describe('RelationshipHeader', () => {
     expect(screen.getByText(/0 items/).closest('p')?.textContent?.trim()).toBe('0 items');
   });
 
+  it('shows a title heading in place of the counts line when the page header already names the person', () => {
+    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
+    expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
+    expect(screen.queryByText(/items/)).toBeNull();
+  });
+
   it('opens the durable Directory person without starting participant promotion', async () => {
     const onOpenDirectory = vi.fn();
     const onOpenDirectoryPerson = vi.fn();

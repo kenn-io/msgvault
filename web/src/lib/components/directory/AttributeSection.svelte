@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { historySource, historyTime } from './history-format';
   import { Button } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
@@ -134,6 +135,30 @@
   }
 </script>
 
+{#if historyOnly}
+  {#each visibleFields as field (field.definition.universal_id)}
+    {@const shown = isRevealed(field.definition)}
+    <section class="history-field" aria-labelledby={`attribute-title-${field.definition.id}`}>
+      <header class="section-header">
+        <h3 id={`attribute-title-${field.definition.id}`}>{field.definition.label}</h3>
+        {#if field.definition.is_sensitive}
+          <Button size="sm" label={shown ? 'Hide' : 'Show'} ariaLabel={`${shown ? 'Hide' : 'Reveal'} ${field.definition.label} values`} onclick={() => toggleReveal(field.definition)} />
+        {/if}
+      </header>
+      <details>
+      <summary>{field.history.length} earlier {field.history.length === 1 ? 'value' : 'values'}</summary>
+      <ul class="history-rows">
+        {#each field.history as value (value.id)}
+          <li>
+            <span class={shown ? '' : 'concealed'}>{shown ? displayAttributeValue(field.definition, value.value) : 'Hidden'}</span>
+            <span class="meta">{#if value.superseded_at ?? value.active_until}Removed {historyTime(value.superseded_at ?? value.active_until)}{:else}{historySource(value.source)} · {historyTime(value.created_at)}{/if}</span>
+          </li>
+        {/each}
+      </ul>
+      </details>
+    </section>
+  {/each}
+{:else}
 <section id="person-attributes" class="attribute-section" aria-label="Attributes" tabindex="-1">
   <header class="section-header">
     <h3>Attributes</h3>
@@ -317,6 +342,7 @@
     />
   {/if}
 </section>
+{/if}
 
 <style>
   .attribute-section,
@@ -408,5 +434,31 @@
   }
   .attribute-error {
     justify-content: space-between;
+  }
+  .history-field {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .history-field summary {
+    padding: var(--space-2) 0;
+  }
+  .history-rows {
+    display: grid;
+    padding: 0;
+    list-style: none;
+  }
+  .history-rows li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--field-gap);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-muted);
+    color: var(--text-secondary);
+  }
+  .history-rows .meta,
+  .concealed {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 </style>

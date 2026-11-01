@@ -212,8 +212,8 @@ for (const profile of [
     await expect(page.getByRole('heading', { name: profile.name })).toBeVisible();
     await page.getByRole('button', { name: 'More actions', exact: true }).click();
     await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-    await expect(page.getByText('No merge history on this page.')).toBeVisible();
-    await expect(page.getByRole('table', { name: 'Person merge history' })).toHaveCount(0);
+    await expect(page.getByText('No merges', { exact: true })).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
   });
@@ -260,7 +260,7 @@ for (const completionTarget of [
 
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  const history = page.getByRole('table', { name: 'Person merge history' });
+  const history = page.getByRole('list', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(0);
   await history.getByRole('button', { name: 'Inspect merge 41' }).focus();
@@ -320,7 +320,7 @@ for (const completionTarget of [
   if (completionTarget.id === 7) {
     await page.getByRole('button', { name: 'More actions', exact: true }).click();
     await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-    const updatedHistory = page.getByRole('table', { name: 'Person merge history' });
+    const updatedHistory = page.getByRole('list', { name: 'Person merge history' });
     await expect(updatedHistory).toBeVisible();
     await updatedHistory.getByRole('button', { name: 'Inspect merge 41' }).focus();
     await page.keyboard.press('Enter');

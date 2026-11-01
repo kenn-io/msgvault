@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { createRawSnippet } from 'svelte';
 import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -10,7 +11,7 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
 function profile() { return { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } as NonNullable<DirectoryReadBundle['structuredProfile']>; }
-function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[] } = {}) {
+function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[]; summary?: boolean } = {}) {
   let stored = initial;
   const writes: Request[] = [];
   const client = createAPIClient(async (input) => {
@@ -30,7 +31,8 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
-  const view = render(PersonFields, { controller });
+  const summary = createRawSnippet(() => ({ render: () => '<p>Summary row</p>' }));
+  const view = render(PersonFields, options.summary ? { controller, summary } : { controller });
   return { controller, writes, view };
 }
 
@@ -128,5 +130,36 @@ it.each([
     await fireEvent.click(screen.getByRole('button', { name: save }));
     await waitFor(() => expect(writes).toHaveLength(1));
     await expect(writes[0]!.json()).resolves.toMatchObject({ [section]: { add: [{ [discriminator]: kind, original_value: value }] } });
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('shows a repeated label once, in place of the edited row, and the summary before More fields', async () => {
+  const initial = profile();
+  initial.contact_points = ['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } }));
+  const { controller, view } = harness(initial, { summary: true });
+  try {
+    expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
+    const more = screen.getByRole('button', { name: 'More fields' });
+    expect(screen.getByText('Summary row').compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Edit Email' })[0]!);
+    const input = await screen.findByRole('textbox', { name: /email|contact value/i });
+    expect(screen.queryByText('first@example.com')).toBeNull();
+    expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('shows sensitive values as Hidden and lets More fields reveal a hidden field and open its form', async () => {
+  const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Private note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
+  const religion = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', display_order: 2 } as AttributeDefinition;
+  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Secret example' }, active_from: when, created_at: when, source: 'user' };
+  const { controller, view } = harness(profile(), { definitions: [note, religion], bundle: { definitions: { definitions: [note, religion] }, attributes: { person_id: 7, attributes: [{ definition: note, current: [value], history: [] }] } } });
+  try {
+    expect(screen.getByText('Hidden')).toBeDefined();
+    expect(screen.queryByText('Secret example')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(screen.queryByRole('menuitem', { name: 'Show Religion' })).toBeNull();
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
+    expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });

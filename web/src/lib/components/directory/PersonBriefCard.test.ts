@@ -254,7 +254,8 @@ describe('PersonBriefCard', () => {
     const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(screen.getByRole('checkbox', { name: 'Also track this person' })).toBeDefined();
-    expect(screen.getByText('This person is not enrolled, so no brief is generated or shown.')).toBeDefined();
+    expect(screen.getByText('Write briefs for this person')).toBeDefined();
+    expect(screen.queryByText('No brief yet.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Generate a brief now' })).toBeNull();
     expect(paths).toEqual(['/api/v1/people/7/brief-enrollment']);
   });
@@ -334,7 +335,7 @@ describe('PersonBriefCard', () => {
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
-      else await screen.findByText('This person is not enrolled, so no brief is generated or shown.');
+      else await waitFor(() => expect(screen.queryByText('No brief yet.')).toBeNull());
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.
@@ -534,8 +535,10 @@ describe('PersonBriefCard', () => {
 
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9 });
 
-    expect(await screen.findByText('This person is not enrolled, so no brief is generated or shown.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: sentenceTexts[1] })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('button', { name: sentenceTexts[1] })).toBeNull());
+    const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    await waitFor(() => expect(toggle.checked).toBe(false));
+    expect(screen.queryByText('No brief yet.')).toBeNull();
     expect(document.body.textContent).not.toContain('Said by this person');
   });
 });

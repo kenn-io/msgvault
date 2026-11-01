@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { appShortcuts, Button, EmptyState, Modal, IconButton, Menu, MenuContent, MenuItem, MenuTrigger } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Modal, IconButton } from '@kenn-io/kit-ui';
 
   import Pencil from '@lucide/svelte/icons/pencil';
   import X from '@lucide/svelte/icons/x';
-  import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, Organization } from '../../directory/models';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
   import EmploymentEditor from './EmploymentEditor.svelte';
   import OrganizationEditor from './OrganizationEditor.svelte';
 
@@ -53,9 +53,14 @@
     return employment.title ?? employment.role ?? 'Employment';
   }
 
-  function dateText(value: { year?: number; month?: number; day?: number } | undefined): string {
-    if (!value) return '';
-    return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // "Mar 2024 – present", or "2019 – 2021".
+  function periodText(employment: Employment): string {
+    const when = (value: { year?: number; month?: number } | undefined) => value?.year ? [value.month ? MONTHS[value.month - 1] : '', value.year].filter(Boolean).join(' ') : '';
+    const start = when(employment.start_date);
+    const end = when(employment.end_date) || (employment.is_current ? 'present' : '');
+    return start && end ? `${start} – ${end}` : start ? `Since ${start}` : end && end !== 'present' ? `Until ${end}` : '';
   }
 
   async function openRequestedOrganization(id: number): Promise<void> {
@@ -137,24 +142,21 @@
     {/if}
     {#if controller.employmentsLoading}<p role="status">Loading employment records…</p>{/if}
     {#if controller.employments.length === 0}
-      {#if !controller.employmentsLoading}<EmptyState title="No work yet" />{/if}
+      {#if !controller.employmentsLoading}<p class="empty">No work yet</p>{/if}
     {:else}
-      <ul class="records">
+      <div class="records">
         {#each controller.employments as employment (employment.id)}
-          <li>
-            <div><strong>{employmentLabel(employment)}</strong> · <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
-              {#if employment.is_primary} <small>Primary</small>{/if}{#if employment.is_current} <small>Current</small>{/if}
-              {#if employment.start_date || employment.end_date}<span class="dates">{dateText(employment.start_date)} – {dateText(employment.end_date) || 'present'}</span>{/if}
-            </div>
-            <div class="row-actions">
-              <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentAction = 'edit'; employmentEditor = employment; }}><Pencil size={14} /></IconButton>
-              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
+          <DetailRow description={[periodText(employment), employment.department, employment.is_primary && controller.employments.filter((item) => item.is_current).length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')}>
+            {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
+            {#snippet actions()}
               {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" shortLabel="Make primary" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
+              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
+              <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentAction = 'edit'; employmentEditor = employment; }}><Pencil size={14} /></IconButton>
               <IconButton size="sm" ariaLabel="Delete employment" onclick={() => openDelete(employment)}><X size={14} /></IconButton>
-            </div>
-          </li>
+            {/snippet}
+          </DetailRow>
         {/each}
-      </ul>
+      </div>
     {/if}
     {#if actionMessage}
       <div role="alert">
@@ -193,18 +195,14 @@
 {/if}
 
 <style>
-  .organization-employment, section, .refresh-error { display: grid; gap: var(--field-gap); min-width: 0; }
-  header, .row-actions { display: flex; gap: var(--control-gap); align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  h3, p, ul { margin: 0; }
+  .organization-employment { display: grid; gap: var(--space-2); min-width: 0; }
+  section, .refresh-error { display: grid; gap: var(--field-gap); min-width: 0; }
+  header { display: flex; gap: var(--control-gap); align-items: center; justify-content: space-between; min-height: var(--control-h); }
+  h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
-  .dates, small { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .records { list-style: none; padding: 0; }
-  .records li { display: flex; align-items: center; justify-content: space-between; gap: var(--control-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); flex-wrap: wrap; }
-  .row-actions { justify-content: flex-end; opacity: 0; }
-  li:hover .row-actions, li:focus-within .row-actions { opacity: 1; }
-  .dates { display: block; }
-  small { margin-left: var(--control-gap); }
+  .records { display: grid; }
+  .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
   .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
+  .org-link:hover { text-decoration: underline; }
   [role="alert"] { color: var(--text-danger); }
-  @media (hover: none) { .row-actions { opacity: 1; } }
 </style>
