@@ -28,6 +28,7 @@
     isChange,
     isIncompleteNumber,
     persistedValue,
+    readOnlyValue,
     typedValue,
     valueText,
     type SettingState,
@@ -172,27 +173,18 @@
     void [statusRevision, Object.keys(building)];
     const controller = new AbortController();
     void createExploreAPI(client).coverage([], controller.signal)
-      .catch(() => ({ status: 'unavailable' as const, actions: [] }))
+      .catch(() => coverage ?? { status: 'unavailable' as const, actions: [] })
       .then(value => { if (!controller.signal.aborted) coverage = value; });
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
       })
-      .catch(() => { if (!controller.signal.aborted) embeddingStatus = undefined; });
+      .catch(() => undefined);
     void generatedGetVisualAttachmentStatus({ ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
       })
-      .catch(() => { if (!controller.signal.aborted) visualStatus = undefined; });
-    void generatedGetOperationStatus({ ...client, signal: controller.signal })
-      .then(({ data, response }) => {
-        if (controller.signal.aborted) return;
-        lanes = response.ok ? data?.lanes : undefined;
-        statusSettled = true;
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
-      });
+      .catch(() => undefined);
     return () => controller.abort();
   });
 
@@ -255,7 +247,7 @@
     const request = cardDAVRequest;
     if (!request || request.key === consumedCategoryRequestKey) return;
     activeCategory = 'carddav';
-    if (request.conflictID === undefined) {
+    if (request.conflictID === undefined && request.connection === undefined) {
       consumedCategoryRequestKey = request.key;
       onCardDAVRequestConsumed(request.key);
     }
@@ -264,7 +256,7 @@
   async function loadSettings(retainDrafts: boolean) {
     if (!retainDrafts) loading = true;
     try {
-      const [{ data: document, error: responseError, response }] = await Promise.all([generatedGetSettings(client), inference.load()]);
+      const { data: document, error: responseError, response } = await generatedGetSettings(client);
       if (!document) throw new Error(apiErrorMessage(responseError, "Can't load settings."));
       loaded = true;
       settings = document.settings;
@@ -272,6 +264,7 @@
       providers = document.person_enrichment_providers ?? [];
       pendingRestart = document.pending_restart;
       etag = response.headers.get('ETag') ?? '';
+      inference.updateConfigRevision(etag);
       credentialETag = response.headers.get('Credential-ETag') ?? document.credential_etag ?? '';
       if (retainDrafts) pruneSettledDrafts();
       else discardChanges();
@@ -379,9 +372,10 @@
       providers = result.person_enrichment_providers ?? providers;
       pendingRestart = result.pending_restart;
       etag = response.headers.get('ETag') ?? etag;
+      inference.updateConfigRevision(etag);
       credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
       discardChanges();
-      void Promise.all([focusCategoryHeading(), inference.load()]);
+      void focusCategoryHeading();
       const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
       if (appearance) onAppearanceSaved(appearance);
     } catch (cause) {
@@ -416,8 +410,9 @@
     settings = document.settings;
     providers = document.person_enrichment_providers ?? providers;
     pendingRestart = document.pending_restart;
-    [etag, credentialETag] = [nextETag, document.credential_etag || credentialETag];
-    void inference.load();
+    etag = nextETag;
+    inference.updateConfigRevision(etag);
+    credentialETag = document.credential_etag || credentialETag;
   }
   function rowLabel(setting: SettingState): string {
     if (Object.hasOwn(LABELS, setting.key)) return LABELS[setting.key]!;
@@ -426,13 +421,6 @@
   function humanizeKey(key: string): string {
     const words = (key.split('.').at(-1) ?? key).replaceAll('_', ' ');
     return words.charAt(0).toUpperCase() + words.slice(1);
-  }
-  function readOnlyValue(setting: SettingState): string {
-    if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
-    const value = valueText(persistedValue(setting));
-    const off = setting.validation?.off;
-    if (off && value === (off.value ?? '')) return off.label;
-    return value || 'Not set';
   }
   // Rows that only matter once something else is on stay out of the way until then.
   function visible(setting: SettingState): boolean {
@@ -619,10 +607,7 @@
             {settings}
             {cardDAVRequest}
             {onCardDAVRequestConsumed}
-            onSettingsRefresh={async () => {
-              await loadSettings(true);
-              onStatusChange();
-            }}
+            onSettingsRefresh={() => loadSettings(true)}
           />
         {:else}
           {@render blocks(layout.blocks)}

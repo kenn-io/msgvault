@@ -176,7 +176,10 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   let cancel: (() => void) | undefined;
   const { unmount, rerender } = render(SettingsWorkspace, {
     props: { client, operationsController, onStatusChange, category: 'server' },
-    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => { hold = next; cancel = nextCancel; }]])
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold, nextCancel: typeof cancel) => {
+      hold = next; cancel = nextCancel;
+      return () => { if (hold === next) hold = undefined; cancel = undefined; };
+    }]])
   });
   const field = await screen.findByLabelText('Stop when idle after');
   await fireEvent.input(field, { target: { value: '15m' } });
@@ -532,6 +535,9 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
   ]);
+  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({
+    endpoint: 'https://changed.example.test'
+  });
 });
 
 it('starts the visual index from Overview and refreshes its row', async () => {
