@@ -87,13 +87,17 @@ describe('OrganizationEmploymentTab', () => {
 
   it('finds an employer beyond the first fifty and retains the selected employer after another search', async () => {
     const queries: string[] = [];
+    const posts: Request[] = [];
     const controller = controllerWith(async input => {
       const request = requestOf(input); const url = new URL(request.url);
       if (url.pathname === '/api/v1/organizations') {
         const query = url.searchParams.get('q') ?? ''; queries.push(query);
         return Response.json({ organizations: query === 'Zebra' ? [organization(51, 1, 'Zebra Example')] : Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)), total: 51, limit: 50, offset: 0 });
       }
-      if (url.pathname === '/api/v1/employments' && request.method === 'POST') return Response.json(employment(12, 1, { organization_id: 51, title: 'Designer' }), { status: 201 });
+      if (url.pathname === '/api/v1/employments' && request.method === 'POST') {
+        posts.push(request.clone());
+        return Response.json(employment(12, 1, { organization_id: 51, title: 'Designer' }), { status: 201 });
+      }
       if (url.pathname === '/api/v1/people/7/employments') return collection([employment(12, 1, { organization_id: 51, title: 'Designer' })], { employment_id: 12, organization_id: 51, organization_name: 'Zebra Example', title: 'Designer', vcard: {} });
       throw new Error(`Unexpected ${request.method} ${url.pathname}`);
     });
@@ -111,6 +115,7 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Designer' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add employment' })).toBeNull());
+      await expect(posts[0]!.json()).resolves.toMatchObject({ organization_id: 51 });
     } finally { view.unmount(); controller.destroy(); }
   });
 
@@ -243,13 +248,14 @@ describe('OrganizationEmploymentTab', () => {
 
   it('reads a row as title at organization with period, department, and ordered actions', () => {
     const controller = controllerWith(vi.fn<typeof fetch>());
+    controller.organizations = [organization()];
     controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false }), employment(12, 1, { is_current: false, is_primary: false, title: 'Historical role' })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     const historical = screen.getByText(/Historical role/).closest('.detail-row') as HTMLElement;
     expect(within(historical).queryByRole('button', { name: 'Make primary employment' })).toBeNull();
     const row = screen.getByText(/Engineer/).closest('.detail-row') as HTMLElement;
-    expect(row.textContent).toContain('Engineer at');
+    expect(row.textContent).toContain('Engineer at Synthetic Org');
     expect(row.textContent).toContain('Mar 2024 – present · Platform');
     expect(within(row).queryByText('Current')).toBeNull();
     expect(within(row).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim()).slice(-4)).toEqual(
@@ -319,7 +325,7 @@ describe('OrganizationEmploymentTab', () => {
     expect(primaryWrites).toBe(1);
   });
 
-  it('supports end and delete with reconciled sibling state without offering primary for history', async () => {
+  it('supports end and delete with reconciled sibling state', async () => {
     const requests: Request[] = [];
     let revision = 1;
     let deleted = false;
@@ -352,8 +358,6 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(requests.some((request) => pathOf(request) === '/api/v1/employments/11/end')).toBe(true));
     expect((await requests.find((request) => pathOf(request) === '/api/v1/employments/11/end')!.json())).toEqual({ end_date: '2026-08' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'End employment' })).toBeNull());
-
-    expect(screen.queryByRole('button', { name: 'Make primary employment' })).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete employment' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete employment' }));

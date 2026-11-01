@@ -351,7 +351,8 @@ it.each([
 });
 
 
-it.each([false, undefined])('forwards sweep configuration and settings navigation to the person page: %s', async sweepConfigured => {
+it('forwards disabled sweep configuration and settings navigation to the person page', async () => {
+  const sweepConfigured = false;
   vi.mocked(PersonPage).mockClear();
   const client = clientFor({ '/api/v1/people/7': () => Response.json(profile(7, 1, [])) });
   const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });

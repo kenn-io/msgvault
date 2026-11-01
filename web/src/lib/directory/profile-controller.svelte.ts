@@ -307,9 +307,7 @@ export class DirectoryProfileController {
         this.client,
       );
       if (response.data) {
-        this.applyAttributeWrite(slug, response.data.value, response.data.superseded);
-        if (slug !== 'primary_channel') await this.invalidateRow();
-        this.completeMutation(draftGeneration, true);
+        await this.completeAttributeWrite(slug, response.data, draftGeneration);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -447,9 +445,7 @@ export class DirectoryProfileController {
         this.client,
       );
       if (response.data) {
-        this.applyAttributeWrite(slug, response.data.value, response.data.superseded);
-        if (slug !== 'primary_channel') await this.invalidateRow();
-        this.completeMutation(draftGeneration, true);
+        await this.completeAttributeWrite(slug, response.data, draftGeneration);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -458,6 +454,13 @@ export class DirectoryProfileController {
     } finally {
       this.finishMutation(draftGeneration);
     }
+  }
+  private async completeAttributeWrite(slug: string, response: { value?: PersonAttributeValue; superseded?: PersonAttributeValue }, draftGeneration: number): Promise<void> {
+    this.applyAttributeWrite(slug, response.value, response.superseded);
+    if (slug !== 'primary_channel') await this.invalidateRow();
+    this.completeMutation(draftGeneration, true);
+    this.finishMutation(draftGeneration);
+    if (slug === 'contact_frequency') await this.reload();
   }
   private prepareMutation(draft: DirectoryProfileDraft): number | DirectoryProfileOperationBlocked {
     if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
