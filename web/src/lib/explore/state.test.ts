@@ -197,29 +197,44 @@ describe('Explore URL state', () => {
 
   it.each([
     ['back', 'leave'], ['back', 'stay'], ['forward', 'leave'], ['forward', 'stay'],
+    ['indexed Back across Past runs', 'leave'], ['indexed Back across Past runs', 'stay'],
   ] as const)('holds browser %s from dirty Settings and handles %s', async (direction, outcome) => {
     window.history.replaceState(null, '', '/?workspace=sources');
     const state = new ExploreState(window);
     try {
       state.commitWorkspace('settings');
-      state.commitWorkspace('files');
-      window.history.back();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      const pastRuns = direction === 'indexed Back across Past runs';
+      if (pastRuns) {
+        state.openOperationHistory({ operationKind: 'source_sync' });
+        state.commitNavigation({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+      } else {
+        state.commitWorkspace('files');
+        window.history.back();
+        await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      }
+      const historyIndex = window.history.state.exploreIndex;
       const historyLength = window.history.length;
       let leave!: () => void;
       state.holdLeave = (next) => { leave = next; return true; };
-      window.history[direction]();
+      if (pastRuns) window.history.go(-3);
+      else window.history[direction]();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       expect(state.current.workspace).toBe('settings');
+      await waitFor(() => expect(window.history.state.exploreIndex).toBe(historyIndex));
       await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      expect(state.current.operationHistory).toBe(false);
       expect(window.history.length).toBe(historyLength);
       state.holdLeave = undefined;
       if (outcome === 'leave') {
         leave();
         await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-        expect(state.current.workspace).toBe(direction === 'back' ? 'sources' : 'files');
-        expect(window.location.search).toBe(direction === 'back' ? '?workspace=sources&mode=full_text' : '?workspace=files&mode=full_text');
+        expect(state.current.workspace).toBe(direction === 'forward' ? 'files' : 'sources');
+        expect(window.location.search).toBe(direction === 'forward' ? '?workspace=files&mode=full_text' : '?workspace=sources&mode=full_text');
         expect(window.history.length).toBe(historyLength);
+      } else if (pastRuns) {
+        expect(state.current.workspace).toBe('settings');
+        window.history.go(-3);
+        await waitFor(() => expect(state.current.workspace).toBe('sources'));
       } else {
         window.history[direction === 'back' ? 'forward' : 'back']();
         await waitFor(() => expect(state.current.workspace).toBe(direction === 'back' ? 'files' : 'sources'));

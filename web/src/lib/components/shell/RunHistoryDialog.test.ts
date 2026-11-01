@@ -56,7 +56,7 @@ describe('Past runs', () => {
     expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
   });
 
-  it('loads document counts when polling observes configuration', async () => {
+  it('reloads status counts when configuration changes', async () => {
     let configured = false;
     const client = createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -92,8 +92,6 @@ describe('Past runs', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'Source sync');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-11/ }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
-    await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '2026-10-23T00:00:00Z', operationStartedBefore: '2026-10-30T00:00:00Z' }), false);
     await fireEvent.click(screen.getByRole('button', { name: 'All' }));
     expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '', operationStartedBefore: '' }), false);
     await fireEvent.click(screen.getByRole('button', { name: '7d' }));
