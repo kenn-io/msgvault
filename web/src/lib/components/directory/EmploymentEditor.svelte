@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appShortcuts, Button, Checkbox, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Checkbox, Modal, Typeahead, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import { intervalDateError } from '../../directory/dates';
@@ -44,10 +44,7 @@
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
     if (selectedOrganization && !organizations.some((item) => item.id === selectedOrganization?.id)) organizations.push(selectedOrganization);
-    return [
-      { value: '', label: 'Choose an organization', disabled: true },
-      ...organizations.map((organization) => ({ value: String(organization.id), label: organization.name }))
-    ];
+    return organizations.map((organization) => ({ name: String(organization.id), label: organization.name }));
   });
 
   onMount(() => {
@@ -188,7 +185,7 @@
       <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
       {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     {:else}
-      <label>Organization<SelectDropdown title="Organization" value={organizationID} options={organizationOptions} onchange={(value) => { organizationID = value; }} disabled={submitting || !!initialEmployment} />
+      <label>Organization<Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} />
         <Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} /></label>
       <label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
       <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label>
@@ -222,7 +219,7 @@
 
 
 <style>
-  .editor { display: grid; gap: var(--space-3); min-width: min(30rem, 80vw); }
+  .editor { display: grid; gap: var(--space-3); min-width: 0; }
   label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
   .field-error { color: var(--text-danger); font-size: var(--font-size-xs); margin: 0; }

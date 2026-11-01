@@ -3,17 +3,18 @@
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
-  import { formatContactDate } from '../../directory/labels';
+  import { contactStateLabel, formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
+  import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import PersonFacts from './PersonFacts.svelte';
   import OrganizationEmploymentTab from '../directory/OrganizationEmploymentTab.svelte';
   import RelationshipsTab from '../directory/RelationshipsTab.svelte';
   import PersonNetwork from '../directory/PersonNetwork.svelte';
   import PersonAgenda from '../directory/PersonAgenda.svelte';
   import PersonBriefCard from '../directory/PersonBriefCard.svelte';
-  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, sweepConfigured }:
+  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, sweepConfigured, onOpenMeeting }:
     { client: APIClient; directory: DirectoryController; personID: number; onOpenPerson?: (id: number) => void;
-      sweepConfigured?: boolean; onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void } = $props();
+      onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void; sweepConfigured?: boolean; onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void } = $props();
   let organizationRequest = $state<{ id: number; key: number }>();
   let requestKey = 0;
   const profile = $derived(directory.selectedPersonID === personID ? directory.profile : null);
@@ -32,7 +33,7 @@
   {#if profile}
     <PersonFields controller={profile} overdue={bundle?.contactState?.cadence_status === 'overdue'} />
     {#if bundle?.contactState}
-      <p class="activity">{bundle.contactState.interaction_count} interactions{#if bundle.contactState.last_contact_at} · last contact {formatContactDate(bundle.contactState.last_contact_at)}{/if}</p>
+      <p class="activity">{contactStateLabel(bundle.contactState.cadence_status)} · {bundle.contactState.interaction_count} interactions{#if bundle.contactState.last_contact_at} · last contact {formatContactDate(bundle.contactState.last_contact_at)}{/if}</p>
     {/if}
     {#if entity}
       <OrganizationEmploymentTab controller={entity} {personID} {organizationRequest} />
@@ -42,6 +43,7 @@
     <PersonAgenda {client} {personID} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
     <PersonFacts {client} {personID} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
     <PersonBriefCard {client} {personID} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    {#if profile.person && profile.person.participant_ids.length === 0}<MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
   {/if}
 </div>
 <style>

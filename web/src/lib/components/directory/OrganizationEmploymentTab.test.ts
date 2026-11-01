@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-import { chooseSelectOption } from '../../../test/kit-ui';
+import { openTypeahead } from '../../../test/kit-ui';
 import OrganizationsSettings from '../settings/OrganizationsSettings.svelte';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
@@ -155,7 +155,9 @@ describe('OrganizationEmploymentTab', () => {
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Org' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Architect' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
 
@@ -171,6 +173,36 @@ describe('OrganizationEmploymentTab', () => {
     expect(screen.getByText(/Engineer/).closest('li')?.textContent).not.toContain('Primary');
   });
 
+  it('finds an employer beyond the first fifty and retains the selected employer after another search', async () => {
+    const queries: string[] = []; let posted: Record<string, unknown> | undefined;
+    const controller = controllerWith(async input => {
+      const request = requestOf(input); const url = new URL(request.url);
+      if (url.pathname === '/api/v1/organizations') {
+        const query = url.searchParams.get('q') ?? ''; queries.push(query);
+        return Response.json({ organizations: query === 'Zebra' ? [organization(51, 1, 'Zebra Example')] : Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)), total: 51, limit: 50, offset: 0 });
+      }
+      if (url.pathname === '/api/v1/employments' && request.method === 'POST') { posted = await request.json(); return Response.json(employment(12, 1, { organization_id: 51, title: 'Designer' }), { status: 201 }); }
+      if (url.pathname === '/api/v1/people/7/employments') return collection([employment(12, 1, { organization_id: 51, title: 'Designer' })], { employment_id: 12, organization_id: 51, organization_name: 'Zebra Example', title: 'Designer', vcard: {} });
+      throw new Error(`Unexpected ${request.method} ${url.pathname}`);
+    });
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
+      await screen.findByRole('button', { name: /^Organization(:|$)/ });
+      await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Zebra' } });
+      await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Zebra Example' }));
+      await screen.findByRole('button', { name: 'Organization: Zebra Example' });
+      await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Example' } });
+      await waitFor(() => expect(queries).toContain('Example'));
+      await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Escape' });
+      expect(screen.getByRole('button', { name: 'Organization: Zebra Example' })).toBeDefined();
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Designer' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add employment' })).toBeNull());
+      expect(posted).toMatchObject({ person_id: 7, organization_id: 51, title: 'Designer' });
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it('rejects a year-less employment date and keeps Create disabled until it is fixed', async () => {
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -180,7 +212,9 @@ describe('OrganizationEmploymentTab', () => {
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Org' }));
     const create = screen.getByRole('button', { name: 'Create employment' });
     expect(create).toHaveProperty('disabled', false);
 
@@ -288,7 +322,7 @@ describe('OrganizationEmploymentTab', () => {
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit employment' }));
-    const selector = await screen.findByRole('combobox', { name: /^Organization:/ });
+    const selector = await screen.findByRole('button', { name: /^Organization(:|$)/ });
     expect(selector.textContent).toContain('Exact Employment Org');
     expect(selector.textContent).not.toContain('Choose an organization');
     await fireEvent.click(screen.getByRole('button', { name: 'Save employment' }));
@@ -430,7 +464,9 @@ describe('OrganizationEmploymentTab', () => {
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Org' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Draft role' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
     expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');

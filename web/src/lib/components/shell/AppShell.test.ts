@@ -28,6 +28,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   const response = await fetchFn(input, init);
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   const field = path === '/api/v1/operations/status' ? 'lanes' : path === '/api/v1/sources/status' ? 'sources' : undefined;
+  if (path.endsWith('/contact-state') && response.ok && !('cadence_status' in await response.clone().json())) return Response.json({ cadence_status: 'unknown', interaction_count: 0 });
   if (path.endsWith('/network') && response.ok && !('nodes' in await response.clone().json())) return Response.json({ root_person_id: Number(path.split('/').at(-2)), depth: 1, truncated: false, nodes: [], edges: [] });
   // Generic archive handlers don't supply these independent shell endpoints.
   if (field && response.ok && !(field in await response.clone().json())) return Response.json({ [field]: [] });
@@ -1574,6 +1575,7 @@ describe('AppShell', () => {
         }] });
       }
       if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      if (meetingFixtureResponse(path)) return meetingFixtureResponse(path)!;
       if (path.startsWith('/api/v1/people/7')) return Response.json({ person_id: 7, participant_ids: [], cadence_status: 'active', interaction_count: 0, employments: [], relationships: [], days: [], attributes: [], categories: [], names: [], contact_points: [], addresses: [], dates: [] });
       return Response.json(exploreResponse());
     });
@@ -2090,6 +2092,8 @@ describe('AppShell', () => {
     );
     expect(promotion).toBeDefined();
     await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people/42')).toHaveLength(1);
     expect(requests.slice(requests.indexOf(promotion!) + 1).some(request => new URL(request.url).pathname === '/api/v1/people/directory')).toBe(true);
 
     rendered.unmount();

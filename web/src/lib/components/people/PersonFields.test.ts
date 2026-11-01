@@ -96,6 +96,7 @@ it('joins refreshed sensitive and read-only field settings to current values and
 
 it.each([
   ['Website', 'Messaging address', 'Contact value', 'xmpp:example@example.com', 'Save contact point', 'contact_points', 'address_kind', 'impp'],
+  ['Website', 'Calendar', 'Contact value', 'https://example.com/calendar.ics', 'Save contact point', 'contact_points', 'address_kind', 'calendar'],
   ['Nickname', 'Pronunciation', 'First name, said as', 'Arisu', 'Save name', 'names', 'name_kind', 'phonetic'],
 ])('switches a new %s editor to %s before saving', async (first, next, input, value, save, section, discriminator, kind) => {
   const { controller, view, writes } = harness();
