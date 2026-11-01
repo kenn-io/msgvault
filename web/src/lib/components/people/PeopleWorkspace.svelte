@@ -157,7 +157,7 @@
   }
   async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
     await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
-    await directory.loadSelection(selectedProfileID);
+    await directory.refreshSelectedPerson();
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
     bulkPending = true;

@@ -283,8 +283,8 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   const two = { ...profile(9, 2, [2]), organizations: [], categories: [], contact_state: 'active' };
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: merged ? [one] : [one, two] }),
-    '/api/v1/people/7': () => Response.json(one),
-    '/api/v1/people/7/profile': () => Response.json({ person: one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }),
+    '/api/v1/people/7': () => Response.json(one, { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/7/profile': () => Response.json({ person: one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }, { headers: { ETag: '"person-7-r4"' } }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: one, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/identity/links': () => merged ? Response.json({ identity_revision: 8, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 }),
@@ -298,10 +298,17 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   const onOpenDirectoryPerson = vi.fn();
   const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
   const view = render(PeopleWorkspace, { props });
+  let sawLoadingPerson = false;
+  const observer = new MutationObserver(records => {
+    if (records.some(record => [...record.addedNodes].some(node => node.textContent?.includes('Loading person…')))) sawLoadingPerson = true;
+  });
   try {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+12025550123' } });
+    observer.observe(view.container, { childList: true, subtree: true });
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     const input = await openTypeahead('Search people to link');
     await fireEvent.input(input, { target: { value: 'Bob' } });
@@ -315,8 +322,10 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
     expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
     await screen.findByText('absorbed@example.com');
+    expect(sawLoadingPerson).toBe(false);
+    expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+12025550123');
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+  } finally { observer.disconnect(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
 it('loads a saved person deep link and opens Directory from its person page', async () => {
