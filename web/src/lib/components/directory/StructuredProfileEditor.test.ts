@@ -806,4 +806,19 @@ describe('StructuredProfileEditor', () => {
     expect(screen.queryByLabelText('Media URI')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save media metadata' })).toBeNull();
   });
+
+  it.each([
+    { label: 'parts', current: { original_value: 'Example', given_name: 'Ex', family_name: 'Ample', phonetic_system: 'ipa' }, initial: 'Ex', edit: 'Ecks', expected: { original_value: 'Ecks Ample', formatted: 'Ecks Ample', given_name: 'Ecks', family_name: 'Ample', phonetic_system: 'ipa' } },
+    { label: 'formatted only', current: { formatted: 'Arisu', original_value: 'Arisu' }, initial: 'Arisu', edit: 'Arisu', expected: { formatted: 'Arisu', original_value: 'Arisu', given_name: 'Arisu' } },
+  ])('preserves pronunciation and metadata when replacing a $label name', async ({ current, initial, edit, expected }) => {
+    const { controller, requests } = requestHarness();
+    const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
+    render(StructuredProfileEditor, { controller, section: 'names', current: { person_id: 7, name_kind: 'phonetic', is_derived: false, envelope, ...current } });
+    const first = screen.getByRole('textbox', { name: 'First name, said as' });
+    expect(first).toHaveProperty('value', initial);
+    await fireEvent.input(first, { target: { value: edit } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await expect(requests[0]!.json()).resolves.toEqual({ names: { add: [{ ...expected, name_kind: 'phonetic', is_derived: false, envelope: { source: 'user', ordinal: 2 } }], supersede: [11] } });
+  });
 });

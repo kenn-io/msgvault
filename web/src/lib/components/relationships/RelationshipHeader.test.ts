@@ -1,9 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { PersonAttributeGroup } from '../../api/generated/models';
 import type { DomainSummary, PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
 import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -102,13 +100,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function attributeGroup(label: string, text: string): PersonAttributeGroup {
-  return {
-    definition: { universal_id: `u-${label}`, slug: label.toLowerCase(), label, is_sensitive: false, display_order: 0 },
-    current: [{ value: { type: 'text', text } }], history: []
-  } as unknown as PersonAttributeGroup;
-}
-
 /** Opens the "Same person…" dialog, searches for "Bob", selects the stubbed
  * search result (participant #99), and confirms. Exercises the real
  * LinkIdentityDialog end to end; its own search/select mechanics are
@@ -131,20 +122,10 @@ describe('RelationshipHeader', () => {
     expect(screen.getByText(/0 items/).closest('p')?.textContent?.trim()).toBe('0 items');
   });
 
-  it('shows current attributes for a durable person and opens their editor in Directory', async () => {
-    const loadAttributes = vi.fn(async () => [attributeGroup('Pronouns', 'they/them')]);
-    const onOpenDirectoryPerson = vi.fn();
-    render(RelationshipHeader, baseProps({
-      detail: { ...person(), profile: { id: 7, revision: 1 } },
-      loadAttributes, onOpenDirectoryPerson
-    }));
-
-    const summary = await screen.findByRole('region', { name: 'Attributes summary' });
-    expect(summary.textContent).toContain('Pronouns');
-    expect(summary.textContent).toContain('they/them');
-    expect(loadAttributes).toHaveBeenCalledWith(7);
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit attributes' }));
-    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
+  it('shows a title heading in place of the counts line when the page header already names the person', () => {
+    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
+    expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
+    expect(screen.queryByText(/items/)).toBeNull();
   });
 
   it('opens the durable Directory person without starting participant promotion', async () => {
@@ -158,35 +139,6 @@ describe('RelationshipHeader', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
     expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
     expect(onOpenDirectory).not.toHaveBeenCalled();
-  });
-
-  it('ignores attributes that finish loading after selecting another person', async () => {
-    let finishFirst: ((groups: PersonAttributeGroup[]) => void) | undefined;
-    const loadAttributes = vi.fn((id: number) => id === 7
-      ? new Promise<PersonAttributeGroup[]>((resolve) => { finishFirst = resolve; })
-      : Promise.resolve([attributeGroup('Status', 'active')]));
-    const props = baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, loadAttributes });
-    const { rerender } = render(RelationshipHeader, props);
-
-    await rerender({ ...props, detail: { ...person(), id: 99, profile: { id: 9, revision: 1 } } });
-    expect((await screen.findByRole('region', { name: 'Attributes summary' })).textContent).toContain('active');
-    finishFirst?.([attributeGroup('Status', 'stale')]);
-    await Promise.resolve();
-    await tick();
-    expect(screen.getByRole('region', { name: 'Attributes summary' }).textContent).not.toContain('stale');
-  });
-
-  it.each([false, true])('retains attributes when the same profile reloads (loading gap: %s)', async (loadingGap) => {
-    const loadAttributes = vi.fn(async () => [attributeGroup('Status', 'active')]);
-    const props = baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, loadAttributes });
-    const { rerender } = render(RelationshipHeader, props);
-    await screen.findByRole('region', { name: 'Attributes summary' });
-
-    if (loadingGap) await rerender({ ...props, detail: null, loading: true });
-    await rerender({ ...props, detail: { ...person(), profile: { id: 7, revision: 1 } } });
-
-    expect(screen.getByRole('region', { name: 'Attributes summary' }).textContent).toContain('active');
-    expect(loadAttributes).toHaveBeenCalledTimes(1);
   });
 
   it('offers Messages and Files as explicit relationship views', async () => {
