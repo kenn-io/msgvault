@@ -1148,13 +1148,13 @@ describe('DirectoryController', () => {
     } finally { controller.destroy(); }
   });
 
-  it('refreshes linked bindings after a pending attribute save and uses the current ETag for the next structured edit', async () => {
+  it.each(['pending attribute save', 'split'])('refreshes the selected profile after a %s and permits its next structured edit', async cause => {
     const pendingSave = deferredResponse();
     let linked = false;
     const patches: Request[] = [];
     const definition = { id: 1, universal_id: '00000000-0000-4000-8000-000000000001', object_type: 'person', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_sensitive: false, is_active: true, revision: 1 };
     const value = { id: 41, person_id: 7, definition_id: 1, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'A note' }, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', source: 'user' };
-    const person = () => ({ id: 7, revision: linked ? 4 : 3, display_name: 'Synthetic Person', participant_ids: linked ? [11, 12] : [11], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
+    const person = () => ({ id: 7, revision: linked ? 4 : 3, display_name: 'Synthetic Person', participant_ids: linked ? (cause === 'split' ? [11] : [11, 12]) : (cause === 'split' ? [11, 12] : [11]), vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
     const profile = () => ({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1164,6 +1164,7 @@ describe('DirectoryController', () => {
         patches.push(request);
         if (request.headers.get('If-Match') !== '"person-7-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
       }
+      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: linked ? 1 : 3, last_contact_at: linked ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: linked ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
       if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: `"person-7-r${person().revision}"` } });
       if (path === '/api/v1/people/7/profile') return Response.json(profile(), { headers: { ETag: `"person-7-r${person().revision}"` } });
       if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [definition] });
@@ -1175,14 +1176,19 @@ describe('DirectoryController', () => {
     let save: ReturnType<NonNullable<typeof controller.profile>['setAttribute']> | undefined;
     try {
       await controller.loadSelection(7);
-      save = controller.profile!.setAttribute('note', { value: { type: 'text', text: 'A note' } });
-      expect(controller.profile!.mutationPending).toBe(true);
+      const owner = controller.profile;
+      expect(controller.detail?.contactState).toMatchObject({ interaction_count: 3, last_contact_at: '2026-08-15T00:00:00Z', cadence_status: 'ok' });
+      if (cause === 'pending attribute save') save = controller.profile!.setAttribute('note', { value: { type: 'text', text: 'A note' } });
+      if (cause === 'pending attribute save') expect(controller.profile!.mutationPending).toBe(true);
       linked = true;
-      await controller.refreshSelectedPerson();
+      if (cause === 'split') await controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
+      else await controller.refreshSelectedPerson();
       pendingSave.resolve(Response.json({ dry_run: false, value }));
       await save;
-      expect(controller.detail?.person?.participant_ids).toEqual([11, 12]);
-      expect(controller.detail?.structuredProfile?.person.participant_ids).toEqual([11, 12]);
+      expect(controller.profile).toBe(owner);
+      expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
+      expect(controller.detail?.person?.participant_ids).toEqual(cause === 'split' ? [11] : [11, 12]);
+      expect(controller.detail?.structuredProfile?.person.participant_ids).toEqual(cause === 'split' ? [11] : [11, 12]);
       expect(controller.detail?.etags).toMatchObject({ person: '"person-7-r4"', structuredProfile: '"person-7-r4"' });
       await controller.profile!.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
       expect(patches).toHaveLength(1);
@@ -1193,38 +1199,6 @@ describe('DirectoryController', () => {
       await save;
       controller.destroy();
     }
-  });
-
-  it('keeps the selected split source and permits its next field write', async () => {
-    let reads = 0; let split = false;
-    const person = () => ({ id: 12, revision: split ? 4 : 3, display_name: 'Synthetic Source', participant_ids: split ? [701] : [701, 702], vcard_uid: 'synthetic-12', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
-    const profile = () => ({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') {
-        reads += 1;
-        return Response.json({ people: reads === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
-      }
-      if (path === '/api/v1/people/12/profile' && request.method === 'PATCH' && request.headers.get('If-Match') !== '"person-12-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
-      if (path === '/api/v1/people/12/contact-state') return Response.json({ person_id: 12, interaction_count: split ? 1 : 3, last_contact_at: split ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: split ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
-      if (path === '/api/v1/people/12') return Response.json(person(), { headers: { ETag: `"person-12-r${person().revision}"` } });
-      if (path === '/api/v1/people/12/profile') return Response.json(profile(), { headers: { ETag: `"person-12-r${person().revision}"` } });
-      return detailResponse(path, 12);
-    });
-    const controller = new DirectoryController(createAPIClient(fetchFn));
-    await controller.loadFirstPage();
-    await controller.selectPerson(12);
-    const owner = controller.profile;
-    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 3, last_contact_at: '2026-08-15T00:00:00Z', cadence_status: 'ok' });
-    split = true;
-    await controller.reconcilePersonSplit({ sourcePersonID: 12, newPersonID: 19 });
-    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
-
-    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Friend', envelope: { source: 'user' } }] } });
-    expect(controller.profile?.conflict).toBeNull();
-    expect(controller.profile).toBe(owner);
-    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
   });
 
   it('reconciles a committed split without fetching an unselected profile', async () => {
@@ -1282,14 +1256,14 @@ describe('DirectoryController', () => {
     expect(controller.promotionError).toBeNull();
   });
 
-  it('keeps person B selected when an earlier deletion of person A completes', async () => {
+  it.each([false, true])('removes a deleted person and preserves a later selection (reselect=%s)', async reselect => {
     const pending = deferredResponse();
     const commit = vi.fn();
     const onWrite = vi.fn();
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7), directoryPerson(9)] });
+      if (path === '/api/v1/people/directory') return Response.json({ people: reselect ? [directoryPerson(7), directoryPerson(9)] : [directoryPerson(7)] });
       if (path === '/api/v1/people/7' && request.method === 'DELETE') return pending.promise;
       return editableDetailResponse(path, path.includes('/people/9') ? 9 : 7);
     });
@@ -1298,36 +1272,18 @@ describe('DirectoryController', () => {
       await controller.loadFirstPage();
       await controller.selectPerson(7);
       const deletion = controller.profile!.deletePerson();
-      await controller.selectPerson(9);
-      const selected = controller.profile;
+      if (reselect) await controller.selectPerson(9);
+      const selected = reselect ? controller.profile : null;
       commit.mockClear();
       pending.resolve(new Response(null, { status: 204 }));
       await deletion;
-      expect(controller.selectedPersonID).toBe(9);
+      expect(controller.selectedPersonID).toBe(reselect ? 9 : null);
       expect(controller.profile).toBe(selected);
-      expect(controller.detail?.person?.id).toBe(9);
-      expect(controller.rows).toEqual([directoryPerson(9)]);
-      expect(commit).not.toHaveBeenCalled();
+      expect(controller.detail?.person?.id ?? null).toBe(reselect ? 9 : null);
+      expect(controller.rows).toEqual(reselect ? [directoryPerson(9)] : []);
+      if (reselect) expect(commit).not.toHaveBeenCalled();
+      else expect(commit).toHaveBeenCalledWith({ directoryPersonID: null }, 'push');
       expect(onWrite).toHaveBeenCalledOnce();
     } finally { pending.resolve(new Response(null, { status: 204 })); controller.destroy(); }
-  });
-
-  it('removes a confirmed deleted person from the Directory and clears its URL selection', async () => {
-    const commits: Array<Record<string, unknown>> = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
-      if (path === '/api/v1/people/7' && request.method === 'DELETE') return new Response(null, { status: 204 });
-      return editableDetailResponse(path, 7);
-    });
-    const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
-    await controller.loadFirstPage();
-    await controller.selectPerson(7);
-    await controller.profile?.deletePerson();
-
-    await vi.waitFor(() => expect(controller.selectedPersonID).toBeNull());
-    expect(controller.rows).toEqual([]);
-    expect(commits).toContainEqual({ directoryPersonID: null });
   });
 });
