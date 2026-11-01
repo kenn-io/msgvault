@@ -239,18 +239,12 @@ it('shows a repeated label once, the editor after the list, and the summary befo
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each([
-  { name: 'reloads choices on open', slug: 'favorite_color', label: 'Favorite color', sensitive: false },
-  { name: 'reveals a hidden field and opens its form', slug: 'religion', label: 'Religion', sensitive: true },
-])('More fields $name', async ({ slug, label, sensitive }) => {
-  const definition = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug, label, value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: sensitive, revision: 1 } as AttributeDefinition;
+it('reloads More fields choices, reveals a hidden field, and opens its form', async () => {
+  const definition = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
   const { controller, view } = harness(profile(), { definitions: [definition], bundle: { definitions: { definitions: [] } } });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    const item = await screen.findByRole('menuitem', { name: label });
-    if (sensitive) {
-      await fireEvent.click(item);
-      expect(await screen.findByRole('textbox', { name: label })).toBeDefined();
-    }
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
+    expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
