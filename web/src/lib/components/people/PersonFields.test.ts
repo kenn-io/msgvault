@@ -11,7 +11,7 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
 function profile() { return { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } as NonNullable<DirectoryReadBundle['structuredProfile']>; }
-function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[]; summary?: boolean } = {}) {
+function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[] } = {}) {
   let stored = initial;
   const writes: Request[] = [];
   const client = createAPIClient(async (input) => {
@@ -30,8 +30,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
-  const summary = createRawSnippet(() => ({ render: () => '<p>Summary row</p>' }));
-  const view = render(PersonFields, options.summary ? { controller, summary } : { controller });
+  const view = render(PersonFields, { controller });
   return { controller, writes, view };
 }
 
@@ -76,21 +75,8 @@ it('identifies row actions and confirmations by value and service scope without 
   ];
   const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const secret = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'private_note', label: 'Private note', is_sensitive: true };
-  const single = { ...secret, id: 10, universal_id: '00000000-0000-4000-8000-000000000010', slug: 'private_single', label: 'Private single', cardinality: 'single' };
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
-  let resolveSave!: (response: Response) => void;
-  const pendingSave = new Promise<Response>(resolve => { resolveSave = resolve; });
-  const writes: Request[] = [];
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    if (request.method === 'PUT' && new URL(request.url).pathname === '/api/v1/people/7/attributes/private_single') {
-      writes.push(request.clone());
-      return pendingSave;
-    }
-    throw new Error(`unexpected ${request.method} ${request.url}`);
-  });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {}, definitions: { definitions: [note, secret, single] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }, { definition: single, current: values(single, ['Single secret']), history: [] }] } });
-  const view = render(PersonFields, { controller });
+  const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note, secret] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }] } } });
   try {
     for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
       expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeDefined();
@@ -106,23 +92,7 @@ it('identifies row actions and confirmations by value and service scope without 
     }
     expect(view.container.innerHTML).not.toContain('Secret one');
     expect(view.container.innerHTML).not.toContain('Secret two');
-    await fireEvent.click(screen.getByRole('button', { name: 'Show Private single: value 1' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Private single: Single secret' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Private single' }), { target: { value: 'Unsaved private draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    await waitFor(() => expect(writes).toHaveLength(1));
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Hide Private single: Single secret' }));
-    expect(screen.queryByRole('textbox', { name: 'Private single' })).toBeNull();
-    expect(view.container.innerHTML).not.toContain('Single secret');
-    expect(view.container.innerHTML).not.toContain('Unsaved private draft');
-    expect(controller.draft).toBeNull();
-    expect(screen.getByRole('button', { name: 'Show Private single: value 1' })).toBeDefined();
-  } finally {
-    await act(() => resolveSave(Response.json({ message: 'Save unavailable' }, { status: 503 })));
-    await waitFor(() => expect(controller.mutationPending).toBe(false));
-    view.unmount(); controller.destroy();
-  }
+  } finally { view.unmount(); controller.destroy(); }
 });
 
 it('blocks attribute additions after a failed read and retries loading values', async () => {
@@ -252,10 +222,23 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows a repeated label once, the editor after the list, and the summary before More fields', async () => {
+it('shows a repeated label once, keeps editors before the summary, and preserves a birthday draft across refresh', async () => {
   const initial = profile();
   initial.contact_points = ['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } }));
-  const { controller, view } = harness(initial, { summary: true });
+  const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/profile')) return Response.json(refreshed, { headers: { ETag: '"profile-7-r2"' } });
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+    if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const summary = createRawSnippet(() => ({ render: () => '<p>Summary row</p>' }));
+  const view = render(PersonFields, { controller, summary });
   try {
     expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
     const more = screen.getByRole('button', { name: 'More fields' });
@@ -265,15 +248,44 @@ it('shows a repeated label once, the editor after the list, and the summary befo
     const input = await screen.findByRole('textbox', { name: /email|contact value/i });
     expect(screen.getByText('first@example.com').compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add birthday' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value: '1985-04-12' } });
+    await act(async () => { await controller.reload(); });
+    expect(screen.getByText('1990-05-06')).toBeDefined();
+    expect(screen.getByRole('textbox', { name: 'Date' })).toHaveProperty('value', '1985-04-12');
+    expect(screen.getByRole('textbox', { name: 'Date' }).compareDocumentPosition(screen.getByText('Summary row')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('reloads More fields choices, reveals a hidden field, and opens its form', async () => {
+it('reloads More fields choices, reveals a hidden field, and hides its new draft during a pending save', async () => {
   const definition = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
-  const { controller, view } = harness(profile(), { definitions: [definition], bundle: { definitions: { definitions: [] } } });
+  let resolveSave!: (response: Response) => void;
+  const pendingSave = new Promise<Response>(resolve => { resolveSave = resolve; });
+  const writes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [definition] });
+    if (request.method === 'PUT' && path === '/api/v1/people/7/attributes/religion') { writes.push(request.clone()); return pendingSave; }
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
-    expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Religion' }), { target: { value: 'Private new value' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide Religion' }));
+    expect(screen.queryByRole('textbox', { name: 'Religion' })).toBeNull();
+    expect(view.container.innerHTML).not.toContain('Private new value');
+    expect(controller.draft).toBeNull();
+  } finally {
+    await act(() => resolveSave(Response.json({ message: 'Save unavailable' }, { status: 503 })));
+    await waitFor(() => expect(controller.mutationPending).toBe(false));
+    view.unmount(); controller.destroy();
+  }
 });

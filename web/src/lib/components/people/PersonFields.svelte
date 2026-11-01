@@ -38,8 +38,6 @@
 
   let confirming = $state<Row & { kind: 'profile' | 'attribute' }>();
   let editing = $state<Editing>();
-  /** Where a new value's form opens: the add row that was clicked, or "more" for the More fields menu. */
-  let addingAt = $state<string>();
   let revealed = $state<Record<string, boolean>>({});
 
   const profile = $derived(controller.structuredProfile);
@@ -148,10 +146,9 @@
     return items;
   });
 
-  function startAdd(target: Editing, at: string): void {
+  function startAdd(target: Editing): void {
     confirming = undefined;
     editing = target;
-    addingAt = at;
   }
 
   function editorKey(target: Editing | undefined): string {
@@ -160,16 +157,8 @@
     return `${target.universalID}:${target.current?.id ?? 'new'}`;
   }
 
-  function editingRow(row: Row): boolean {
-    if (row.kind === 'add') return editing !== undefined && !editing.current && addingAt === row.id;
-    if (!editing || !editing.current) return false;
-    if (row.kind === 'profile') return editing.kind === 'profile' && editing.current.envelope.id === row.record.envelope.id && editing.section === row.section;
-    return editing.kind === 'attribute' && editing.current?.id === row.current.id;
-  }
-
   function startEdit(row: Row & { kind: 'profile' | 'attribute' }): void {
     confirming = undefined;
-    addingAt = undefined;
     editing =
       row.kind === 'profile'
         ? { kind: 'profile', section: row.section, current: row.record }
@@ -180,7 +169,6 @@
     if (editing?.kind === 'profile' && controller.draft?.kind === 'profile' && !controller.discardProfileDraft()) return;
     else if (editing?.kind === 'attribute') controller.discardAttributeDraft(activeEditor?.definition.slug ?? '');
     editing = undefined;
-    addingAt = undefined;
   }
 
   function sensitive(row: Row): boolean {
@@ -240,16 +228,14 @@
         <StructuredProfileEditor {controller} section={editing.section} current={editing.current} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
       {:else if editing?.kind === 'attribute' && activeEditor}
         <AttributeEditor {controller} definition={activeEditor!.definition} current={editing.current} sensitiveRevealed onDone={close} onCancel={close} />
+        {#if activeEditor.definition.is_sensitive}<Button label={`Hide ${activeEditor.definition.label}`} onclick={() => toggleReveal(activeEditor!.definition)} />{/if}
       {/if}
     {/key}
   {/snippet}
   {#each rows as row, index (row.id)}
-    <!-- Add forms replace their add row; existing value editors render below the list. -->
-    {#if row.kind === 'add' && editingRow(row)}
-      {@render editor()}
-    {:else if row.kind === 'add'}
+    {#if row.kind === 'add'}
       <!-- kit-ui-check-ignore: an add row in the field list, styled like a contact card's add rows. -->
-      <button type="button" class="add-row" disabled={!controller.canWriteProfile} onclick={() => startAdd(row.target, row.id)}>
+      <button type="button" class="add-row" disabled={!controller.canWriteProfile} onclick={() => startAdd(row.target)}>
         <Plus size={14} aria-hidden="true" />{row.label}
       </button>
     {:else}
@@ -289,7 +275,7 @@
     {/if}
   {/each}
 
-  {#if editing?.current || (editing && addingAt === 'more')}{@render editor()}{/if}
+  {#if editing}{@render editor()}{/if}
   {@render summary?.()}
 
   <div class="add">
@@ -303,7 +289,7 @@
             {@const definition = field.definition}
             <!-- Choosing a hidden field reveals it, then opens its form. -->
             <MenuItem textValue={definition.label} disabled={!controller.attributes || !!controller.attributesError || (isAttributeRevealed(definition, revealed) && !canAddAttribute(field, controller, revealed))}
-              onselect={() => { if (!isAttributeRevealed(definition, revealed)) toggleReveal(definition); if (canAddAttribute(field, controller, revealed)) startAdd({ kind: 'attribute', universalID: definition.universal_id }, 'more'); }}>{definition.label}</MenuItem>
+              onselect={() => { if (!isAttributeRevealed(definition, revealed)) toggleReveal(definition); if (canAddAttribute(field, controller, revealed)) startAdd({ kind: 'attribute', universalID: definition.universal_id }); }}>{definition.label}</MenuItem>
           {/each}
           <MenuSeparator />
         {/if}
@@ -311,7 +297,7 @@
           <MenuItem
             textValue={item.label}
             disabled={!controller.canWriteProfile}
-            onselect={() => startAdd({ kind: 'profile', section: item.section, contactKind: item.contactKind, nameKind: item.nameKind }, 'more')}
+            onselect={() => startAdd({ kind: 'profile', section: item.section, contactKind: item.contactKind, nameKind: item.nameKind })}
           >
             {item.label}
           </MenuItem>

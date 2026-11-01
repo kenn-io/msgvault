@@ -2,34 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
-}
-
-function employment(id: number, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, person_id: 7, organization_id: 21, source: 'user', is_current: true, is_primary: false,
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
-
-function organization(revision: number) {
-  return {
-    id: 21, revision, name: 'Synthetic Org', kind: 'company',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
-}
-
-function organizationProfile(revision: number) {
-  return {
-    organization: organization(revision), names: [], contact_points: [], addresses: [], categories: [], identifiers: [], media: []
-  };
-}
+import { requestOf, pathOf, employment, organization, organizationProfile } from './entity-fixtures.test-support';
 
 function relationship(id: number, revision = 1) {
   return {
@@ -214,7 +187,7 @@ describe('DirectoryEntityController', () => {
       }
       if (pathOf(request) === '/api/v1/organizations/21' && request.method === 'PATCH') {
         patchRequest = request;
-        return new Response(JSON.stringify(organization(3)), { headers: { ETag: '"organization-21-r3"' } });
+        return new Response(JSON.stringify(organization(21, 3)), { headers: { ETag: '"organization-21-r3"' } });
       }
       return defaultResponse(request);
     }));

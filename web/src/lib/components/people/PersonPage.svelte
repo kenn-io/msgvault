@@ -9,6 +9,7 @@
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
   import PersonAddresses from './PersonAddresses.svelte';
+  import { formatContactDate } from '../../directory/labels';
   import MergePeopleDialog from './MergePeopleDialog.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
   import { localDayBoundsUTC } from '../relationships/timeline-support';
@@ -158,6 +159,9 @@
     {/if}
     {#if detail && !controller.detailMissing}
       <PersonAddresses {detail} {onAnnounce} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+      {#if 'domain' in detail}
+        <p>{detail.activity_count.toLocaleString()} items{#if detail.activity_count > 0} · {formatContactDate(detail.first_at)} – {formatContactDate(detail.last_at)}{/if} · {detail.person_count.toLocaleString()} people</p>
+      {/if}
     {/if}
   </div>
   {#if mergeOpen}<MergePeopleDialog {client} {controller} personID={profileID} participantID={person?.id ?? null} {name} onReconcile={onReconcilePersonMerge} onLinked={linked} onOpenPerson={onOpenDirectoryPerson} onClose={() => mergeOpen = false} />{/if}
