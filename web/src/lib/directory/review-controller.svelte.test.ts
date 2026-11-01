@@ -267,8 +267,8 @@ describe('DirectoryReviewController', () => {
       error: 'person_merge_required',
       message: 'Choose a survivor',
       profiles: [
-        { etag: '"person-7-r4"', person: { id: 7, revision: 4, display_name: 'Synthetic One' } },
-        { etag: '"person-9-r2"', person: { id: 9, revision: 2, display_name: 'Synthetic Two' } }
+        { etag: '"person-7-r4"', person: person(7) },
+        { etag: '"person-9-r2"', person: person(9) }
       ]
     };
     const requests: Request[] = [];

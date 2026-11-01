@@ -1,4 +1,3 @@
-import { person as profile } from '../../directory/entity-fixtures.test-support';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DirectoryController } from '../../directory/controller.svelte';

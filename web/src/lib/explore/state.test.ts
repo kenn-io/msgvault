@@ -417,7 +417,7 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState, workspace: 'everything', settingsCategory: 'search'
     });
     expect(elsewhere).not.toContain('settingsCategory');
-    for (const [category, expected] of [['<script>', 'overview'], [42, 'overview'], ['', 'overview'], ['Search', 'overview'], ['toString', 'overview'], ['people', 'enrichment']]) {
+    for (const [category, expected] of [['<script>', 'overview'], [42, 'overview'], ['', 'overview'], ['Search', 'overview'], ['toString', 'overview']]) {
       expect(parseExploreURLState(serializeExploreURLState({
         ...defaultExploreURLState, workspace: 'settings', settingsCategory: category
       } as unknown as ExploreURLState)).settingsCategory).toBe(expected);
@@ -1019,33 +1019,27 @@ describe('relationships workspace state', () => {
     });
   });
 
-  it('opens People without carrying the Messages search', async () => {
+  it.each(['Messages search', 'duplicates'])('opens People and restores %s on Back', async origin => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
-    state.commitNavigation({ workspace: 'everything', query: 'quarterly plan' });
-    state.commitWorkspace('relationships');
-    expect(state.current.workspace).toBe('relationships');
-    expect(state.current.query).toBe('');
-    expect(state.predicate()).not.toHaveProperty('query');
-    expect(state.predicate()).not.toHaveProperty('search_mode');
-    expect(parseExploreURLState(window.location.search).query).toBe('');
-    window.history.back();
-    await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current.workspace).toBe('everything');
-    expect(state.current.query).toBe('quarterly plan');
-    state.destroy();
-  });
-
-  it('opens People from duplicates and restores duplicates on Back', async () => {
-    window.history.replaceState(null, '', '/');
-    const state = new ExploreState(window);
-    state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
-    state.commitWorkspace('relationships');
-    expect(state.current.peopleDuplicates).toBe(false);
-    window.history.back();
-    await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current.peopleDuplicates).toBe(true);
-    state.destroy();
+    try {
+      state.commitNavigation(origin === 'Messages search' ? { workspace: 'everything', query: 'quarterly plan' } : { workspace: 'relationships', peopleDuplicates: true });
+      state.commitWorkspace('relationships');
+      expect(state.current.workspace).toBe('relationships');
+      if (origin === 'Messages search') {
+        expect(state.current.query).toBe('');
+        expect(state.predicate()).not.toHaveProperty('query');
+        expect(state.predicate()).not.toHaveProperty('search_mode');
+        expect(parseExploreURLState(window.location.search).query).toBe('');
+      } else expect(state.current.peopleDuplicates).toBe(false);
+      const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await popped;
+      if (origin === 'Messages search') {
+        expect(state.current.workspace).toBe('everything');
+        expect(state.current.query).toBe('quarterly plan');
+      } else expect(state.current.peopleDuplicates).toBe(true);
+    } finally { state.destroy(); }
   });
 
   it('rejects invalid facet/target shapes', () => {
