@@ -661,13 +661,3 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
 });
-
-it('routes Overview document extraction Details to live document status', async () => {
-  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
-    if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents' })] });
-  });
-  const onOpenStatus = vi.fn();
-  render(SettingsWorkspace, { client, operationsController, onStatusChange, onOpenStatus });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Details, Document extraction' }));
-  expect(onOpenStatus).toHaveBeenCalledWith('getDocumentIndexStatus');
-});

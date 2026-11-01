@@ -647,6 +647,21 @@ export class ExploreState {
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
+    if (this.current.operationHistory && next.operationHistory &&
+      (Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
+        [...OPERATION_FILTER_FIELDS, 'operationRunID', 'operationStatus'].includes(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
+      this.current.operationLane = next.operationLane;
+      this.current.operationKind = next.operationKind;
+      this.current.operationState = next.operationState;
+      this.current.operationStartedFrom = next.operationStartedFrom;
+      this.current.operationStartedBefore = next.operationStartedBefore;
+      this.current.operationRunID = next.operationRunID;
+      this.current.operationStatus = next.operationStatus;
+      this.historyIndex = nextIndex;
+      this.committed = normalize(this.current);
+      this.cancelHeldLeave?.();
+      return;
+    }
     const commit = () => this.commitPopped(next, nextIndex);
     if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
     commit();
