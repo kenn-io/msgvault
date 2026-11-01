@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/recordingref"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -629,6 +630,18 @@ func (c *Config) DaemonConfigError() error {
 	return errors.Join(c.daemonErrs...)
 }
 
+// PeopleTiersError returns the recorded [people.tiers] errors, or nil. Tier
+// previews refuse to run on them instead of falling back to defaults.
+func (c *Config) PeopleTiersError() error {
+	var errs []error
+	for _, err := range c.daemonErrs {
+		if errors.Is(err, persontiers.ErrInvalidConfig) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // requireDaemonValid returns the config, or the recorded daemon errors.
 func (c *Config) requireDaemonValid() (*Config, error) {
 	if err := c.DaemonConfigError(); err != nil {
@@ -673,6 +686,7 @@ type PeopleConfig struct {
 	Sweep           peoplesweep.Config      `toml:"sweep"`
 	Enrichment      personenrichment.Config `toml:"enrichment"`
 	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
+	Tiers           persontiers.Config      `toml:"tiers"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -948,6 +962,7 @@ func NewDefaultConfig() *Config {
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
+	cfg.People.Tiers = persontiers.DefaultConfig()
 	return cfg
 }
 
@@ -1119,6 +1134,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown people.identity_scoring config key %q", key.String()))
 		}
+		if strings.HasPrefix(key.String(), "people.tiers.") {
+			cfg.deferDaemonError(fmt.Errorf("%w: unknown people.tiers config key %q", persontiers.ErrInvalidConfig, key.String()))
+		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown IMAP draft config key %q", key.String()))
 		}
@@ -1243,6 +1261,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.IdentityScoring.ApplyDefaults()
 	cfg.deferDaemonError(cfg.People.IdentityScoring.Validate())
+	cfg.deferDaemonError(cfg.People.Tiers.Validate())
 	if err := cfg.Backup.Validate(); err != nil {
 		return nil, err
 	}
