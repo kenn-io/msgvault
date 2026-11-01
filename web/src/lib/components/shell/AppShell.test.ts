@@ -2994,3 +2994,67 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
     await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
   } finally { view.unmount(); state.destroy(); }
 });
+
+it('keeps duplicate and saved-view Undo actions independent', async () => {
+  const writes: Request[] = [];
+  let deleted = false;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (request.method === 'POST' && path.includes('/review/')) { writes.push(request); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/saved-views/3') && request.method === 'DELETE') { deleted = true; return new Response(null, { status: 204 }); }
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: deleted ? [] : [view(3, 'Project notes')] });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Undo' })).toHaveLength(2));
+    const duplicateFlash = screen.getByText('Keep separate queued').closest('[role="status"]') as HTMLElement;
+    await fireEvent.click(within(duplicateFlash).getByRole('button', { name: 'Undo' }));
+    const restored = await screen.findByRole('button', { name: 'Keep separate' });
+    expect(writes).toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: 'Undo' })).toHaveLength(1);
+    expect(restored.closest('li')).toBe(document.activeElement);
+    await fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(deleted).toBe(true));
+    expect(writes).toHaveLength(0);
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it('refreshes Saved rows when browser Back restores unchanged filters', async () => {
+  let synced = false;
+  const saved = () => ({ ...person(7, 1, []), display_name: synced ? 'After sync' : 'Before sync', organizations: [], categories: [], contact_state: 'active' });
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/people/directory')) return Response.json({ people: [saved()] });
+    if (path.endsWith('/people/7')) return Response.json(saved(), { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  window.history.replaceState(null, '', '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true })));
+  const state = new ExploreState(window);
+  const view = render(AppShell, { client, state });
+  try {
+    const grid = await screen.findByRole('grid', { name: 'People results' });
+    await fireEvent.click(await within(grid).findByText('Before sync'));
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
+    synced = true;
+    const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await restored;
+    await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
+    expect(await within(grid).findByText('After sync')).toBeDefined();
+    expect(within(grid).queryByText('Before sync')).toBeNull();
+  } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
+});
