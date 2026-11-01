@@ -1,5 +1,5 @@
 import { documentStatus, lane, lanes } from '../../../test/operations';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
@@ -36,7 +36,28 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
-  it('loads document counts when polling observes configuration', async () => {
+  it('keeps the same title while a deep-linked run loads and identifies its kind', async () => {
+    let resolveDetail!: (response: Response) => void;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+      if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
+      if (path === `/api/v1/operations/runs/${run.id}`) return new Promise<Response>(resolve => { resolveDetail = resolve; });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const controller = new OperationsController(client); controllers.push(controller);
+    render(RunHistoryDialog, { client, controller,
+      state: { ...defaultOperationsState(), operationRunID: run.id },
+      onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+    await vi.waitFor(() => expect(resolveDetail).toBeDefined());
+    expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
+    resolveDetail(Response.json({ ...run, supported_actions: [] }));
+    const detail = await screen.findByRole('region', { name: 'Operation run detail' });
+    expect(within(detail).getByText('Document extraction')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
+  });
+
+  it('reloads status counts when configuration changes', async () => {
     let configured = false;
     const client = createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -72,8 +93,6 @@ describe('Past runs', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Kind:/ }), 'Source sync');
     await fireEvent.click(screen.getByRole('button', { name: /2026-10-11/ }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Relative' }));
-    await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '2026-10-23T00:00:00Z', operationStartedBefore: '2026-10-30T00:00:00Z' }), false);
     await fireEvent.click(screen.getByRole('button', { name: 'All' }));
     expect(applyURLState).toHaveBeenLastCalledWith(expect.objectContaining({ operationStartedFrom: '', operationStartedBefore: '' }), false);
     await fireEvent.click(screen.getByRole('button', { name: '7d' }));
