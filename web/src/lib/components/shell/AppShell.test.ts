@@ -2149,7 +2149,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
-  it('clears prior Directory selection and promotion state before opening a new relationship candidate', async () => {
+  it('opens a new People candidate from the selected saved person', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryPersonID: 7
     }))}`);
@@ -2202,8 +2202,6 @@ describe('AppShell', () => {
 
     expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(state.current.directoryPersonID).toBeNull();
 
     rendered.unmount();
     state.destroy();

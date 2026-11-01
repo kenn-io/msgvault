@@ -98,7 +98,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows person Details content across person tabs', async () => {
+it('shows Identities only on the person Details tab', async () => {
   vi.stubEnv('TZ', 'UTC');
   const summary = { id: 1, display_label: 'Alice Example', identifiers: [], activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
   const target = 'cluster:1';
