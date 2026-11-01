@@ -21,9 +21,11 @@
     controller: DirectoryProfileController;
     /** Shown beside the contact frequency when the person is overdue. */
     overdue?: boolean;
+    /** Rows shown after the values, before More fields. */
+    summary?: import('svelte').Snippet;
   }
 
-  let { controller, overdue = false }: Props = $props();
+  let { controller, overdue = false, summary = undefined }: Props = $props();
 
   type Editing =
     | { kind: 'profile'; section: FieldSection; current?: FieldRecord; contactKind?: string; nameKind?: string }
@@ -240,18 +242,19 @@
       {/if}
     {/key}
   {/snippet}
-  {#each rows as row (row.id)}
-    <!-- An edited value's row gives way to the editor below the list, which outlives the row when Reload replaces or removes it. -->
+  {#each rows as row, index (row.id)}
+    <!-- An edited value's row gives way to its editor in place. If Reload replaces or removes the row, the editor moves below the list. -->
     {#if editingRow(row)}
-      {#if row.kind === 'add'}{@render editor()}{/if}
+      {@render editor()}
     {:else if row.kind === 'add'}
       <!-- kit-ui-check-ignore: an add row in the field list, styled like a contact card's add rows. -->
       <button type="button" class="add-row" disabled={!controller.canWriteProfile} onclick={() => startAdd(row.target, row.id)}>
         <Plus size={14} aria-hidden="true" />{row.label}
       </button>
     {:else}
-      <DetailRow label={row.label}>
-        {#if sensitive(row)}<span class="hidden-value">••••••</span>{:else}{row.value}{/if}
+      <!-- Like a contact card, a run of the same kind shows its label once. -->
+      <DetailRow label={rows[index - 1]?.kind !== 'add' && rows[index - 1]?.label === row.label ? '' : row.label}>
+        {#if sensitive(row)}<span class="hidden-value">Hidden</span>{:else}{row.value}{/if}
         {#if row.kind === 'profile' && row.section === 'contact_points'}
           {@const point = row.record as import('../../api/generated/models').PersonContactPoint}
           {#if point.service_slug || point.scope_kind || point.scope_value}<small>{[point.service_slug, point.scope_kind, point.scope_value].filter(Boolean).join(' · ')}</small>{/if}
@@ -285,7 +288,8 @@
     {/if}
   {/each}
 
-  {#if editing?.current || (editing && addingAt === 'more')}{@render editor()}{/if}
+  {#if (editing?.current && !rows.some((row) => row.kind !== 'add' && editingRow(row))) || (editing && addingAt === 'more')}{@render editor()}{/if}
+  {@render summary?.()}
 
   <div class="add">
     <Menu onopenchange={(open) => { if (open) void controller.reloadDefinitions(); }}>
@@ -296,11 +300,9 @@
         {#if addableAttributes.length > 0}
           {#each addableAttributes as field (field.definition.universal_id)}
             {@const definition = field.definition}
-            {#if !isAttributeRevealed(definition, revealed)}
-              <MenuItem textValue={`Show ${definition.label}`} onselect={() => toggleReveal(definition)}>Show {definition.label}</MenuItem>
-            {:else}
-              <MenuItem textValue={definition.label} disabled={!canAddAttribute(field, controller, revealed)} onselect={() => startAdd({ kind: 'attribute', universalID: definition.universal_id }, 'more')}>{definition.label}</MenuItem>
-            {/if}
+            <!-- Choosing a hidden field reveals it, then opens its form. -->
+            <MenuItem textValue={definition.label} disabled={isAttributeRevealed(definition, revealed) && !canAddAttribute(field, controller, revealed)}
+              onselect={() => { if (!isAttributeRevealed(definition, revealed)) toggleReveal(definition); if (canAddAttribute(field, controller, revealed)) startAdd({ kind: 'attribute', universalID: definition.universal_id }, 'more'); }}>{definition.label}</MenuItem>
           {/each}
           <MenuSeparator />
         {/if}
@@ -337,7 +339,6 @@
 
   .hidden-value {
     color: var(--text-muted);
-    letter-spacing: 0.1em;
   }
 
   .overdue {
@@ -349,17 +350,41 @@
     font-size: var(--font-size-xs);
   }
 
-  .add {
-    padding-top: var(--field-gap);
+  /* Add rows and More fields sit in the value column, under the values they add to. */
+  .add-row,
+  .add :global(.add-trigger) {
+    padding-left: calc(120px + var(--field-gap));
+  }
+
+  .add :global(.add-trigger) {
+    display: flex;
+    min-height: var(--control-h-lg);
+    align-items: center;
+    gap: var(--space-2);
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-right: 0;
+    border: 0;
+    background: none;
+    color: var(--link-ink);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .add :global(.add-trigger:hover) {
+    text-decoration: underline;
   }
 
   /* kit-ui-check-ignore: add rows read as list rows, not buttons. */
   .add-row {
     display: flex;
-    min-height: var(--control-h-lg);
+    min-height: var(--control-h);
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-2) 0;
+    padding-top: var(--space-1);
+    padding-bottom: var(--space-1);
+    padding-right: 0;
     border: 0;
     border-bottom: 1px solid var(--border-muted);
     background: none;
@@ -368,6 +393,13 @@
     font: inherit;
     font-size: var(--font-size-sm);
     text-align: left;
+  }
+
+  @media (max-width: 640px) {
+    .add-row,
+    .add :global(.add-trigger) {
+      padding-left: calc(88px + var(--field-gap));
+    }
   }
 
   .add-row:hover:not(:disabled) {

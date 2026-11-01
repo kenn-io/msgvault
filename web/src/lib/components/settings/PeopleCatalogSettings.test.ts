@@ -33,7 +33,7 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
   await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
   await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('text · Inactive');
+  await screen.findByText('Text · inactive');
   expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
   await fireEvent.click(await screen.findByRole('button', { name: 'Edit Preferred color' }));
   await screen.findByRole('textbox', { name: 'Name' });

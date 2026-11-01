@@ -77,7 +77,7 @@
     align-items: center;
     gap: var(--control-gap);
     min-height: var(--control-h-lg);
-    padding: var(--pane-pad-y) var(--pane-pad-x);
+    padding: var(--space-1) var(--pane-pad-x);
   }
   .list li + li {
     border-top: 1px solid var(--border-muted);

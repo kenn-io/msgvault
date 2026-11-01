@@ -22,6 +22,8 @@
     filesOpen: boolean;
     showTabs?: boolean;
     showIdentity?: boolean;
+    /** Heading for the identities block when the page header already shows the person. */
+    title?: string;
     missing?: boolean;
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
@@ -40,6 +42,7 @@
     filesOpen,
     showTabs = true,
     showIdentity = true,
+    title = undefined,
     missing = false,
     onFilesToggle,
     client,
@@ -288,7 +291,7 @@
   }
 </script>
 
-<header class="relationship-header" class:has-detail={Boolean(detail)} aria-label="Relationship detail">
+<header class="relationship-header" class:has-detail={Boolean(detail) && !title} aria-label="Relationship detail">
   {#if !detail}
     <p class="header-empty" role="status">
       {loading ? 'Loading relationship…' : missing ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
@@ -301,7 +304,7 @@
         shape={isPersonDetail(detail) ? 'person' : 'domain'}
         size={36}
       />
-      <h2>{displayLabel(detail)}</h2>{/if}
+      <h2>{displayLabel(detail)}</h2>{:else if title}<h3>{title}</h3>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
           {#if showIdentity && (onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson))}
@@ -339,7 +342,7 @@
         onchange={(value) => onFilesToggle(value === 'files')}
       />
     </div>{/if}
-    <p class="counts">
+    {#if !title}<p class="counts">
       {detail.activity_count.toLocaleString()} items
       {#if detail.activity_count > 0}
         · {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
@@ -347,7 +350,7 @@
       {#if !isPersonDetail(detail)}
         · {detail.person_count.toLocaleString()} people
       {/if}
-    </p>
+    </p>{/if}
     {#if isPersonDetail(detail) && showIdentities}
       {#key detail.id}
       <details class="identities" open={identitiesOpen || forceIdentitiesOpen} ontoggle={handleIdentitiesToggle}>
@@ -529,6 +532,12 @@
 
   .view-row {
     display: flex;
+  }
+
+  .title-row h3 {
+    flex: 1;
+    margin: 0;
+    font-size: var(--font-size-md);
   }
 
   .counts {

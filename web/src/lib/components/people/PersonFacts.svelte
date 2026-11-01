@@ -42,11 +42,12 @@
   section {
     display: flex;
     flex-direction: column;
-    gap: var(--field-gap);
+    gap: var(--space-2);
   }
 
   header {
     display: flex;
+    min-height: var(--control-h);
     align-items: center;
     gap: var(--control-gap);
   }

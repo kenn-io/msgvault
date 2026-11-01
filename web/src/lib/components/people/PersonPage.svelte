@@ -143,7 +143,7 @@
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
-      <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
+      <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} title="Identities" {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
         onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
     {/if}
@@ -155,6 +155,7 @@
   .calendar { width: 100%; max-width: 960px; margin-inline: auto; padding: var(--pane-pad-y) var(--page-gutter); box-sizing: border-box; }
   .tabs { padding: var(--space-3) var(--page-gutter); border-bottom: 1px solid var(--border-muted); }
   .files { display: flex; min-height: 0; flex: 1; padding: var(--pane-pad-y) var(--page-gutter) var(--page-gutter); }
-  .details { padding: var(--pane-pad-y) var(--page-gutter); }
+  .details { display: flex; flex-direction: column; gap: var(--space-7); padding: var(--pane-pad-y) var(--page-gutter) var(--space-8); }
+  .details > :global(*) { max-width: 720px; }
   .summary-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--pane-pad-y) var(--page-gutter); }
 </style>
