@@ -517,6 +517,7 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
+  expect(screen.getByRole('dialog').textContent).toContain('The daemon uses it after a restart.');
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -531,13 +532,12 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   expect(screen.getByText('1 unsaved change.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   expect(screen.getByText('1 unsaved change.')).toBeDefined();
+  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   expect(writes()).toEqual([
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
   ]);
-  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({
-    endpoint: 'https://changed.example.test'
-  });
+  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({ endpoint: 'https://changed.example.test' });
 });
 
 it('starts the visual index from Overview and refreshes its row', async () => {
@@ -675,7 +675,7 @@ it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People
 it('refreshes People profiles and revision after a shared-settings conflict while People lookups stays open', async () => {
   let revision = '"s1"';
   const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings') {
       if (request.method === 'PATCH') return Response.json({ message: 'Config changed' }, { status: 412 });
@@ -690,7 +690,7 @@ it('refreshes People profiles and revision after a shared-settings conflict whil
       }, { headers: { ETag: revision } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
   await screen.findByText('model-one');
   revision = '"s2"';
   await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
@@ -706,7 +706,7 @@ it.each(['save', 'create'] as const)('refreshes People profiles, checks, and rev
   let revision = '"s1"';
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' } };
   const doc = settingsDoc({ person_enrichment_providers: [provider] });
-  const { client, seen } = fixture(doc, request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings') return Response.json(doc, { headers: { ETag: revision } });
     if (path.includes('/person-enrichment/providers/') && request.method === 'PUT') return Response.json({ message: 'Config changed' }, { status: 412 });
@@ -719,7 +719,7 @@ it.each(['save', 'create'] as const)('refreshes People profiles, checks, and rev
       }, { headers: { ETag: revision } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
   await screen.findByText('model-one');
   await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
   await screen.findByLabelText('I confirm this exact disclosure');
@@ -896,14 +896,14 @@ it.each([
   { name: 'Visual search', kind: 'visual_embedding' as const, path: '/multimodal/status', status: { ...visualStatus, current: 2 } },
 ])('clears $name progress when a refresh fails over the network', async ({ name, kind, path, status }) => {
   let reads = 0;
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane(kind, { active: { id: 'run-1', kind, lane: lane(kind).lane, state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } })) });
     if (request.url.endsWith(path)) {
       if (++reads > 1) throw new TypeError('Failed to fetch');
       return Response.json(status);
     }
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await screen.findByRole('list', { name: 'Features' });
   const row = screen.getByText(name).closest('li')!;
   await within(row).findByText('Building 2 of 10');
