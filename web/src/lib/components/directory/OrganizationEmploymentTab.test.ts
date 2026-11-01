@@ -443,23 +443,22 @@ describe('OrganizationEmploymentTab', () => {
     }
   });
 
-});
-
-it('loads employer names for every Work row independently of search results', async () => {
-  const controller = controllerWith(async input => {
-    const path = pathOf(requestOf(input));
-    if (path.endsWith('/employments')) return collection([employment(11, 1, { is_primary: true }), employment(12, 1, { organization_id: 22, title: 'Advisor' })]);
-    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(1, 'Primary Co'), { headers: { ETag: '"org-21-r1"' } });
-    if (path === '/api/v1/organizations/22') return Response.json({ ...organizationProfile(), organization: organization(22, 1, 'Second Co') }, { headers: { ETag: '"org-22-r1"' } });
-    if (path.startsWith('/api/v1/organizations')) return Response.json({ organizations: [organization(99, 1, 'Search Result')], total: 1, limit: 50, offset: 0 });
-    if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
-    return Response.json({ relationships: [] });
+  it('loads employer names for every Work row independently of search results', async () => {
+    const controller = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path.endsWith('/employments')) return collection([employment(11, 1, { is_primary: true }), employment(12, 1, { organization_id: 22, title: 'Advisor' })]);
+      if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(1, 'Primary Co'), { headers: { ETag: '"org-21-r1"' } });
+      if (path === '/api/v1/organizations/22') return Response.json({ ...organizationProfile(), organization: organization(22, 1, 'Second Co') }, { headers: { ETag: '"org-22-r1"' } });
+      if (path.startsWith('/api/v1/organizations')) return Response.json({ organizations: [organization(99, 1, 'Search Result')], total: 1, limit: 50, offset: 0 });
+      if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+      return Response.json({ relationships: [] });
+    });
+    await controller.load();
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      expect(screen.getByText(/Advisor at/).closest('.detail-row')?.textContent).toContain('Advisor at Second Co');
+      await controller.refreshOrganizations('Search');
+      expect(screen.getByText(/Advisor at/).closest('.detail-row')?.textContent).toContain('Advisor at Second Co');
+    } finally { view.unmount(); controller.destroy(); }
   });
-  await controller.load();
-  const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
-  try {
-    expect(screen.getByText(/Advisor at/).closest('.detail-row')?.textContent).toContain('Advisor at Second Co');
-    await controller.refreshOrganizations('Search');
-    expect(screen.getByText(/Advisor at/).closest('.detail-row')?.textContent).toContain('Advisor at Second Co');
-  } finally { view.unmount(); controller.destroy(); }
 });

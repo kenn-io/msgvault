@@ -49,4 +49,3 @@ function setting(key: string, value: unknown, overrides: Partial<SettingState> =
     ...overrides,
   };
 }
-
