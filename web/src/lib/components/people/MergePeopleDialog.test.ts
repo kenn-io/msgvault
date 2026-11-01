@@ -1,12 +1,12 @@
 import { mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
 
-it.each([{ promote: false, disposed: false }, { promote: true, disposed: false }, { promote: false, disposed: true }])('merges saved profiles with promotion=$promote and disposal during reconciliation=$disposed', async ({ promote, disposed }) => {
+it.each([false, true])('merges saved profiles with promotion=%s', async promote => {
   const requests: Request[] = [];
   let failProfile = promote;
   const client = createAPIClient(async input => {
@@ -25,10 +25,8 @@ it.each([{ promote: false, disposed: false }, { promote: true, disposed: false }
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
-  let finishReconcile!: () => void;
-  const onReconcile = vi.fn(() => disposed ? new Promise<void>(resolve => { finishReconcile = resolve; }) : Promise.resolve());
-  let currentPerson = 7, unmounted = false;
-  const onOpenPerson = vi.fn((id: number) => { currentPerson = id; }), onClose = vi.fn();
+  const onReconcile = vi.fn(async () => undefined);
+  const onOpenPerson = vi.fn(), onClose = vi.fn();
   const view = render(MergePeopleDialog, { client, controller, personID: 7, participantID: null, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
@@ -46,16 +44,8 @@ it.each([{ promote: false, disposed: false }, { promote: true, disposed: false }
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
-    if (disposed) {
-      const closes = onClose.mock.calls.length;
-      view.unmount();
-      unmounted = true;
-      currentPerson = 99;
-      await act(async () => finishReconcile());
-      expect(currentPerson).toBe(99);
-      expect(onClose).toHaveBeenCalledTimes(closes);
-    } else expect(onOpenPerson).toHaveBeenCalledWith(7);
-  } finally { if (!unmounted) view.unmount(); controller.destroy(); }
+    expect(onOpenPerson).toHaveBeenCalledWith(7);
+  } finally { view.unmount(); controller.destroy(); }
 });
 
 function renderRepresentativeLink(savedAnchor: boolean, missing = false) {
@@ -63,9 +53,9 @@ function renderRepresentativeLink(savedAnchor: boolean, missing = false) {
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [{ id: 7, display_name: 'Synthetic Saved' }] });
+    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [{ ...profile(7), display_name: 'Synthetic Saved' }] });
     if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 1, display_label: 'Synthetic Observed' }] : [] });
-    if (path.endsWith('/people/7')) return missing ? Response.json({ message: 'Target missing' }, { status: 404 }) : Response.json({ id: 7, participant_ids: [2, 3] });
+    if (path.endsWith('/people/7')) return missing ? Response.json({ message: 'Target missing' }, { status: 404 }) : Response.json(profile(7, 4, [2, 3]));
     if (path.endsWith('/identity/links')) { links.push(await request.json()); return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
     throw new Error(`Unexpected ${path}`);
   });

@@ -200,17 +200,20 @@ export class DirectoryReviewController {
   }
   async loadNextPage(): Promise<void> {
     if (this.loading || !this.hasNextPage) return;
-    await this.settleDecision();
-    await this.loadIdentityPage(this.offset + IDENTITY_REVIEW_PAGE_LIMIT);
+    await this.loadPageAfterSettlement(this.offset + IDENTITY_REVIEW_PAGE_LIMIT);
   }
   async loadPreviousPage(): Promise<void> {
     if (this.loading || !this.hasPreviousPage) return;
-    await this.settleDecision();
-    await this.loadIdentityPage(Math.max(0, this.offset - IDENTITY_REVIEW_PAGE_LIMIT));
+    await this.loadPageAfterSettlement(Math.max(0, this.offset - IDENTITY_REVIEW_PAGE_LIMIT));
   }
   async retryPage(targetOffset = this.retryOffset ?? this.offset): Promise<void> {
+    await this.loadPageAfterSettlement(targetOffset);
+  }
+  /** A page move made before a decision settles yields to any newer review context. */
+  private async loadPageAfterSettlement(targetOffset: number): Promise<void> {
+    const context = this.reviewContextSnapshot();
     await this.settleDecision();
-    await this.loadIdentityPage(targetOffset);
+    if (this.isReviewContextCurrent(context)) await this.loadIdentityPage(targetOffset);
   }
   async acceptIdentity(
     candidateID: number,
