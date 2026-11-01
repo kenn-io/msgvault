@@ -66,6 +66,7 @@
     onAnnounce?: (message: string) => void;
     onOpenSettings?: () => void;
     onOpenPerson?: (participantID: number) => void;
+    onConfigureVisualSearch?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
@@ -98,6 +99,7 @@
     onOpenDirectory = undefined,
     onOpenDirectoryPerson = undefined,
     onAnnounce = undefined,
+    onConfigureVisualSearch = undefined,
     onOpenMeeting = undefined,
     onOpenSettings = undefined,
     onOpenPerson = undefined,
@@ -607,9 +609,10 @@
                   <p role="status">{meetingContext.error}</p>
                 {/if}
               </div>
-              <div class="relationship-activity">
+              <div class="relationship-activity" class:files-open={filesOpen && filesReady}>
                 {#if filesOpen && filesReady}
                   <FilesWorkspace
+                    {onConfigureVisualSearch}
                     {client}
                     embedded
                     predicate={contextPredicate(predicate)}
@@ -821,6 +824,7 @@
   }
 
   .layout-narrow .relationship-activity { min-height: 340px; flex-basis: 340px; }
+  .layout-narrow .relationship-activity.files-open { min-height: 180px; flex: 1 1 180px; }
   .layout-narrow .hub-body { flex-direction: column; }
   .layout-narrow :global(.drawer-toggle) { align-self: flex-start; flex: none; margin-inline: var(--page-gutter); }
 

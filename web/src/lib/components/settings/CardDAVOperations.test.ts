@@ -91,7 +91,7 @@ describe('CardDAVOperations', () => {
 
   it.each([
     { reason: 'credential_missing', available: false, message: 'No CardDAV credential is stored. Connect the account in CardDAV settings and save it.' },
-    { reason: 'google_authorization_required', available: true, message: 'Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.' },
+    { reason: 'google_authorization_required', available: true, message: 'Check the selected OAuth app\'s client settings. Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.' },
     { reason: 'microsoft_authorization_required', available: true, message: 'Run msgvault carddav authorize-microsoft with your account email, then try again.' },
   ])('shows repair instructions for $reason and keeps sync disabled', async ({ reason, available, message }) => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

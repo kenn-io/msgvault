@@ -138,6 +138,11 @@
 
   $effect(() => {
     const request = cardDAVRequest;
+    if (request?.connection) {
+      selected = request.connection;
+      onCardDAVRequestConsumed(request.key);
+      return;
+    }
     if (!request?.conflictID || !available) return;
     untrack(() => {
       void conflictsController.openRequestedConflict({
