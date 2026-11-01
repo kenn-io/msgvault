@@ -84,7 +84,7 @@ describe('PersonNetwork', () => {
 
     expect(await screen.findByText('No connections at this depth')).toBeDefined();
     expect(screen.queryByRole('region', { name: 'Network graph' })).toBeNull();
-    expect(screen.queryByRole('list', { name: 'Directory network connections' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Network connections' })).toBeNull();
   });
 
   it('draws every typed relationship and employment with its relation label and makes both entity kinds actionable', async () => {
@@ -99,7 +99,7 @@ describe('PersonNetwork', () => {
     const region = screen.getByRole('region', { name: 'Network graph' });
     expect(region.tabIndex).toBe(0);
     expect(document.querySelector('.graph > svg')?.getAttribute('aria-hidden')).toBe('true');
-    expect(screen.queryByRole('list', { name: 'Directory network connections' })).toBeNull();
+    expect(screen.getByRole('list', { name: 'Network connections' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open organization Shared Organization' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open person Second Hop Person' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Open person Selected Person' })).toBeNull();
