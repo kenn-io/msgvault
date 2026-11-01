@@ -347,72 +347,71 @@ func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
 // serial: changes routeProbeTimeout.
 func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 	testutil.SkipIfPostgres(t, "uses a SQLite function to slow quiet-roster writes")
-	requirements := require.New(t)
-	f := newFakeBeeper(t)
-	quiet := mediaChat()
-	f.addChat(quiet)
-	active := mediaChat()
-	active.ID = "!active-slow-roster:beeper.local"
-	active.LastActivity = time.Now().UTC()
-	active.Msgs = nil
-	f.addChat(active)
-	st := testutil.NewTestStore(t)
-	client := NewClient("http://beeper.test", testToken, 10000)
-	client.http.Transport = handlerTransport(f.handler())
-	imp := NewImporter(st, client)
-	st.DB().SetMaxOpenConns(1)
-	opts := ImportOptions{AccountID: "signal", NoMedia: true}
-	_, err := imp.Import(t.Context(), opts)
-	requirements.NoError(err)
-	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
-	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
-		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID)
-	requirements.NoError(err)
-	f.mu.Lock()
-	quiet.Participants = append(quiet.Participants, map[string]any{
-		"id": "@signal_bob:beeper.local", "fullName": "Bob",
-	})
-	f.mu.Unlock()
-
-	oldTimeout := routeProbeTimeout
-	routeProbeTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { routeProbeTimeout = oldTimeout })
-	conn, err := st.DB().Conn(t.Context())
-	requirements.NoError(err)
-	err = conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		requirements.True(ok, "driver connection is SQLite")
-		return sqliteConn.RegisterFunc("slow_quiet_roster_write", func() int {
-			// Hold the roster write open past the probe deadline it must outlast.
-			timer := time.NewTimer(4 * routeProbeTimeout)
-			defer timer.Stop()
-			<-timer.C
-			return 0
-		}, false)
-	})
-	requirements.NoError(err)
-	requirements.NoError(conn.Close())
-	_, err = st.DB().Exec(`CREATE TRIGGER slow_quiet_roster_write
-		AFTER INSERT ON conversation_participants
-		BEGIN
-			SELECT slow_quiet_roster_write();
-		END`)
-	requirements.NoError(err)
-	defer func() {
-		_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS slow_quiet_roster_write`)
-		requirements.NoError(dropErr)
-	}()
-
-	// Fake time advances during the slow writes, after the in-process probe finishes.
 	synctest.Test(t, func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
+		f := newFakeBeeper(t)
+		quiet := mediaChat()
+		f.addChat(quiet)
+		active := mediaChat()
+		active.ID = "!active-slow-roster:beeper.local"
+		active.LastActivity = time.Now().UTC()
+		active.Msgs = nil
+		f.addChat(active)
+		st := testutil.NewTestStore(t)
+		client := NewClient("http://beeper.test", testToken, 10000)
+		client.http.Transport = handlerTransport(f.handler())
+		imp := NewImporter(st, client)
+		st.DB().SetMaxOpenConns(1)
+		opts := ImportOptions{AccountID: "signal", NoMedia: true}
+		_, err := imp.Import(t.Context(), opts)
+		requirements.NoError(err)
+		source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+		requirements.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
+			WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID)
+		requirements.NoError(err)
+		f.mu.Lock()
+		quiet.Participants = append(quiet.Participants, map[string]any{
+			"id": "@signal_bob:beeper.local", "fullName": "Bob",
+		})
+		f.mu.Unlock()
+
+		oldTimeout := routeProbeTimeout
+		routeProbeTimeout = 50 * time.Millisecond
+		t.Cleanup(func() { routeProbeTimeout = oldTimeout })
+		conn, err := st.DB().Conn(t.Context())
+		requirements.NoError(err)
+		err = conn.Raw(func(driverConn any) error {
+			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+			requirements.True(ok, "driver connection is SQLite")
+			return sqliteConn.RegisterFunc("slow_quiet_roster_write", func() int {
+				// Hold the roster write open past the probe deadline it must outlast.
+				timer := time.NewTimer(4 * routeProbeTimeout)
+				defer timer.Stop()
+				<-timer.C
+				return 0
+			}, false)
+		})
+		requirements.NoError(err)
+		requirements.NoError(conn.Close())
+		_, err = st.DB().Exec(`CREATE TRIGGER slow_quiet_roster_write
+			AFTER INSERT ON conversation_participants
+			BEGIN
+				SELECT slow_quiet_roster_write();
+			END`)
+		requirements.NoError(err)
+		defer func() {
+			_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS slow_quiet_roster_write`)
+			requirements.NoError(dropErr)
+		}()
+
+		// Fake time advances during the slow writes, after the in-process probe finishes.
 		start := time.Now()
 		f.mu.Lock()
 		quiet.LastActivity = start.Add(-48 * time.Hour)
 		active.LastActivity = start
 		f.mu.Unlock()
-		_, err := imp.Import(t.Context(), opts)
+		_, err = imp.Import(t.Context(), opts)
 		requirements.NoError(err)
 		assertions.Greater(time.Since(start), routeProbeTimeout, "roster writes outlast the provider probe timeout")
 		ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
