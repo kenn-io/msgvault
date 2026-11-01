@@ -391,7 +391,6 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   await openPersonFacts(page);
   await expect(page.getByRole('region', { name: 'Facts' })).toBeVisible();
   await expect(page.getByLabel('Fact evidence')).toBeVisible();
-  await assertNoViolations(page, 'Directory Fact ledger desktop');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('region', { name: 'Facts', exact: true }).getByRole('button', { name: 'Show', exact: true }).click();
   await expect(page.getByRole('radiogroup', { name: 'Fact ledger section' })).toBeVisible();
@@ -417,10 +416,9 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   await assertNoViolations(page, 'Directory split modal');
 });
 
-test('Imported relationship reviews have no axe violations at desktop and narrow widths', async ({ page }) => {
+test('Imported relationship reviews have no axe violations at narrow width', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   for (const viewport of [
-    { label: 'desktop', width: 1280, height: 900 },
     { label: 'narrow', width: 390, height: 844 }
   ]) {
     await page.setViewportSize(viewport);

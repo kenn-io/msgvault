@@ -23,13 +23,17 @@ const basisLabels: Record<string, string> = {
   conversation_membership: 'shared conversation'
 };
 
+export function identityBasisLabel(basis: string): string {
+  return basisLabels[basis] || basis.replaceAll('_', ' ');
+}
+
 function linkOriginText(edge: PersonClusterEdge): string {
   const origin = edge.link_origin;
   if (origin?.kind === 'manual') return 'linked manually';
   if (origin?.kind !== 'candidate') return '';
   const source = origin.source || '';
   const from = sourceLabels[source] || source.replaceAll('_', ' ');
-  const basis = basisLabels[origin.basis || ''] || origin.basis?.replaceAll('_', ' ');
+  const basis = identityBasisLabel(origin.basis || '');
   return `matched from ${from || 'another source'}${basis ? ` (${basis})` : ''}`;
 }
 

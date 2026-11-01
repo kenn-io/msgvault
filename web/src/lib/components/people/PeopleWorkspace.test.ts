@@ -544,7 +544,8 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: savedEntry ? 7 : null, relationshipTarget: 'cluster:1' });
   await controller.openTarget('cluster:1', {}, false);
-  const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget })); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const onDuplicatesChanged = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget })); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
@@ -556,6 +557,7 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(state.current.relationshipTarget).toBeNull();
+    expect(onDuplicatesChanged).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

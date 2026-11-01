@@ -257,7 +257,7 @@ export class DirectoryReviewController {
   ): Promise<void> {
     if (this.disposed) return;
     this.lastMerge = { candidateID, ...success };
-    this.summaries.clear();
+    this.invalidateSummaries(this.rows.find(row => row.id === candidateID));
     if (!this.isReviewContextCurrent(context)) return;
     if (this.mergeRequired?.candidateID === candidateID) this.mergeRequired = null;
     const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
@@ -282,6 +282,9 @@ export class DirectoryReviewController {
   }
 
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }
+  private invalidateSummaries(candidate: IdentityMatchCandidate | undefined): void {
+    if (candidate) for (const side of ['left', 'right'] as const) this.summaries.delete(endpointKey(candidate, side));
+  }
   /** Queues the lookups for the cards on the current page. */
   requestSummaries(): void {
     this.lookupQueue = [];
@@ -337,11 +340,13 @@ export class DirectoryReviewController {
         this.summaries.set(key, 'failed');
         return;
       }
-      const primary = person.identifiers?.find((identifier) => identifier.is_primary) ?? person.identifiers?.[0];
+      const identifiers = person.identifiers?.filter(identifier => identifier.participant_id === id);
+      const primary = identifiers?.find(identifier => identifier.is_primary) ?? identifiers?.[0];
+      const member = person.cluster?.members?.find(member => member.participant_id === id);
       this.summaries.set(key, {
         id,
-        name: person.display_label || primary?.display_value || primary?.value || `Person ${id}`,
-        address: primary?.display_value ?? primary?.value ?? '',
+        name: primary?.participant_display_name || member?.display_name || (person.id === id ? person.display_label : '') || primary?.display_value || primary?.value || `Person ${id}`,
+        address: primary?.value || member?.email || member?.phone || '',
         lastAt: person.last_at ?? null,
         count: person.activity_count ?? 0,
         personID: person.profile?.id,
@@ -407,7 +412,7 @@ export class DirectoryReviewController {
       }
       if (response.data) {
         const decidedCandidate = response.data.candidate;
-        if (decision === 'accept') this.summaries.clear();
+        if (decision === 'accept') this.invalidateSummaries(decidedCandidate);
         this.decisionDrafts.delete(candidateID);
         if (this.ownsDecisionContext(context)) {
           this.rows = this.rows.map(row => row.id === candidateID ? decidedCandidate : row);
@@ -419,6 +424,7 @@ export class DirectoryReviewController {
       const mergeConflict =
         decision === 'accept' && response.response.status === 409 ? validatePersonMergeRequired(response.error) : null;
       if (mergeConflict) {
+        if (this.mergeRequired && this.mergeRequired.candidateID !== candidateID) return result = { ok: false, kind: 'error', status: 409, message: 'Finish the open merge, then choose Merge again.' };
         if (this.ownsDecisionContext(context)) this.mergeRequired = { candidateID, conflict: mergeConflict, context };
         return result = { ok: false, kind: 'merge_required', conflict: mergeConflict };
       }

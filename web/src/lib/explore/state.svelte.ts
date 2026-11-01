@@ -796,7 +796,7 @@ export class ExploreState {
       // yes, ranked people and cluster timeline no). Entering the hub drops
       // the carried query — visibly, in the URL state — so every surface
       // consistently reflects no text filter.
-      ...(workspace === 'relationships' ? { query: '' } : {}),
+      ...(workspace === 'relationships' ? { query: '', peopleDuplicates: false } : {}),
       analysisTarget: null,
       selectedIdentifier: null,
       activeRow: null,

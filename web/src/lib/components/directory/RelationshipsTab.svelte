@@ -132,7 +132,7 @@
       </div>
     {/if}
     {#if controller.relationshipsLoading}<p class="muted" role="status">Loading relationships…</p>{/if}
-    {#if controller.relationships.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
+    {#if controller.relationships.length === 0 && imports.rows.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
       <p class="muted">No connections yet</p>
     {:else if controller.relationships.length > 0}
       <div class="records">
