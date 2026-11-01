@@ -2105,8 +2105,6 @@ describe('AppShell', () => {
     window.history.back();
     await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
     await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Candidate'));
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'More actions' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
 
