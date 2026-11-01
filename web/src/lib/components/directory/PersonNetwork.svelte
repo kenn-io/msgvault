@@ -95,13 +95,19 @@
     {#if controller.networkLoading}<p role="status">Loading network…</p>{/if}
     {#if network?.truncated}<p role="status">Showing a bounded prefix of at most 250 nodes and 500 connections at depth {depth}.</p>{/if}
     {#if network && !hasLinks}<p>No curated connections at this depth.</p>{/if}
-    {#if network}<ul aria-label="Directory network connections">
-      <li>{network?.nodes.find((node) => node.hop === 0)?.label}</li>
+    {#if network}<ul class="connection-list" aria-label="Directory network connections">
+      {#if !hasLinks}<li>{network.nodes.find((node) => node.hop === 0)?.label}</li>{/if}
       {#each [1, 2, 3] as hop}
         {#each network?.edges ?? [] as edge (edge.id)}
           {@const source = network?.nodes.find((node) => node.id === edge.source_node_id)}
           {@const target = network?.nodes.find((node) => node.id === edge.target_node_id)}
-          {#if Math.max(source?.hop ?? 0, target?.hop ?? 0) === hop}<li>Hop {hop}: {source?.label} {edge.label} {target?.label}</li>{/if}
+          {#if source && target && Math.max(source.hop, target.hop) === hop}<li class="connection">
+            <span>Hop {hop}</span>
+            <Button size="sm" label={source.label} onclick={() => source.kind === 'person' ? onOpenPerson(source.entity_id) : onOpenOrganization(source.entity_id)} />
+            <span>{edge.label}</span>
+            <Button size="sm" label={target.label} onclick={() => target.kind === 'person' ? onOpenPerson(target.entity_id) : onOpenOrganization(target.entity_id)} />
+            <small>{edge.kind === 'relationship' ? 'Typed relationship' : 'Employment'}</small>
+          </li>{/if}
         {/each}
       {/each}
     </ul>{/if}
@@ -155,6 +161,10 @@
     align-items: center;
     gap: var(--control-gap);
   }
+
+  .connection-list { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+  .connection { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .connection small { margin-left: auto; color: var(--text-muted); font-size: var(--font-size-sm); }
 
   /* Ended connections, shown only when asked for, read as muted like in Connections. */
   line.ended {

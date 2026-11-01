@@ -287,6 +287,14 @@ test('Directory network list and visualization have no axe violations', async ({
   expect(bounds!.width).toBeGreaterThan(200);
   expect(bounds!.height).toBeGreaterThan(40);
   await expect(list.getByText(/^Hop [23]$/)).toHaveCount(0);
+  await expect(list).toHaveCSS('list-style-type', 'none');
+  const connection = list.getByRole('listitem').filter({ hasText: 'mentors' });
+  const source = await connection.getByRole('button', { name: 'Archive Person', exact: true }).boundingBox();
+  const label = await connection.getByText('mentors', { exact: true }).boundingBox();
+  const target = await connection.getByRole('button', { name: 'Curated Peer', exact: true }).boundingBox();
+  expect(label!.x - source!.x - source!.width).toBeGreaterThanOrEqual(4);
+  expect(target!.x - label!.x - label!.width).toBeGreaterThanOrEqual(4);
+  expect(target!.x + target!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
   await assertNoViolations(page, 'Directory network');
 });
 
