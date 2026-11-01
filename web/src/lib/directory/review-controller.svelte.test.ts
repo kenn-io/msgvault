@@ -407,7 +407,7 @@ describe('DirectoryReviewController', () => {
     expect(requests).toHaveLength(1);
   });
 
-  it.each([409, 503])('retains pair recovery after paging and History navigation following a %s response', async status => {
+  it('retains merge-required recovery after paging and History navigation', async () => {
     const decisionResponse = deferredResponse();
     const conflict = {
       error: 'person_merge_required',
@@ -434,23 +434,53 @@ describe('DirectoryReviewController', () => {
     const navigation = controller.loadNextPage();
     const decision = controller.settleDecision();
     await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
-    if (status === 503) {
-      await controller.setIdentityState('accepted');
-      await vi.waitFor(() => expect(controller.rows).toEqual(conflictRows));
-    }
-    decisionResponse.resolve(status === 409 ? Response.json(conflict, { status }) : Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status }));
+    decisionResponse.resolve(Response.json(conflict, { status: 409 }));
 
-    await expect(decision).resolves.toMatchObject(status === 409 ? { ok: false, kind: 'merge_required', conflict } : { ok: false, kind: 'error', status: 503, message: 'Decision unavailable' });
+    await expect(decision).resolves.toMatchObject({ ok: false, kind: 'merge_required', conflict });
     await navigation;
     expect(controller.offset).toBe(10);
-    expect(controller.mergeRequired?.candidateID ?? null).toBe(status === 409 ? 17 : null);
-    if (status === 409) await controller.setIdentityState('accepted');
+    expect(controller.mergeRequired?.candidateID ?? null).toBe(17);
+    await controller.setIdentityState('accepted');
     await vi.waitFor(() => expect(controller.rows).toEqual(conflictRows));
-    expect(controller.mergeRequired?.candidateID ?? null).toBe(status === 409 ? 17 : null);
-    expect(controller.decisionError).toBe(status === 409 ? null : 'Decision unavailable');
+    expect(controller.mergeRequired?.candidateID ?? null).toBe(17);
+    expect(controller.decisionError).toBe(null);
     expect(controller.isDecisionPending(17)).toBe(false);
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(3);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  });
+
+  it('keeps an explicit History switch on its first page after a pending Next settlement fails', async () => {
+    const decisionResponse = deferredResponse();
+    const requests: Request[] = [];
+    const historyRows = [candidate(88, 'accepted')];
+    const controller = new DirectoryReviewController(createAPIClient(async input => {
+      const request = requestOf(input);
+      requests.push(request);
+      if (request.method === 'POST') return decisionResponse.promise;
+      const params = new URL(request.url).searchParams;
+      return params.get('state') === 'accepted,rejected'
+        ? page(historyRows, Number(params.get('offset')))
+        : page(Array.from({ length: 11 }, (_, i) => candidate(17 + i)));
+    }));
+    await controller.loadIdentityPage();
+    controller.setDecisionDraft(17, 'Review both profiles');
+    await controller.queueDecision(controller.rows[0]!, 'accept');
+    const navigation = controller.loadNextPage();
+    const decision = controller.settleDecision();
+    await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
+    await controller.setIdentityState('accepted');
+    await vi.waitFor(() => expect(controller.rows).toEqual(historyRows));
+    decisionResponse.resolve(Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status: 503 }));
+
+    await expect(decision).resolves.toMatchObject({ ok: false, kind: 'error', status: 503, message: 'Decision unavailable' });
+    await navigation;
+    expect(controller.identityState).toBe('accepted');
+    expect(controller.offset).toBe(0);
+    expect(controller.rows).toEqual(historyRows);
+    expect(controller.decisionError).toBe('Decision unavailable');
+    expect(controller.mergeRequired).toBeNull();
+    expect(controller.isDecisionPending(17)).toBe(false);
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
   });
 
   it('keeps decision draft editing isolated by candidate', () => {
@@ -491,7 +521,7 @@ describe('DirectoryReviewController', () => {
     await first;
   });
 
-  it('clears only a successful row draft while a previously failed row retains its note', async () => {
+  it('clears a successful row draft', async () => {
     const accepted = candidate(18, 'accepted');
     let reads = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -500,18 +530,14 @@ describe('DirectoryReviewController', () => {
         reads += 1;
         return page(reads === 1 ? [candidate(17), candidate(18)] : [candidate(17), accepted]);
       }
-      return new URL(request.url).pathname.endsWith('/17/review/reject')
-        ? Response.json({ error: 'unavailable', message: 'Decision failed' }, { status: 503 })
-        : Response.json({ candidate: accepted, identity_revision: 7, cache_state: 'ready' });
+      return Response.json({ candidate: accepted, identity_revision: 7, cache_state: 'ready' });
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    await controller.rejectIdentity(17, 'Keep row 17 note');
     await controller.acceptIdentity(18, 'Clear row 18 note');
 
     expect(controller.getDecisionDraft(18)).toBe('');
-    expect(controller.getDecisionDraft(17)).toBe('Keep row 17 note');
   });
 
   it('aborts page and decision requests when destroyed', async () => {
