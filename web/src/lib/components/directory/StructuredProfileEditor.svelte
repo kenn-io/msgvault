@@ -80,7 +80,7 @@
   let region = $state(currentAddress?.region ?? '');
   let postalCode = $state(currentAddress?.postal_code ?? '');
   let countryName = $state(currentAddress?.country_name ?? '');
-  let dateKind = $state(currentDate?.date_kind ?? 'birthday');
+  let dateKind = $state(currentDate?.date_kind ?? (untrack(() => controller.structuredProfile?.dates.some(date => date.date_kind === 'birthday')) ? 'anniversary' : 'birthday'));
   let dateValue = $state(
     formatDate(currentDate?.date) ??
       currentDate?.date_text ??
@@ -214,7 +214,7 @@
                 name_kind: nameKind,
                 original_value: formatted,
                 formatted,
-                ...(givenName.trim() ? { given_name: givenName.trim() } : {}),
+                ...(givenName.trim() && !(formattedPronunciation && givenName === formattedPronunciation && !familyName.trim()) ? { given_name: givenName.trim() } : {}),
                 ...(familyName.trim() ? { family_name: familyName.trim() } : {}),
                 is_derived: false,
                 envelope: envelope(),
