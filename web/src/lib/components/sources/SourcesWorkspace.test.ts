@@ -5,24 +5,22 @@ import { tick } from 'svelte';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
 
 function source(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
-    last_sync_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z',
-    active_sync: null, latest_sync: null, last_successful_sync: null,
-    can_sync: true, scheduled: false, next_sync_at: null, ...overrides
-  };
+  return sourceStatus({
+    display_name: 'Archive', last_sync_at: '2026-07-19T10:00:00Z',
+    updated_at: '2026-07-19T10:00:00Z', ...overrides
+  });
 }
 
 function run(status: string, processed: number, overrides: Record<string, unknown> = {}) {
-  return {
-    id: 9, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null,
-    status, messages_processed: processed, messages_added: processed,
-    messages_updated: 0, errors_count: 0, error_message: null, ...overrides
-  };
+  return syncRunStatus({
+    id: 9, started_at: '2026-07-19T10:00:00Z', completed_at: null,
+    status, messages_processed: processed, messages_added: processed, ...overrides
+  });
 }
 
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet. Refresh to check again.";
@@ -83,7 +81,7 @@ describe('SourcesWorkspace', () => {
       unavailable(1, 'import@example.com', 'Imported', 'source_not_schedulable', { source_type: 'mbox' }),
       unavailable(2, 'busy@example.com', 'Busy', 'sync_already_running'),
       unavailable(3, 'down@example.com', 'Down', 'scheduler_unavailable'),
-      unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured'),
+      unavailable(4, 'unset@example.com', 'Unset', 'sync_not_configured', { scheduled: false }),
       unavailable(5, 'other@example.com', 'Other', 'future_reason')
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
@@ -183,7 +181,7 @@ describe('SourcesWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source(),
       source({ id: 2, source_type: 'imap', identifier: 'readonly@example.com', display_name: null,
-        can_sync: false, sync_unavailable_reason: 'sync_not_configured' })
+        scheduled: false })
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
@@ -193,7 +191,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Sync now Archive' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Sync now readonly@example.com' })).toBeNull();
     expect(screen.getByText('Sync not set up')).toBeDefined();
-    expect(screen.getAllByText('Not scheduled')).toHaveLength(2);
+    expect(screen.getAllByText('Not scheduled')).toHaveLength(1);
     expect(screen.getAllByText('Never synced')).toHaveLength(2);
     expect(screen.getAllByTitle(formatDateTime('2026-07-19T10:00:00Z', 'long'))).toHaveLength(2);
     expect(screen.queryAllByTitle('2026-07-19T10:00:00Z')).toHaveLength(0);
@@ -263,7 +261,7 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('This result may be out of date.')).toBeDefined();
   });
 
-  it('keeps polling through idle status races until the accepted run appears and completes', async () => {
+  it('keeps polling through idle races until the accepted run completes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;
     const requests: Request[] = [];
