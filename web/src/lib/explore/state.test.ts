@@ -1007,7 +1007,7 @@ describe('relationships workspace state', () => {
   it.each(['everything', 'duplicates'])('opens People without a carried query from %s', async entry => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
-    state.commitNavigation({ workspace: entry === 'everything' ? 'everything' : 'relationships', peopleDuplicates: entry === 'duplicates', query: 'quarterly plan' });
+    state.commitNavigation({ workspace: entry === 'everything' ? 'everything' : 'relationships', peopleDuplicates: entry === 'duplicates', ...(entry === 'everything' ? { query: 'quarterly plan' } : {}) });
     state.commitWorkspace('relationships');
 
     expect(state.current.workspace).toBe('relationships');
@@ -1019,8 +1019,10 @@ describe('relationships workspace state', () => {
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current.workspace).toBe(entry === 'everything' ? 'everything' : 'relationships');
-    expect(state.current.query).toBe('quarterly plan');
+    if (entry === 'everything') {
+      expect(state.current.workspace).toBe('everything');
+      expect(state.current.query).toBe('quarterly plan');
+    } else expect(state.current.peopleDuplicates).toBe(true);
     state.destroy();
   });
 

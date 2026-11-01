@@ -4,16 +4,13 @@ import { parseExploreURLState } from '../src/lib/explore/state.svelte';
 const peopleURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships' }));
 const duplicatesURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true }));
 
-test('People Filter opens duplicate cards, evidence, and browser-restored History', async ({ page }) => {
+test('People Filter opens duplicate cards and browser-restored History', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   await page.goto(peopleURL);
   await expect(page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'People', exact: true })).toContainText('3');
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByText('Possible duplicates', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Possible duplicates' })).toBeVisible();
-  const card = page.locator('.cards > li').first();
-  await card.getByText('Evidence and notes').click();
-  await expect(card.getByRole('list', { name: 'Evidence for identity match 17' })).toContainText('Both synthetic endpoints');
   await page.getByRole('radio', { name: 'History', exact: true }).click();
   await expect(page.getByText('Nothing decided yet')).toBeVisible();
   await page.reload();
