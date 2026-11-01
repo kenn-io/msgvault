@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { expect, it } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
+import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
 it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete', async () => {
@@ -73,15 +74,18 @@ it('keeps Add disabled until a resumed field creation is acknowledged', async ()
     if (path.endsWith('/organizations')) return Response.json({ organizations: [] });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
-  render(PeopleCatalogSettings, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Add field' }));
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Label' }), { target: { value: 'First field' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-  await screen.findByRole('button', { name: 'Retry registry refresh' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
-  expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
-  expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', false);
+  const registry = vi.spyOn(DirectoryProfileController.prototype, 'reloadDefinitions');
+  const view = render(PeopleCatalogSettings, { client });
+  try {
+    await act(async () => { await registry.mock.results[0]!.value; });
+    const fields = registry.mock.contexts[0] as DirectoryProfileController;
+    await act(async () => { await fields.createDefinition({ object_type: 'person', label: 'First field', value_type: 'text', field_type: 'text', cardinality: 'single', is_sensitive: false, display_order: 0 }); });
+    expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
+    await act(async () => { await fields.retryDefinitionRefresh(); });
+    const done = await screen.findByRole('button', { name: 'Done' });
+    expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
+    await fireEvent.click(done);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', false));
+  } finally { registry.mockRestore(); view.unmount(); }
 });

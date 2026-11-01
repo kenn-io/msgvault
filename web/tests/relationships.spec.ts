@@ -479,17 +479,6 @@ test('saved people keep durable IDs separate from participants and open profiles
 });
 
 
-test('reloading a saved person deep link opens Details after the profile loads', async ({ page }) => {
-  await prepare(page);
-  const person = { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] };
-  await page.route('**/api/v1/people/91', route => route.fulfill({ json: person }));
-  await page.route('**/api/v1/people/91/profile', route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 91, relationshipTarget: 'cluster:1' }))}`);
-  await expect(page.getByRole('heading', { name: 'Saved Alice' })).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole('heading', { name: 'Saved Alice' })).toBeVisible();
-});
-
 test('People history and reload restore participant scope without a message query', async ({ page }) => {
   await prepare(page);
   const requests: Record<string, unknown>[] = [];

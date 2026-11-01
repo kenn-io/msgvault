@@ -299,24 +299,7 @@ describe('DirectoryController', () => {
     expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]);
   });
 
-  it('rereads relationships when reopening the selected person', async () => {
-    const requests: Request[] = [];
-    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return detailResponse(pathOf(request));
-    }));
-    const controller = new DirectoryController(client);
-    try {
-      await controller.loadSelection(7);
-      const firstEntity = controller.entity!;
-      await controller.loadSelection(7);
-      expect(controller.entity).not.toBe(firstEntity);
-      expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
-    } finally { controller.destroy(); }
-  });
-
-  it('requests each person detail section once and leaves the network to the Network tab', async () => {
+  it('requests each person detail section once and rereads relationships when reopening', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -337,6 +320,12 @@ describe('DirectoryController', () => {
     expect(paths).not.toContain('/api/v1/people/7/network');
     expect(controller.detail).not.toHaveProperty('employments');
     expect(controller.detail).not.toHaveProperty('relationships');
+
+    const firstEntity = controller.entity;
+    await controller.loadSelection(7);
+    expect(controller.entity).not.toBe(firstEntity);
+    expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
+    controller.destroy();
   });
 
   it('reloads Directory ordering, cursor membership, and the open Network after a person rename', async () => {
