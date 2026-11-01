@@ -287,9 +287,10 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it('keeps the newer contacts sync result in the row and panel after an older connections refresh resolves', async () => {
+  it.each(['before', 'during'])('keeps the newer contacts sync result in the row and panel after an older connections refresh resolves: refresh started %s sync', async refreshStarted => {
     vi.useFakeTimers();
     let finishRefresh!: (response: Response) => void;
+    let finishSync!: (response: Response) => void;
     let connectionsReads = 0;
     const older = { ...contact, status: { ...contact.status, latest: { ...contact.status.latest,
       state: 'failed', error_code: 'upstream_failed', error_message: 'Previous sync failed.' } } };
@@ -299,7 +300,9 @@ describe('SourcesWorkspace', () => {
       if (url.pathname.endsWith('/carddav/connections') && ++connectionsReads === 2) {
         return new Promise<Response>(resolve => { finishRefresh = resolve; });
       }
-      if (url.pathname.endsWith('/carddav/sync') && request.method === 'POST') return Response.json({ status: 'succeeded' });
+      if (url.pathname.endsWith('/carddav/sync') && request.method === 'POST') {
+        return new Promise<Response>(resolve => { finishSync = resolve; });
+      }
       if (url.pathname.endsWith('/carddav/status')) return Response.json({ ...contact.status, latest, latest_successful: latest });
     }, [older]);
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
@@ -310,14 +313,20 @@ describe('SourcesWorkspace', () => {
       const panel = screen.getByRole('dialog', { name: 'user-a' });
       expect(within(panel).getByText('Previous sync failed.')).toBeDefined();
 
-      const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
-      document.dispatchEvent(new Event('visibilitychange'));
-      hidden.mockReturnValue(false);
-      document.dispatchEvent(new Event('visibilitychange'));
+      if (refreshStarted === 'during') {
+        await fireEvent.click(within(row).getByRole('button', { name: 'Sync now user-a' }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(finishSync).toBeTypeOf('function');
+      }
+      view.component.refresh();
       await vi.advanceTimersByTimeAsync(0);
       expect(connectionsReads).toBe(2);
 
-      await fireEvent.click(within(row).getByRole('button', { name: 'Sync now user-a' }));
+      if (refreshStarted === 'before') {
+        await fireEvent.click(within(row).getByRole('button', { name: 'Sync now user-a' }));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      finishSync(Response.json({ status: 'succeeded' }));
       await vi.advanceTimersByTimeAsync(0);
       expect(within(row).getByText('Succeeded')).toBeDefined();
       expect(within(panel).getByText(/7 new/)).toBeDefined();
