@@ -467,6 +467,7 @@ it('keeps Messages mounted across a profile reload', async () => {
     let reload!: Promise<void>;
     await act(() => { reload = directory.loadSelection(7); });
     expect(messages.isConnected).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Save', exact: true })).toBeNull();
     expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);
     await act(async () => { releaseProfile(Response.json(saved)); await reload; });
     expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);

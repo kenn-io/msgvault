@@ -88,7 +88,7 @@
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}
         {#if profileID !== null && savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}
-        {:else if person}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
+        {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
       {/snippet}
     </PersonHeader>
     {#if directory.promotionError}<p role="alert">{directory.promotionError}<Button label="Retry Save" onclick={() => void savePerson()} /></p>{/if}
