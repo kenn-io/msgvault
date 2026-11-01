@@ -7,7 +7,7 @@ description: Find people across your archive, keep their details together, and u
 Find someone across email, chats, and meetings, then keep their contact details
 and the things you want to remember in one profile. Start in the Web UI's
 **People** workspace to explore contacts already in your archive, then
-choose **Save** in their **Details** tab. You can also use the
+choose **Save** in their header. You can also use the
 [TUI People browser](/docs/usage/tui/#people).
 
 | I want to… | Start here |
