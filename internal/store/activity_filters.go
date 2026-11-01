@@ -213,8 +213,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE WHEN ` + listExcluded + `=1 OR EXISTS(SELECT 1 FROM facts f WHERE f.message_id=e.message_id AND f.recipient_type='from' AND f.excluded NOT IN ('','owner')) THEN 0 ELSE 1 END AS non_noise
  FROM message_flags e
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` ORDER BY counted DESC,source_id,message_id) AS copy_rank,
- COUNT(*) OVER (PARTITION BY ` + activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + `) AS copy_count
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ` + s.activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` ORDER BY counted DESC,source_id,message_id) AS copy_rank,
+ COUNT(*) OVER (PARTITION BY ` + s.activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + `) AS copy_count
  FROM scored e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
@@ -231,6 +231,6 @@ const activityBurstGroupsCTE = `, burst_groups AS (
 )`
 
 // activityCopyKeySQL is shared by projected and request-time cold readers.
-func activityCopyKeySQL(channel, rfcID, messageID string) string {
-	return `CASE WHEN ` + channel + `='email' THEN 'email:'||COALESCE(NULLIF(` + rfcID + `,''),'id:'||CAST(` + messageID + ` AS TEXT)) ELSE 'id:'||CAST(` + messageID + ` AS TEXT) END`
+func (s *Store) activityCopyKeySQL(channel, rfcID, messageID string) string {
+	return `CASE WHEN ` + channel + `='email' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("COALESCE(NULLIF("+rfcID+",''),'id:'||CAST("+messageID+" AS TEXT))") + ` ELSE 'id:'||CAST(` + messageID + ` AS TEXT) END`
 }
