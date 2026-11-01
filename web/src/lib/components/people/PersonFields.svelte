@@ -177,8 +177,8 @@
   }
 
   function close(): void {
-    if (editing?.kind === 'profile') controller.discardProfileDraft();
-    else if (editing) controller.discardAttributeDraft(activeEditor?.definition.slug ?? '');
+    if (editing?.kind === 'profile' && controller.draft?.kind === 'profile' && !controller.discardProfileDraft()) return;
+    else if (editing?.kind === 'attribute') controller.discardAttributeDraft(activeEditor?.definition.slug ?? '');
     editing = undefined;
     addingAt = undefined;
   }

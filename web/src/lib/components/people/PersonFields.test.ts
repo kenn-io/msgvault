@@ -36,6 +36,43 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   return { controller, writes, view };
 }
 
+it('keeps a conflicted structured editor available to cancel after a deferred failed reload', async () => {
+  let releaseReload!: (response: Response) => void;
+  const pendingReload = new Promise<Response>(resolve => releaseReload = resolve);
+  const initial = profile();
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
+    if (path.endsWith('/profile')) return pendingReload;
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+    return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const view = render(PersonFields, { controller });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+12025550123' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save contact point' }));
+    await screen.findByRole('button', { name: 'Reload profile' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload profile' }));
+    expect(controller.reloadPending).toBe(true);
+    const cancel = screen.getByRole('button', { name: /^Cancel$/ });
+    await fireEvent.click(cancel);
+    expect(screen.getByDisplayValue('+12025550123')).toBeDefined();
+    await act(() => releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })));
+    await waitFor(() => expect(controller.reloadPending).toBe(false));
+    expect(controller.conflict).not.toBeNull();
+    await fireEvent.click(cancel);
+    expect(screen.queryByDisplayValue('+12025550123')).toBeNull();
+    expect(controller.draft).toBeNull();
+    expect(controller.conflict).toBeNull();
+    expect(controller.canWriteProfile).toBe(true);
+  } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
+});
+
 it('blocks attribute additions after a failed read and retries before editing the unseen value', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
