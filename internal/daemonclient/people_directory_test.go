@@ -104,7 +104,7 @@ func TestPeopleBrowserDirectoryAddressRejectsUnsupportedDaemon(t *testing.T) {
 				http.NotFound(w, r)
 			}))
 			_, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{Address: "alex@example.test"})
-			require.ErrorContains(t, err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
+			require.EqualError(t, err, "person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 			assert.Zero(t, lookups)
 		})
 	}

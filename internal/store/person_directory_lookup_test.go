@@ -110,7 +110,7 @@ func TestDirectoryPeopleAddressLookupBindsCursor(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]int64{beta.ID}, directoryPersonIDs(second.People))
 	_, err = st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "alpha", Limit: 1, Cursor: first.NextCursor})
-	assert.ErrorIs(err, store.ErrInvalidDirectoryCursor)
+	require.ErrorIs(err, store.ErrInvalidDirectoryCursor)
 	_, err = st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Limit: 1, Cursor: first.NextCursor})
 	assert.ErrorIs(err, store.ErrInvalidDirectoryCursor)
 }
