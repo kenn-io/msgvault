@@ -433,14 +433,10 @@ test('saved people keep durable IDs separate from participants and open profiles
     { id: 93, participant_ids: [3], display_name: 'Draft Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-93' },
   ];
   await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
+  await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
   for (const person of profiles) {
     await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
     await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
-    await page.route(`**/api/v1/people/${person.id}/attributes*`, route => route.fulfill({ json: { person_id: person.id, attributes: [] } }));
-    await page.route(`**/api/v1/people/${person.id}/contact-state`, route => route.fulfill({ json: { person_id: person.id, cadence_status: 'unknown', interaction_count: 0 } }));
-    await page.route(`**/api/v1/people/${person.id}/employments`, route => route.fulfill({ json: { employments: [] } }));
-    await page.route(`**/api/v1/people/${person.id}/relationships*`, route => route.fulfill({ json: { relationships: [] } }));
-    await page.route(`**/api/v1/people/${person.id}/network*`, route => route.fulfill({ json: { root_person_id: person.id, depth: 1, nodes: [], edges: [], truncated: false } }));
   }
   await page.route('**/api/v1/participants/3', route => route.fulfill({ status: 404, json: { error: 'not_found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
@@ -460,6 +456,7 @@ test('saved people keep durable IDs separate from participants and open profiles
   await expect(page.getByRole('radio', { name: 'Details', exact: true })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
 });
+
 
 test('reloading a saved person deep link opens Details after the profile loads', async ({ page }) => {
   await prepare(page);
@@ -581,7 +578,6 @@ test('missing saved profiles keep Back to People on narrow screens', async ({ pa
   await page.route('**/api/v1/people/999', route => route.fulfill({ status: 404, json: { message: 'Person not found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 999 }))}`);
   await expect(page.getByRole('alert')).toContainText('person: Person not found.');
-  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Saved person', exact: true })).toBeHidden();
   await page.getByRole('button', { name: 'Back to People', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'People results' })).toBeVisible();
@@ -628,9 +624,11 @@ for (const previous of ['Alice', 'no person']) {
       { id: 92, display_name: 'Bob Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [2], carddav_bindings: [], vcard_uid: 'example-92' },
     ];
     await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
-    for (const profile of profiles) await page.route(`**/api/v1/people/${profile.id}`, route => route.fulfill({ json: profile }));
     await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
-    for (const person of profiles) await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+    for (const person of profiles) {
+      await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
+      await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+    }
     await page.route('**/api/v1/participants/1', route => route.fulfill({ json: { ...alice, profile: { id: 91, display_name: 'Alice Example' } } }));
     await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);

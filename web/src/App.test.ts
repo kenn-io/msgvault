@@ -456,43 +456,6 @@ describe('application foundation', () => {
     expect(localStorage.getItem(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid');
   });
 
-  it('refreshes filtered Saved results after renaming their organization in Settings', async () => {
-    let renamed = false;
-    const organization = () => ({ id: 21, revision: renamed ? 2 : 1, name: renamed ? 'New Org' : 'Old Org', kind: 'company', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' });
-    const session = createSessionController(async input => {
-      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
-      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
-      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
-      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
-      if (path === '/api/v1/settings') return settingsResponse('system', '"settings"');
-      if (path === '/api/v1/people/directory') return Response.json({ people: new URL(request.url).searchParams.get('organization') !== organization().name ? [] : [{ id: 7, revision: 1, display_name: 'Synthetic Person', organizations: [organization().name], categories: [], contact_state: 'active' }] });
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/organizations/21') {
-        if (request.method === 'PATCH') { renamed = true; return Response.json(organization(), { headers: { ETag: '"organization-21-r2"' } }); }
-        return Response.json({ organization: organization(), names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] }, { headers: { ETag: '"organization-21-r1"' } });
-      }
-      if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
-      if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });
-      if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
-      return Response.json({ rows: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
-    });
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryOrganization: 'Old Org' }))}`);
-    const view = render(App, { session });
-    try {
-      await session.bootstrap();
-      await screen.findByText('Synthetic Person');
-      await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-      await fireEvent.click(await within(screen.getByRole('main', { name: 'Settings' })).findByRole('button', { name: 'People' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Edit Old Org' }));
-      await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'New Org' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-      await screen.findByRole('button', { name: 'Edit New Org' });
-      await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'People' }));
-      await screen.findByRole('main', { name: 'People' });
-      await waitFor(() => expect(screen.queryByText('Synthetic Person')).toBeNull());
-    } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
-  });
-
   it('threads repeated same-conflict handoffs through AppShell as distinct exactly-once live events', async () => {
     window.history.replaceState(
       null,

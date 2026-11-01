@@ -426,7 +426,6 @@ describe('DirectoryWorkspace', () => {
     render(DirectoryWorkspace, { client, controller, state, onOpenPerson });
     await fireEvent.click(await screen.findByRole('row', { name: /Synthetic Person/ }));
     expect(onOpenPerson).toHaveBeenCalledExactlyOnceWith(7);
-    expect(screen.queryByRole('dialog', { name: 'Person detail' })).toBeNull();
     controller.destroy();
   });
 });

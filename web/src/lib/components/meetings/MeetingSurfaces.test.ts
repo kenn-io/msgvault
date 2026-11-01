@@ -43,15 +43,16 @@ describe('meeting panel surfaces', () => {
     directory.selectedPersonID = 7; directory.detail = bundle;
     directory.profile = new DirectoryProfileController(client, 7, bundle);
     const view = render(PersonDetails, { client, personID: 7, directory });
-    await waitFor(() => expect(resolveOld).toBeDefined());
-    await act(() => { directory.profile!.person = { ...person, revision: 2, participant_ids: [] }; });
-    expect(await screen.findByText('4 meetings')).toBeDefined();
-    expect(metrics).toEqual([{ scope: { person_id: 7 } }, { scope: { person_id: 7 } }]);
-    expect(oldSignal.aborted).toBe(true);
-    resolveOld(Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: 99 } })));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByText('99 meetings')).toBeNull();
-    view.unmount(); directory.destroy();
+    try {
+      await waitFor(() => expect(resolveOld).toBeDefined());
+      await act(() => { directory.profile!.person = { ...person, revision: 2, participant_ids: [] }; });
+      expect(await screen.findByText('4 meetings')).toBeDefined();
+      expect(metrics).toEqual([{ scope: { person_id: 7 } }, { scope: { person_id: 7 } }]);
+      expect(oldSignal.aborted).toBe(true);
+      resolveOld(Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: 99 } })));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.queryByText('99 meetings')).toBeNull();
+    } finally { view.unmount(); directory.destroy(); }
   });
 
   it('uses separately loaded exact group authority across a workspace round-trip', async () => {
