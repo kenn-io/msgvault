@@ -81,38 +81,32 @@
 
   const hasLinks = $derived((network?.edges.length ?? 0) > 0);
 
+  // How a node relates to the node one step closer, such as "Designer" or "guides".
+  function relation(node: NetworkNode): string {
+    const hop = (id: string) => network?.nodes.find((each) => each.id === id)?.hop ?? 0;
+    return (network?.edges ?? [])
+      .filter((edge) => (edge.target_node_id === node.id && hop(edge.source_node_id) < node.hop) || (edge.source_node_id === node.id && hop(edge.target_node_id) < node.hop))
+      .map((edge) => edge.label)
+      .filter((label, index, all) => label && all.indexOf(label) === index)
+      .join(', ');
+  }
+
 </script>
 
   <section aria-labelledby={`network-${personID}`}>
     <header>
       <h3 id={`network-${personID}`}>Network</h3>
       <span class="controls">
-        <Checkbox checked={includeEnded} label="Include ended connections" onchange={(checked) => (includeEnded = checked)} />
+        <Checkbox checked={includeEnded} label="Show ended" ariaLabel="Include ended connections" onchange={(checked) => (includeEnded = checked)} />
         <SegmentedControl ariaLabel="Network depth" value={depth} options={depthOptions} onchange={(value) => (depth = value)} />
       </span>
     </header>
     {#if controller.errors.network}<p role="alert">{controller.errors.network}<Button label="Retry network" onclick={() => void controller.loadNetwork(Number(depth), includeEnded)} /></p>{/if}
     {#if controller.networkLoading}<p role="status">Loading network…</p>{/if}
     {#if network?.truncated}<p role="status">Showing a bounded prefix of at most 250 nodes and 500 connections at depth {depth}.</p>{/if}
-    {#if network && !hasLinks}<p>No curated connections at this depth.</p>{/if}
-    {#if network}<ul class="connection-list" aria-label="Directory network connections">
-      {#if !hasLinks}<li>{network.nodes.find((node) => node.hop === 0)?.label}</li>{/if}
-      {#each [1, 2, 3] as hop}
-        {#each network?.edges ?? [] as edge (edge.id)}
-          {@const source = network?.nodes.find((node) => node.id === edge.source_node_id)}
-          {@const target = network?.nodes.find((node) => node.id === edge.target_node_id)}
-          {#if source && target && Math.max(source.hop, target.hop) === hop}<li class="connection">
-            <span>Hop {hop}</span>
-            <Button size="sm" label={source.label} onclick={() => source.kind === 'person' ? onOpenPerson(source.entity_id) : onOpenOrganization(source.entity_id)} />
-            <span>{edge.label}</span>
-            <Button size="sm" label={target.label} onclick={() => target.kind === 'person' ? onOpenPerson(target.entity_id) : onOpenOrganization(target.entity_id)} />
-            <small>{edge.kind === 'relationship' ? 'Typed relationship' : 'Employment'}</small>
-          </li>{/if}
-        {/each}
-      {/each}
-    </ul>{/if}
+    {#if network && !hasLinks}<p class="muted">No connections at this depth</p>{/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <div class="scroll" tabindex="0" role="region" aria-label="Network graph">
+    {#if hasLinks}<div class="scroll" tabindex="0" role="region" aria-label="Network graph">
       <div class="graph" style:width={`${layout.width}px`} style:height={`${layout.height}px`}>
         <svg width={layout.width} height={layout.height} aria-hidden="true">
           {#each layout.edges as edge (edge.id)}
@@ -127,11 +121,14 @@
           {#if at}
             {@const person = node.kind === 'person'}
             {@const root = node.hop === 0}
-            <div class="node" class:node--root={root} style:left={`${at.x - AVATAR / 2}px`} style:top={`${at.y - AVATAR / 2}px`} style:max-width={`${NAME + AVATAR}px`} title={node.label} bind:clientWidth={widths[node.id]}>
+            <div class="node" class:node--root={root} style:left={`${at.x - AVATAR / 2}px`} style:top={`${at.y}px`} style:max-width={`${NAME + AVATAR}px`} title={node.label} bind:clientWidth={widths[node.id]}>
               <IdentityAvatar label={node.label} seed={node.id} shape={person ? 'person' : 'domain'} size={AVATAR} />
               {#if !root}
-                <!-- kit-ui-check-ignore: a name in the graph that opens the person, styled as a link. -->
-                <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}`} onclick={() => person ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
+                <span class="text">
+                  <!-- kit-ui-check-ignore: a name in the graph that opens the person, styled as a link. -->
+                  <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}`} onclick={() => person ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
+                  {#if relation(node)}<span class="relation">{relation(node)}</span>{/if}
+                </span>
               {:else}
                 <span class="name">{node.label}</span>
               {/if}
@@ -139,7 +136,7 @@
           {/if}
         {/each}
       </div>
-    </div>
+    </div>{/if}
   </section>
 
 <style>
@@ -153,7 +150,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: var(--divider-gap);
+    gap: var(--control-gap);
+    min-height: var(--control-h);
+    padding-bottom: var(--space-2);
   }
 
   .controls {
@@ -162,9 +161,21 @@
     gap: var(--control-gap);
   }
 
-  .connection-list { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-  .connection { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .connection small { margin-left: auto; color: var(--text-muted); font-size: var(--font-size-sm); }
+  .muted { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }
+
+  .text {
+    display: grid;
+    min-width: 0;
+    justify-items: start;
+  }
+
+  .relation {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   /* Ended connections, shown only when asked for, read as muted like in Connections. */
   line.ended {
@@ -200,6 +211,7 @@
 
   .node {
     position: absolute;
+    transform: translateY(-50%);
     display: flex;
     align-items: center;
     gap: var(--space-2);

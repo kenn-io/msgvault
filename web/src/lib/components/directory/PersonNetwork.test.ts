@@ -28,7 +28,7 @@ function connected(depth = 2, truncated = false): PersonNetworkProjection {
     nodes: [
       { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
       { id: 'person:8', kind: 'person', entity_id: 8, label: 'Curated Peer', hop: 1 },
-      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 1 },
+      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 },
       { id: 'person:9', kind: 'person', entity_id: 9, label: 'Second Hop Person', hop: 2 }
     ],
     edges: [
@@ -76,20 +76,18 @@ describe('PersonNetwork', () => {
     expect(parseFloat(graph.style.width)).toBeGreaterThanOrEqual(parseFloat(node.style.left) + parseFloat(node.style.maxWidth));
   });
 
-  it('keeps a root-only projection in the semantic list while hiding the progressive SVG', async () => {
+  it('shows the empty state and no graph for a root-only projection', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(rootOnly())));
     const controller = new DirectoryEntityController(client, 7);
 
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
 
-    const list = await screen.findByRole('list', { name: 'Directory network connections' });
-    await waitFor(() => expect(list.textContent).toContain('Selected Person'));
-    expect(screen.getByText('No curated connections at this depth.')).toBeDefined();
-    expect(document.querySelector('.graph > svg')?.getAttribute('aria-hidden')).toBe('true');
-    expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
+    expect(await screen.findByText('No connections at this depth')).toBeDefined();
+    expect(screen.queryByRole('region', { name: 'Network graph' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Directory network connections' })).toBeNull();
   });
 
-  it('groups every typed relationship and employment by hop and makes both entity kinds actionable', async () => {
+  it('draws every typed relationship and employment with its relation label and makes both entity kinds actionable', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(connected())));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();
@@ -97,15 +95,20 @@ describe('PersonNetwork', () => {
 
     render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
 
-    const list = await screen.findByRole('list', { name: 'Directory network connections' });
-    await waitFor(() => expect(list.textContent).toContain('Hop 1'));
-    const listText = list.textContent?.replace(/\s+/g, ' ') ?? '';
-    expect(listText).toContain('Hop 2');
-    expect(listText).toContain('Selected Person works with Curated Peer');
-    expect(listText).toContain('Curated Peer Engineer Shared Organization');
-    expect(listText).toContain('Curated Peer mentors Second Hop Person');
+    const peer = await screen.findByRole('button', { name: 'Open person Curated Peer' });
+    const region = screen.getByRole('region', { name: 'Network graph' });
+    expect(region.tabIndex).toBe(0);
+    expect(document.querySelector('.graph > svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.queryByRole('list', { name: 'Directory network connections' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open organization Shared Organization' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Open person Second Hop Person' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Open person Selected Person' })).toBeNull();
+    const relationOf = (button: HTMLElement) => button.parentElement?.querySelector('.relation')?.textContent;
+    expect(relationOf(peer)).toBe('works with');
+    expect(relationOf(screen.getByRole('button', { name: 'Open organization Shared Organization' }))).toBe('Engineer');
+    expect(relationOf(screen.getByRole('button', { name: 'Open person Second Hop Person' }))).toBe('mentors');
 
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Open person Curated Peer' })[0]!);
+    await fireEvent.click(peer);
     await fireEvent.click(screen.getByRole('button', { name: 'Open organization Shared Organization' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(onOpenOrganization).toHaveBeenCalledWith(21);
@@ -170,13 +173,13 @@ describe('PersonNetwork', () => {
     const controller = new DirectoryEntityController(client, 7);
 
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByText('No curated connections at this depth.');
+    await screen.findByText('No connections at this depth');
     await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '2')).toBe(true));
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     expect((await screen.findAllByText('Curated Peer')).length).toBeGreaterThan(0);
     depthTwo.resolve(Response.json(connected(2)));
     await waitFor(() => expect(screen.getByText(/bounded prefix/).textContent).toContain('at most 250 nodes and 500 connections at depth 3'));
-    expect(screen.getByRole('list', { name: 'Directory network connections' }).textContent).toContain('Second Hop Person');
+    expect(screen.getByRole('button', { name: 'Open person Second Hop Person' })).toBeDefined();
   });
 });

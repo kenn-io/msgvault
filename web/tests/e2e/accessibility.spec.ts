@@ -277,24 +277,22 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network rows stay separated within bounds and have no axe violations', async ({ page }) => {
+test('Directory network graph labels stay within bounds and have no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  const list = page.getByRole('list', { name: 'Directory network connections' });
-  await expect(list).toContainText('Archive Person mentors Curated Peer');
-  const bounds = await list.boundingBox();
+  const graph = page.getByRole('region', { name: 'Network graph' });
+  await expect(graph).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Directory network connections' })).toHaveCount(0);
+  const bounds = await graph.boundingBox();
   expect(bounds!.width).toBeGreaterThan(200);
   expect(bounds!.height).toBeGreaterThan(40);
-  await expect(list.getByText(/^Hop [23]$/)).toHaveCount(0);
-  await expect(list).toHaveCSS('list-style-type', 'none');
-  const connection = list.getByRole('listitem').filter({ hasText: 'mentors' });
-  const source = await connection.getByRole('button', { name: 'Archive Person', exact: true }).boundingBox();
-  const label = await connection.getByText('mentors', { exact: true }).boundingBox();
-  const target = await connection.getByRole('button', { name: 'Curated Peer', exact: true }).boundingBox();
-  expect(label!.x - source!.x - source!.width).toBeGreaterThanOrEqual(4);
-  expect(target!.x - label!.x - label!.width).toBeGreaterThanOrEqual(4);
-  expect(target!.x + target!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
+  const peer = graph.getByRole('button', { name: 'Open person Curated Peer' });
+  const node = peer.locator('xpath=ancestor::*[contains(@class, "node")][1]');
+  await expect(node.locator('.relation')).toContainText('mentors');
+  const box = await node.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(bounds!.x);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1);
   await assertNoViolations(page, 'Directory network');
 });
 
@@ -434,7 +432,7 @@ test('Directory review, merge, split, and honest Fact gate have no axe violation
   }))}`);
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  const history = page.getByRole('table', { name: 'Person merge history' });
+  const history = page.getByRole('list', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   await history.getByRole('button', { name: 'Inspect merge 41' }).click();
   await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();

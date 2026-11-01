@@ -3,8 +3,9 @@
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
-  import { contactStateLabel, formatContactDate } from '../../directory/labels';
+  import { formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
+  import DetailRow from './DetailRow.svelte';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import PersonFacts from './PersonFacts.svelte';
   import OrganizationEmploymentTab from '../directory/OrganizationEmploymentTab.svelte';
@@ -31,10 +32,16 @@
     {/each}
   {/if}
   {#if profile}
-    <PersonFields controller={profile} overdue={bundle?.contactState?.cadence_status === 'overdue'} />
-    {#if bundle?.contactState}
-      <p class="activity">{contactStateLabel(bundle.contactState.cadence_status)} · {bundle.contactState.interaction_count} interactions{#if bundle.contactState.last_contact_at} · last contact {formatContactDate(bundle.contactState.last_contact_at)}{/if}</p>
-    {/if}
+    {@const contact = bundle?.contactState}
+    <PersonFields controller={profile} overdue={contact?.cadence_status === 'overdue'}>
+      {#snippet summary()}
+        {#if contact && (contact.interaction_count > 0 || contact.last_contact_at)}
+          <DetailRow label="Last contact">
+            <span>{#if contact.last_contact_at}{formatContactDate(contact.last_contact_at)} · {/if}{contact.interaction_count.toLocaleString()} {contact.interaction_count === 1 ? 'interaction' : 'interactions'}</span>
+          </DetailRow>
+        {/if}
+      {/snippet}
+    </PersonFields>
     {#if entity}
       <OrganizationEmploymentTab controller={entity} {personID} {organizationRequest} />
       <RelationshipsTab {client} controller={entity} {personID} {onOpenPerson} />
@@ -47,6 +54,5 @@
   {/if}
 </div>
 <style>
-  .details { display: flex; max-width: 720px; min-width: 0; flex-direction: column; gap: var(--section-gap); }
-  .activity { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }
+  .details { display: flex; max-width: 720px; min-width: 0; flex-direction: column; gap: var(--space-7); }
 </style>
