@@ -1640,7 +1640,7 @@
   {/if}
 </div>
 
-{#if archiveMeetingID !== undefined}
+{#if archiveMeetingID !== undefined && !runHistory}
   <ArchivedMeetingReader {client} message={archivedMeeting.detail?.id === archiveMeetingID ? archivedMeeting.detail : undefined}
     loading={archivedMeeting.loading} error={archivedMeeting.error} predicate={exploreState.predicate()}
     anchorID={conversationAnchorId} onClose={closeArchivedMeeting}
