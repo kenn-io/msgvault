@@ -20,7 +20,7 @@ it('leaves Escape to a child picker, then closes before the underlying reader', 
     await fireEvent.keyDown(picker, { key: 'Escape' });
     expect(onclose).not.toHaveBeenCalled();
     expect(screen.queryByRole('listbox')).toBeNull();
-    readerClosed.mockClear();
+    expect(readerClosed).not.toHaveBeenCalled();
     await fireEvent.keyDown(picker, { key: 'Escape' });
     expect(onclose).toHaveBeenCalledOnce();
     expect(readerClosed).not.toHaveBeenCalled();
