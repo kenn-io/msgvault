@@ -249,7 +249,7 @@
   async function loadSettings(retainDrafts: boolean) {
     if (!retainDrafts) loading = true;
     try {
-      const { data: document, error: responseError, response } = await generatedGetSettings(client);
+      const [{ data: document, error: responseError, response }] = await Promise.all([generatedGetSettings(client), inference.load()]);
       if (!document) throw new Error(apiErrorMessage(responseError, "Can't load settings."));
       loaded = true;
       settings = document.settings;
@@ -351,7 +351,7 @@
         response,
       } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
       if (response.status === 412) {
-        await Promise.all([loadSettings(true), inference.load()]);
+        await loadSettings(true);
         error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
         if (dirtyCount === 0) void focusCategoryHeading();
         return;
