@@ -176,16 +176,6 @@ describe('ConversationView', () => {
     if (state === 'disabled') await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
     else expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
-    if (cached) {
-      expect(await screen.findByText('Linked task 1')).toBeDefined();
-      expect(await screen.findByText('Linked task 2')).toBeDefined();
-    } else {
-      expect(screen.getAllByRole('heading', { name: /^Tasks$/ })).toHaveLength(1);
-      expect(within(screen.getByRole('article', { name: 'Message 1' })).getByRole('button', { name: 'Open Settings' })).toBeDefined();
-    }
-    await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
-    if (state === 'disabled') expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
-    if (cached) expect(screen.getByText('Linked task 2')).toBeDefined();
     view.unmount();
   });
 

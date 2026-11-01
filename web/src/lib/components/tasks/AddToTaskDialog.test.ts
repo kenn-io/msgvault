@@ -40,7 +40,7 @@ describe('Add to task', () => {
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
-  it('preserves a failed Tasks draft across provider changes', async () => {
+  it('preserves a failed Tasks draft across provider and mode changes', async () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       if (request.method === 'POST') {
@@ -61,6 +61,11 @@ describe('Add to task', () => {
       await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
       await screen.findByText('Response lost after create');
+      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+      expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
+      await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+      expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
+      expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
       const provider = screen.getByRole('combobox', { name: /^Provider:/ });
       await chooseSelectOption(provider, 'Kata');
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
