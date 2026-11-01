@@ -118,7 +118,6 @@ it.each(['domain', 'person'] as const)('shows the %s Details content across pers
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     if (kind === 'domain') {
       expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
-      expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
     } else expect(screen.getByRole('heading', { name: 'Identities' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });

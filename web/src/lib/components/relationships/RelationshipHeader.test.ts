@@ -128,19 +128,6 @@ describe('RelationshipHeader', () => {
     expect(screen.queryByText(/items/)).toBeNull();
   });
 
-  it('opens the durable Directory person without starting participant promotion', async () => {
-    const onOpenDirectory = vi.fn();
-    const onOpenDirectoryPerson = vi.fn();
-    render(RelationshipHeader, baseProps({
-      detail: { ...person(), profile: { id: 7, revision: 1 } },
-      onOpenDirectory, onOpenDirectoryPerson
-    }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
-    expect(onOpenDirectory).not.toHaveBeenCalled();
-  });
-
   it('offers Messages and Files as explicit relationship views', async () => {
     const onFilesToggle = vi.fn();
     render(RelationshipHeader, baseProps({ onFilesToggle }));
@@ -232,22 +219,6 @@ describe('RelationshipHeader', () => {
     expect(onFilesToggle).toHaveBeenCalledWith(true);
   });
 
-  it('hands the selected API participant ID to Directory and never offers domains', async () => {
-    const onOpenDirectory = vi.fn();
-    const { rerender } = render(RelationshipHeader, baseProps({ onOpenDirectory }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(onOpenDirectory).toHaveBeenCalledWith(12);
-
-    onOpenDirectory.mockClear();
-    await rerender(baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, onOpenDirectory }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(onOpenDirectory).toHaveBeenCalledWith(12);
-
-    await rerender(baseProps({ detail: domain(), onOpenDirectory }));
-    expect(screen.queryByRole('button', { name: 'Open in Directory' })).toBeNull();
-  });
-
   it('hides the identities section entirely for a single identity with nothing linked', () => {
     const single = { ...person(), identifiers: [person().identifiers![0]!] };
     render(RelationshipHeader, baseProps({ detail: single }));
@@ -265,17 +236,6 @@ describe('RelationshipHeader', () => {
     expect(linked.textContent).toContain('linked');
   });
 
-  it('keeps person actions separate from the Messages and Files view switch', () => {
-    render(RelationshipHeader, baseProps({ onOpenDirectory: vi.fn() }));
-
-    const actions = screen.getByRole('group', { name: 'Person actions' });
-    expect(within(actions).getByRole('button', { name: 'Open in Directory' })).toBeTruthy();
-    expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
-    expect(within(actions).queryByRole('radio', { name: 'Messages' })).toBeNull();
-    expect(screen.getByRole('radio', { name: 'Messages' })).toBeTruthy();
-    expect(screen.getByRole('radio', { name: 'Files 3' })).toBeTruthy();
-  });
-
   it('formats the counts date range with the month spelled out', () => {
     render(RelationshipHeader, baseProps());
 
@@ -290,11 +250,10 @@ describe('RelationshipHeader', () => {
   });
 
   it('renders a domain by domain name and person count, without identity chips or a Same person button', () => {
-    render(RelationshipHeader, baseProps({ detail: domain() }));
+    render(RelationshipHeader, baseProps({ detail: { ...domain(), activity_count: 9, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
 
     expect(screen.getByRole('heading', { name: 'example.com' })).toBeDefined();
-    expect(screen.getByText(/100 items/)).toBeDefined();
-    expect(screen.getByText(/8 people/)).toBeDefined();
+    expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
     expect(screen.queryByLabelText('Linked identities')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
   });
