@@ -27511,6 +27511,11 @@ paths:
           name: q
           schema:
             type: string
+        - description: Literal case-insensitive substring of current bound participant identities or curated contact points
+          in: query
+          name: address
+          schema:
+            type: string
         - description: Opaque cursor returned by the previous Directory page
           in: query
           name: cursor
