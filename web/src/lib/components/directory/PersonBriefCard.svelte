@@ -425,7 +425,7 @@
   .version-list span { color: var(--text-muted); font-size: var(--font-size-sm); }
 
   @media (max-width: 760px) {
-    .heading-row, .notice, .history-heading { align-items: stretch; flex-direction: column; }
+    .notice, .history-heading { align-items: stretch; flex-direction: column; }
     .version-list { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
