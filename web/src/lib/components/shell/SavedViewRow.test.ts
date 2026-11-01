@@ -16,7 +16,7 @@ it('shows what a saved view holds in its tooltip', () => {
   saved.canonical_state = { ...(saved.canonical_state as object), query: 'budget' };
   renderRow(saved);
   expect(screen.getByRole('button', { name: 'Budget threads' }).getAttribute('title')?.split('\n')).toEqual([
-    expect.stringMatching(/\S/), 'Every thread about the Q3 budget',
+    expect.stringContaining('budget'), 'Every thread about the Q3 budget',
   ]);
 });
 

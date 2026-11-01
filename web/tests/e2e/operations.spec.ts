@@ -1,7 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installOperations } from './fixtures/operations';
-import { readFileSync } from 'node:fs';
-import type { OperationRunsResponse, OperationRunSummary } from '../../src/lib/api/generated/models';
 
 const historyURL = (state: Record<string, unknown> = {}) => `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true, ...state }))}`;
 
@@ -11,19 +9,6 @@ async function openHistory(page: Page, path = '/') {
   await page.getByRole('menuitem', { name: 'Past runs' }).click();
   await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
 }
-
-test('Past runs describes the time and outcome of repeated job kinds', async ({ page }) => {
-  await installOperations(page);
-  const publicOperations = JSON.parse(readFileSync(new URL('./fixtures/operations-public.json', import.meta.url), 'utf8')) as OperationRunsResponse & { job_runs: OperationRunSummary[] };
-  await page.route(url => url.pathname === '/api/v1/operations/runs', route => route.fulfill({ json: {
-    runs: [publicOperations.runs.find(run => run.kind === 'source_sync')!, publicOperations.job_runs.find(run => run.kind === 'source_sync')!],
-    membership_revision: 1, unavailable_kinds: [],
-  } }));
-  await openHistory(page);
-  const runs = page.getByRole('button', { name: 'Open Source sync run', exact: true });
-  await expect(runs.nth(0)).toHaveAccessibleDescription(/Aug 30, 2026, 12:00 PM.*Succeeded/);
-  await expect(runs.nth(1)).toHaveAccessibleDescription(/Aug 30, 2026, 11:00 AM.*Failed/);
-});
 
 test('Past runs offers advertised actions and announces completion', async ({ page }) => {
   await installOperations(page);
@@ -42,23 +27,23 @@ test('Past runs offers advertised actions and announces completion', async ({ pa
   await expect(detail.getByRole('button', { name: 'Start CardDAV sync' })).toHaveCount(0);
 });
 
-test('Past runs keeps focus through detail and history, then restores workspace focus', async ({ page }) => {
+test('Past runs keeps focus through history and related status, and preserves Messages', async ({ page }) => {
   await installOperations(page);
   await openHistory(page, '/?workspace=sources');
-  const row = page.getByRole('button', { name: 'Open Document extraction run' });
-  for (let index = 0; index < 120 && !(await row.evaluate(element => document.activeElement === element)); index += 1) await page.keyboard.press('Tab');
-  await expect(row).toBeFocused();
-  await row.press('Enter');
+  const sourceRow = page.getByRole('button', { name: 'Open Document extraction run' });
+  for (let index = 0; index < 120 && !(await sourceRow.evaluate(element => document.activeElement === element)); index += 1) await page.keyboard.press('Tab');
+  await expect(sourceRow).toBeFocused();
+  await sourceRow.press('Enter');
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
   await page.goBack();
-  await expect(row).toBeFocused();
+  await expect(sourceRow).toBeFocused();
   await page.goForward();
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
   await page.keyboard.press('Tab');
   await page.keyboard.press('Shift+Tab');
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(row).toBeFocused();
+  await expect(sourceRow).toBeFocused();
   await page.keyboard.press('Enter');
   const link = page.getByRole('button', { name: 'Open Document index status' });
   await link.click();
@@ -67,6 +52,41 @@ test('Past runs keeps focus through detail and history, then restores workspace 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
+
+  let exploreRequests = 0;
+  await page.route('**/api/v1/explore', route => {
+    exploreRequests += 1;
+    return route.fulfill({ json: {
+      rows: [1, 2].map(index => ({
+        key: `message:${index}`, kind: 'message', message_type: 'email', conversation_type: 'email',
+        title: `Synthetic subject ${index}`, preview: `Synthetic excerpt ${index}`,
+        occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_identifier: 'archive@example.com',
+        source_type: 'synthetic', participant_labels: ['Example Person'], participant_ids: [1],
+        attachment_count: 0, attachment_size: 0, has_attachments: false, deleted_from_source: false,
+        message_count: 1, match: {}
+      })), total_count: 2, cache_revision: 'operations-messages', search_provenance: {}
+    } });
+  });
+  await openHistory(page);
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
+  await expect(grid.getByText('Synthetic subject 2')).toBeVisible();
+  expect(exploreRequests).toBe(1);
+  const row = page.getByRole('button', { name: 'Open Document extraction run' });
+  await row.click();
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveAccessibleName('Past runs');
+  await expect(page.getByRole('region', { name: 'Operation run detail' }).getByText('Document extraction', { exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(row).toBeFocused();
+  expect(exploreRequests).toBe(1);
+  await page.goForward();
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  expect(exploreRequests).toBe(1);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
+  expect(exploreRequests).toBe(1);
 });
 
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {

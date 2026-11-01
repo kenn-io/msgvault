@@ -7,6 +7,7 @@
     CommandPalette,
     FlashBanner,
     showFlash,
+    dismissFlash,
     getThemeMode,
     IconButton,
     appShortcuts,
@@ -93,7 +94,6 @@
   import type { JobTarget } from '../../jobs/jobs';
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
-  import UndoToast from '../common/UndoToast.svelte';
 
   const media = mediaReadiness();
   const visual = visualReadiness();
@@ -398,6 +398,33 @@
   let drawerOpen = $state(false);
   let drawerOpenerHost = $state<HTMLElement>();
   let shellRoot = $state<HTMLElement>();
+  let flashRoot = $state<HTMLElement>();
+  $effect(() => {
+    const view = shellData.pending;
+    if (!view) return;
+    const flashID = untrack(() => showFlash(`Deleted ${view.name}`, {
+      durationMs: 8000,
+      action: { label: 'Undo', onclick: () => void undoViewDeletion(view) },
+    }));
+    const expire = () => void flashViewError(shellData.expireDelete());
+    const timer = setTimeout(expire, 8000);
+    window.addEventListener('pagehide', expire);
+    void tick().then(() => {
+      if (document.activeElement === document.body) flashRoot?.querySelector<HTMLElement>('.kit-flash-banner__action')?.focus();
+    });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', expire);
+      dismissFlash(flashID);
+    };
+  });
+
+  async function undoViewDeletion(view: SavedView): Promise<void> {
+    await shellData.undoDelete();
+    await tick();
+    shellRoot?.querySelector<HTMLElement>(`[data-saved-view-id="${view.id}"] .saved-view__open`)?.focus();
+  }
+
   let sidebarCollapsed = $state(readSidebarCollapsed());
 
   function readSidebarCollapsed(): boolean {
@@ -742,9 +769,9 @@
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
+    if (exploreState.current.workspace === 'settings' && document.activeElement?.closest('.app-main')) return;
     const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
-      ? focusableResultsGrid()
-      : null;
+      ? focusableResultsGrid() : null;
     (grid ?? navigationFocusTarget())?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
@@ -1606,10 +1633,7 @@
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
     onConfigure={openVisualAttachmentSettings} />
 {/if}
-<FlashBanner />
-{#if shellData.pending}
-  {#key shellData.pending.id}<UndoToast message={`Deleted ${shellData.pending.name}`} onUndo={() => shellData.undoDelete()} onExpire={() => void flashViewError(shellData.expireDelete())} />{/key}
-{/if}
+<div bind:this={flashRoot}><FlashBanner /></div>
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 

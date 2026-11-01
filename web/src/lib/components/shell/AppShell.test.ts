@@ -86,6 +86,40 @@ describe('AppShell', () => {
     }
   });
 
+  it('keeps confirmation focus through held Back and its restoring traversal', async () => {
+    window.history.replaceState({ exploreIndex: 0 }, '', '/?workspace=files');
+    window.history.pushState({ exploreIndex: 1 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    const settings = createRawSnippet(() => ({
+      render: () => '<main aria-label="Settings fixture"><button>Stay</button></main>'
+    }));
+    const rendered = render(AppShell, {
+      client: createAPIClient(vi.fn()), state, enabled: false, settings
+    });
+    const stay = await screen.findByRole('button', { name: 'Stay' });
+    state.holdLeave = () => { stay.focus(); return true; };
+    const focused: Array<Element | null> = [];
+    let finish!: () => void;
+    const traversed = new Promise<void>(resolve => { finish = resolve; });
+    const recordFocus = async () => {
+      await tick();
+      focused.push(document.activeElement);
+      if (focused.length === 2) finish();
+    };
+    window.addEventListener('popstate', recordFocus);
+    try {
+      window.history.back();
+      await traversed;
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings');
+      expect(focused).toEqual([stay, stay]);
+    } finally {
+      window.removeEventListener('popstate', recordFocus);
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   function entry(index: number) {
     return {
       key: `message:${index}`,
@@ -950,7 +984,7 @@ describe('AppShell', () => {
       const search = await screen.findByRole('searchbox', { name: 'Search keyboard shortcuts' });
 
       await fireEvent.keyDown(search, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull());
       await waitFor(() => expect(document.activeElement).toBe(entry));
     });
 
@@ -961,7 +995,7 @@ describe('AppShell', () => {
       await fireEvent.keyDown(theme, { key: '?', shiftKey: true });
       await fireEvent.click(await screen.findByRole('button', { name: 'Close' }));
 
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull());
       await waitFor(() => expect(document.activeElement).toBe(theme));
     });
 
@@ -974,7 +1008,7 @@ describe('AppShell', () => {
       const search = await screen.findByRole('searchbox', { name: 'Search keyboard shortcuts' });
 
       await fireEvent.keyDown(search, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull());
       await waitFor(() => expect(document.activeElement).toBe(opener));
     });
 
@@ -2679,7 +2713,10 @@ describe('AppShell', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
       await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
       await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Stay' }));
+      const stay = await screen.findByRole('button', { name: 'Stay' });
+      await tick();
+      expect(document.activeElement).toBe(stay);
+      await fireEvent.click(stay);
       expect((screen.getByLabelText('Stop when idle after') as HTMLInputElement).value).toBe('15m');
       await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
@@ -2915,11 +2952,10 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
-it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
+it('wires sidebar deletion through pagehide', async () => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const width = window.innerWidth;
   window.innerWidth = 1024;
-  const undo = vi.spyOn(ShellData.prototype, 'undoDelete').mockResolvedValue();
   const expire = vi.spyOn(ShellData.prototype, 'expireDelete').mockResolvedValue(undefined);
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -2930,18 +2966,51 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    if (ending === 'undo') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-      expect(undo).toHaveBeenCalledOnce();
-    } else {
-      window.dispatchEvent(new Event('pagehide'));
-      expect(expire).toHaveBeenCalled();
-      expect((expire.mock.contexts.at(-1) as ShellData).pending?.id).toBe(3);
-    }
+    window.dispatchEvent(new Event('pagehide'));
+    expect(expire).toHaveBeenCalled();
+    expect((expire.mock.contexts.at(-1) as ShellData).pending?.id).toBe(3);
   } finally {
     rendered.unmount();
-    undo.mockRestore();
+    const expired = expire.mock.calls.length;
+    window.dispatchEvent(new Event('pagehide'));
+    expect(expire).toHaveBeenCalledTimes(expired);
     expire.mockRestore();
+    window.innerWidth = width;
+  }
+});
+
+it('commits a saved-view deletion after the eight-second undo window', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const width = window.innerWidth;
+  window.innerWidth = 1024;
+  let deleted = false;
+  const deletes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/saved-views/3') && request.method === 'DELETE') {
+      deletes.push(request);
+      deleted = true;
+      return new Response(null, { status: 204 });
+    }
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: deleted ? [] : [view(3, 'Project notes')] });
+    return Response.json(exploreResponse());
+  });
+  const rendered = render(AppShell, { client });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(deletes).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deletes).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Project notes' })).toBeNull();
+  } finally {
+    rendered.unmount();
+    vi.useRealTimers();
     window.innerWidth = width;
   }
 });
@@ -3062,25 +3131,7 @@ function settingsWithLeaveGuard(client: ReturnType<typeof createAPIClient>) {
   });
 }
 
-it('keeps Stay focused when a saved view holds departure from dirty Settings', async () => {
-  window.history.replaceState(null, '', '/?workspace=settings');
-  const client = settingsLeaveClient();
-  const settings = settingsWithLeaveGuard(client);
-  const state = new ExploreState(window);
-  const rendered = render(AppShell, { client, state, settings });
-  try {
-    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
-    const stay = await screen.findByRole('button', { name: 'Stay' });
-    await tick();
-    expect(state.current.workspace).toBe('settings');
-    expect(document.activeElement).toBe(stay);
-  } finally {
-    rendered.unmount(); state.destroy();
-  }
-});
-
-it.each(['Source status', 'indexed Back'] as const)('keeps the Settings leave choice after Past runs closes through %s', async action => {
+it('keeps the Settings leave choice after Past runs closes through Source status', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
   const state = new ExploreState(window);
   state.commitWorkspace('settings');
@@ -3092,14 +3143,7 @@ it.each(['Source status', 'indexed Back'] as const)('keeps the Settings leave ch
     await fireEvent.click(await screen.findByRole('menuitem', { name: /^Past runs/ }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
     const depart = async () => {
-      if (action === 'Source status') await fireEvent.click(await screen.findByRole('button', { name: 'Open Sources status' }));
-      else {
-        const index = window.history.state.exploreIndex;
-        const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-        window.history.go(-3);
-        await popped;
-        await waitFor(() => expect(window.history.state.exploreIndex).toBe(index));
-      }
+      await fireEvent.click(await screen.findByRole('button', { name: 'Open Sources status' }));
     };
     await depart();
     await waitFor(() => expect(state.current.operationHistory).toBe(false));
@@ -3108,11 +3152,9 @@ it.each(['Source status', 'indexed Back'] as const)('keeps the Settings leave ch
     expect(state.current.operationHistory).toBe(false);
     expect(state.current.workspace).toBe('settings');
     expect((screen.getByLabelText('Stop when idle after') as HTMLInputElement).value).toBe('15m');
-    if (action === 'Source status') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Idle' }));
-      await fireEvent.click(screen.getByRole('menuitem', { name: /^Past runs/ }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
-    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Idle' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: /^Past runs/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Source sync run' }));
     await depart();
     await waitFor(() => expect(state.current.operationHistory).toBe(false));
     await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
