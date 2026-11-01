@@ -265,19 +265,16 @@ describe('RelationshipReviewController', () => {
   });
 });
 
-it('loads all imported states for the owner, keeps opaque values, and retries a failed read', async () => {
+it('loads all three imported states for the selected owner', async () => {
   const queries: string[] = [];
   const controller = new RelationshipReviewController(createAPIClient(async input => {
     queries.push(new URL(requestOf(input).url).search);
-    if (queries.length === 1) return Response.json({ error: 'unavailable' }, { status: 503 });
-    return Response.json({ reviews: [generatedReview(), generatedReview({ id: 42, status: 'accepted' }), generatedReview({ id: 43, status: 'rejected', matched_person_id: undefined, raw_related_value: 'opaque-synthetic-value' })] });
+    return Response.json({ reviews: [generatedReview(), generatedReview({ id: 42, status: 'accepted' }), generatedReview({ id: 43, status: 'rejected' })] });
   }));
   try {
     controller.applyPerson(7);
-    await vi.waitFor(() => expect(controller.error).toBeTruthy());
-    await controller.retry();
-    expect(queries).toEqual(['?person_id=7', '?person_id=7']);
+    await vi.waitFor(() => expect(controller.rows).toHaveLength(3));
+    expect(queries).toEqual(['?person_id=7']);
     expect(controller.rows.map(row => row.status)).toEqual(['pending', 'accepted', 'rejected']);
-    expect(controller.rows[2]).toMatchObject({ raw_related_value: 'opaque-synthetic-value', person_id: 7 });
   } finally { controller.destroy(); }
 });

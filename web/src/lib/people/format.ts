@@ -1,3 +1,5 @@
+import { identityBasisLabel } from '../relationships/identity-chip';
+
 export function messageCount(count: number): string {
   return `${count.toLocaleString()} ${count === 1 ? 'message' : 'messages'}`;
 }
@@ -7,21 +9,14 @@ export function joinParts(parts: Array<string | null | undefined | false>): stri
   return parts.filter(Boolean).join(' · ');
 }
 
-/** One line naming why two people look alike, such as "Same email". */
+/** The reason and matched value on a pair card. */
 export function basisLine(candidate: {
   basis: string;
   normalized_value?: string;
   service_slug?: string;
 }): string {
-  const kind = candidate.basis.toLowerCase();
-  let label: string;
-  if (kind.includes('email')) label = 'Same email';
-  else if (kind.includes('phone')) label = 'Same phone number';
-  else if (kind.includes('username') || kind.includes('handle')) {
-    label = candidate.service_slug ? `Same ${candidate.service_slug} username` : 'Same username';
-  } else if (kind.includes('name')) label = 'Same name';
-  else if (kind.includes('conversation')) label = 'In the same conversations';
-  else label = 'Similar details';
+  const basis = identityBasisLabel(candidate.basis);
+  const label = basis.replace(/^./, letter => letter.toUpperCase());
   return candidate.normalized_value ? `${label}: ${candidate.normalized_value}` : label;
 }
 
