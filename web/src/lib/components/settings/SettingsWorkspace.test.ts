@@ -633,7 +633,7 @@ it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People
   let revision = '"s1"';
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' } };
   const doc = settingsDoc({ person_enrichment_providers: [provider] });
-  const { client, seen } = fixture(doc, request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings' || path.endsWith('/person-enrichment/providers/primary')) {
       if (request.method !== 'GET') revision = '"s2"';
@@ -648,7 +648,7 @@ it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People
       }, { headers: { ETag: revision } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
   await screen.findByText('model-one');
   await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
   await screen.findByLabelText('I confirm this exact disclosure');
@@ -867,7 +867,7 @@ it('shows unavailable message coverage after a failed initial read', async () =>
 
 it('marks failed coverage refreshes unavailable without hiding Overview', async () => {
   let coverageReads = 0;
-  const { client } = fixture(settingsDoc(), request => {
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
     if (request.url.includes('/search/coverage')) {
       return ++coverageReads === 1
@@ -875,7 +875,7 @@ it('marks failed coverage refreshes unavailable without hiding Overview', async 
         : Response.json({ error: 'vector_generation_changed' }, { status: 503 });
     }
   });
-  render(SettingsWorkspace, { client });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await screen.findByRole('button', { name: 'Build index, Message search' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   const features = screen.getByRole('list', { name: 'Features' });
