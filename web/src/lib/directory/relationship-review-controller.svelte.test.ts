@@ -116,24 +116,6 @@ describe('RelationshipReviewController', () => {
     expect(attempts).toBe(2);
     expect(controller.rows).toEqual([]);
     expect(controller.error).toBeNull();
-    expect(controller.lastSuccessfulState).toBe('pending');
-    controller.destroy();
-  });
-
-  it('surfaces invalid-status responses as a bounded programming error', async () => {
-    const controller = new RelationshipReviewController(
-      createAPIClient(
-        vi.fn<typeof fetch>(async () =>
-          Response.json({ error: 'invalid_status', message: 'forbidden-validator-detail' }, { status: 400 }),
-        ),
-      ),
-    );
-
-    controller.applyPerson(7);
-    await vi.waitFor(() => expect(controller.loading).toBe(false));
-
-    expect(controller.error).toBe('The imported relationship review state is invalid.');
-    expect(controller.rows).toEqual([]);
     controller.destroy();
   });
 

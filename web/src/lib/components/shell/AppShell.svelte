@@ -90,6 +90,8 @@
   import type { JobTarget } from '../../jobs/jobs';
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
+  import UndoToast from '../common/UndoToast.svelte';
+  import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
 
   const media = mediaReadiness();
   const visual = visualReadiness();
@@ -365,11 +367,17 @@
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
     (patch) => commitNavigation(patch),
-    result => {
+    async result => {
       if (!result.ok && result.kind !== 'merge_required') announceOperation(result.message);
-      if (result.ok) void Promise.all([shellData.refreshDuplicates(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+      if (result.ok) await Promise.all([identityChanged(false), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
     },
   );
+  async function identityChanged(refreshReviews = true): Promise<void> {
+    await Promise.all([
+      shellData.refreshDuplicates(),
+      ...(refreshReviews ? [directoryReviewController.invalidate(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates)] : []),
+    ]);
+  }
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
   let cardDAVSettingsRequestKey = 0;
   const settingsNavigationTarget = $derived(exploreState.current.workspace === 'settings'
@@ -547,7 +555,7 @@
     const identityState = exploreState.current.identityState;
     untrack(() => {
       void directoryReviewController.settleDecision();
-      if (active) directoryReviewController.applyURLState({ reviewKind: 'identity', identityState }, historyRestoration);
+      if (active) directoryReviewController.applyURLState({ identityState }, historyRestoration);
     });
   });
   $effect(() => {
@@ -1242,7 +1250,7 @@
           onConfigureVisualSearch={openVisualAttachmentSettings}
           sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
           reviews={directoryReviewController}
-          onDuplicatesChanged={() => void shellData.refreshDuplicates()}
+          onDuplicatesChanged={() => void identityChanged()}
           directory={directoryController}
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
@@ -1526,6 +1534,13 @@
     onConfigure={openVisualAttachmentSettings} />
 {/if}
 <div bind:this={flashRoot}><FlashBanner /></div>
+{#if directoryReviewController.mergeRequired}
+  {@const merge = directoryReviewController.mergeRequired}
+  {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
+    onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
+    onSuccess={async success => { await Promise.all([identityChanged(false), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]); await directoryReviewController.completePersonMerge(merge.candidateID, merge.context, success); }}
+    onClose={() => directoryReviewController.mergeRequired = null} />{/key}
+{/if}
 {#if directoryReviewController.pending}
   {#key directoryReviewController.pending.candidate.id}<UndoToast message={directoryReviewController.pending.decision === 'accept' ? 'Merge queued' : 'Keep separate queued'} onUndo={async () => { const id = directoryReviewController.pending?.candidate.id; directoryReviewController.undoDecision(); await tick(); document.getElementById(`duplicate-${id}`)?.focus(); }} onExpire={() => void directoryReviewController.settleDecision()} />{/key}
 {/if}

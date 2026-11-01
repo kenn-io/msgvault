@@ -19,7 +19,7 @@
   import { RELATIONSHIP_DAY_HISTORY_KEY, relationshipDayHistory } from '../../relationships/reader-history';
   import type { ComponentProps } from 'svelte';
 
-  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
+  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChanged' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
   let { reviews, onDuplicatesChanged, directory, urlState, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
     PageProps & { reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
@@ -208,6 +208,7 @@
   async function retryLink(): Promise<void> {
     if (!staleLink) return;
     const result = await controller.linkParticipants(staleLink.a, staleLink.b);
+    if (result.ok) onDuplicatesChanged();
     if (result.ok && result.cacheState === 'ready') { staleLink = null; bulkMessage = 'Identity cache refreshed.'; }
   }
 </script>
@@ -249,6 +250,7 @@
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); }}
+    onIdentityChanged={onDuplicatesChanged}
     onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
@@ -267,7 +269,6 @@
   </div>
   {/if}
   {#if bulkConflict}<PersonBindingConflictModal client={page.client} conflict={bulkConflict} onOpenProfile={(id) => page.onOpenDirectoryPerson?.(id)} onSuccess={merged} onClose={() => { bulkConflict = undefined; bulkMessage = `${bulkCompleted} of ${bulkIDs.length - 1} linked. Linking stopped.`; }} />{/if}
-  {#if reviews.mergeRequired}<PersonBindingConflictModal client={page.client} conflict={reviews.mergeRequired.conflict} onOpenProfile={(id) => { reviews.mergeRequired = null; page.onOpenDirectoryPerson?.(id); }} onSuccess={async (success) => { await reviews.completePersonMerge(reviews.mergeRequired!.candidateID, reviews.mergeRequired!.context, success); await reconcilePersonMerge(controller.personMergeContextSnapshot()); }} onClose={() => reviews.mergeRequired = null} />{/if}
   {#if confirmDelete}<Modal title="Delete people" onclose={() => { if (!bulkPending) confirmDelete = false; }}><p>This permanently deletes {selectedSaved.length} saved profiles, their contact points, and profile history. Archived messages stay.</p>{#snippet footer()}<Button label="Cancel" disabled={bulkPending} onclick={() => confirmDelete = false} /><Button label={bulkPending ? 'Deleting…' : 'Confirm delete'} disabled={bulkPending} tone="danger" onclick={() => void deleteSelected()} />{/snippet}</Modal>{/if}
 </main>
 <style>

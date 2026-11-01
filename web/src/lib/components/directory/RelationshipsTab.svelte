@@ -149,7 +149,7 @@
     {/if}
     {#if imports.loading}<p role="status">Loading imported connections…</p>{/if}
     {#if imports.error}<p role="alert">{imports.error}<Button label="Retry imported connections" size="sm" onclick={() => void imports.retry()} /></p>{/if}
-    {#each imports.rows.filter(row => row.status !== 'accepted' || !controller.relationships.some(view => view.counterpart_person_id === row.matched_person_id)) as row (row.id)}
+    {#each imports.rows as row (row.id)}
       <DetailRow label={sentenceCase(row.status)} description={[row.raw_related_type, row.source, row.value_kind, row.updated_at, row.reviewed_at].filter(Boolean).join(' · ')}>
         {row.raw_related_value}
         {#if row.matched_person_id && !controller.relationships.some(view => row.status === 'accepted' && view.counterpart_person_id === row.matched_person_id)}<Button label="Open person" size="sm" onclick={() => onOpenPerson?.(row.matched_person_id!)} />{/if}
