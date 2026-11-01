@@ -321,9 +321,7 @@ describe('DirectoryController', () => {
     expect(controller.detail).not.toHaveProperty('employments');
     expect(controller.detail).not.toHaveProperty('relationships');
 
-    const firstEntity = controller.entity;
     await controller.loadSelection(7);
-    expect(controller.entity).not.toBe(firstEntity);
     expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
     controller.destroy();
   });

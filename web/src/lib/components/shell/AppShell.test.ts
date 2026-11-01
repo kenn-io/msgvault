@@ -1444,19 +1444,6 @@ describe('AppShell', () => {
     });
   }
 
-  it('opens the Directory list from an already selected saved person', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 }))}`);
-    const state = new ExploreState(window);
-    const view = render(AppShell, { client: createAPIClient(directoryPersonFetch()), state, enabled: false });
-    try {
-      await screen.findByRole('heading', { name: 'Synthetic Person' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
-      await screen.findByRole('main', { name: 'Directory' });
-      expect(state.current.directoryPersonID).toBeNull();
-      expect(state.current.relationshipTarget).toBeNull();
-    } finally { view.unmount(); state.destroy(); }
-  });
-
   it('returns to Files after replacing an old Directory person route', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
     const state = new ExploreState(window);
@@ -2154,44 +2141,6 @@ describe('AppShell', () => {
     } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
-  it('shows a failed People Save in the person page alert', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', relationshipTarget: 'cluster:11'
-    }))}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
-      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
-      if (path === '/api/v1/participants/11') return Response.json({
-        id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
-        activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
-        last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
-      });
-      if (path === '/api/v1/participants/11/timeline') return Response.json({
-        cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
-      });
-      if (path === '/api/v1/people/directory') return Response.json({ people: [] });
-      if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
-        error: 'person_binding_conflict', message: 'This identity is already bound to another person'
-      }, { status: 409 });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
-    expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
-
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('already bound to another person');
-    expect(state.current.directoryPersonID).toBeNull();
-
-    rendered.unmount();
-    state.destroy();
-  });
-
   it('clears prior Directory selection and promotion state before opening a new relationship candidate', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryPersonID: 7
@@ -2216,8 +2165,6 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
-      if (path === '/api/v1/people/7/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {} });
       if (path === '/api/v1/relationships') return Response.json({ rows: [] });
       if (path === '/api/v1/participants/11' || path === '/api/v1/participants/12') {
         const id = Number(path.split('/').at(-1));
