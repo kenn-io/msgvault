@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-28"
+last_edited: "2026-11-01"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -3047,7 +3047,40 @@ database size. The message total includes active and source-deleted messages;
 when source-deleted messages exist, their counts are shown separately. The
 analytics cache also retains source-deleted messages.
 
-Text output only. For structured counts use:
+Text output is the default. Use `--json` to emit one JSON object:
+
+```bash
+msgvault stats --json
+msgvault stats --collection team --json
+```
+
+JSON always includes these integer counts, even when zero:
+
+| Field | Meaning |
+|---|---|
+| `total_messages` | Active plus source-deleted messages, excluding dedup-hidden rows |
+| `active_messages` | Messages still present at the source |
+| `source_deleted_messages` | Messages deleted at the source and retained in the archive |
+| `total_threads`, `total_attachments`, `total_labels` | Counts associated with active messages |
+| `total_accounts` | Source records in the selected scope, including calendar sources and sources with no messages |
+
+The CLI's `total_messages` includes active and source-deleted messages. The
+daemon HTTP API retains its legacy active-only `total_messages` for compatibility.
+
+The `scope` object identifies `kind` as `archive`, `account`, `collection`, or
+`agent_grant`. Its `source_count` equals `total_accounts`; both count source
+records, including associated calendar sources and sources with no messages.
+One account can span multiple source records. Scoped results include a `label`
+when available. Without an explicit account or collection, delegated reads use
+`agent_grant` and count only granted sources, including a zero count when none
+remain.
+
+Owner reads include `database_size_bytes`, even when zero, with
+`database_size_scope: "global"`. Size remains global with `--account` or
+`--collection`. Delegated reads omit both size fields. JSON contains no database
+path or server URL. `--json=false` selects text output.
+
+For custom structured counts, use:
 
 ```bash
 msgvault query "SELECT count(*) AS n FROM messages"
@@ -3061,6 +3094,7 @@ msgvault stats [flags]
 |---|---|
 | `--account` | Show stats for a specific account |
 | `--collection` | Show stats for all member accounts of a collection |
+| `--json` | Output structured archive counts and scope metadata as JSON |
 
 ---
 
