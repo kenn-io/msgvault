@@ -10,7 +10,7 @@
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { TimelineScope } from '../../explore/api';
-  import { ExploreLoader } from '../../explore/loader.svelte';
+  import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import type { ExploreFilter, ExploreURLState, ExplorePredicate } from '../../explore/models';
   import { ExploreState, ExploreSelectionState } from '../../explore/state.svelte';
   import EverythingWorkspace from '../shell/EverythingWorkspace.svelte';
@@ -19,14 +19,19 @@
   import { relationshipMeetingScope } from '../../meetings/scopes';
   import type { MeetingRef } from '../../api/generated/models';
 
-  let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange }:
+  let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange, onMessagesTableChange }:
     { client: APIClient; identityScope: TimelineScope; target: string; predicate: ExplorePredicate; period?: { after: string; before: string } | null;
       onOpenPerson?: (id: number) => void; onOpenMeeting?: (meeting: MeetingRef) => void;
+      onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onOpenFiles: () => void; onFiltersChange: (filters: ExploreFilter[]) => void; onClearPeriod: () => void; onOpenSettings?: () => void } = $props();
   const scope: ExploreFilter = untrack(() => identityScope.kind === 'person'
     ? { dimension: 'participant', values: [String(identityScope.id)] }
     : { dimension: 'domain', values: [identityScope.domain] });
   const exploreState = new ExploreState(null);
+  $effect(() => {
+    onMessagesTableChange?.({ state: exploreState, loader, openRow: (row) => navigate({ selectedRow: row.key }) });
+    return () => onMessagesTableChange?.(undefined);
+  });
   let restoredRow = $state<string | null>(null);
   let restoredBounds = $state<{ start: string; end: string }>();
   let hasPredicate = false;
