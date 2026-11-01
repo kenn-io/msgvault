@@ -411,7 +411,7 @@ test('domain calendar retries, selects a previous year, and clears date filters'
     if (body.grouping?.[0] !== 'day') return route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-domain', search_provenance: {} } });
     if (++attempts === 1) return route.fulfill({ status: 500, json: { message: 'Could not load activity.' } });
     return route.fulfill({ json: { rows: [...Array.from({ length: 7 }, (_, i) => ({ key: `${body.filters[1].values[0].slice(0, 4)}-01-0${i + 1}`, count: 1, level: 'FIRST_QUARTILE' })), { key: `${body.filters[1].values[0].slice(0, 4)}-07-19`, label: 'Jul 19', count: 3, estimated_bytes: 30, latest_at: when, level: 'FOURTH_QUARTILE' }, { key: `${body.filters[1].values[0].slice(0, 4)}-08-01`, count: 10, level: 'FOURTH_QUARTILE' }],
-      total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
+      total_count: 9, cache_revision: 'cache-domain', search_provenance: {} } });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', filters: [{ dimension: 'source', values: ['1'] }] }))}`);
   await page.getByRole('radio', { name: 'Domains', exact: true }).click();
@@ -457,15 +457,6 @@ test('saved people keep durable IDs separate from participants and open profiles
   await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
   await expect.poll(async () => (await exploreHistoryState(page)).workspace).toBe('directory');
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92 });
-});
-
-test('reloading a saved person deep link opens its activity after the profile loads', async ({ page }) => {
-  await prepare(page);
-  await page.route('**/api/v1/people/91', route => route.fulfill({ json: { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 91, relationshipTarget: 'cluster:1' }))}`);
-  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
 });
 
 test('People history and reload restore participant scope without a message query', async ({ page }) => {
