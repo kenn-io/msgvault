@@ -351,7 +351,7 @@
         response,
       } = await generatedPatchSettings({ updates }, { ...client, headers: { 'If-Match': etag } });
       if (response.status === 412) {
-        await loadSettings(true);
+        await Promise.all([loadSettings(true), inference.load()]);
         error = 'The settings changed on disk. The latest are loaded. Review your changes and save again.';
         if (dirtyCount === 0) void focusCategoryHeading();
         return;
