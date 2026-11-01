@@ -72,6 +72,7 @@ export class DirectoryProfileController {
   createdDefinition = $state<AttributeDefinition | null>(null);
   definitionCreationCommit = $state<DefinitionCreationCommit | null>(null);
   definitionsError = $state<string | null>(null);
+  attributesError = $state<string | null>(null);
   private bundle: DirectoryReadBundle;
   private readonly client: APIClient;
   private readonly personID: number;
@@ -183,7 +184,10 @@ export class DirectoryProfileController {
       }
       if (attributes.data) {
         this.attributes = attributes.data;
+        this.attributesError = null;
         refreshed = true;
+      } else {
+        this.attributesError = failureMessage(attributes.error, attributes.response?.status ?? 0);
       }
       if (definitions.data) {
         this.definitions = definitions.data.definitions ?? [];
