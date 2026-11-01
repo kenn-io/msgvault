@@ -14,4 +14,5 @@ export const ExploreGroupDimension = {
   kind: "kind",
   year: "year",
   month: "month",
+  day: "day",
 } as const;
