@@ -255,6 +255,41 @@ it('blocks reload only while Settings has unsaved drafts', async () => {
   expect(discarded.defaultPrevented).toBe(false);
 });
 
+it('refreshes shared Contacts status after saving a disabled account', async () => {
+  let enabled = true;
+  const status = () => ({
+    configured: true, available: true, credential_configured: true, enabled,
+    scheduled: false, schedule: '',
+    account: { base_url: 'https://contacts.example.test/', username: 'user@example.com' }
+  });
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), async request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/operations/status') {
+      return Response.json({ lanes: lanes(lane('carddav_sync', { configured: enabled })) });
+    }
+    if (path === '/api/v1/carddav/connections') {
+      return Response.json({ connections: [{ connection: 'default', status: status() }] });
+    }
+    if (path === '/api/v1/carddav/status') return Response.json(status());
+    if (path === '/api/v1/carddav/account' && request.method === 'PUT') {
+      const body = await request.json();
+      enabled = body.enabled;
+      return Response.json({ ...body, books: 0 });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
+  const contacts = (await screen.findByText('Contacts', { selector: '.row__name' })).closest('li')!;
+  expect(within(contacts).getByText('On')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  await waitFor(() => expect(screen.getByLabelText('Username')).toHaveProperty('value', 'user@example.com'));
+  await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+  await screen.findByText('CardDAV account saved. Found 0 address books.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  const updatedContacts = (await screen.findByText('Contacts', { selector: '.row__name' })).closest('li')!;
+  await waitFor(() => expect(within(updatedContacts).getByText('Off')).toBeDefined());
+});
+
 it('keeps a failed Overview action error on Overview', async () => {
   const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
