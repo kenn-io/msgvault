@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getPersonProfileHistory as generatedGetPersonProfileHistory, listPersonAttributes, listAttributeDefinitions } from '../../api/generated/api/api';
+  import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
   import { Button, Modal } from '@kenn-io/kit-ui';
   import AttributeSection from './AttributeSection.svelte';
   import { sentenceCase } from '../../explore/labels';
@@ -28,27 +28,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   onMount(() => void load());
-  let attributeError = $state<string | null>(null);
-  onMount(() => void loadAttributeHistory());
-  async function loadAttributeHistory(): Promise<void> {
-    if (!controller) return;
-    attributeError = null;
-    try {
-      const [attributes, definitions] = await Promise.all([
-        listPersonAttributes({ id: personID }, { history: true }, client),
-        listAttributeDefinitions({ object_type: 'person', include_hidden: true }, client),
-      ]);
-      if (!attributes.data || !definitions.data) {
-        const failed = !attributes.data ? attributes : definitions;
-        attributeError = messageFor(failed.error, failed.response.status);
-        return;
-      }
-      controller.attributes = attributes.data;
-      controller.definitions = definitions.data.definitions ?? [];
-    } catch (cause: unknown) {
-      attributeError = messageFor(cause, 0);
-    }
-  }
+  onMount(() => void controller?.reload());
   async function load(): Promise<void> {
     loading = true;
     error = null;
@@ -156,9 +136,9 @@
       {/each}
     {/if}
     {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
-    {#if attributeError}
-      <p role="alert" class="history-error">{attributeError}</p>
-      <Button label="Retry attribute history" onclick={() => void loadAttributeHistory()} />
+    {#if controller?.attributesError ?? controller?.definitionsError}
+      <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
+      <Button label="Retry attribute history" onclick={() => void controller?.reload()} />
     {:else if controller}<AttributeSection {controller} historyOnly />{/if}
     <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} {onSplitCommitted} />
   </div>
