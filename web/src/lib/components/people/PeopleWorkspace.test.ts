@@ -13,8 +13,9 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    const personID = Number(path.match(/\/people\/(\d+)\//)?.[1]);
     requests?.push(path);
-    return routes[path]?.(request) ?? (path.endsWith('/contact-state') ? Response.json({ cadence_status: 'unknown', interaction_count: 0 }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0 }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
@@ -600,5 +601,25 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(state.current.relationshipTarget).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('leaving People aborts its pending Save', async () => {
+  let pending: Request | undefined;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people' && request.method === 'POST') { pending = request; return new Promise<Response>(resolve => request.signal.addEventListener('abort', () => resolve(Response.json({ id: 42, revision: 1 }, { status: 201 })), { once: true })); }
+    if (path === '/api/v1/participants/11') return Response.json({ id: 11, display_label: 'Synthetic Candidate', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z' });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const state = new ExploreState(null); const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:11' });
+  await controller.openTarget('cluster:11', {}, false);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:11', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(pending).toBeDefined());
+    view.unmount();
+    expect(pending!.signal.aborted).toBe(true);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

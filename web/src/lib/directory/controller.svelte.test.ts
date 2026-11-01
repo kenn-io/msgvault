@@ -27,7 +27,6 @@ function detailResponse(path: string, personID = 7): Response {
   if (path.endsWith('/contact-state')) return Response.json({ person_id: personID, state: 'active' });
   if (path.endsWith('/employments')) return Response.json({ employments: [] });
   if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
-  if (path.endsWith('/days')) return Response.json({ person_id: personID, days: [], total_count: 0 });
   throw new Error(`unexpected detail path ${path}`);
 }
 
@@ -234,7 +233,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7/profile') return Response.json({ error: 'down', message: 'structured down' }, { status: 503 });
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-etag"' } });
       if (path === '/api/v1/people/7/attributes') return new Response(JSON.stringify({ person_id: 7, attributes: [] }), { headers: { ETag: '"attributes-etag"' } });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -259,7 +257,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7/profile') throw new TypeError('profile network down');
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-etag"' } });
       if (path === '/api/v1/people/7/attributes') return new Response(JSON.stringify({ person_id: 7, attributes: [] }), { headers: { ETag: '"attributes-etag"' } });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -282,7 +279,6 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/7/employments') return oldEmployments.promise;
       if (path === '/api/v1/people/8/employments') return Response.json({ employments: [{ id: 80, person_id: 8, organization_id: 1, is_current: true, is_primary: true, source: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path, path.includes('/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -309,7 +305,6 @@ describe('DirectoryController', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -353,7 +348,6 @@ describe('DirectoryController', () => {
         return new Response(JSON.stringify({ person: { id: 7, revision: 3, display_name: 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       }
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -445,7 +439,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7/employments') {
         return Response.json({ employments: employmentCreated ? [createdEmployment] : [] });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -492,7 +485,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -592,7 +584,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [] }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -632,7 +623,6 @@ describe('DirectoryController', () => {
           : Response.json({ people: [{ ...directoryPerson(7), categories: ['stale'] }, directoryPerson(8)], next_cursor: 'new-next' });
       }
       if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') return writeResponse.promise;
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, path.startsWith('/api/v1/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -687,7 +677,6 @@ describe('DirectoryController', () => {
           person: { id: 7, revision: 4 }, names: [], contact_points: [], addresses: [], dates: [], categories: [category], media: []
         }), { headers: { ETag: '"person-7-r4"' } });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, path.startsWith('/api/v1/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -745,7 +734,6 @@ describe('DirectoryController', () => {
           categories: [categoryFor(8, 'VIP Eight', 32)], media: []
         }), { headers: { ETag: '"person-8-r4"' } });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, path.startsWith('/api/v1/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -810,7 +798,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -882,7 +869,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -956,7 +942,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1027,7 +1012,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1061,7 +1045,6 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 3 });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition: { slug: 'alias' }, current: [], history: [{ id: 19 }] }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1084,7 +1067,6 @@ describe('DirectoryController', () => {
         if (cursor === 'page-2') return Response.json({ people: [directoryPerson(2)], next_cursor: 'page-3' });
         return Response.json({ people: [directoryPerson(1)], next_cursor: 'page-2' });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1114,7 +1096,6 @@ describe('DirectoryController', () => {
       if (pathOf(request) === '/api/v1/people') return Response.json({ id: 42, revision: 1 }, { status });
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(42)] });
       if (pathOf(request) === '/api/v1/people/42') return detailResponse(pathOf(request), 42);
-      if (pathOf(request) === '/api/v1/people/42/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(pathOf(request), 42);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -1188,7 +1169,6 @@ describe('DirectoryController', () => {
         return new Promise<Response>((resolve) => { resolvePromotion = resolve; });
       }
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(42)] });
-      if (pathOf(request) === '/api/v1/people/42/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(pathOf(request), pathOf(request).startsWith('/api/v1/people/7') ? 7 : 42);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
