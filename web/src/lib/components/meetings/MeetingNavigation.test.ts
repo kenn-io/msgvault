@@ -35,7 +35,7 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
     if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'person-7', created_at: '', updated_at: '' });
     if (path === '/api/v1/people/7/profile') return Response.json({ person: { id: 7, revision: 1, display_name: 'Example Person' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
-    if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'current', interaction_count: 1, computed_at: detail.sent_at, stale: false });
+    if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'ok', interaction_count: 1, computed_at: detail.sent_at, stale: false });
     if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
     if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
     if (path === '/api/v1/relationships/7/calendar') return Response.json({ year: 2026, days: [] });

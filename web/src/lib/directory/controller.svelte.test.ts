@@ -513,6 +513,7 @@ describe('DirectoryController', () => {
     if (mode === 'reload') {
       expect(controller.pageError).toBe('Directory reconciliation unavailable.');
       await controller.reloadFirstPage();
+      expect(directoryRequests).toHaveLength(4);
       expect(controller.pageError).toBeNull();
       const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
       expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic person', contact_state: 'active', category: 'STRASSE', organization: 'Example Org', primary_channel: 'email' });
