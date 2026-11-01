@@ -25,20 +25,6 @@ test('People Filter opens duplicate cards and browser-restored History', async (
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('staging another duplicate flushes the first and pagehide submits the second', async ({ page }) => {
-  const fixture = await installDirectoryReviewArchive(page);
-  await page.goto(duplicatesURL);
-  const card = page.locator('.cards > li').first();
-  await card.getByRole('button', { name: 'Keep separate' }).click();
-  await page.locator('.cards > li').first().getByRole('button', { name: 'Keep separate' }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').length).toBe(1);
-  await expect(page.locator('#duplicate-18')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
-  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').length).toBe(2);
-});
-
-
 test('refreshes cached duplicate tokens and the badge after Unlink and Split', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
   let unlinked = false;

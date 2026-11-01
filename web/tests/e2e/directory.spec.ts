@@ -73,7 +73,7 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await directory.getByRole('button', { name: 'Filter' }).click();
   await page.getByText('Profile filters', { exact: true }).click();
   const panel = directory.getByRole('group', { name: 'Profile filters' });
-  const chip = directory.getByRole('button', { name: 'Remove Last contacted after Jan 1, 2026 filter' });
+  const chip = directory.getByRole('button', { name: 'Remove Last contacted after Jan 1, 2026' });
   await expect(chip).toHaveCount(0);
 
   await panel.getByLabel('Last contacted after', { exact: true }).fill('2026-01-01');
@@ -89,6 +89,7 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await page.getByText('Profile filters', { exact: true }).click();
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('2026-01-01');
 
+  await page.keyboard.press('Escape');
   await chip.click();
   await expect(chip).toHaveCount(0);
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('');
@@ -228,10 +229,10 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
       error: 'invalid_cursor', message: 'Synthetic Directory changed while paging.'
     } });
     return route.fulfill({ json: requests === 1 ? {
-      people: [{
-        id: 42, revision: 1, display_name: 'Retained Person', primary_channel: 'email',
+      people: Array.from({ length: 100 }, (_, index) => ({
+        id: 42 + index, revision: 1, display_name: index === 0 ? 'Retained Person' : `Saved Person ${index}`, primary_channel: 'email',
         contact_state: 'active', categories: [], organizations: []
-      }], next_cursor: 'invalidated'
+      })), next_cursor: 'invalidated'
     } : {
       people: [{
         id: 43, revision: 1, display_name: 'Reloaded Person', primary_channel: 'email',
@@ -242,10 +243,11 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
   await page.goto(directoryURL());
 
   await expect(page.getByText('Retained Person')).toBeVisible();
-  await page.getByRole('button', { name: 'Load more people' }).click();
+  const grid = page.getByRole('grid', { name: 'People results' });
+  await grid.evaluate(element => element.scrollTo(0, element.scrollHeight));
   await expect(page.getByRole('alert')).toContainText('Synthetic Directory changed while paging.');
   await expect(page.getByText('Retained Person')).toBeVisible();
-  await page.getByRole('button', { name: 'Reload people' }).click();
+  await page.getByRole('button', { name: 'Reload', exact: true }).click();
   await expect(page.getByText('Reloaded Person')).toBeVisible();
   await expect(page.getByText('Retained Person')).toBeHidden();
 });

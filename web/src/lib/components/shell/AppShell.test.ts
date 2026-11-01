@@ -1143,7 +1143,7 @@ describe('AppShell', () => {
     });
   }
 
-  it('returns to Files after replacing an old Directory person route', async () => {
+  it('returns to Files after opening a saved person', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
     const state = new ExploreState(window);
     const fetchPerson = directoryPersonFetch();

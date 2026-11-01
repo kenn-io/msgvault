@@ -122,15 +122,7 @@ describe('PersonAddresses', () => {
   });
 
   it('labels the profile own row', () => {
-    const base = clusteredPerson();
-    render(PersonAddresses, baseProps({ detail: {
-      ...base,
-      cluster: { ...base.cluster!, edges: [
-        { participant_a: 12, participant_b: 34, link_origin: { kind: 'manual' } },
-        { participant_a: 34, participant_b: 56,
-          link_origin: { kind: 'candidate', source: 'carddav_import', basis: 'email' } }
-      ] }
-    } }));
+    render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
 
     const own = screen.getByLabelText('Identity Alice');
     expect(own.textContent).toContain('this profile');

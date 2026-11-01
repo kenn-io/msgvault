@@ -156,15 +156,15 @@ describe('LinkIdentityDialog', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it.each([['already_linked', 'nope', 'Already linked — these two are treated as the same person.']] as const)('shows %s inline and stays open', async (code, message, expected) => {
+  it('shows an already-linked outcome inline and stays open', async () => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code, message }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'nope' }));
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain(expected);
+    expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
     expect(onClose).not.toHaveBeenCalled();
   });
 

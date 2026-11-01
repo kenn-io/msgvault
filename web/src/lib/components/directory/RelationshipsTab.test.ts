@@ -125,8 +125,9 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     expect(screen.queryByRole('button', { name: 'Refresh relationships' })).toBeNull();
-    void controller.refreshRelationships();
-    expect((await screen.findByText('Loading relationships…')).textContent).toContain('Loading relationships');
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
+    expect(includeEnded).toEqual(['true']);
+    await screen.findByText('Loading relationships…');
     resolveFirst(Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 }));
 
     const alert = await screen.findByRole('alert');
