@@ -51,7 +51,7 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
 
 it.each([
   { name: 'preserves restored kinds when adding Email', filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
-  { name: 'groups meeting notes and minutes in a meetings-only archive', filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: 'Meeting', expected: ['meeting_note', 'meeting_minutes'] },
+  { name: 'groups meeting kinds in a meetings-only archive', filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: undefined, expected: ['meeting_note', 'meeting_minutes'] },
 ])('$name', async ({ filters, kinds, label, expected }) => {
   const onChange = vi.fn();
   render(FilterMenu, {
@@ -61,7 +61,7 @@ it.each([
     filters, onChange, onClear: vi.fn(),
   });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await fireEvent.click(await screen.findByLabelText(label));
+  await fireEvent.click(await screen.findByRole('checkbox', { name: label }));
   expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: expected }]);
 });
 

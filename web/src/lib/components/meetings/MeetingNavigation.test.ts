@@ -111,7 +111,10 @@ describe('meeting archive reader navigation', () => {
     const state = stateWithMeetingFilter(deep ? 'archive-meeting:42' : null);
     const view = render(AppShell, { client, state });
     try {
-      if (!deep) await fireEvent.click(await screen.findByRole('link', { name: 'Open archived meeting' }));
+      if (!deep) {
+        await fireEvent.click(await screen.findByRole('button', { name: /Action items ·/ }));
+        await fireEvent.click(await screen.findByRole('link', { name: 'Action provenance title' }));
+      }
       await waitFor(() => expect(finish).toBeTypeOf('function'));
       state.openOperationHistory({});
       const history = await screen.findByRole('dialog', { name: 'Past runs' });
