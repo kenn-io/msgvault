@@ -3,6 +3,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as requestID from '../../api/request-id';
 import { createAPIClient } from '../../api/client';
 import type { Person as GeneratedPerson } from '../../api/generated/models';
 import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -97,7 +98,7 @@ describe('PersonBindingConflictModal', () => {
       requests.push(request);
       return Response.json(mergeResult(merged, 'stale'), { headers: { ETag: '"person-7-r5"' } });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('11111111-1111-4111-8111-111111111111');
     const { onSuccess, onClose } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -128,7 +129,7 @@ describe('PersonBindingConflictModal', () => {
       if (attempts === 1) throw new TypeError('connection reset');
       return Response.json(mergeResult(merged), { headers: { ETag: '"person-7-r5"' } });
     });
-    const uuid = vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValueOnce('11111111-1111-4111-8111-111111111111');
+    const uuid = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('11111111-1111-4111-8111-111111111111');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -151,7 +152,7 @@ describe('PersonBindingConflictModal', () => {
       requests.push(request);
       throw new TypeError('offline');
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
+    vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     renderModal(fetchFn);
@@ -198,7 +199,7 @@ describe('PersonBindingConflictModal', () => {
       }
       return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
+    vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     const { onSuccess } = renderModal(fetchFn);
@@ -250,7 +251,7 @@ describe('PersonBindingConflictModal', () => {
       return Response.json({ error, message: 'Application failure' }, { status });
     });
     const uuid = vi
-      .spyOn(globalThis.crypto, 'randomUUID')
+      .spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     renderModal(fetchFn);
@@ -453,7 +454,7 @@ describe('PersonBindingConflictModal', () => {
       const refreshed = requestedID === 7 ? refreshedSeven : refreshedNine;
       return Response.json(refreshed, { headers: { ETag: `"person-${requestedID}-r${refreshed.revision}"` } });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
+    vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     const { onSuccess } = renderModal(fetchFn);

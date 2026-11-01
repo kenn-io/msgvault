@@ -1,0 +1,233 @@
+<script lang="ts">
+  import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
+
+  import { tick, untrack } from 'svelte';
+  import type { IdentityMatchCandidate } from '../../api/generated/models';
+  import {
+    type EndpointSummary,
+    endpointKey,
+  } from '../../people/duplicates.svelte';
+  import { basisLine, blockerLine, joinParts, messageCount, relativeDate } from '../../people/format';
+  import IdentityAvatar from '../common/IdentityAvatar.svelte';
+  import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
+  import IdentityCandidateCard from '../directory/IdentityCandidateCard.svelte';
+
+  interface Props {
+    controller: DirectoryReviewController;
+    /** Hides the card for the Undo window, then makes the decision. */
+    onDecide: (candidate: IdentityMatchCandidate, decision: 'accept' | 'reject', names: [string, string]) => void;
+  }
+
+  let { controller, onDecide }: Props = $props();
+  $effect(() => { void controller.rows; untrack(() => controller.requestSummaries()); });
+  const history = $derived(controller.identityState === 'accepted' || controller.identityState === 'rejected');
+
+  $effect(() => {
+    const id = controller.lastMerge?.candidateID;
+    if (id && !history && !controller.loading && controller.rows.some(row => row.id === id)) {
+      void tick().then(() => document.getElementById(`duplicate-${id}`)?.querySelector<HTMLButtonElement>('.footer button:last-child')?.focus());
+    }
+  });
+
+  function summaryOf(key: string): EndpointSummary | 'failed' | undefined {
+    return controller.summaries.get(key);
+  }
+
+  function nameOf(key: string): string {
+    const summary = summaryOf(key);
+    return summary && summary !== 'failed' ? summary.name : 'Unknown person';
+  }
+
+  // A match between two saved people still merges: the server asks which one to keep.
+  function blocked(candidate: IdentityMatchCandidate): boolean {
+    return !candidate.actionable && candidate.blocker !== 'person_merge_required';
+  }
+
+  function conflicted(candidate: IdentityMatchCandidate): boolean {
+    return candidate.state === 'conflict' || Boolean(candidate.blocker);
+  }
+
+  const decidedLabel: Record<string, string> = { accepted: 'Merged', rejected: 'Kept separate' };
+</script>
+
+<div class="duplicates">
+  <div class="toolbar">
+    <SegmentedControl
+      ariaLabel="Show"
+      value={history ? 'history' : 'waiting'}
+      options={[
+        { value: 'waiting', label: 'To review' },
+        { value: 'history', label: 'History' },
+      ]}
+      onchange={(value) => controller.setIdentityState(value === 'history' ? 'accepted' : 'candidate')}
+    />
+  </div>
+
+  {#if controller.error}
+    <EmptyState title={controller.error}  />
+  {:else if controller.loading && controller.rows.length === 0}
+    <p class="status" role="status">Loading…</p>
+  {:else if controller.rows.filter(row => !controller.hidden.has(row.id)).length === 0}
+    <EmptyState title={history ? 'Nothing decided yet' : 'No possible duplicates'} />
+  {:else}
+    <ul class="cards">
+      {#each controller.rows.filter(row => !controller.hidden.has(row.id)) as candidate (candidate.id)}
+        {@const pair = [endpointKey(candidate, 'left'), endpointKey(candidate, 'right')] as const}
+        <li id={`duplicate-${candidate.id}`} class="card" tabindex="-1" aria-label={`${nameOf(pair[0])} and ${nameOf(pair[1])}`}>
+          <div class="people">
+            {#each pair as id (id)}
+              {@const summary = summaryOf(id)}
+              <div class="person">
+                <IdentityAvatar label={nameOf(id)} seed={id} size={32} />
+                <div class="text">
+                  <span class="name">{nameOf(id)}</span>
+                  {#if summary && summary !== 'failed'}
+                    <span class="detail">{summary.address}</span>
+                    <span class="detail" data-mono>{joinParts([relativeDate(summary.lastAt), messageCount(summary.count)])}</span>
+                  {:else if !summary}
+                    <span class="detail">Loading…</span>
+                  {:else}<Button label="Retry person" size="sm" onclick={() => controller.retrySummary(id)} />
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+          <div class="footer">
+            <span class="basis">
+              {#if history}
+                {decidedLabel[candidate.state] ?? candidate.state} · {relativeDate(candidate.decided_at ?? candidate.updated_at)}
+              {:else if conflicted(candidate)}
+                {basisLine(candidate)}. {blockerLine(candidate.blocker)}
+              {:else}
+                {basisLine(candidate)}
+              {/if}
+            </span>
+            {#if !history}
+              <Button
+                label="Keep separate"
+                onclick={() => onDecide(candidate, 'reject', [nameOf(pair[0]), nameOf(pair[1])])}
+              />
+              <Button
+                tone="info"
+                surface="solid"
+                label="Merge"
+                disabled={blocked(candidate) || controller.isDecisionPending(candidate.id)}
+                onclick={() => onDecide(candidate, 'accept', [nameOf(pair[0]), nameOf(pair[1])])}
+              />
+            {/if}
+          </div>
+          {#if !history && controller.lastMerge?.candidateID === candidate.id}<p role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
+          <details><summary>Evidence and notes</summary>
+            <IdentityCandidateCard {candidate} pending={true} onAccept={() => undefined} onReject={() => undefined} showActions={false} />
+            {#if !history}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}
+          </details>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+  {#if controller.staleDecision}<p role="alert">Identity saved; the cache refresh failed.<Button label="Retry identity cache" onclick={() => void controller.retryCache()} /></p>{/if}
+  {#if controller.decisionError}<p role="alert">{controller.decisionError}</p>{/if}
+  {#if controller.status}<p role="status">{controller.status}</p>{/if}
+  {#if controller.pageError}<p role="alert">{controller.pageError}<Button label="Retry page" onclick={() => void controller.retryPage()} /></p>{/if}
+  <nav aria-label="Duplicate pages"><Button label="Previous" disabled={controller.loading || !controller.hasPreviousPage} onclick={() => void controller.loadPreviousPage()} /><span>Page {controller.offset / 10 + 1}</span><Button label="Next" disabled={controller.loading || !controller.hasNextPage} onclick={() => void controller.loadNextPage()} /></nav>
+</div>
+
+<style>
+  nav { display: flex; align-items: center; gap: var(--control-gap); }
+  details, label { display: grid; gap: var(--control-gap); }
+  .duplicates {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--field-gap);
+    overflow: auto;
+    padding: var(--section-gap) var(--page-gutter);
+  }
+
+  .toolbar {
+    display: flex;
+  }
+
+  .cards {
+    display: grid;
+    max-width: 880px;
+    margin: 0;
+    padding: 0;
+    gap: var(--field-gap);
+    list-style: none;
+  }
+
+  .card {
+    display: grid;
+    gap: var(--field-gap);
+    padding: var(--pane-pad-x);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .people {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--section-gap);
+  }
+
+  .person {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: var(--control-gap);
+  }
+
+  .text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .name {
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium, 500);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: var(--control-gap);
+    padding-top: var(--divider-gap);
+    border-top: 1px solid var(--border-muted);
+  }
+
+  .basis {
+    min-width: 0;
+    flex: 1;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+
+  .status {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  @media (max-width: 640px) {
+    .people {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

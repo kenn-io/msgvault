@@ -179,7 +179,7 @@ describe('ProfileHistoryDialog', () => {
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
     expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
-    expect(screen.getByRole('dialog', { name: 'Profile history' })).toBeDefined();
+    expect(screen.getByRole('dialog', { name: 'History' })).toBeDefined();
   });
 
   it('opening History preserves a conflicted draft', async () => {

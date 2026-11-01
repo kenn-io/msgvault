@@ -29,8 +29,6 @@ export const DELETIONS_ITEM: NavigationItem = { id: 'deletions', label: 'Staged 
 export const SETTINGS_ITEM: NavigationItem = { id: 'settings', label: 'Settings', icon: Settings };
 
 export function workspaceLabel(id: ExploreWorkspace): string {
-  if (id === 'directory') return 'Directory';
-  if (id === 'directory_review') return 'Reviews';
   if (id === 'deletions') return 'Staged deletions';
   return [...NAVIGATION_ITEMS, SETTINGS_ITEM].find((item) => item.id === id)?.label ?? 'msgvault';
 }
@@ -42,6 +40,7 @@ export function relationshipDestination(participantID: number) {
     relationshipFacet: 'people' as const,
     relationshipTarget: `cluster:${participantID}`,
     directoryPersonID: null,
+    peopleDuplicates: false,
     relationshipFiles: false,
     relationshipShowAll: false,
     analysisTarget: null,

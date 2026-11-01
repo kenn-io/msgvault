@@ -6,7 +6,7 @@ import { installMixedArchive } from './fixtures/mixed-archive';
 
 function directoryURL(personID?: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'directory', ...(personID === undefined ? {} : { directoryPersonID: personID })
+    workspace: 'relationships', relationshipSaved: true, ...(personID === undefined ? {} : { directoryPersonID: personID })
   }))}`;
 }
 
@@ -40,7 +40,7 @@ test('Directory lists durable people, opens People Files, and scopes files to th
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL());
 
-  const directory = page.getByRole('main', { name: 'Directory' });
+  const directory = page.getByRole('main', { name: 'People' });
   await expect(directory).toBeVisible();
   const row = page.getByRole('row', { name: /Archive Person/ });
   await expect(row).toBeVisible();
@@ -68,10 +68,11 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL());
 
-  const directory = page.getByRole('main', { name: 'Directory' });
+  const directory = page.getByRole('main', { name: 'People' });
   await expect(directory.getByRole('row', { name: /Archive Person/ })).toBeVisible();
-  await directory.getByRole('button', { name: 'Filters' }).click();
-  const panel = directory.getByRole('group', { name: 'Directory filters' });
+  await directory.getByRole('button', { name: 'Filter' }).click();
+  await page.getByText('Profile filters', { exact: true }).click();
+  const panel = directory.getByRole('group', { name: 'Profile filters' });
   const chip = directory.getByRole('button', { name: 'Remove Last contacted after Jan 1, 2026 filter' });
   await expect(chip).toHaveCount(0);
 
@@ -84,7 +85,8 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await page.reload();
   await expect(chip).toBeVisible();
   await expect.poll(() => afterBoundaries.at(-1)).toBe('2026-01-01T00:00:00Z');
-  await directory.getByRole('button', { name: 'Filters' }).click();
+  await directory.getByRole('button', { name: 'Filter' }).click();
+  await page.getByText('Profile filters', { exact: true }).click();
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('2026-01-01');
 
   await chip.click();
@@ -243,7 +245,7 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
   await page.getByRole('button', { name: 'Load more people' }).click();
   await expect(page.getByRole('alert')).toContainText('Synthetic Directory changed while paging.');
   await expect(page.getByText('Retained Person')).toBeVisible();
-  await page.getByRole('button', { name: 'Reload directory' }).click();
+  await page.getByRole('button', { name: 'Reload people' }).click();
   await expect(page.getByText('Reloaded Person')).toBeVisible();
   await expect(page.getByText('Retained Person')).toBeHidden();
 });
