@@ -37,7 +37,7 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { ExploreLoader } from '../../explore/loader.svelte';
+  import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState, navigationFingerprint } from '../../explore/state.svelte';
@@ -279,8 +279,8 @@
     exploreState.closeOperationHistory();
   }
   let displayOpen = $state(false);
-  let personMessagesState = $state<ExploreState>();
-  const messageDisplayState = $derived(personMessagesState ?? (exploreState.current.workspace === 'everything' ? exploreState : undefined));
+  let personMessages = $state<MessagesTable>();
+  const messageDisplayState = $derived(personMessages?.state ?? (exploreState.current.workspace === 'everything' ? exploreState : undefined));
   let resultsWidth = $state(0);
   const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
@@ -932,7 +932,7 @@
     control?.click();
   }
   function changeMessageColumns(columns: ExploreURLState['columns']): void {
-    if (personMessagesState) personMessagesState.replaceTransient({ columns });
+    if (personMessages) personMessages.state.replaceTransient({ columns });
     else replaceTransient({ columns });
   }
   function fixedSortNotice(): void {
@@ -943,12 +943,12 @@
         : 'Messages is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
-  function navigateReader(delta: number): void {
-    if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
-    const index = loader.rows.findIndex((row) => row.key === exploreState.current.selectedRow);
+  function navigateReader(delta: number, { state, loader: { rows }, openRow: open }: MessagesTable = personMessages ?? { state: exploreState, loader, openRow }): void {
+    if (!state.current.selectedRow || rows.length === 0) return;
+    const index = rows.findIndex((row) => row.key === state.current.selectedRow);
     if (index < 0) return;
-    const next = loader.rows[Math.max(0, Math.min(loader.rows.length - 1, index + delta))];
-    if (next && next.key !== exploreState.current.selectedRow) openRow(next);
+    const next = rows[Math.max(0, Math.min(rows.length - 1, index + delta))];
+    if (next && next.key !== state.current.selectedRow) open(next);
   }
   function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined, init: KeyboardEventInit = {}): void {
     const resolvedKey = key ?? event?.key;
@@ -1309,7 +1309,7 @@
         <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
         <PeopleWorkspace
-          onMessagesStateChange={(state) => personMessagesState = state}
+          onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           directory={directoryController}
           urlState={exploreState.current}
