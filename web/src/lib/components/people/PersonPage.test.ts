@@ -114,15 +114,15 @@ it('shows Identities only on the person Details tab', async () => {
   await controller.openTarget(target, {}, false);
   const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
-    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(screen.getByRole('heading', { name: 'Identities' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Addresses' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
-    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
     await view.rerender({ filesOpen: false });
-    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
