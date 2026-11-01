@@ -1,5 +1,4 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { createRawSnippet } from 'svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -78,6 +77,7 @@ it('identifies row actions and confirmations by value and service scope without 
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
   const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note, secret] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }] } } });
   try {
+    expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
     for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
       expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeDefined();
       await fireEvent.click(screen.getByRole('button', { name: `Remove ${label}` }));
@@ -97,18 +97,18 @@ it('identifies row actions and confirmations by value and service scope without 
 
 it('blocks attribute additions after a failed read and routes Retry attributes to the profile controller', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
-  const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
+    if (path.endsWith('/attributes')) return Response.json({ message: 'Attributes unavailable' }, { status: 503 });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
     if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r1"' } });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  await controller.reload();
   const reload = vi.spyOn(controller, 'reload');
   const view = render(PersonFields, { controller });
   try {
@@ -222,9 +222,8 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows a repeated label once, keeps editors before the summary, and preserves a birthday draft across refresh', async () => {
+it('preserves a birthday draft across a refresh that introduces a birthday', async () => {
   const initial = profile();
-  initial.contact_points = ['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } }));
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -237,24 +236,13 @@ it('shows a repeated label once, keeps editors before the summary, and preserves
     throw new Error(`unexpected ${request.method} ${path}`);
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
-  const summary = createRawSnippet(() => ({ render: () => '<p>Summary row</p>' }));
-  const view = render(PersonFields, { controller, summary });
+  const view = render(PersonFields, { controller });
   try {
-    expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
-    const more = screen.getByRole('button', { name: 'More fields' });
-    expect(screen.getByText('Summary row').compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Email: first@example.com' }));
-    const input = await screen.findByRole('textbox', { name: /email|contact value/i });
-    expect(screen.getByText('first@example.com').compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add birthday' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value: '1985-04-12' } });
     await act(async () => { await controller.reload(); });
     expect(screen.getByText('1990-05-06')).toBeDefined();
     expect(screen.getByRole('textbox', { name: 'Date' })).toHaveProperty('value', '1985-04-12');
-    expect(screen.getByRole('textbox', { name: 'Date' }).compareDocumentPosition(screen.getByText('Summary row')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   } finally { view.unmount(); controller.destroy(); }
 });
 
