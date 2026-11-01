@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -44,7 +45,7 @@ func TestStatsJSON(t *testing.T) {
 		{name: "grant", mode: "delegated", label: "agent grant", kind: "agent_grant", wantLabel: "agent grant", active: 8, deleted: 3, total: 11, sources: 2, scopeSources: 2},
 		{name: "empty grant", mode: "delegated", label: "agent grant", kind: "agent_grant", wantLabel: "agent grant"},
 		{name: "delegated account", mode: "delegated", account: "reader@example.test", label: "Resolved account", kind: "account", wantLabel: "Resolved account", sources: 2, scopeSources: 2},
-		{name: "delegated collection", mode: "delegated", collection: "team", label: "Resolved team", kind: "collection", wantLabel: "Resolved team", deleted: 3, total: 3, sources: 2, scopeSources: 2},
+		{name: "delegated collection", mode: "delegated", collection: "team", label: "agent grant", kind: "collection", wantLabel: "agent grant", deleted: 3, total: 3, sources: 2, scopeSources: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -73,18 +74,18 @@ func TestStatsJSON(t *testing.T) {
 			var trailing any
 			require.ErrorIs(decoder.Decode(&trailing), io.EOF, "exactly one JSON object")
 			want := map[string]any{
-				"total_messages": json.Number(fmt.Sprint(tc.total)), "active_messages": json.Number(fmt.Sprint(tc.active)),
-				"source_deleted_messages": json.Number(fmt.Sprint(tc.deleted)), "total_accounts": json.Number(fmt.Sprint(tc.sources)),
-				"total_threads": json.Number(fmt.Sprint(threads)), "total_attachments": json.Number(fmt.Sprint(attachments)),
-				"total_labels": json.Number(fmt.Sprint(labels)),
+				"total_messages": json.Number(strconv.FormatInt(tc.total, 10)), "active_messages": json.Number(strconv.FormatInt(tc.active, 10)),
+				"source_deleted_messages": json.Number(strconv.FormatInt(tc.deleted, 10)), "total_accounts": json.Number(strconv.FormatInt(tc.sources, 10)),
+				"total_threads": json.Number(strconv.FormatInt(threads, 10)), "total_attachments": json.Number(strconv.FormatInt(attachments, 10)),
+				"total_labels": json.Number(strconv.FormatInt(labels, 10)),
 			}
-			scope := map[string]any{"kind": tc.kind, "source_count": json.Number(fmt.Sprint(tc.sources))}
+			scope := map[string]any{"kind": tc.kind, "source_count": json.Number(strconv.FormatInt(tc.sources, 10))}
 			if tc.wantLabel != "" {
 				scope["label"] = tc.wantLabel
 			}
 			want["scope"] = scope
 			if tc.mode != "delegated" {
-				want["database_size_bytes"] = json.Number(fmt.Sprint(tc.size))
+				want["database_size_bytes"] = json.Number(strconv.FormatInt(tc.size, 10))
 				want["database_size_scope"] = "global"
 			}
 			assert.Equal(want, got, "complete JSON contract, including zero fields and no endpoint metadata")
