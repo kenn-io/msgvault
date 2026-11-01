@@ -1987,7 +1987,7 @@ func configuredPersonSemanticProviderProfile(
 		)
 	}
 	config := deps.vectorConfig()
-	config, err := resolveLocalVectorConfig(context.Background(), config)
+	config, err := discoverLocalVectorConfig(context.Background(), config)
 	if err != nil {
 		return vector.SemanticPersonEmbeddingProfile{}, err
 	}

@@ -105,6 +105,10 @@ func (s *Server) handlePutProviderCredential(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", "Could not read settings")
 		return
 	}
+	if credentialID == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
+		writeError(w, http.StatusBadRequest, "local_embeddings_no_credentials", "Local embeddings don't use provider credentials")
+		return
+	}
 	binding, ok := providerCredentialBindingForID(cfg, credentialID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "provider_not_found", "Configured provider was not found")
@@ -180,6 +184,9 @@ func providerCredentialRestartRequired(id string) bool {
 func providerCredentialBindingForID(cfg *config.Config, id string) (providerCredentialBinding, bool) {
 	switch id {
 	case providercredentials.VectorEmbeddingsID:
+		if cfg.Vector.Embeddings.LocalOnly {
+			return providerCredentialBinding{}, false
+		}
 		return providerCredentialBinding{id: id, endpoint: cfg.Vector.Embeddings.Endpoint,
 			environment: cfg.Vector.Embeddings.APIKeyEnv}, true
 	case providercredentials.VectorMultimodalID:

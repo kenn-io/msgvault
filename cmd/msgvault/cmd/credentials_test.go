@@ -270,3 +270,18 @@ func TestCredentialsRejectInvalidInputsAndPeopleProviderID(t *testing.T) {
 		})
 	}
 }
+
+func TestCredentialsLocalEmbeddingsRejectsProviderKeys(t *testing.T) {
+	for _, args := range [][]string{
+		{"set", providercredentials.VectorEmbeddingsID, "--stdin"},
+		{"set", providercredentials.VectorEmbeddingsID, "--stdin", "--endpoint", "https://api.openai.com/v1"},
+	} {
+		cfg := credentialsTestConfig(t)
+		cfg.Vector.Embeddings.LocalOnly = true
+		_, err := runCredentialsTestCommand(t, cfg, "synthetic-key", args...)
+		require.ErrorContains(t, err, "local embeddings do not use provider credentials")
+		snapshot, err := providercredentials.Read(cfg.TokensDir())
+		require.NoError(t, err)
+		assert.False(t, snapshot.Stored(providercredentials.VectorEmbeddingsID))
+	}
+}

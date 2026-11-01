@@ -302,7 +302,9 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		detection.ollamaEndpoint = server + "/v1"
 		detection.ollamaLoopback = embeddingProviderName(server) == "local"
 	}
-	if detection.localEmbeddings || needsLocalText {
+	if needsLocalText && !detection.localEmbeddings && detection.ollamaLoopback && detection.ollama.Reachable && detection.ollama.hasModel(setupOllamaTextModel) {
+		detection.embeddingEndpoint = detection.ollamaEndpoint
+	} else if detection.localEmbeddings || needsLocalText {
 		dir, err := localEmbeddingsDir()
 		if err != nil {
 			detection.embeddingError = fmt.Errorf("local embedding directory: %w", err)
@@ -526,7 +528,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 	switch {
 	case loaded.Vector.Enabled && !detection.localEmbeddings:
 		lane.Action = planActionKeep
-		lane.Provider = embeddingProviderName(embeddings.Endpoint)
+		lane.Provider = textEmbeddingProviderName(embeddings)
 		lane.Model = embeddings.Model
 		lane.Reason = "already configured; switching the embedding policy requires `msgvault embeddings build --full-rebuild`"
 		if !embeddings.LocalOnly && embeddings.Model == setupOllamaTextModel && embeddingProviderName(embeddings.Endpoint) == "local" {
@@ -570,7 +572,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			lane.Action, lane.Reason = planActionPending, detection.embeddingError.Error()
 			return lane
 		}
-		localOnly := detection.localEmbeddings || detection.embeddingEndpoint != "http://127.0.0.1:11434/v1"
+		localOnly := detection.localEmbeddings || (detection.embeddingEndpoint != detection.ollamaEndpoint && detection.embeddingEndpoint != "http://127.0.0.1:11434/v1")
 		lane.installLocal = localOnly
 		endpoint := detection.embeddingEndpoint
 		if localOnly {

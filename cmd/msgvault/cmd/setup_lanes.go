@@ -16,7 +16,6 @@ import (
 	"text/tabwriter"
 
 	"go.kenn.io/docbank/document/mistral"
-	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
@@ -236,14 +235,8 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
 	state := &setupConsentState{}
 	resolved := *cfg
-	if cfg.Vector.Embeddings.LocalOnly {
-		dir, dirErr := localEmbeddingsDir()
-		if dirErr == nil {
-			if endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true}); err == nil {
-				resolved.Vector.Embeddings.Endpoint = endpoint
-				resolved.Vector.Embeddings.APIKeyEnv = ""
-			}
-		}
+	if vecCfg, err := discoverLocalVectorConfig(ctx, cfg.Vector); err == nil {
+		resolved.Vector = vecCfg
 	}
 	cfg = &resolved
 	if cfg.Vector.Enabled && cfg.Attachments.Documents.Index.Embeddings.Enabled {
@@ -353,6 +346,13 @@ func embeddingProviderName(endpoint string) string {
 	return "custom"
 }
 
+func textEmbeddingProviderName(embeddings vector.EmbeddingsConfig) string {
+	if embeddings.LocalOnly {
+		return "local"
+	}
+	return embeddingProviderName(embeddings.Endpoint)
+}
+
 func embedScheduleSummary(schedule vector.EmbedScheduleConfig) string {
 	parts := []string{}
 	if schedule.Cron != "" {
@@ -390,10 +390,7 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	embeddings := cfg.Vector.Embeddings
 	if cfg.Vector.Enabled {
 		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(embeddings.Endpoint)
-		if embeddings.LocalOnly {
-			lane.Provider = "local"
-		}
+		lane.Provider = textEmbeddingProviderName(embeddings)
 		lane.Model = embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		if embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
@@ -429,7 +426,7 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	switch {
 	case cfg.Vector.Enabled && cfg.Vector.People.Enabled:
 		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
+		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
 		lane.Reason = "one curated document per person rides the text-search generation"
@@ -580,7 +577,7 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	switch {
 	case documents.Enabled && documents.Index.Embeddings.Enabled:
 		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
+		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"

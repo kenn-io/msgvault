@@ -43,6 +43,9 @@ func desiredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.Docu
 	if cfg == nil || !cfg.Vector.Enabled || !cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		return store.DocumentVectorGenerationSpec{}, errors.New("document embeddings are disabled; enable [vector] and [attachments.documents.index.embeddings]")
 	}
+	if _, err := resolveLocalVectorConfig(ctx, cfg.Vector); err != nil {
+		return store.DocumentVectorGenerationSpec{}, err
+	}
 	return configuredDocumentVectorSpec(ctx, st)
 }
 
@@ -57,7 +60,7 @@ func configuredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.D
 	}
 	resolved := *cfg
 	var err error
-	resolved.Vector, err = resolveLocalVectorConfig(ctx, cfg.Vector)
+	resolved.Vector, err = discoverLocalVectorConfig(ctx, cfg.Vector)
 	if err != nil {
 		return store.DocumentVectorGenerationSpec{}, err
 	}
@@ -94,7 +97,7 @@ func configuredDocumentVectorConsentSpec(spec store.DocumentVectorGenerationSpec
 	if purpose == "query_embedding" {
 		fingerprint = vectordocument.QueryEgressFingerprint
 	}
-	vecCfg, err := resolveLocalVectorConfig(context.Background(), state.cfg.Vector)
+	vecCfg, err := discoverLocalVectorConfig(context.Background(), state.cfg.Vector)
 	if err != nil {
 		return store.DocumentVectorConsentSpec{}, err
 	}
@@ -158,6 +161,13 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDocumentVectorCommandHTTP(command, args, false)
 			}
+			state := invocationFromCommand(command)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			if _, err := resolveLocalVectorConfig(command.Context(), state.cfg.Vector); err != nil {
+				return err
+			}
 			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
 				spec, err := configuredDocumentVectorSpec(command.Context(), st)
 				if err != nil {
@@ -195,7 +205,7 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 		return
 	}
 	resolved := *state.cfg
-	vecCfg, err := resolveLocalVectorConfig(context.Background(), resolved.Vector)
+	vecCfg, err := discoverLocalVectorConfig(context.Background(), resolved.Vector)
 	if err != nil {
 		return
 	}
@@ -405,7 +415,7 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 				return nil
 			}
 			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
-				spec, err := desiredDocumentVectorSpec(command.Context(), st)
+				spec, err := configuredDocumentVectorSpec(command.Context(), st)
 				if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
 					if jsonOutput {
 						return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), map[string]bool{"enabled": true, "configured": false}, json.Deterministic(true))

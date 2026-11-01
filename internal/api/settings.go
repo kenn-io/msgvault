@@ -741,7 +741,11 @@ func (s *Server) buildSettingsResponse(
 		if definition.inherited != nil {
 			setting.Inherited = definition.inherited(cfg)
 		}
-		if definition.credentialID != "" {
+		if definition.credentialID == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
+			setting.ReadOnly = true
+			setting.Description = "Local embeddings don't use provider credentials."
+			setting.Secret = &SecretSettingState{Configured: false, Source: string(providercredentials.SourceNone)}
+		} else if definition.credentialID != "" {
 			value, state, err := credentials.Resolve(definition.credentialID,
 				definition.credentialEndpoint(cfg), definition.credentialEnvironment(cfg), osLookupEnv)
 			if errors.Is(err, providercredentials.ErrOriginMismatch) {
@@ -968,6 +972,9 @@ func settingsEdits(current *config.Config, updates []SettingUpdate) ([]config.Ed
 			return nil, false, fmt.Errorf("%w: %s", errInvalidSettingUpdate, update.Key)
 		}
 		edits = append(edits, config.Edit{Key: update.Key, Value: value})
+		if update.Key == "vector.embeddings.endpoint" {
+			edits = append(edits, config.Edit{Key: "vector.embeddings.local_only", Value: false})
+		}
 		restartRequired = restartRequired || definition.restartRequired
 	}
 	edits = append(edits, credentialSeveranceEdits(current, edits)...)

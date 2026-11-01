@@ -145,6 +145,9 @@ func validateHeadlessCredentialID(id string) error {
 func configuredCredentialEndpoint(cfg *config.Config, id string) (string, error) {
 	switch id {
 	case providercredentials.VectorEmbeddingsID:
+		if cfg.Vector.Embeddings.LocalOnly {
+			return "", errors.New("local embeddings do not use provider credentials")
+		}
 		return cfg.Vector.Embeddings.Endpoint, nil
 	case providercredentials.VectorMultimodalID:
 		return cfg.Vector.Multimodal.Endpoint, nil
@@ -159,6 +162,9 @@ func configuredCredentialEndpoint(cfg *config.Config, id string) (string, error)
 }
 
 func putHeadlessCredential(cfg *config.Config, snapshot providercredentials.Snapshot, id, endpoint, key string) (providercredentials.Snapshot, error) {
+	if id == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
+		return providercredentials.Snapshot{}, errors.New("local embeddings do not use provider credentials")
+	}
 	if id == providercredentials.PersonEnrichmentSuppressionID {
 		if _, err := personenrichment.NewSuppressionHasher([]byte(key)); err != nil {
 			return providercredentials.Snapshot{}, fmt.Errorf("validate suppression key: %w", err)
@@ -172,8 +178,10 @@ type credentialEnvironment struct{ id, environment string }
 
 func configuredCredentialEnvironments(cfg *config.Config) []credentialEnvironment {
 	entries := []credentialEnvironment{
-		{providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.APIKeyEnv},
 		{providercredentials.VectorMultimodalID, cfg.Vector.Multimodal.APIKeyEnv},
+	}
+	if !cfg.Vector.Embeddings.LocalOnly {
+		entries = append(entries, credentialEnvironment{providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.APIKeyEnv})
 	}
 	if cfg.People.Enrichment.SuppressionKeyEnv != providercredentials.StoredSuppressionEnvironment {
 		entries = append(entries, credentialEnvironment{providercredentials.PersonEnrichmentSuppressionID, cfg.People.Enrichment.SuppressionKeyEnv})

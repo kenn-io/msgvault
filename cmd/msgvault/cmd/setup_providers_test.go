@@ -1312,7 +1312,7 @@ api_key_env = "STALE_PROVIDER_KEY"
 
 	loaded := fixture.load(t)
 	assert.True(loaded.Vector.Enabled)
-	assert.Equal("http://127.0.0.1:11434/v1", loaded.Vector.Embeddings.Endpoint)
+	assert.Equal("http://localhost:11434/v1", loaded.Vector.Embeddings.Endpoint)
 	assert.Equal(setupOllamaTextModel, loaded.Vector.Embeddings.Model)
 	assert.Equal(setupOllamaTextDim, loaded.Vector.Embeddings.Dimension)
 	assert.Equal(setupOllamaDocPrefix, loaded.Vector.Embeddings.DocumentPrefix)
@@ -1785,4 +1785,25 @@ max_input_chars = 2000
 			}
 		})
 	}
+}
+
+func TestSetupProvidersPreservesCustomLocalOllama(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[chat]
+server = "http://localhost:11435"
+`)
+	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text"}}
+	output, err := fixture.run(t, "providers", "--yes", "--json")
+	require.NoError(err, output)
+	cfg := fixture.load(t)
+	assert.Equal("http://localhost:11435/v1", cfg.Vector.Embeddings.Endpoint)
+	assert.False(cfg.Vector.Embeddings.LocalOnly)
+	cfg.Vector.Embeddings.LocalOnly = true
+	cfg.Vector.Embeddings.Endpoint = ""
+	cfg.Vector.People.Enabled = true
+	cfg.Attachments.Documents.Enabled = true
+	cfg.Attachments.Documents.Index.Embeddings.Enabled = true
+	assert.Equal("local", personSearchLane(cfg, setupEnvironment{}).Provider)
+	assert.Equal("local", documentVectorsLane(cfg, setupEnvironment{}).Provider)
 }
