@@ -160,7 +160,7 @@
     {/if}
     {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
     {#if controller}<AttributeSection {controller} historyOnly />{/if}
-    <PersonMergeHistory {client} {personID} {onOpenPerson} {onSplitCommitted} />
+    <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} {onSplitCommitted} />
   </div>
   {#snippet footer()}
     <Button label="Close" onclick={onClose} />
