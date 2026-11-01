@@ -2915,6 +2915,40 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
+it('returns keyboard focus to the restored saved view after Undo', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const width = window.innerWidth;
+  window.innerWidth = 1024;
+  const requests: string[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    requests.push(request.method);
+    if (new URL(request.url).pathname.endsWith('/saved-views')) return Response.json({ saved_views: [view(3, 'Project notes')] });
+    return Response.json(exploreResponse());
+  });
+  const rendered = render(AppShell, { client });
+  try {
+    const actions = await screen.findByRole('button', { name: 'Project notes actions' });
+    actions.focus();
+    await fireEvent.click(actions);
+    const deleteItem = screen.getByRole('menuitem', { name: 'Delete' });
+    deleteItem.focus();
+    // jsdom needs the click a browser dispatches for keyboard activation.
+    await fireEvent.click(deleteItem);
+    const undo = await screen.findByRole('button', { name: 'Undo' });
+    await waitFor(() => expect(document.activeElement).toBe(undo));
+    expect(screen.queryByRole('button', { name: 'Project notes' })).toBeNull();
+    await fireEvent.click(undo);
+    const restored = await screen.findByRole('button', { name: 'Project notes' });
+    await waitFor(() => expect(document.activeElement).toBe(restored));
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(requests).not.toContain('DELETE');
+  } finally {
+    rendered.unmount();
+    window.innerWidth = width;
+  }
+});
+
 it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending => {
   window.history.replaceState(null, '', '/?workspace=everything');
   const width = window.innerWidth;
@@ -2940,8 +2974,48 @@ it.each(['undo', 'pagehide'])('wires sidebar deletion through %s', async ending 
     }
   } finally {
     rendered.unmount();
+    const expired = expire.mock.calls.length;
+    window.dispatchEvent(new Event('pagehide'));
+    expect(expire).toHaveBeenCalledTimes(expired);
     undo.mockRestore();
     expire.mockRestore();
+    window.innerWidth = width;
+  }
+});
+
+it('commits a saved-view deletion after the eight-second undo window', async () => {
+  window.history.replaceState(null, '', '/?workspace=everything');
+  const width = window.innerWidth;
+  window.innerWidth = 1024;
+  let deleted = false;
+  const deletes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/saved-views/3') && request.method === 'DELETE') {
+      deletes.push(request);
+      deleted = true;
+      return new Response(null, { status: 204 });
+    }
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: deleted ? [] : [view(3, 'Project notes')] });
+    return Response.json(exploreResponse());
+  });
+  const rendered = render(AppShell, { client });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Project notes actions' }));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(deletes).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].headers.get('If-Match')).toBe('"saved-view-3-r1"');
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Project notes' })).toBeNull();
+  } finally {
+    rendered.unmount();
+    vi.useRealTimers();
     window.innerWidth = width;
   }
 });
