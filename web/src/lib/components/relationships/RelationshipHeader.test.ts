@@ -1,9 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { PersonAttributeGroup } from '../../api/generated/models';
 import type { DomainSummary, PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
 import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -102,13 +100,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function attributeGroup(label: string, text: string): PersonAttributeGroup {
-  return {
-    definition: { universal_id: `u-${label}`, slug: label.toLowerCase(), label, is_sensitive: false, display_order: 0 },
-    current: [{ value: { type: 'text', text } }], history: []
-  } as unknown as PersonAttributeGroup;
-}
-
 /** Opens the "Same person…" dialog, searches for "Bob", selects the stubbed
  * search result (participant #99), and confirms. Exercises the real
  * LinkIdentityDialog end to end; its own search/select mechanics are
@@ -131,62 +122,10 @@ describe('RelationshipHeader', () => {
     expect(screen.getByText(/0 items/).closest('p')?.textContent?.trim()).toBe('0 items');
   });
 
-  it('shows current attributes for a durable person and opens their editor in Directory', async () => {
-    const loadAttributes = vi.fn(async () => [attributeGroup('Pronouns', 'they/them')]);
-    const onOpenDirectoryPerson = vi.fn();
-    render(RelationshipHeader, baseProps({
-      detail: { ...person(), profile: { id: 7, revision: 1 } },
-      loadAttributes, onOpenDirectoryPerson
-    }));
-
-    const summary = await screen.findByRole('region', { name: 'Attributes summary' });
-    expect(summary.textContent).toContain('Pronouns');
-    expect(summary.textContent).toContain('they/them');
-    expect(loadAttributes).toHaveBeenCalledWith(7);
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit attributes' }));
-    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
-  });
-
-  it('opens the durable Directory person without starting participant promotion', async () => {
-    const onOpenDirectory = vi.fn();
-    const onOpenDirectoryPerson = vi.fn();
-    render(RelationshipHeader, baseProps({
-      detail: { ...person(), profile: { id: 7, revision: 1 } },
-      onOpenDirectory, onOpenDirectoryPerson
-    }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
-    expect(onOpenDirectory).not.toHaveBeenCalled();
-  });
-
-  it('ignores attributes that finish loading after selecting another person', async () => {
-    let finishFirst: ((groups: PersonAttributeGroup[]) => void) | undefined;
-    const loadAttributes = vi.fn((id: number) => id === 7
-      ? new Promise<PersonAttributeGroup[]>((resolve) => { finishFirst = resolve; })
-      : Promise.resolve([attributeGroup('Status', 'active')]));
-    const props = baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, loadAttributes });
-    const { rerender } = render(RelationshipHeader, props);
-
-    await rerender({ ...props, detail: { ...person(), id: 99, profile: { id: 9, revision: 1 } } });
-    expect((await screen.findByRole('region', { name: 'Attributes summary' })).textContent).toContain('active');
-    finishFirst?.([attributeGroup('Status', 'stale')]);
-    await Promise.resolve();
-    await tick();
-    expect(screen.getByRole('region', { name: 'Attributes summary' }).textContent).not.toContain('stale');
-  });
-
-  it.each([false, true])('retains attributes when the same profile reloads (loading gap: %s)', async (loadingGap) => {
-    const loadAttributes = vi.fn(async () => [attributeGroup('Status', 'active')]);
-    const props = baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, loadAttributes });
-    const { rerender } = render(RelationshipHeader, props);
-    await screen.findByRole('region', { name: 'Attributes summary' });
-
-    if (loadingGap) await rerender({ ...props, detail: null, loading: true });
-    await rerender({ ...props, detail: { ...person(), profile: { id: 7, revision: 1 } } });
-
-    expect(screen.getByRole('region', { name: 'Attributes summary' }).textContent).toContain('active');
-    expect(loadAttributes).toHaveBeenCalledTimes(1);
+  it('shows a title heading in place of the counts line when the page header already names the person', () => {
+    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
+    expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
+    expect(screen.queryByText(/items/)).toBeNull();
   });
 
   it('offers Messages and Files as explicit relationship views', async () => {
@@ -280,22 +219,6 @@ describe('RelationshipHeader', () => {
     expect(onFilesToggle).toHaveBeenCalledWith(true);
   });
 
-  it('hands the selected API participant ID to Directory and never offers domains', async () => {
-    const onOpenDirectory = vi.fn();
-    const { rerender } = render(RelationshipHeader, baseProps({ onOpenDirectory }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(onOpenDirectory).toHaveBeenCalledWith(12);
-
-    onOpenDirectory.mockClear();
-    await rerender(baseProps({ detail: { ...person(), profile: { id: 7, revision: 1 } }, onOpenDirectory }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(onOpenDirectory).toHaveBeenCalledWith(12);
-
-    await rerender(baseProps({ detail: domain(), onOpenDirectory }));
-    expect(screen.queryByRole('button', { name: 'Open in Directory' })).toBeNull();
-  });
-
   it('hides the identities section entirely for a single identity with nothing linked', () => {
     const single = { ...person(), identifiers: [person().identifiers![0]!] };
     render(RelationshipHeader, baseProps({ detail: single }));
@@ -313,17 +236,6 @@ describe('RelationshipHeader', () => {
     expect(linked.textContent).toContain('linked');
   });
 
-  it('keeps person actions separate from the Messages and Files view switch', () => {
-    render(RelationshipHeader, baseProps({ onOpenDirectory: vi.fn() }));
-
-    const actions = screen.getByRole('group', { name: 'Person actions' });
-    expect(within(actions).getByRole('button', { name: 'Open in Directory' })).toBeTruthy();
-    expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
-    expect(within(actions).queryByRole('radio', { name: 'Messages' })).toBeNull();
-    expect(screen.getByRole('radio', { name: 'Messages' })).toBeTruthy();
-    expect(screen.getByRole('radio', { name: 'Files 3' })).toBeTruthy();
-  });
-
   it('formats the counts date range with the month spelled out', () => {
     render(RelationshipHeader, baseProps());
 
@@ -338,11 +250,10 @@ describe('RelationshipHeader', () => {
   });
 
   it('renders a domain by domain name and person count, without identity chips or a Same person button', () => {
-    render(RelationshipHeader, baseProps({ detail: domain() }));
+    render(RelationshipHeader, baseProps({ detail: { ...domain(), activity_count: 9, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
 
     expect(screen.getByRole('heading', { name: 'example.com' })).toBeDefined();
-    expect(screen.getByText(/100 items/)).toBeDefined();
-    expect(screen.getByText(/8 people/)).toBeDefined();
+    expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
     expect(screen.queryByLabelText('Linked identities')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
   });
