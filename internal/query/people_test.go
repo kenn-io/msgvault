@@ -871,7 +871,7 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 				sort  SortSpec
 				first int64
 			}{
-				{name: "default relevance", sort: SortSpec{Field: "activity_count", Direction: "desc"}, first: hotID},
+				{name: "default relevance", sort: SortSpec{}, first: hotID},
 				{name: "most recent", sort: SortSpec{Field: "latest_at", Direction: "desc"}, first: coldID},
 			} {
 				t.Run(order.name, func(t *testing.T) {

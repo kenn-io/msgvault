@@ -51,7 +51,7 @@ it('refreshes the open person after linking and profile reconciliation', async (
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('clearing a calendar day through Files clears the conversation reader bounds', async () => {
+it('opening Files drops the selected day from the conversation reader', async () => {
   const at = '2026-07-18T10:00:00Z';
   vi.stubEnv('TZ', 'UTC');
   const conversations: URL[] = [];

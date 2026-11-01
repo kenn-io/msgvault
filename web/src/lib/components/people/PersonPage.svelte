@@ -53,6 +53,12 @@
     const bounds = localDayBoundsUTC(`${selectedDate}T00:00:00`);
     return { after: bounds.start, before: bounds.end };
   });
+  $effect(() => {
+    if (!selectedDate || !detail) return;
+    const year = Number(selectedDate.slice(0, 4));
+    if (domain) domainYear = year;
+    else if (controller.relationshipCalendarYear !== year) void controller.loadRelationshipYear(year);
+  });
   // Files pushes its own entry first, so this drops the cleared day only from that entry's reader.
   function clearDate(): void {
     selectedDate = null;
