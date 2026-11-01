@@ -33,7 +33,7 @@ import { canonicalFingerprint, hasValidSearchAuthority, predicateFingerprint } f
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
-import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../relationships/reader-history';
+import { relationshipHistoryState } from '../relationships/reader-history';
 import {
   normalizeSettingsNavigationAuthority,
   settingsNavigationTarget,
@@ -190,6 +190,8 @@ export const defaultExploreURLState: ExploreURLState = {
   relationshipTarget: null,
   relationshipShowAll: false,
   relationshipFiles: false,
+  relationshipSaved: false,
+  relationshipSort: 'closest',
   operationHistory: false,
   operationLane: '',
   operationKind: '',
@@ -528,6 +530,8 @@ function normalize(value: unknown): ExploreURLState {
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
     relationshipFiles: value.relationshipFiles === true,
+    relationshipSaved: value.relationshipSaved === true,
+    relationshipSort: value.relationshipSort === 'name' || value.relationshipSort === 'recent' ? value.relationshipSort : 'closest',
     operationHistory: value.operationHistory === true || (value.operationHistory === undefined && value.workspace === 'operations' &&
       !!(operationRunID(value.operationRunID) || operationStatus || operationLane || operationKind || operationState || operationStartedFrom || operationStartedBefore)),
     operationLane,
@@ -558,15 +562,15 @@ function normalize(value: unknown): ExploreURLState {
 // Fields that only describe one workspace stay out of the link when another
 // workspace is shared; browser history still carries them for Back/Forward.
 const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<ExploreWorkspace>>> = {
-  directoryQuery: ['directory'],
-  directoryContactState: ['directory'],
-  directoryCategory: ['directory'],
-  directoryOrganization: ['directory'],
-  directoryPrimaryChannel: ['directory'],
-  directoryLastContactAfter: ['directory'],
-  directoryLastContactBefore: ['directory'],
-  directorySort: ['directory'],
-  directoryPersonID: ['directory', 'directory_review'],
+  directoryQuery: ['directory', 'relationships'],
+  directoryContactState: ['directory', 'relationships'],
+  directoryCategory: ['directory', 'relationships'],
+  directoryOrganization: ['directory', 'relationships'],
+  directoryPrimaryChannel: ['directory', 'relationships'],
+  directoryLastContactAfter: ['directory', 'relationships'],
+  directoryLastContactBefore: ['directory', 'relationships'],
+  directorySort: ['directory', 'relationships'],
+  directoryPersonID: ['directory', 'directory_review', 'relationships'],
   reviewKind: ['directory_review'],
   identityState: ['directory_review'],
   relationshipReviewState: ['directory_review'],
@@ -583,6 +587,8 @@ const WORKSPACE_FIELDS: Partial<Record<keyof ExploreURLState, ReadonlyArray<Expl
   relationshipTarget: ['relationships'],
   relationshipShowAll: ['relationships'],
   relationshipFiles: ['relationships'],
+  relationshipSaved: ['relationships'],
+  relationshipSort: ['relationships'],
   settingsAuthority: ['settings'],
   settingsCategory: ['settings']
 };
@@ -642,6 +648,7 @@ export class ExploreState {
   // Drops a held leave whenever another navigation or history move commits.
   cancelHeldLeave?: () => void;
   private readonly browser: ExploreWindow;
+  private readonly detached: boolean;
   private readonly preferenceStorage: SearchModeStorage | null;
   private configuredDefaultSearchMode: ExploreSearchMode | undefined;
   private committed: ExploreURLState;
@@ -712,11 +719,19 @@ export class ExploreState {
   }
 
   constructor(
-    browser: ExploreWindow = window,
+    browser: ExploreWindow | null = window,
     preferenceStorage: SearchModeStorage | null = browser === globalThis.window
       ? availableSearchModeStorage()
       : null
   ) {
+    this.detached = browser === null;
+    if (browser === null) {
+      this.browser = window;
+      this.preferenceStorage = null;
+      this.historyIndex = 0;
+      this.committed = normalize(this.current);
+      return;
+    }
     this.browser = browser;
     this.preferenceStorage = preferenceStorage;
     this.historyIndex = browser.history.state?.exploreIndex ?? 0;
@@ -934,7 +949,7 @@ export class ExploreState {
   }
 
   destroy(): void {
-    this.browser.removeEventListener('popstate', this.handlePopState);
+    if (!this.detached) this.browser.removeEventListener('popstate', this.handlePopState);
   }
 
   private readURLState(): ExploreURLState {
@@ -974,8 +989,8 @@ export class ExploreState {
       (mode === 'push' || RESTORATION_INVALIDATING_FIELDS.has(key)))) {
       this.pendingRestorationEpoch = undefined;
     }
-    const baseSearch = this.browser.location.search;
-    if (mode === 'push') {
+    const baseSearch = this.detached ? '' : this.browser.location.search;
+    if (mode === 'push' && !this.detached) {
       const priorFocus = this.pendingSearchPriorFocus;
       const transient = Object.fromEntries(
         TRANSIENT_HISTORY_FIELDS
@@ -1000,6 +1015,10 @@ export class ExploreState {
     for (const key of keysToApply) {
       if (key in next) this.current[key] = next[key];
     }
+    if (this.detached) {
+      this.committed = normalize(this.current);
+      return;
+    }
     const search = serializeExploreURLState(this.current, baseSearch);
     const url = `${this.browser.location.pathname}${search}${this.browser.location.hash}`;
     if (mode === 'push') this.historyIndex += 1;
@@ -1012,8 +1031,7 @@ export class ExploreState {
   }
 
   private relationshipReaderHistoryState(state: ExploreURLState): Record<string, unknown> | null {
-    const snapshot = relationshipReaderHistory(this.browser.history.state, state.workspace, state.relationshipTarget);
-    return snapshot ? { [RELATIONSHIP_READER_HISTORY_KEY]: snapshot } : null;
+    return relationshipHistoryState(this.browser.history.state, state.workspace, state.relationshipTarget);
   }
 
   private operationHistoryDepth(): number {
