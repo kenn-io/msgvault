@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
+import OrganizationsSettings from '../settings/OrganizationsSettings.svelte';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
 function requestOf(input: RequestInfo | URL): Request {
@@ -120,17 +121,14 @@ describe('OrganizationEmploymentTab', () => {
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     }));
     controller.employments = [];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
+    render(OrganizationsSettings, { controller });
 
-    expect(screen.getByText('No employment records.')).toBeDefined();
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search organizations' }), { target: { value: 'synthetic' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search organizations' }));
-    expect(screen.getByRole('status').textContent).toContain('Searching organizations');
+    await waitFor(() => expect(controller.organizationsLoading).toBe(true));
     resolveSearch(Response.json({ error: 'unavailable', message: 'Organization search unavailable.' }, { status: 503 }));
     expect((await screen.findByRole('alert')).textContent).toContain('Organization search unavailable.');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Search organizations' }));
-    expect(await screen.findByRole('button', { name: 'Manage Synthetic Org' })).toBeDefined();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search organizations' }), { target: { value: 'synthetic again' } });
+    expect(await screen.findByRole('button', { name: 'Edit Synthetic Org' })).toBeDefined();
   });
 
   it('creates an employment for the exact selected person with user provenance and renders reconciled projection', async () => {
@@ -156,7 +154,7 @@ describe('OrganizationEmploymentTab', () => {
     controller.employmentProjection = { employment_id: 11, organization_id: 21, organization_name: 'Old Org', title: 'Engineer', vcard: {} };
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add employment' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
     await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Architect' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
@@ -167,8 +165,9 @@ describe('OrganizationEmploymentTab', () => {
     expect(postedBody).toMatchObject({ person_id: 7, organization_id: 21, source: 'user', title: 'Architect' });
     expect(postedBody.source_ref).toBeUndefined();
     expect(employmentReads).toBe(1);
-    expect(screen.getByText(/Primary organization: Synthetic Org/)).toBeDefined();
-    expect(screen.getAllByText(/Architect/)).toHaveLength(2);
+    expect(screen.getByText('Architect')).toBeDefined();
+    expect(controller.employmentProjection?.organization_name).toBe('Synthetic Org');
+    expect(screen.getAllByText(/Architect/)).toHaveLength(1);
     expect(screen.getByText(/Engineer/).closest('li')?.textContent).not.toContain('Primary');
   });
 
@@ -180,7 +179,7 @@ describe('OrganizationEmploymentTab', () => {
     }));
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add employment' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
     await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
     const create = screen.getByRole('button', { name: 'Create employment' });
     expect(create).toHaveProperty('disabled', false);
@@ -411,7 +410,7 @@ describe('OrganizationEmploymentTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete employment' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Confirm delete employment' }));
-    await waitFor(() => expect(screen.getByText('No employment records.')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('No work yet')).toBeDefined());
     expect(requests.find((request) => request.method === 'DELETE')?.headers.get('If-Match')).toBe('"employment-11-r2"');
   });
 
@@ -430,7 +429,7 @@ describe('OrganizationEmploymentTab', () => {
     }));
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add employment' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
     await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Draft role' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
@@ -456,9 +455,9 @@ describe('OrganizationEmploymentTab', () => {
       if (path === '/api/v1/organizations') return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
+    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'New organization' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
     const name = screen.getByRole('textbox', { name: 'Organization name' }) as HTMLInputElement;
     await fireEvent.input(name, { target: { value: 'Unknown Result Org' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
@@ -488,15 +487,15 @@ describe('OrganizationEmploymentTab', () => {
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.organizations = [organization()];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
+    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'New organization' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New Synthetic Org' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
     expect(await requests.find((request) => request.method === 'POST')!.json()).toMatchObject({ name: 'New Synthetic Org' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Manage Synthetic Org' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit Synthetic Org' });
     const organizationName = await within(dialog).findByRole('textbox', { name: 'Organization name' });
     await fireEvent.input(organizationName, { target: { value: 'Renamed Synthetic Org' } });
@@ -505,7 +504,7 @@ describe('OrganizationEmploymentTab', () => {
     expect(requests.find((request) => request.method === 'PATCH')?.headers.get('If-Match')).toBe('"organization-21-r2"');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Manage Renamed Synthetic Org' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
     readRevision = 3;
     await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Example Works' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
@@ -515,10 +514,10 @@ describe('OrganizationEmploymentTab', () => {
     expect(await put.json()).toMatchObject({ media: [{ content_hash: 'sha256:synthetic' }] });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Manage Synthetic Org' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Manage Synthetic Org' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Synthetic Org' })).toBeNull());
   });
 
   it('does not undo a concurrent organization retirement during an unrelated field edit', async () => {
@@ -542,9 +541,9 @@ describe('OrganizationEmploymentTab', () => {
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.organizations = [organization()];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
+    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Manage Synthetic Org' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Edited Org' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
@@ -587,9 +586,9 @@ describe('OrganizationEmploymentTab', () => {
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.organizations = [organization()];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
+    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Manage Synthetic Org' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
     await fireEvent.input(aliases, { target: { value: 'User Draft Alias' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'User Draft Category' } });
@@ -653,9 +652,9 @@ describe('OrganizationEmploymentTab', () => {
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.organizations = [organization()];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
+    render(OrganizationsSettings, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Manage Synthetic Org' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' }) as HTMLInputElement;
     await fireEvent.input(aliases, { target: { value: 'Retained Draft Alias' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
@@ -733,8 +732,8 @@ describe('OrganizationEmploymentTab', () => {
       if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return pending;
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     }));
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: 'New organization' }));
+    render(OrganizationsSettings, { controller });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Pending Org' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Close organization editor' }));

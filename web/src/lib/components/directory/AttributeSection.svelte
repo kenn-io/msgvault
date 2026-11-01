@@ -18,6 +18,7 @@
 
   interface Props {
     controller: DirectoryProfileController;
+    historyOnly?: boolean;
   }
 
   interface JoinedAttribute {
@@ -26,7 +27,7 @@
     history: PersonAttributeValue[];
   }
 
-  let { controller }: Props = $props();
+  let { controller, historyOnly = false }: Props = $props();
   let editing = $state<{ universalID: string; current?: PersonAttributeValue }>();
   let confirming = $state<{ universalID: string; current: PersonAttributeValue; position: number }>();
   let revealed = $state<Record<string, boolean>>({});
@@ -48,7 +49,7 @@
   let showEmpty = $state(false);
   let recentlyCreatedID = $state<string | null>(null);
   const emptyCount = $derived(fields.filter((field) => field.current.length === 0).length);
-  const visibleFields = $derived(showEmpty ? fields : fields.filter((field) =>
+  const visibleFields = $derived(historyOnly ? fields.filter((field) => field.history.length > 0) : showEmpty ? fields : fields.filter((field) =>
     field.current.length > 0 || editing?.universalID === field.definition.universal_id || recentlyCreatedID === field.definition.universal_id
   ));
 
@@ -229,7 +230,7 @@
 <section id="person-attributes" class="attribute-section" aria-label="Attributes" tabindex="-1">
   <header class="section-header">
     <h3>Attributes</h3>
-    <Button
+    {#if !historyOnly}<Button
       label="Create attribute field"
       size="sm"
       disabled={!canCreateDefinition()}
@@ -237,6 +238,7 @@
         creatingDefinition = true;
       }}
     />
+    {/if}
   </header>
 
   {#if creatingDefinition}
@@ -271,16 +273,16 @@
               onclick={() => toggleReveal(field.definition)}
             />
           {/if}
-          <Button
+          {#if !historyOnly}<Button
             label={`Add ${field.definition.label} value`}
             size="sm"
             disabled={!canAdd(field)}
             onclick={() => openEditor(field)}
-          />
+          />{/if}
         </div>
       </header>
 
-      <ul class="current-values">
+      {#if !historyOnly}<ul class="current-values">
         {#each field.current as value, index (value.id)}
           <li>
             <div class="value-copy">
@@ -358,6 +360,7 @@
         {/key}
       {/if}
 
+      {/if}
       {#if field.history.length}
         <details>
           <summary>History ({field.history.length})</summary>
@@ -397,7 +400,7 @@
   {:else}
     {#if fields.length === 0}<p class="empty">No attribute definitions are available.</p>{/if}
   {/each}
-  {#if emptyCount > 0}
+  {#if !historyOnly && emptyCount > 0}
     <Button
       label={showEmpty ? 'Hide empty fields' : `Show empty fields (${emptyCount})`}
       surface="soft"

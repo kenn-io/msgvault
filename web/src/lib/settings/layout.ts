@@ -6,6 +6,7 @@ export const RAIL = [
   { id: 'server', label: 'Server' },
   { id: 'search', label: 'Search & AI' },
   { id: 'enrichment', label: 'People lookups' },
+  { id: 'people', label: 'People' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'carddav', label: 'Contacts' },
   { id: 'sources', label: 'Sources' },
@@ -124,7 +125,7 @@ export function categoryOf(setting: SettingState): CategoryID {
 }
 
 export function normalizeCategory(id: string, fallback: CategoryID = 'overview'): CategoryID {
-  const aliases: Record<string, CategoryID> = { browser: 'advanced', archive: 'advanced', integrations: 'tasks', attachments: 'sources', people: 'enrichment' };
+  const aliases: Record<string, CategoryID> = { browser: 'advanced', archive: 'advanced', integrations: 'tasks', attachments: 'sources' };
   return RAIL.some(category => category.id === id) ? id as CategoryID : Object.hasOwn(aliases, id) ? aliases[id]! : fallback;
 }
 

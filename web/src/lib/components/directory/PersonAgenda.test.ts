@@ -35,9 +35,9 @@ describe('PersonAgenda', () => {
 
     render(PersonAgenda, { client, personID: 7 });
 
-    expect(screen.getByRole('heading', { name: 'Agenda' })).toBeDefined();
-    expect(await screen.findByRole('heading', { name: 'Gift Ideas' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Open in Kata' }).getAttribute('href')).toBe('https://tasks.example.test/one');
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
+    expect(await screen.findByText('gift ideas')).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Ask about launch' }).getAttribute('href')).toBe('https://tasks.example.test/one');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
@@ -307,7 +307,7 @@ describe('PersonAgenda', () => {
     }));
     render(PersonAgenda, { client, personID: 7 });
     expect(await screen.findByText('Task service is unavailable')).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Agenda' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
   });
 
   it('distinguishes an available empty agenda from an unavailable one', async () => {
@@ -622,5 +622,5 @@ it('reports that a bounded agenda has more open tasks', async () => {
     return Response.json({ project: 'msgvault', items: [item('one', 'Ask')], truncated: true });
   }));
   render(PersonAgenda, { client, personID: 7 });
-  expect(await screen.findByText('More open tasks are linked to this person. View the full list in Kata.')).toBeDefined();
+  expect(await screen.findByText('More tasks are linked to this person.')).toBeDefined();
 });

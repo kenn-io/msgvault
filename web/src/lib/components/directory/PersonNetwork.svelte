@@ -1,180 +1,250 @@
 <script lang="ts">
-  import { Button, Checkbox, SelectDropdown } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, SegmentedControl } from '@kenn-io/kit-ui';
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-  import type { NetworkEdge, NetworkNode } from '../../directory/models';
+  import type { NetworkEdge, NetworkNode, PersonNetwork } from '../../api/generated/models';
+  import IdentityAvatar from '../common/IdentityAvatar.svelte';
 
   interface Props {
     controller: DirectoryEntityController;
-    onOpenPerson: (personID: number) => void;
-    onOpenOrganization: (organizationID: number) => void;
+    onOpenOrganization: (id: number) => void;
+    /** Opens a person in the graph. */
+    onOpenPerson?: (personID: number) => void;
   }
 
-  let { controller, onOpenPerson, onOpenOrganization }: Props = $props();
-  const graphMinimumWidth = 650;
-  const nodeLabelOffset = 25;
-  const nodeLabelLaneWidth = 160;
+  let { controller, onOpenOrganization, onOpenPerson = undefined }: Props = $props();
+
+  const COLUMN = 280;
+  const NAME = 170;
+  const ROW = 56;
+  const AVATAR = 28;
+  const depthOptions = [
+    { value: '1', label: 'Direct' },
+    { value: '2', label: '2 steps' },
+    { value: '3', label: '3 steps' },
+  ];
+
   let depth = $state('1');
   let includeEnded = $state(false);
-  const depthOptions = [1, 2, 3].map((value) => ({ value: String(value), label: `${value} ${value === 1 ? 'hop' : 'hops'}` }));
-  const nodes = $derived(controller.network?.nodes ?? []);
-  const edges = $derived(controller.network?.edges ?? []);
-  const nodeByID = $derived(new Map(nodes.map((node) => [node.id, node])));
-  const rootNode = $derived(nodes.find((node) => node.id === `person:${controller.personID}`));
-  const edgeGroups = $derived.by(() => {
-    const grouped = new Map<number, NetworkEdge[]>();
+  const personID = $derived(controller.personID);
+  const network = $derived(controller.network);
+
+  $effect(() => { void controller.loadNetwork(Number(depth), includeEnded); });
+
+  // One column per step away, each ordered by the people it hangs off so lines cross as little as possible.
+  const layout = $derived.by(() => {
+    const nodes = network?.nodes ?? [];
+    const edges = network?.edges ?? [];
+    const neighbours = new Map<string, string[]>();
     for (const edge of edges) {
-      const source = nodeByID.get(edge.source_node_id);
-      const target = nodeByID.get(edge.target_node_id);
-      const hop = Math.max(source?.hop ?? 0, target?.hop ?? 0);
-      grouped.set(hop, [...(grouped.get(hop) ?? []), edge]);
+      neighbours.set(edge.source_node_id, [...(neighbours.get(edge.source_node_id) ?? []), edge.target_node_id]);
+      neighbours.set(edge.target_node_id, [...(neighbours.get(edge.target_node_id) ?? []), edge.source_node_id]);
     }
-    return [...grouped.entries()].sort(([left], [right]) => left - right);
+    const columns: NetworkNode[][] = [];
+    for (const node of nodes) (columns[node.hop] ??= []).push(node);
+    const row = new Map<string, number>();
+    columns.forEach((column, hop) => {
+      if (hop > 0) {
+        const anchor = (node: NetworkNode) => {
+          const parents = (neighbours.get(node.id) ?? []).map((id) => row.get(id)).filter((value) => value !== undefined);
+          return parents.length ? parents.reduce((sum, value) => sum + value, 0) / parents.length : Infinity;
+        };
+        column.sort((left, right) => anchor(left) - anchor(right) || left.label.localeCompare(right.label));
+      }
+      const tallest = Math.max(...columns.map((each) => each?.length ?? 0));
+      const offset = (tallest - column.length) / 2;
+      column.forEach((node, index) => row.set(node.id, offset + index));
+    });
+    const tallest = Math.max(1, ...columns.map((column) => column?.length ?? 0));
+    const place = new Map<string, { x: number; y: number }>();
+    for (const node of nodes) place.set(node.id, { x: node.hop * COLUMN + AVATAR / 2, y: (row.get(node.id) ?? 0) * ROW + ROW / 2 });
+    return { nodes, edges, place, width: columns.length * COLUMN, height: tallest * ROW };
   });
-  const positions = $derived.by(() => {
-    const byHop = new Map<number, NetworkNode[]>();
-    for (const node of nodes) byHop.set(node.hop, [...(byHop.get(node.hop) ?? []), node]);
-    const result = new Map<string, { x: number; y: number }>();
-    for (const [hop, hopNodes] of byHop) {
-      hopNodes.forEach((node, index) => result.set(node.id, {
-        x: 70 + hop * 190,
-        y: 45 + index * 80
-      }));
+
+  // Each node's drawn width, so a line starts where its name ends.
+  let widths = $state<Record<string, number>>({});
+
+  // A line runs from the end of the left node's name to the right node's avatar, with its label sitting on the middle of the line.
+  function segment(edge: NetworkEdge) {
+    const a = layout.place.get(edge.source_node_id);
+    const b = layout.place.get(edge.target_node_id);
+    if (!a || !b) return null;
+    const [left, right, leftID] = a.x <= b.x ? [a, b, edge.source_node_id] : [b, a, edge.target_node_id];
+    if (left.x === right.x) {
+      const x = left.x - AVATAR / 2 - 8;
+      return { x1: x, y1: left.y, x2: x, y2: right.y, tx: x, ty: (left.y + right.y) / 2 };
     }
-    return result;
-  });
-  const graphWidth = $derived(Math.max(graphMinimumWidth, ...nodes.map((node) => {
-    const position = positions.get(node.id);
-    if (!position) return 0;
-    return Math.max(
-      position.x + nodeRadius(node),
-      position.x + nodeLabelOffset + nodeLabelLaneWidth
-    );
-  })));
-  const graphHeight = $derived(Math.max(100, ...[...positions.values()].map((position) => position.y + 45)));
-
-  $effect(() => {
-    void controller.loadNetwork(Number(depth), includeEnded);
-  });
-
-  function openNode(node: NetworkNode): void {
-    if (node.kind === 'person') onOpenPerson(node.entity_id);
-    else onOpenOrganization(node.entity_id);
+    const x1 = left.x - AVATAR / 2 + (widths[leftID] ?? AVATAR) + 8;
+    const x2 = right.x - AVATAR / 2 - 6;
+    return { x1, y1: left.y, x2, y2: right.y, tx: (x1 + x2) / 2, ty: (left.y + right.y) / 2 };
   }
 
-  function nodeActionLabel(node: NetworkNode): string {
-    return `Open ${node.kind} ${node.label}`;
-  }
+  const hasLinks = $derived((network?.edges.length ?? 0) > 0);
 
-  function nodeRadius(node: NetworkNode): number {
-    return node.kind === 'person' ? 19 : 16;
-  }
-
-  function retry(): void {
-    void controller.loadNetwork(Number(depth), includeEnded);
+  function edgeLabel(edge: NetworkEdge): string {
+    return edge.label.trim();
   }
 </script>
 
-<section class="person-network" aria-label="Directory network">
-  <header>
-    <div>
-      <h2>Network</h2>
-      <p>Curated typed relationships and employments only. Messages and co-occurrence never create connections.</p>
-    </div>
-    <div class="controls">
-      <label>Depth<SelectDropdown title="Network depth" value={depth} options={depthOptions} onchange={(value) => { depth = value; }} /></label>
-      <Checkbox checked={includeEnded} label="Include ended connections" onchange={(checked) => { includeEnded = checked; }} />
-    </div>
-  </header>
 
-  <!-- Keyboard focus lets a user scroll a graph wider than its pane without a pointer. -->
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="projection" role="region" aria-label="Network graph" tabindex="0" aria-busy={controller.networkLoading}>
-    {#if controller.network}
-      <svg aria-hidden="true" width={graphWidth} viewBox={`0 0 ${graphWidth} ${graphHeight}`} preserveAspectRatio="xMinYMin meet">
-        {#each edges as edge (edge.id)}
-          {@const source = positions.get(edge.source_node_id)}
-          {@const target = positions.get(edge.target_node_id)}
-          {#if source && target}<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} />{/if}
-        {/each}
-        {#each nodes as node (node.id)}
-          {@const position = positions.get(node.id)}
-          {#if position}
-            <g transform={`translate(${position.x} ${position.y})`}>
-              <circle r={nodeRadius(node)} />
-              <text x={nodeLabelOffset} y="5">{node.label}</text>
-            </g>
+  <section aria-labelledby={`network-${personID}`}>
+    <header>
+      <h3 id={`network-${personID}`}>Network</h3>
+      <span class="controls">
+        <Checkbox checked={includeEnded} label="Include ended connections" onchange={(checked) => (includeEnded = checked)} />
+        <SegmentedControl ariaLabel="Network depth" value={depth} options={depthOptions} onchange={(value) => (depth = value)} />
+      </span>
+    </header>
+    {#if controller.errors.network}<p role="alert">{controller.errors.network}<Button label="Retry network" onclick={() => void controller.loadNetwork(Number(depth), includeEnded)} /></p>{/if}
+    {#if controller.networkLoading}<p role="status">Loading network…</p>{/if}
+    {#if network?.truncated}<p role="status">Showing a bounded prefix of at most 250 nodes and 500 connections at depth {depth}.</p>{/if}
+    {#if network && !hasLinks}<p>No curated connections at this depth.</p>{/if}
+    {#if network}<ul class="kit-sr-only" aria-label="Directory network connections">
+      <li>{network?.nodes.find((node) => node.hop === 0)?.label}</li>
+      {#each [1, 2, 3] as hop}
+        <li>Hop {hop}<ul>{#each network?.edges ?? [] as edge (edge.id)}
+          {@const source = network?.nodes.find((node) => node.id === edge.source_node_id)}
+          {@const target = network?.nodes.find((node) => node.id === edge.target_node_id)}
+          {#if Math.max(source?.hop ?? 0, target?.hop ?? 0) === hop}<li>{source?.label} {edge.label} {target?.label}</li>{/if}
+        {/each}</ul></li>
+      {/each}
+    </ul>{/if}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="scroll" tabindex="0" role="region" aria-label="Network graph">
+      <div class="graph" style:width={`${layout.width}px`} style:height={`${layout.height}px`}>
+        <svg width={layout.width} height={layout.height} aria-hidden="true">
+          {#each layout.edges as edge (edge.id)}
+            {@const line = segment(edge)}
+            {#if line}
+              <line class:ended={Boolean(edge.end_date)} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
+            {/if}
+          {/each}
+        </svg>
+        {#each layout.edges as edge (edge.id)}
+          {@const line = segment(edge)}
+          {#if line && edgeLabel(edge)}
+            <span class="edge-label" class:ended={Boolean(edge.end_date)} style:left={`${line.tx}px`} style:top={`${line.ty}px`}>{edgeLabel(edge)}</span>
           {/if}
         {/each}
-      </svg>
-    {/if}
-
-    {#if controller.networkLoading}<p class="loading" role="status">Loading network…</p>{/if}
-  </div>
-
-  {#if controller.errors.network}
-    <div class="network-error" role="alert">
-      <p>{controller.errors.network}</p>
-      <Button label="Retry network" onclick={retry} />
-    </div>
-  {/if}
-
-  {#if controller.network?.truncated}
-    <p class="truncated">This is a bounded prefix with at most 250 nodes and 500 connections at depth {controller.network.depth}.</p>
-  {/if}
-
-  <ul class="connection-list" aria-label="Directory network connections">
-    {#if edges.length === 0 && rootNode}
-      <li class="root-only">
-        <h3>Hop 0</h3>
-        <Button size="sm" label={rootNode.label} ariaLabel={nodeActionLabel(rootNode)} onclick={() => openNode(rootNode)} />
-      </li>
-    {:else}
-      {#each edgeGroups as [hop, hopEdges] (hop)}
-        <li class="hop-group">
-          <h3>Hop {hop}</h3>
-          <ul>
-            {#each hopEdges as edge (edge.id)}
-              {@const source = nodeByID.get(edge.source_node_id)}
-              {@const target = nodeByID.get(edge.target_node_id)}
-              {#if source && target}
-                <li class="connection">
-                  <Button size="sm" label={source.label} ariaLabel={nodeActionLabel(source)} onclick={() => openNode(source)} />
-                  <span>{edge.label}</span>
-                  <Button size="sm" label={target.label} ariaLabel={nodeActionLabel(target)} onclick={() => openNode(target)} />
-                  <small>{edge.kind === 'relationship' ? 'Typed relationship' : 'Employment'}</small>
-                </li>
+        {#each layout.nodes as node (node.id)}
+          {@const at = layout.place.get(node.id)}
+          {#if at}
+            {@const person = node.kind === 'person'}
+            {@const root = node.hop === 0}
+            <div class="node" class:node--root={root} style:left={`${at.x - AVATAR / 2}px`} style:top={`${at.y - AVATAR / 2}px`} style:max-width={`${NAME + AVATAR}px`} title={node.label} bind:clientWidth={widths[node.id]}>
+              <IdentityAvatar label={node.label} seed={node.id} shape={person ? 'person' : 'domain'} size={AVATAR} />
+              {#if !root}
+                <!-- kit-ui-check-ignore: a name in the graph that opens the person, styled as a link. -->
+                <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}`} onclick={() => person ? onOpenPerson?.(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
+              {:else}
+                <span class="name">{node.label}</span>
               {/if}
-            {/each}
-          </ul>
-        </li>
-      {/each}
-    {/if}
-  </ul>
-
-  {#if controller.network && edges.length === 0}<p class="empty">No curated connections at this depth.</p>{/if}
-</section>
+            </div>
+          {/if}
+        {/each}
+      </div>
+    </div>
+  </section>
 
 <style>
-  .person-network, header, .controls, .projection, .network-error, .connection-list, .hop-group, .hop-group > ul { display: grid; gap: var(--space-3); }
-  header { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
-  header p, h2, h3, p, ul { margin: 0; }
-  header p, .empty, small { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .controls { grid-auto-flow: column; align-items: end; }
-  .controls label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .projection { position: relative; min-height: 7rem; overflow: auto; padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .projection:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
-  svg { min-width: 100%; max-height: 24rem; }
-  line { stroke: var(--border-strong); stroke-width: 1.5; }
-  circle { fill: var(--bg-surface); stroke: var(--accent-blue); stroke-width: 2; }
-  text { fill: var(--text-primary); font: var(--font-size-sm) var(--font-sans); }
-  .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg-surface) 72%, transparent); }
-  .network-error { justify-items: start; padding: var(--pane-pad-y) var(--pane-pad-x); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-danger); }
-  .truncated { padding: var(--pane-pad-y) var(--pane-pad-x); border-radius: var(--radius-sm); background: var(--bg-warning); color: var(--text-primary); }
-  .connection-list, .hop-group > ul { list-style: none; padding: 0; }
-  .hop-group, .root-only { padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
-  .connection { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .connection small { margin-left: auto; }
-  @media (max-width: 640px) { header { grid-template-columns: 1fr; } .controls { grid-auto-flow: row; justify-items: start; } }
-  @media (prefers-reduced-motion: reduce) { .projection { scroll-behavior: auto; } }
+  section {
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    flex-wrap: wrap;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: var(--divider-gap);
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: var(--control-gap);
+  }
+
+  /* Ended connections, shown only when asked for, read as muted like in Connections. */
+  line.ended {
+    stroke-dasharray: 3 3;
+  }
+
+  .edge-label.ended {
+    color: var(--text-muted);
+  }
+
+  h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold, 600);
+  }
+
+  .scroll {
+    overflow-x: auto;
+    padding: var(--space-2) 0;
+  }
+
+  .graph {
+    position: relative;
+  }
+
+  svg {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+  }
+
+  line {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .edge-label {
+    position: absolute;
+    padding: 0 var(--chip-pad-x);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: 18px;
+    white-space: nowrap;
+    transform: translate(-50%, -50%);
+  }
+
+  .node {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .name {
+    overflow: hidden;
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node--root .name {
+    font-weight: var(--font-weight-semibold, 600);
+  }
+
+  /* kit-ui-check-ignore: a text link inside the graph, not a button control. */
+  .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--link-ink);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .link:hover {
+    text-decoration: underline;
+  }
 </style>

@@ -24,6 +24,7 @@
     filesOpen: boolean;
     showTabs?: boolean;
     showIdentity?: boolean;
+    showDirectoryAction?: boolean;
     missing?: boolean;
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
@@ -43,6 +44,7 @@
     filesOpen,
     showTabs = true,
     showIdentity = true,
+    showDirectoryAction = true,
     missing = false,
     onFilesToggle,
     client,
@@ -322,7 +324,7 @@
       <h2>{displayLabel(detail)}</h2>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
-          {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}
+          {#if showDirectoryAction && (onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson))}
             <Button
               label="Open in Directory"
               surface="outline"

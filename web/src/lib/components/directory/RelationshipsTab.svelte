@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { appShortcuts, Button, Checkbox, EmptyState, Modal } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount } from 'svelte';
+  import { appShortcuts, Button, Checkbox, EmptyState, Modal, IconButton } from '@kenn-io/kit-ui';
+  import Pencil from '@lucide/svelte/icons/pencil';
+  import X from '@lucide/svelte/icons/x';
 
   import type { APIClient } from '../../api/client';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
@@ -12,9 +13,11 @@
     client: APIClient;
     controller: DirectoryEntityController;
     personID: number;
+    catalogOnly?: boolean;
+    onOpenPerson?: (id: number) => void;
   }
 
-  let { client, controller, personID }: Props = $props();
+  let { client, controller, personID, catalogOnly = false, onOpenPerson }: Props = $props();
   let relationshipEditor = $state<PersonRelationshipView | null | undefined>(undefined);
   let relationshipTypeEditor = $state<RelationshipType | null | undefined>(undefined);
   let deletingRelationship = $state<PersonRelationshipView>();
@@ -23,10 +26,9 @@
   let actionMessage = $state('');
   let conflictRelationship = $state<PersonRelationship>();
   let conflictType = $state<RelationshipType>();
-  let releaseScope: (() => void) | undefined;
-
-  onMount(() => { releaseScope = appShortcuts.pushScope('directory-relationships'); });
-  onDestroy(() => releaseScope?.());
+  $effect(() => {
+    if (deletingRelationship || deletingType) return appShortcuts.pushScope('directory-relationships');
+  });
 
   function counterpart(view: PersonRelationshipView): string {
     return view.counterpart_display_name?.trim() || view.counterpart_vcard_uid || `Person ${view.counterpart_person_id}`;
@@ -96,11 +98,11 @@
 </script>
 
 <section class="relationships-tab" aria-label="Person relationships">
-  <header>
-    <div><h2>Relationships</h2><p>Curated, typed connections between durable people.</p></div>
+  {#if !catalogOnly}<header>
+    <h3>Connections</h3>
     <div class="actions">
-      <Button label="Add relationship" onclick={() => { relationshipEditor = null; }} />
-      <Button label="Add relationship type" onclick={() => { relationshipTypeEditor = null; }} />
+      <Button label="Add connection" onclick={() => { relationshipEditor = null; }} />
+
     </div>
   </header>
 
@@ -117,27 +119,28 @@
   {/if}
   {#if controller.relationshipsLoading}<p role="status">Loading relationships…</p>{/if}
   {#if controller.relationships.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
-    <EmptyState title="No relationships" description="Add a typed relationship to connect this durable person." />
+    <EmptyState title="No connections" />
   {:else if controller.relationships.length > 0}
     <ul class="records">
       {#each controller.relationships as view (view.relationship.id)}
         <li>
           <div>
-            <strong>{counterpart(view)} · {view.counterpart_label}</strong>
+            <strong>{view.counterpart_label} · {#if onOpenPerson}<button class="person-link" type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}</strong>
             <small>{view.direction}{#if view.relationship.start_date} · from {dateText(view.relationship.start_date)}{/if}{#if view.relationship.end_date} · ended {dateText(view.relationship.end_date)}{/if}</small>
             {#if view.relationship.notes}<p>{view.relationship.notes}</p>{/if}
           </div>
           <div class="row-actions">
-            <Button size="sm" label="Edit relationship" onclick={() => { relationshipEditor = view; }} />
-            <Button size="sm" tone="danger" label="Delete relationship" onclick={() => { deletingRelationship = view; }} />
+            <IconButton size="sm" ariaLabel="Edit relationship" onclick={() => { relationshipEditor = view; }}><Pencil size={14} /></IconButton>
+            <IconButton size="sm" ariaLabel="Delete relationship" onclick={() => { deletingRelationship = view; }}><X size={14} /></IconButton>
           </div>
         </li>
       {/each}
     </ul>
   {/if}
 
-  <section aria-label="Relationship types">
-    <div class="section-heading"><h3>Relationship types</h3><Button label="Refresh relationship types" disabled={controller.relationshipTypesLoading} onclick={() => void controller.refreshRelationshipTypes()} /></div>
+  {/if}
+  {#if catalogOnly}<section aria-label="Connection types">
+    <div class="section-heading"><h3>Connection types</h3><Button label="Add type" onclick={() => relationshipTypeEditor = null} /><Button label="Refresh relationship types" disabled={controller.relationshipTypesLoading} onclick={() => void controller.refreshRelationshipTypes()} /></div>
     {#if controller.relationshipTypesLoading}<p role="status">Loading relationship types…</p>
     {:else if controller.errors.relationshipTypes}<p role="alert">{controller.errors.relationshipTypes}</p>
     {:else if controller.relationshipTypes.length === 0}<p class="muted">No relationship types are available.</p>
@@ -156,7 +159,7 @@
         {/each}
       </ul>
     {/if}
-  </section>
+  </section>{/if}
 </section>
 
 {#if relationshipEditor !== undefined}
@@ -185,11 +188,16 @@
 <style>
   .relationships-tab, section, .refresh-error { display: grid; gap: var(--space-3); }
   header, .actions, .filters, .row-actions, .types li, .section-heading { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  h2, h3, p, ul { margin: 0; }
-  header p, small, .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
+  h3, p, ul { margin: 0; }
+  small, .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
   .records, .types { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
-  .records li { display: flex; gap: var(--space-3); justify-content: space-between; align-items: start; flex-wrap: wrap; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+  .records li { display: flex; gap: var(--space-3); justify-content: space-between; align-items: start; flex-wrap: wrap; padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); }
   .records li > div:first-child { display: grid; gap: var(--space-1); }
+  h3 { font-size: var(--font-size-md); }
+  .records .row-actions { opacity: 0; }
+  .records li:hover .row-actions, .records li:focus-within .row-actions { opacity: 1; }
+  @media (hover: none) { .records .row-actions { opacity: 1; } }
   .row-actions { justify-content: flex-start; }
   [role="alert"] { color: var(--text-danger); }
+  .person-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
 </style>
