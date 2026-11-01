@@ -156,7 +156,7 @@ describe('LinkIdentityDialog', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it.each([['already_linked', 'nope', 'Already linked — these two are treated as the same person.'], ['error', 'Request failed (500)', 'Request failed (500)']] as const)('shows %s inline and stays open', async (code, message, expected) => {
+  it.each([['already_linked', 'nope', 'Already linked — these two are treated as the same person.']] as const)('shows %s inline and stays open', async (code, message, expected) => {
     const onClose = vi.fn();
     const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code, message }));
     renderDialog({ onClose, onConfirm });

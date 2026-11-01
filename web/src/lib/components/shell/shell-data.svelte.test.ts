@@ -221,7 +221,7 @@ it('refreshes jobs on the timer and deletions on explicit refresh', async () => 
   } finally { data.stop(); vi.useRealTimers(); }
 });
 
-it('counts waiting matches and retains its badge after an offline read', async () => {
+it('counts waiting matches and retains its badge after a 503 response', async () => {
   const count = 4;
   const queries: string[] = [];
   const data = new ShellData(createAPIClient(async input => {

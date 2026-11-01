@@ -51,8 +51,8 @@ function controllerWith(fetchFn: typeof fetch, personID = 7): { client: ReturnTy
 }
 
 describe('RelationshipsTab', () => {
-  it('keeps accepted imported history beside curated connections', async () => {
-    const { controller } = controllerWith(vi.fn());
+  it('renders curated connections', async () => {
+    const { client, controller } = controllerWith(vi.fn());
     controller.relationships = [
       view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
       view(42, 'incoming', 'is mentored by', 'Synthetic Guide'),
@@ -60,11 +60,7 @@ describe('RelationshipsTab', () => {
         relationship: relationship(43, 1, { is_symmetric: true, forward_label: 'works with', reverse_label: 'works with' })
       })
     ];
-    const imports = [{ id: 71, person_id: 7, matched_person_id: 141, raw_related_value: 'imported@example.com', raw_related_type: 'friend', value_kind: 'text', status: 'accepted', source: 'vcard_import', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' }];
-    const importedClient = createAPIClient(async () => Response.json({ reviews: imports }));
-    render(RelationshipsTab, { client: importedClient, controller, personID: 7 });
-    await screen.findByText('imported@example.com');
-    expect(screen.getByText('Accepted')).toBeDefined();
+    render(RelationshipsTab, { client, controller, personID: 7 });
     for (const [name, label] of [['Synthetic Learner', 'Mentors'], ['Synthetic Guide', 'Is mentored by'], ['Synthetic Peer', 'Works with']]) {
       const row = screen.getByText(name).closest('.detail-row') as HTMLElement;
       expect(within(row).getByText(label)).toBeDefined();
@@ -87,9 +83,11 @@ describe('RelationshipsTab', () => {
     const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
     try {
       await screen.findByText('existing@example.com');
+      expect(screen.getByText('Accepted')).toBeDefined();
       merged = true;
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();
+      expect(screen.getAllByText('Accepted')).toHaveLength(2);
     } finally { rendered.unmount(); controller.destroy(); }
   });
 
