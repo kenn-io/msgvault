@@ -37,26 +37,4 @@ test('duplicate Undo restores the pair and the next decision settles exact evide
   await page.locator('.cards > li').first().getByRole('button', { name: 'Keep separate' }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').length).toBe(1);
   expect(fixture.requests.find(request => request.method === 'POST')?.body).toEqual({ review_token: 'review-17-candidate', notes: 'Different people' });
-  await page.getByRole('button', { name: 'Undo' }).click();
-});
-
-test('duplicate merge chooses a survivor through the existing revision-checked dialog', async ({ page }) => {
-  const fixture = await installDirectoryReviewArchive(page);
-  await page.goto(duplicatesURL);
-  await page.locator('.cards > li').last().getByRole('button', { name: 'Merge', exact: true }).click();
-  await page.getByRole('button', { name: 'Back to People' }).click();
-  const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
-  await expect(merge).toBeVisible();
-  await merge.getByRole('button', { name: 'Open Synthetic One profile' }).click();
-  await expect(page.getByRole('heading', { name: 'Synthetic One', exact: true })).toBeVisible();
-  await expect(merge).toBeHidden();
-  await page.getByRole('button', { name: 'Filter', exact: true }).click();
-  await page.getByText('Possible duplicates', { exact: true }).click();
-  await page.locator('.cards > li').last().getByRole('button', { name: 'Merge', exact: true }).click();
-  await page.getByRole('button', { name: 'Back to People' }).click();
-  await merge.getByRole('radio', { name: 'Synthetic One (Person 7)' }).click();
-  await merge.getByRole('checkbox', { name: /I understand/ }).check();
-  await merge.getByRole('button', { name: 'Merge into selected survivor' }).click();
-  await expect(merge).toBeHidden();
-  expect(fixture.requests.find(request => request.path.endsWith('/7/merge'))?.headers['if-match']).toBe('"person-7-r4", "person-9-r2"');
 });

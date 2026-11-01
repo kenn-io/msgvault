@@ -297,7 +297,7 @@ Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last t
 
 Manage organizations, connection types, and custom field definitions under **Settings → People**. Catalog edits save immediately.
 
-Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **99+** at 100. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
+Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **500+** at 500. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
 
 Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Addresses lists joined identities with **Unlink**. To separate saved profiles after a merge, open **More actions → History**, inspect the merge, and choose **Split merged profile**. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
 

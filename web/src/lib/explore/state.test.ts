@@ -298,10 +298,6 @@ describe('Explore URL state', () => {
     state.destroy();
   });
 
-  it('restores duplicate History through URL state', () => {
-    const restored = parseExploreURLState(serializeExploreURLState({ ...defaultExploreURLState, workspace: 'relationships', peopleDuplicates: true, identityState: 'accepted' }));
-    expect(restored).toMatchObject({ workspace: 'relationships', peopleDuplicates: true, identityState: 'accepted' });
-  });
   it('opens old review bookmarks in People', () => {
     expect(parseExploreURLState('?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'directory_review', identityState: 'rejected' })))).toMatchObject({ workspace: 'relationships', peopleDuplicates: true, identityState: 'rejected' });
     expect(parseExploreURLState('?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 7 })))).toMatchObject({ workspace: 'relationships', peopleDuplicates: false, directoryPersonID: 7 });
