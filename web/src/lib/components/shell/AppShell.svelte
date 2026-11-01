@@ -279,6 +279,8 @@
     exploreState.closeOperationHistory();
   }
   let displayOpen = $state(false);
+  let personMessagesState = $state<ExploreState>();
+  const messageDisplayState = $derived(personMessagesState ?? (exploreState.current.workspace === 'everything' ? exploreState : undefined));
   let resultsWidth = $state(0);
   const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
@@ -924,15 +926,14 @@
     focusGrid();
   }
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
-    const selector =
-      kind === 'filters'
-        ? exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
-        : kind === 'grouping'
-          ? '[data-group-picker] button'
-          : '[data-sort-menu] button';
-    const control = document.querySelector<HTMLButtonElement>(selector);
+    const selector = { filters: 'button[aria-label="Filter"], button[aria-label="Filters"]', grouping: '[data-group-picker] button', sort: '[data-sort-menu] button' }[kind];
+    const control = (document.querySelector('.everything-workspace') ?? document).querySelector<HTMLButtonElement>(selector);
     control?.focus();
     control?.click();
+  }
+  function changeMessageColumns(columns: ExploreURLState['columns']): void {
+    if (personMessagesState) personMessagesState.replaceTransient({ columns });
+    else replaceTransient({ columns });
   }
   function fixedSortNotice(): void {
     sortNotice = exploreState.current.groupingChain.length > 0
@@ -1282,8 +1283,8 @@
           onThemeChange={(theme) => appearance.setTemporary({ theme })}
           onDensityChange={(density) => appearance.setTemporary({ density })}
           onUseDefaults={() => appearance.clearTemporary()}
-          columns={exploreState.current.workspace === 'everything' && exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0 ? exploreState.current.columns : undefined}
-          onColumnsChange={(columns) => replaceTransient({ columns })}
+          columns={messageDisplayState?.current.presentation === 'table' && messageDisplayState.current.groupingChain.length === 0 ? messageDisplayState.current.columns : undefined}
+          onColumnsChange={changeMessageColumns}
           readerPosition={exploreState.current.workspace === 'everything' && resultsWidth >= 960 ? readerPosition.value : undefined}
           onReaderPositionChange={(value) => readerPosition.set(value)}
         />
@@ -1308,6 +1309,7 @@
         <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
         <PeopleWorkspace
+          onMessagesStateChange={(state) => personMessagesState = state}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           directory={directoryController}
           urlState={exploreState.current}
