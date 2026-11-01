@@ -178,12 +178,12 @@
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
       })
-      .catch(() => undefined);
+      .catch(() => { if (!controller.signal.aborted) embeddingStatus = undefined; });
     void generatedGetVisualAttachmentStatus({ ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
       })
-      .catch(() => undefined);
+      .catch(() => { if (!controller.signal.aborted) visualStatus = undefined; });
     return () => controller.abort();
   });
 
@@ -255,7 +255,7 @@
   async function loadSettings(retainDrafts: boolean) {
     if (!retainDrafts) loading = true;
     try {
-      const { data: document, error: responseError, response } = await generatedGetSettings(client);
+      const [{ data: document, error: responseError, response }] = await Promise.all([generatedGetSettings(client), inference.load()]);
       if (!document) throw new Error(apiErrorMessage(responseError, "Can't load settings."));
       loaded = true;
       settings = document.settings;
