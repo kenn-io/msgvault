@@ -347,7 +347,7 @@ func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
 // serial: changes routeProbeTimeout.
 func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 	testutil.SkipIfPostgres(t, "uses a SQLite function to slow quiet-roster writes")
-	assertions, requirements := assert.New(t), require.New(t)
+	requirements := require.New(t)
 	f := newFakeBeeper(t)
 	quiet := mediaChat()
 	f.addChat(quiet)
@@ -356,8 +356,10 @@ func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 	active.LastActivity = time.Now().UTC()
 	active.Msgs = nil
 	f.addChat(active)
-	imp, st, done := newTestImporter(t, f)
-	defer done()
+	st := testutil.NewTestStore(t)
+	client := NewClient("http://beeper.test", testToken, 10000)
+	client.http.Transport = handlerTransport(f.handler())
+	imp := NewImporter(st, client)
 	st.DB().SetMaxOpenConns(1)
 	opts := ImportOptions{AccountID: "signal", NoMedia: true}
 	_, err := imp.Import(t.Context(), opts)
@@ -402,12 +404,22 @@ func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 		requirements.NoError(dropErr)
 	}()
 
-	_, err = imp.Import(t.Context(), opts)
-	requirements.NoError(err)
-	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
-	requirements.NoError(err)
-	assertions.Empty(ids, "the probe timeout bounds the provider request, not the roster writes")
-	assertions.Len(rosterMembers(t, st, source.ID, quiet.ID), 3)
+	// Fake time advances during the slow writes, after the in-process probe finishes.
+	synctest.Test(t, func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		start := time.Now()
+		f.mu.Lock()
+		quiet.LastActivity = start.Add(-48 * time.Hour)
+		active.LastActivity = start
+		f.mu.Unlock()
+		_, err := imp.Import(t.Context(), opts)
+		requirements.NoError(err)
+		assertions.Greater(time.Since(start), routeProbeTimeout, "roster writes outlast the provider probe timeout")
+		ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
+		requirements.NoError(err)
+		assertions.Empty(ids, "the probe timeout bounds the provider request, not the roster writes")
+		assertions.Len(rosterMembers(t, st, source.ID, quiet.ID), 3)
+	})
 }
 
 func TestImportStopsBeforeStaleRederivationWhenBudgetIsSpent(t *testing.T) {
