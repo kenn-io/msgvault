@@ -326,9 +326,9 @@ export class DirectoryProfileController {
       this.finishMutation(draftGeneration);
     }
   }
-  async reloadDefinitions(expectedDraftGeneration?: number): Promise<boolean> {
+  async reloadDefinitions(expectedDraftGeneration = this.draftGeneration): Promise<boolean> {
     const response = await settle(generatedListAttributeDefinitions({ object_type: 'person', include_hidden: true }, this.client));
-    if (this.disposed) return false;
+    if (this.disposed || this.draftGeneration !== expectedDraftGeneration) return false;
     if (response.data) {
       this.definitions = response.data.definitions ?? [];
       this.definitionsError = null;
@@ -337,10 +337,7 @@ export class DirectoryProfileController {
         this.publish();
         return reconciled;
       }
-      if (
-        this.draft?.kind === 'createDefinition' &&
-        (expectedDraftGeneration === undefined || this.draftGeneration === expectedDraftGeneration)
-      ) {
+      if (this.draft?.kind === 'createDefinition') {
         this.draft = null;
         this.conflict = null;
       }
@@ -348,10 +345,7 @@ export class DirectoryProfileController {
       return true;
     }
     this.definitionsError = failureMessage(response.error, response.response?.status ?? 0);
-    if (
-      this.draft?.kind === 'createDefinition' &&
-      (expectedDraftGeneration === undefined || this.draftGeneration === expectedDraftGeneration)
-    ) {
+    if (this.draft?.kind === 'createDefinition') {
       this.captureFailure(response.error, response.response?.status ?? 0);
     }
     return false;
