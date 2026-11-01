@@ -26,10 +26,12 @@ it('retries a failed section through the profile controller', async () => {
   });
   const directory = new DirectoryController(client);
   await directory.loadSelection(7);
+  const owner = directory.profile;
   const view = render(PersonDetails, { client, directory, personID: 7 });
   try {
     const alert = screen.getAllByRole('alert').find(element => element.textContent?.startsWith('attributes:'))!;
     await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(attributeReads).toBe(2));
+    expect(directory.profile).toBe(owner);
   } finally { view.unmount(); directory.destroy(); }
 });
