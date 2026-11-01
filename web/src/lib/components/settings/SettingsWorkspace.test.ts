@@ -462,6 +462,7 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
+  expect(screen.getByRole('dialog').textContent).toContain('The daemon uses it after a restart.');
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -476,10 +477,12 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   expect(screen.getByText('1 unsaved change.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
   expect(screen.getByText('1 unsaved change.')).toBeDefined();
+  expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false);
   expect(writes()).toEqual([
     ['PUT', '/api/v1/settings/provider-credentials/vector.embeddings', '"credential-a"'],
     ['PUT', '/api/v1/settings/person-enrichment/providers/primary', '"s1"']
   ]);
+  expect(seen.find(request => request.path.endsWith('/providers/primary'))?.body).toMatchObject({ endpoint: 'https://changed.example.test' });
 });
 
 it('starts the visual index from Overview and refreshes its row', async () => {
