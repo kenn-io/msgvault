@@ -131,6 +131,7 @@ describe('LinkIdentityDialog', () => {
 
   it('drops the prior selection when the picker reopens', async () => {
     const { onConfirm } = renderDialog();
+    expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true);
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', false);
@@ -141,11 +142,6 @@ describe('LinkIdentityDialog', () => {
     expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     expect(onConfirm).not.toHaveBeenCalled();
-  });
-
-  it('disables the confirm action until a result is selected', async () => {
-    renderDialog();
-    expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true);
   });
 
   it.each(['ready', 'stale'] as const)('closes silently on an ok/%s outcome', async cacheState => {

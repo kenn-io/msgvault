@@ -533,7 +533,7 @@ it.each([false, true])('keeps the split receipt visible after source binding cha
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(onDuplicatesChanged).toHaveBeenCalled();
-    if (savedEntry) expect(state.current.relationshipTarget).toBeNull();
+    expect(state.current.relationshipTarget).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

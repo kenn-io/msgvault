@@ -1,4 +1,4 @@
-import { person as profile } from '../../directory/entity-fixtures.test-support';
+import { mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -21,7 +21,7 @@ it.each([false, true])('merges saved profiles and promotes an observed choice on
       const id = Number(path.split('/').at(-1));
       return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } });
     }
-    if (path === '/api/v1/people/7/merge') return Response.json({ person: profile(7), cache_state: 'ready', identity_revision: 3, merge: { id: 41 }, review_candidates: [] }, { headers: { ETag: '"person-7-r5"' } });
+    if (path === '/api/v1/people/7/merge') return Response.json(mergeResult(profile(7)), { headers: { ETag: '"person-7-r5"' } });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
