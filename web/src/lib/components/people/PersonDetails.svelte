@@ -3,7 +3,6 @@
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
-  import { getSettingsPeopleInference } from '../../api/generated/api/api';
   import { formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
   import PersonFacts from './PersonFacts.svelte';
@@ -12,28 +11,14 @@
   import PersonNetwork from '../directory/PersonNetwork.svelte';
   import PersonAgenda from '../directory/PersonAgenda.svelte';
   import PersonBriefCard from '../directory/PersonBriefCard.svelte';
-  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings }:
+  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, sweepConfigured }:
     { client: APIClient; directory: DirectoryController; personID: number; onOpenPerson?: (id: number) => void;
-      onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void } = $props();
+      sweepConfigured?: boolean; onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void } = $props();
   let organizationRequest = $state<{ id: number; key: number }>();
   let requestKey = 0;
   const profile = $derived(directory.selectedPersonID === personID ? directory.profile : null);
   const entity = $derived(directory.selectedPersonID === personID ? directory.entity : null);
   const bundle = $derived(directory.selectedPersonID === personID ? directory.detail : null);
-  let providerEnabled = $state<boolean>();
-  let providerError = $state('');
-  let providerReload = $state(0);
-  $effect(() => {
-    void providerReload;
-    const abort = new AbortController();
-    providerError = '';
-    void getSettingsPeopleInference({ ...client, signal: abort.signal }).then(({ data, error }) => {
-      if (abort.signal.aborted) return;
-      if (data && typeof data.running_enabled === 'boolean') providerEnabled = data.running_enabled;
-      else providerError = error?.message ?? 'Could not load facts and briefs setup.';
-    }).catch((cause) => { if (!abort.signal.aborted) providerError = cause instanceof Error ? cause.message : 'Could not load facts and briefs setup.'; });
-    return () => abort.abort();
-  });
   $effect(() => { const owner = profile; if (owner) untrack(() => void owner.reloadDefinitions()); });
 </script>
 
@@ -55,9 +40,8 @@
       <PersonNetwork controller={entity} {onOpenPerson} onOpenOrganization={(id) => organizationRequest = { id, key: ++requestKey }} />
     {/if}
     <PersonAgenda {client} {personID} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
-    {#if providerError}<p role="alert">{providerError}<Button label="Retry setup" onclick={() => providerReload += 1} /></p>{/if}
-    <PersonFacts {client} {personID} onSetUp={providerEnabled === false ? () => onOpenSettings?.('enrichment') : undefined} />
-    <PersonBriefCard {client} {personID} {onAnnounce} onSetUp={providerEnabled === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    <PersonFacts {client} {personID} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    <PersonBriefCard {client} {personID} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
   {/if}
 </div>
 <style>

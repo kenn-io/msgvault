@@ -559,7 +559,8 @@
     const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
     appliedDirectoryRestorationEpoch = restorationEpoch;
     if (exploreState.current.workspace !== 'directory') return;
-    if (exploreState.current.directoryPersonID !== null) { untrack(() => openDirectoryPerson(exploreState.current.directoryPersonID!)); return; }
+    const personID = exploreState.current.directoryPersonID;
+    if (personID !== null) { untrack(() => replaceCommittedNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false })); return; }
     const directoryState = {
       directoryQuery: exploreState.current.directoryQuery,
       directoryContactState: exploreState.current.directoryContactState,
@@ -1308,6 +1309,7 @@
         <PeopleWorkspace
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
+          sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
           directory={directoryController}
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}

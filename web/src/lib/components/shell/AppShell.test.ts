@@ -28,6 +28,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   const response = await fetchFn(input, init);
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   const field = path === '/api/v1/operations/status' ? 'lanes' : path === '/api/v1/sources/status' ? 'sources' : undefined;
+  if (path.endsWith('/network') && response.ok && !('nodes' in await response.clone().json())) return Response.json({ root_person_id: Number(path.split('/').at(-2)), depth: 1, truncated: false, nodes: [], edges: [] });
   // Generic archive handlers don't supply these independent shell endpoints.
   if (field && response.ok && !(field in await response.clone().json())) return Response.json({ [field]: [] });
   return response;
@@ -1271,7 +1272,7 @@ describe('AppShell', () => {
     await vi.waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.includes('fact'))).toHaveLength(10));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open person profile' }));
-    expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 42 });
+    expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 42 });
     rendered.unmount();
     state.destroy();
   });
@@ -1341,7 +1342,7 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
 
-    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 7 }));
     expect(screen.getByRole('status', { name: 'Operation status' }).textContent)
       .toContain('People merged into Synthetic One. Identity cache stale.');
     expect(requests.some((request) => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7')).toBe(true);
@@ -1435,32 +1436,36 @@ describe('AppShell', () => {
       if (path === '/api/v1/people/7/contact-state') return Response.json({
         person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
       });
+      if (/\/api\/v1\/participants\/(42|19)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic Person', profile: { id: 7 }, identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: '2026-08-01T00:00:00Z', last_at: '2026-08-01T00:00:00Z' });
+      if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
+      if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
       return Response.json(exploreResponse());
     });
   }
 
-  it.each([
-    {
-      action: 'Review facts',
-      expected: { workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 7 }
-    },
-    {
-      action: 'Open relationship',
-      expected: { workspace: 'relationships', relationshipTarget: 'cluster:19' }
-    }
-  ])('leaves a Directory person through $action', async ({ action, expected }) => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryPersonID: 7
-    }))}`);
+  it('returns to Files after replacing an old Directory person route', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
     const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(directoryPersonFetch()), state, enabled: false });
+    const fetchPerson = directoryPersonFetch();
+    const client = createAPIClient(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      return fetchPerson(input, init);
+    });
+    const rendered = render(AppShell, { client, state, enabled: false });
     try {
-      await fireEvent.click(await screen.findByRole('button', { name: action }));
-      expect(state.current).toMatchObject(expected);
-    } finally {
-      rendered.unmount();
-      state.destroy();
-    }
+      await screen.findByRole('main', { name: 'Files' });
+      state.commitNavigation({ workspace: 'directory', directoryPersonID: 7 });
+      await screen.findByRole('heading', { name: 'Synthetic Person' });
+      expect(state.current.workspace).toBe('relationships');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Show' }));
+      await screen.findByRole('radio', { name: 'Claims' });
+      const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await restored;
+      await waitFor(() => expect(state.current.workspace).toBe('files'));
+      expect(screen.getByRole('main', { name: 'Files' })).toBeDefined();
+    } finally { rendered.unmount(); state.destroy(); }
   });
 
   it('owns an ephemeral CardDAV conflict handoff and Browser Back restores the prior Directory person', async () => {
@@ -1520,7 +1525,8 @@ describe('AppShell', () => {
       client: createAPIClient(fetchFn), state, enabled: false, settings: settings as never
     });
 
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'carddav' });
     expect(settingsHandoffs.at(-1)?.request).toMatchObject({ conflictID: 41 });
@@ -1530,12 +1536,14 @@ describe('AppShell', () => {
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 7 }));
     expect(await screen.findByRole('heading', { name: 'Synthetic Person' })).toBeDefined();
     expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
-    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
     await waitFor(() => expect(restoredPublicationSignal).toBeDefined());
 
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Publish to address book' })).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(restoredPublicationSignal?.aborted).toBe(true);
     resolveRestoredPublication(Response.json({
@@ -1551,7 +1559,7 @@ describe('AppShell', () => {
 
   it('does not reset Directory page one for ordinary selection and filter commits', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryQuery: '', directoryPersonID: null
+      workspace: 'relationships', relationshipSaved: true, directoryPersonID: null
     }))}`);
     const directoryRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1573,13 +1581,11 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
 
     await screen.findByText('Synthetic Person');
-    await fireEvent.click(screen.getByRole('row', { name: /Synthetic Person/ }));
+    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Person'));
     await Promise.resolve();
     expect(directoryRequests).toHaveLength(1);
 
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search directory' }), {
-      target: { value: 'refined' }
-    });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter people' }), { target: { value: 'refined' } });
     await waitFor(() => expect(screen.getByText('Refined Person')).toBeDefined());
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(directoryRequests).toHaveLength(2);
@@ -2073,77 +2079,22 @@ describe('AppShell', () => {
 
     expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Promote to person' }));
+    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(state.current.directoryPersonID).toBe(42));
-    expect(state.current.workspace).toBe('directory');
+    expect(state.current.workspace).toBe('relationships');
     expect(new URL(window.location.href).searchParams.get('explore')).toContain('directoryPersonID');
     const promotion = requests.find((request) =>
       new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST'
     );
     expect(promotion).toBeDefined();
     await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
-    expect(requests.filter((request) => new URL(request.url).pathname === '/api/v1/people/directory').length)
-      .toBeGreaterThanOrEqual(2);
+    expect(requests.slice(requests.indexOf(promotion!) + 1).some(request => new URL(request.url).pathname === '/api/v1/people/directory')).toBe(true);
 
     rendered.unmount();
     state.destroy();
   });
-
-  it.each(['sidebar', 'global search'] as const)(
-    'drops the relationship promotion when leaving Directory by %s and going back',
-    async (exit) => {
-      window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-        workspace: 'relationships', relationshipTarget: 'cluster:11'
-      }))}`);
-      const fetchFn = vi.fn<typeof fetch>(async (input) => {
-        const request = input instanceof Request ? input : new Request(input);
-        const path = new URL(request.url).pathname;
-        const meetingResponse = meetingFixtureResponse(path);
-        if (meetingResponse) return meetingResponse;
-        if (path === '/api/v1/relationships') return Response.json({ rows: [] });
-        if (path === '/api/v1/participants/11') return Response.json({
-          id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
-          activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
-          last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
-        });
-        if (path === '/api/v1/participants/11/timeline') return Response.json({
-          cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {}
-        });
-        if (path === '/api/v1/people/directory') return Response.json({ people: [] });
-        return Response.json(exploreResponse());
-      });
-      const state = new ExploreState(window);
-      const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
-      expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-      expect(await screen.findByRole('button', { name: 'Promote to person' })).toBeDefined();
-
-      if (exit === 'sidebar') {
-        await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' }))
-          .getByRole('button', { name: 'Messages' }));
-      } else {
-        await fireEvent.input(screen.getByRole('searchbox', { name: 'Search messages' }), {
-          target: { value: 'pipeline' }
-        });
-        await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
-      }
-      expect(await screen.findByRole('main', { name: 'Messages' })).toBeDefined();
-
-      const restored = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-      window.history.back();
-      await restored;
-      expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
-      expect(screen.queryByRole('button', { name: 'Promote to person' })).toBeNull();
-
-      rendered.unmount();
-      state.destroy();
-    }
-  );
 
   it('renders actionable Directory guidance for a relationship promotion conflict', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
@@ -2173,12 +2124,10 @@ describe('AppShell', () => {
 
     expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('already bound to another person');
-    expect(alert.textContent).toContain('resolve that binding before promoting');
     expect(state.current.directoryPersonID).toBeNull();
 
     rendered.unmount();
@@ -2230,16 +2179,14 @@ describe('AppShell', () => {
     state.commitNavigation(relationshipDestination(11));
     expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
     expect((await screen.findByRole('alert')).textContent).toContain('already bound to another person');
 
     state.commitNavigation(relationshipDestination(12));
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
 
-    expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(state.current.directoryPersonID).toBeNull();
