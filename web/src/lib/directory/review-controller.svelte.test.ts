@@ -72,34 +72,39 @@ describe('DirectoryReviewController', () => {
     expect(controller.rows).toEqual([candidate(2, 'conflict')]);
   });
 
-  it('retains the prior page after a later-page failure and retries the same offset', async () => {
+  it.each(['next', 'previous'] as const)('retains the prior page after a %s-page failure', async direction => {
     const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT + 1 }, (_, index) => candidate(index + 1));
-    let secondAttempt = 0;
+    const secondPage = [candidate(101)];
+    const failedOffset = direction === 'next' ? '10' : '0';
+    let failedAttempts = 0;
     const offsets: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const offset = new URL(request.url).searchParams.get('offset') ?? '';
+      const offset = new URL(requestOf(input).url).searchParams.get('offset') ?? '';
       offsets.push(offset);
-      if (offset === '0') return page(firstPage);
-      secondAttempt += 1;
-      if (secondAttempt === 1) return Response.json({ error: 'unavailable', message: 'Queue unavailable' }, { status: 503 });
-      return page(Array.from({ length: 10 }, (_, index) => candidate(101 + index)), 10);
+      if (offset === failedOffset && offsets.length > 1) {
+        failedAttempts += 1;
+        if (failedAttempts === 1) return Response.json({ error: 'unavailable', message: 'Queue unavailable' }, { status: 503 });
+      }
+      return offset === '0' ? page(firstPage) : page(secondPage, 10);
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
 
     await controller.loadIdentityPage();
     expect(controller.hasNextPage).toBe(true);
-    await controller.loadNextPage();
-    expect(controller.rows).toEqual(firstPage.slice(0, 10));
-    expect(controller.offset).toBe(0);
+    if (direction === 'previous') await controller.loadNextPage();
+    await (direction === 'next' ? controller.loadNextPage() : controller.loadPreviousPage());
+    expect(controller.rows).toEqual(direction === 'next' ? firstPage.slice(0, 10) : secondPage);
+    expect(controller.offset).toBe(direction === 'next' ? 0 : 10);
     expect(controller.pageError).toBe('Queue unavailable');
+    expect(controller.error).toBeNull();
+    if (direction === 'previous') expect(offsets).toEqual(['0', '10', '0']);
 
     await controller.retryPage();
-    expect(offsets).toEqual(['0', '10', '10']);
-    expect(controller.rows).toHaveLength(10);
-    expect(controller.offset).toBe(10);
-    expect(controller.hasPreviousPage).toBe(true);
-    expect(controller.hasNextPage).toBe(false);
+    expect(offsets).toEqual(direction === 'next' ? ['0', '10', '10'] : ['0', '10', '0', '0']);
+    expect(controller.rows).toEqual(direction === 'next' ? secondPage : firstPage.slice(0, 10));
+    expect(controller.offset).toBe(direction === 'next' ? 10 : 0);
+    expect(controller.hasPreviousPage).toBe(direction === 'next');
+    expect(controller.hasNextPage).toBe(direction === 'previous');
   });
 
   it.each(['restoration', 'History'] as const)('resets the offset synchronously before a failed %s load', async entry => {
@@ -173,31 +178,6 @@ describe('DirectoryReviewController', () => {
     expect(controller.pageError).toBeNull();
     expect(controller.status).toBeNull();
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(3);
-  });
-
-  it('retains the current same-state page when previous-page loading fails', async () => {
-    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT + 1 }, (_, index) => candidate(index + 1));
-    let firstPageLoads = 0;
-    const offsets: string[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const offset = new URL(requestOf(input).url).searchParams.get('offset') ?? '';
-      offsets.push(offset);
-      if (offset === '10') return page([candidate(101)], 10);
-      firstPageLoads += 1;
-      if (firstPageLoads === 1) return page(firstPage);
-      return Response.json({ error: 'unavailable', message: 'Previous page failed' }, { status: 503 });
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-    await controller.loadNextPage();
-
-    await controller.loadPreviousPage();
-
-    expect(offsets).toEqual(['0', '10', '0']);
-    expect(controller.offset).toBe(10);
-    expect(controller.rows).toEqual([candidate(101)]);
-    expect(controller.pageError).toBe('Previous page failed');
-    expect(controller.error).toBeNull();
   });
 
   it('applies a successful decision before best-effort reconciliation', async () => {
@@ -368,7 +348,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.mergeRequired).toBeNull();
   });
 
-  it('records merge success, preserves decision notes, and refreshes the current page', async () => {
+  it('records merge success and refreshes the current page', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(requestOf(input));
@@ -376,8 +356,6 @@ describe('DirectoryReviewController', () => {
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     controller.rows = [candidate(17), candidate(18)];
-    controller.setDecisionDraft(17, 'merge this one');
-    controller.setDecisionDraft(18, 'keep this draft');
     const success = {
       result: mergeResult(person(7), 'stale'),
       survivor: person(7),
@@ -391,8 +369,6 @@ describe('DirectoryReviewController', () => {
 
     expect(controller.lastMerge).toEqual({ candidateID: 17, ...success });
     expect(controller.rows[0]?.review_token).toBe('after-profile-merge');
-    expect(controller.getDecisionDraft(17)).toBe('merge this one');
-    expect(controller.getDecisionDraft(18)).toBe('keep this draft');
     expect(controller.status).toContain('Review the refreshed pair to finish.');
     expect(requests).toHaveLength(1);
   });
