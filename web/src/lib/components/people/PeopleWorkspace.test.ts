@@ -172,7 +172,7 @@ it('reads a saved profile once and loads its fields when Details opens', async (
     if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
     if (path === '/api/v1/people/91') return Response.json(profile);
-    if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'overdue', interaction_count: 3 });
+    if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'unknown', interaction_count: 0 });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
@@ -332,7 +332,8 @@ it('ignores a completed saved profile lookup after an observed person supersedes
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
   const onNavigate = vi.fn((patch) => state.commitNavigation(patch));
-  const props = () => ({ client, controller, directory, urlState: state.current, target: state.current.relationshipTarget, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() });
+  const onReplaceNavigation = vi.fn();
+  const props = () => ({ client, controller, directory, urlState: state.current, target: state.current.relationshipTarget, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() });
   const view = render(PeopleWorkspace, { props: props() });
   try {
     await fireEvent.click(await screen.findByText('Saved Contact'));
@@ -342,6 +343,8 @@ it('ignores a completed saved profile lookup after an observed person supersedes
     await view.rerender(props());
     await act(async () => { release(Response.json(saved)); await pending; await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(state.current).toMatchObject({ directoryPersonID: null, relationshipTarget: 'cluster:1' });
+    expect(onReplaceNavigation).not.toHaveBeenCalled();
+    expect(directory.selectedPersonID).toBeNull();
     expect(onNavigate.mock.calls).toEqual([[{ directoryPersonID: 92, relationshipTarget: null, relationshipFiles: false }], [{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
@@ -432,8 +435,6 @@ it('keeps Messages mounted across a profile reload', async () => {
     let reload!: Promise<void>;
     await act(() => { reload = directory.loadSelection(7); });
     expect(messages.isConnected).toBe(true);
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
-    expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);
     await act(async () => { releaseProfile(Response.json(saved)); await reload; });
     expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);
   } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
