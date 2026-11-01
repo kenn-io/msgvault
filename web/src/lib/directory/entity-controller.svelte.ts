@@ -167,10 +167,7 @@ export class DirectoryEntityController {
   private async loadEmployments(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('employments');
     try {
-      const response = await generatedListPersonEmployments({ id: this.personID }, undefined, {
-        ...this.client,
-        signal: abort.signal,
-      });
+      const response = await this.readEmployments(abort.signal);
       if (!this.owns('employments', abort, generation)) return false;
       if (response.data) {
         this.employments = response.data.employments ?? [];
@@ -188,6 +185,12 @@ export class DirectoryEntityController {
     } finally {
       if (generation === this.employmentGeneration) this.loading.employments = false;
     }
+  }
+  private async readEmployments(signal: AbortSignal) {
+    const response = await generatedListPersonEmployments({ id: this.personID }, undefined, { ...this.client, signal });
+    const ids = new Set((response.data?.employments ?? []).map(item => item.organization_id));
+    await Promise.allSettled([...ids].map(id => this.prepareOrganizationMutation(id)));
+    return response;
   }
   async refreshRelationships(includeEnded = this.relationshipsIncludeEnded): Promise<void> {
     this.relationshipsIncludeEnded = includeEnded;

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -32,7 +32,7 @@ describe('ProfileHistoryDialog', () => {
       if (url.pathname === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
       if (url.pathname.endsWith('/profile')) return Response.json({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"profile-7-r3"' } });
       if (url.pathname.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
-      if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: [{
+      if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: note === 'Latest note' ? [] : [{
         person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { ...currentEnvelope, id: 2 },
       }] });
       if (url.pathname.endsWith('/attributes')) {
@@ -60,9 +60,9 @@ describe('ProfileHistoryDialog', () => {
     await dialog.unmount();
     note = 'Latest note';
     render(ProfileHistoryDialog, props);
-    expect(await screen.findByText('Current Name')).toBeDefined();
     expect(await screen.findByText('Latest note')).toBeDefined();
     expect(screen.queryByText('Earlier note')).toBeNull();
+    expect(screen.queryByText('No profile history yet')).toBeNull();
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
@@ -76,7 +76,7 @@ describe('ProfileHistoryDialog', () => {
         person: person(),
         names: [
           { person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { id: 2, ordinal: 0, source: 'user', active_from: when, created_at: when, updated_at: when, vcard: {} } },
-          { person_id: 7, name_kind: 'formatted', original_value: 'Previous Name', is_derived: false, envelope: { id: 1, ordinal: 0, source: 'user', created_at: when, updated_at: when, superseded_at: '2026-08-02T00:00:00Z', vcard: {} } }
+          { person_id: 7, name_kind: 'formatted', original_value: 'Previous Name', is_derived: false, envelope: { id: 1, ordinal: 0, source: 'carddav_import', source_ref: 'synthetic-card', active_from: when, active_until: '2026-08-02T00:00:00Z', created_at: when, updated_at: when, superseded_at: '2026-08-02T00:00:00Z', vcard: {} } }
         ],
         contact_points: [...['workspace-a', 'workspace-b'].map((scope, index) => ({
           person_id: 7, address_kind: 'username', original_value: 'alice', normalized_value: 'alice', normalization: 'casefold', normalization_version: 1,
@@ -85,7 +85,7 @@ describe('ProfileHistoryDialog', () => {
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } }],
         addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
         dates: [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, date_text: 'February 14', original_value: '--02-14', envelope: { ...currentEnvelope, id: 32 } }],
-        categories: [{ person_id: 7, normalized_value: 'current category', original_value: 'Current category', envelope: { ...currentEnvelope, id: 33 } }, {
+        categories: [{ person_id: 7, normalized_value: 'current category', original_value: 'Current category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
           person_id: 7, original_value: 'Past category', normalized_value: 'past category',
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
@@ -119,13 +119,15 @@ describe('ProfileHistoryDialog', () => {
       expect(row.closest('details')).not.toBeNull();
       expect(row.textContent).toMatch(new RegExp(`Removed ${dateText}`));
     }
-    expect(screen.getAllByText(new RegExp(`^Removed ${dateText}`))).toHaveLength(4);
+    const previous = screen.getByText('Previous Name').closest('li')!;
+    expect(previous.textContent).toContain('synthetic-card');
+    expect(previous.textContent).toMatch(/Valid from:.*Valid until:/);
     const observed = screen.getByText('observed@example.test').closest('li')!;
     expect(observed.textContent).toMatch(/Archive observation · Jul 31, 2026/);
     expect(screen.getByText('slack · workspace / workspace-a')).toBeDefined();
     expect(screen.getByText('slack · workspace / workspace-b')).toBeDefined();
     expect(screen.getByText('email')).toBeDefined();
-    expect(document.body.textContent).not.toMatch(/Service:|Scope:|Superseded:|Observed:/);
+    expect(document.body.textContent).not.toMatch(/Service:|Scope:|Observed:/);
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
@@ -141,4 +143,31 @@ describe('ProfileHistoryDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
     expect(screen.getByRole('dialog', { name: 'History' })).toBeDefined();
   });
+});
+
+it('opening History preserves a conflicted profile draft', async () => {
+  const saved = person();
+  const structured = { person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] };
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
+    if (path.endsWith('/profile/history')) return Response.json(structured);
+    if (path.endsWith('/profile')) return Response.json(structured, { headers: { ETag: '"profile-7-r4"' } });
+    if (path === '/api/v1/people/7') return Response.json({ ...saved, revision: 4 }, { headers: { ETag: '"person-7-r4"' } });
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/merges')) return Response.json({ merges: [] });
+    return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown' });
+  });
+  const controller = new DirectoryProfileController(client, 7, { person: saved, structuredProfile: structured, etags: { structuredProfile: '"profile-7-r3"' }, errors: {} });
+  await controller.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
+  const draft = controller.draft, conflict = controller.conflict;
+  expect(conflict).not.toBeNull();
+  const view = render(ProfileHistoryDialog, { client, controller, personID: 7, onClose: vi.fn() });
+  try {
+    await waitFor(() => expect(controller.person?.revision).toBe(4));
+    expect(controller.draft).toBe(draft);
+    expect(controller.conflict).toBe(conflict);
+  } finally { view.unmount(); controller.destroy(); }
 });

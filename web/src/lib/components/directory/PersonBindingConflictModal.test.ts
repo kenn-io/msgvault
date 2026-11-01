@@ -1,4 +1,4 @@
-import { mergeResult } from '../../directory/entity-fixtures.test-support';
+import { mergeResult, requestOf } from '../../directory/entity-fixtures.test-support';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -39,10 +39,6 @@ function conflict(): ValidatedPersonMergeRequired {
   };
 }
 
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function renderModal(
   fetchFn: typeof fetch,

@@ -84,7 +84,7 @@ function renderSection(
     errors: {},
   } satisfies DirectoryReadBundle;
   const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle);
-  render(AttributeSection, { controller, historyOnly: true });
+  render(AttributeSection, { controller });
   return controller;
 }
 
@@ -115,44 +115,28 @@ describe('AttributeSection', () => {
     expect(screen.getByText('Hidden')).toBeDefined();
   });
 
-  it('joins registry definitions to grouped values by universal ID and renders collapsed history', () => {
-    const stale = definition({
-      universal_id: 'portable-field-id',
-      slug: 'portable_field',
-      label: 'Stale label',
-      is_sensitive: false,
+  it('renders collapsed attribute history with value labels and provenance', () => {
+    const field = definition({
+      label: 'Portable field', is_sensitive: false, cardinality: 'multi',
+      options: { choices: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
     });
-    const registry = definition({
-      universal_id: 'portable-field-id',
-      slug: 'portable_field',
-      label: 'Portable field',
-      description: 'Registry description',
-      is_sensitive: false,
-      cardinality: 'multi',
-      options: {
-        choices: [
-          { value: 'one', label: 'One' },
-          { value: 'two', label: 'Two' },
-        ],
-      },
-    });
-    const current = personValue(stale, 31, { type: 'text', text: 'one' }, 2);
-    const historical = personValue(stale, 29, { type: 'text', text: 'two' }, 2, {
+    const current = personValue(field, 31, { type: 'text', text: 'one' }, 2);
+    const historical = personValue(field, 29, { type: 'text', text: 'two' }, 2, {
       source: 'vcard_import',
       source_ref: 'synthetic-source',
       active_until: when,
       superseded_at: when,
     });
 
-    renderSection(vi.fn(), [{ definition: stale, current: [current], history: [current, historical] }], [registry]);
+    renderSection(vi.fn(), [{ definition: field, current: [current], history: [current, historical] }]);
 
-    expect(screen.getByRole('heading', { name: 'Portable field' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Stale label' })).toBeNull();
     const history = screen.getByText('1 earlier value').closest('details');
     expect(history).not.toBeNull();
     expect(history?.hasAttribute('open')).toBe(false);
     const row = screen.getByText('Two').closest('li')!;
     expect(row.textContent).toMatch(/Removed (Jul|Aug) \d{1,2}, 2026/);
-    expect(row.textContent).not.toMatch(/Source:|Reference:|vcard_import|synthetic-source/);
+    expect(row.textContent).toContain('Vcard import');
+    expect(row.textContent).toContain('Reference: synthetic-source');
+    expect(row.textContent).toMatch(/Valid from:.*Valid until:/);
   });
 });

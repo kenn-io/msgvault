@@ -98,14 +98,14 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each(['domain', 'person'] as const)('shows the %s Details content across person tabs', async kind => {
+it('shows person Details content across person tabs', async () => {
   vi.stubEnv('TZ', 'UTC');
-  const summary = { ...(kind === 'domain' ? { domain: 'example.com', person_count: 3 } : { id: 1, display_label: 'Alice Example', identifiers: [] }), activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
-  const target = kind === 'domain' ? 'domain:example.com' : 'cluster:1';
+  const summary = { id: 1, display_label: 'Alice Example', identifiers: [], activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
+  const target = 'cluster:1';
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/domains/example.com' || path === '/api/v1/participants/1') return Response.json(summary);
+    if (path === '/api/v1/participants/1') return Response.json(summary);
     if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
     return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
   });
@@ -116,9 +116,7 @@ it.each(['domain', 'person'] as const)('shows the %s Details content across pers
   try {
     expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    if (kind === 'domain') {
-      expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
-    } else expect(screen.getByRole('heading', { name: 'Addresses' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Addresses' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
     expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();

@@ -160,7 +160,6 @@
   async function peopleDeleted(ids: number[]): Promise<void> {
     onDuplicatesChanged();
     if (selectedProfileID !== null && ids.includes(selectedProfileID)) close();
-    await controller.loadList(page.predicate);
   }
   async function startBulk(): Promise<void> {
     const ids = [...selection.explicitKeys].map((key) => /^cluster:([1-9][0-9]*)$/.exec(key)?.[1]).filter((id): id is string => id !== undefined).map(Number);

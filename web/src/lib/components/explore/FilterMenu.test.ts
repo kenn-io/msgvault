@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
+import { CHAT_MESSAGE_TYPES } from '../../explore/labels';
 import FilterMenu from './FilterMenu.svelte';
 
 it('edits UTC date bounds and retains committed bounds after invalid edits', async () => {
@@ -52,6 +53,7 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
 it.each([
   { name: 'preserves restored kinds when adding Email', filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
   { name: 'groups meeting kinds in a meetings-only archive', filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: undefined, expected: ['meeting_note', 'meeting_minutes'] },
+  { name: 'includes older SMS when conversation groups expose only MMS', filters: [], kinds: ['mms'], label: 'Conversation', expected: [...CHAT_MESSAGE_TYPES] },
 ])('$name', async ({ filters, kinds, label, expected }) => {
   const onChange = vi.fn();
   render(FilterMenu, {

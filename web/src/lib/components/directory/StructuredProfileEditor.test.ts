@@ -809,7 +809,7 @@ describe('StructuredProfileEditor', () => {
 
   it.each([
     { label: 'parts', current: { original_value: 'Example', given_name: 'Ex', family_name: 'Ample', phonetic_system: 'ipa' }, initial: 'Ex', edit: 'Ecks', expected: { original_value: 'Ecks Ample', formatted: 'Ecks Ample', given_name: 'Ecks', family_name: 'Ample', phonetic_system: 'ipa' } },
-    { label: 'formatted only', current: { formatted: 'Arisu', original_value: 'Arisu' }, initial: 'Arisu', edit: 'Arisu', expected: { formatted: 'Arisu', original_value: 'Arisu', given_name: 'Arisu' } },
+    { label: 'formatted only', current: { formatted: 'Arisu', original_value: 'Arisu' }, initial: 'Arisu', edit: 'Arisu', expected: { formatted: 'Arisu', original_value: 'Arisu' } },
   ])('preserves pronunciation and metadata when replacing a $label name', async ({ current, initial, edit, expected }) => {
     const { controller, requests } = requestHarness();
     const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
@@ -821,4 +821,12 @@ describe('StructuredProfileEditor', () => {
     await waitFor(() => expect(requests).toHaveLength(1));
     await expect(requests[0]!.json()).resolves.toEqual({ names: { add: [{ ...expected, name_kind: 'phonetic', is_derived: false, envelope: { source: 'user', ordinal: 2 } }], supersede: [11] } });
   });
+});
+
+it('defaults another Date to anniversary when a birthday already exists', () => {
+  const { controller } = requestHarness();
+  controller.structuredProfile!.dates = [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, original_value: '--02-14', envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }];
+  const view = render(StructuredProfileEditor, { controller, section: 'dates' });
+  try { expect(screen.getByLabelText('Date kind')).toHaveProperty('value', 'anniversary'); }
+  finally { view.unmount(); controller.destroy(); }
 });

@@ -3,7 +3,8 @@
   import { Button, Modal } from '@kenn-io/kit-ui';
   import AttributeSection from './AttributeSection.svelte';
   import { sentenceCase } from '../../explore/labels';
-  import { historySource, historyTime } from './history-format';
+  import { historySource, historyProvenance } from './history-format';
+  import { formatDateTime as historyTime } from '../../util/format';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
@@ -28,7 +29,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   onMount(() => void load());
-  onMount(() => void controller?.reload());
+  onMount(() => void controller?.reload(false));
   async function load(): Promise<void> {
     loading = true;
     error = null;
@@ -49,7 +50,7 @@
 
   // A value stops being current when it is replaced, removed, or its validity ends.
   function ended(envelope: ValueEnvelope): string | undefined {
-    return envelope.superseded_at ?? envelope.active_until;
+    return envelope.superseded_at ?? (envelope.active_until && Date.parse(envelope.active_until) <= Date.now() ? envelope.active_until : undefined);
   }
 
   type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; scope_kind?: string; scope_value?: string };
@@ -114,7 +115,7 @@
         <li>
           <span class="value">{item.value}{#if item.context}<small>{item.context}</small>{/if}</span>
           <span class="meta">
-            {#if past}Removed {historyTime(ended(item.envelope))}{:else}{historySource(item.envelope.source)} · {historyTime(item.observedAt ?? item.envelope.updated_at)}{/if}
+            {#if past}Removed {historyTime(ended(item.envelope))} · {historyProvenance(item.envelope)}{:else}{historySource(item.envelope.source)} · {historyTime(item.observedAt ?? item.envelope.updated_at)}{/if}
           </span>
         </li>
       {/snippet}
@@ -131,15 +132,13 @@
             </details>
           {/if}
         </section>
-      {:else}
-        <p class="empty">No profile history yet</p>
       {/each}
     {/if}
     {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
     {#if controller?.attributesError ?? controller?.definitionsError}
       <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
-      <Button label="Retry attribute history" onclick={() => void controller?.reload()} />
-    {:else if controller}<AttributeSection {controller} historyOnly />{/if}
+      <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />
+    {:else if controller}<AttributeSection {controller} />{/if}
     <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} {onSplitCommitted} />
   </div>
   {#snippet footer()}
@@ -185,8 +184,7 @@
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
-  small,
-  .empty {
+  small {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
