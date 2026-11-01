@@ -71,7 +71,6 @@ describe('RelationshipsTab', () => {
 
   it('renders the shared type catalog without person connections and keeps system types read-only', () => {
     const { client, controller } = controllerWith(vi.fn(), 0);
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner')];
     controller.relationshipTypes = [
       relationshipType({ ownership: 'system', is_deletable: false }),
       relationshipType({ id: 32, slug: 'custom', forward_label: 'supports', reverse_label: 'is supported by' })
@@ -80,7 +79,6 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
     expect(screen.queryByRole('heading', { name: 'Connections' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add connection' })).toBeNull();
-    expect(screen.queryByText('Synthetic Learner · mentors')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete mentor relationship type' })).toBeNull();
     expect(screen.getByText('Built in')).toBeDefined();
@@ -554,7 +552,6 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/relationship-types/31' && request.method === 'PATCH') {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });
       }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     }), 0);
     controller.relationshipTypes = [current];
@@ -665,7 +662,6 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/relationship-types/31' && request.method === 'PATCH') {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });
       }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     }), 0);
     controller.relationshipTypes = [current];

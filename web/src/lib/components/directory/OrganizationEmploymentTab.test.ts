@@ -46,7 +46,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 
 
-  it('creates an employment for the exact selected person with user provenance and renders reconciled projection', async () => {
+  it('creates an employment for the exact selected person with user provenance', async () => {
     const requests: Request[] = [];
     let employmentReads = 0;
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
@@ -66,7 +66,6 @@ describe('OrganizationEmploymentTab', () => {
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.employments = [employment(11, 1, { is_primary: true })];
-    controller.employmentProjection = { employment_id: 11, organization_id: 21, organization_name: 'Old Org', title: 'Engineer', vcard: {} };
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
@@ -257,7 +256,7 @@ describe('OrganizationEmploymentTab', () => {
     expect(within(current).getByRole('button', { name: 'Make primary employment' })).toBeDefined();
   });
 
-  it('makes a current employment primary and reconciles the projection', async () => {
+  it('makes a current employment primary', async () => {
     const requests: Request[] = [];
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
