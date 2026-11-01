@@ -1,3 +1,4 @@
+import { person as profile } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -8,7 +9,6 @@ import MergePeopleDialog from './MergePeopleDialog.svelte';
 it.each([false, true])('merges saved profiles and promotes an observed choice only when needed: %s', async promote => {
   const requests: Request[] = [];
   let failProfile = promote;
-  const profile = (id: number) => ({ id, revision: id === 7 ? 4 : 2, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', participant_ids: id === 7 ? [] : [2], created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard_uid: `example-${id}` });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request.clone());

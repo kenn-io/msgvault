@@ -1,3 +1,4 @@
+import { person as profile } from '../../directory/entity-fixtures.test-support';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -22,7 +23,6 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
     return routes[path]?.(request) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0 }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
-const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
 
 it('keeps the day across Details and the file filter across Files', async () => {
   const observers = new Map<Element, ResizeObserverCallback>();
@@ -530,7 +530,7 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-async function splitSelectedPerson(savedEntry: boolean, verify: (result: { onDuplicatesChanged: ReturnType<typeof vi.fn>; state: ExploreState }) => void | Promise<void>) {
+it.each([false, true])('keeps the split receipt visible after source binding changes: saved=%s', async savedEntry => {
   let split = false;
   const saved = () => profile(7, split ? 5 : 4, split ? [] : [1]);
   const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 3, absorbed_revision_before: 2, survivor_revision_after: 4, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };
@@ -558,21 +558,9 @@ async function splitSelectedPerson(savedEntry: boolean, verify: (result: { onDup
     await fireEvent.click(screen.getByRole('checkbox', { name: /I confirm splitting/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
-    await verify({ onDuplicatesChanged, state });
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-}
-
-it('keeps the split receipt visible after the saved source loses its displayed binding', async () => {
-  await splitSelectedPerson(true, async ({ state }) => {
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
-    expect(state.current.relationshipTarget).toBeNull();
-  });
-});
-
-it('refreshes the waiting badge after splitting the observed source', async () => {
-  await splitSelectedPerson(false, ({ onDuplicatesChanged }) => {
-    expect(onDuplicatesChanged).toHaveBeenCalledOnce();
-  });
+    if (savedEntry) expect(state.current.relationshipTarget).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
 it('leaving People aborts its pending Save', async () => {

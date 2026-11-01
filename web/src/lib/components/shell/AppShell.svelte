@@ -367,9 +367,12 @@
     (patch) => commitNavigation(patch),
     async result => {
       if (!result.ok && result.kind !== 'merge_required') announceOperation(result.message);
-      if (result.ok) await Promise.all([identityChanged(false), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+      if (result.ok) await reconcileIdentity();
     },
   );
+  async function reconcileIdentity(): Promise<void> {
+    await Promise.all([identityChanged(false), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+  }
   async function identityChanged(refreshReviews = true): Promise<void> {
     await Promise.all([
       shellData.refreshDuplicates(),
@@ -966,6 +969,7 @@
     ...groupingCommands,
   ]);
   const shellCommands = $derived([
+    { id: 'go:duplicates', label: 'Possible duplicates', section: 'Go to', run: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityState: 'candidate' }) },
     ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
     ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: `Open view: ${view.name}`, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
     { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
@@ -1513,7 +1517,7 @@
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
-    onSuccess={async success => { await Promise.all([identityChanged(false), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]); await directoryReviewController.completePersonMerge(merge.candidateID, merge.context, success); }}
+    onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, merge.context, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
 {#if directoryReviewController.pending}

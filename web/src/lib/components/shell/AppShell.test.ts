@@ -1,3 +1,4 @@
+import { person } from '../../directory/entity-fixtures.test-support';
 import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
@@ -376,7 +377,7 @@ describe('AppShell', () => {
 
   it.each([
     ['everything', 'Messages'],
-    ['relationships', 'People'], ['deletions', 'Staged deletions'], ['settings', 'Settings']
+    ['relationships', 'People'], ['relationships', 'Possible duplicates'], ['deletions', 'Staged deletions'], ['settings', 'Settings']
   ])('reaches %s through the command palette', async (workspace, label) => {
     window.history.replaceState(null, '', `/?workspace=${workspace === 'everything' ? 'sources' : 'everything'}`);
     const state = new ExploreState(window);
@@ -384,6 +385,7 @@ describe('AppShell', () => {
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     await fireEvent.click(await screen.findByRole('option', { name: label }));
     expect(state.current.workspace).toBe(workspace);
+    if (label === 'Possible duplicates') expect(state.current.peopleDuplicates).toBe(true);
     rendered.unmount(); state.destroy();
   });
 
@@ -2817,4 +2819,52 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
     expect((screen.getByLabelText('Filter filename') as HTMLInputElement).value).toBe('');
     expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
   } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
+});
+
+const when = '2026-08-01T00:00:00Z';
+const pair = { id: 17, left_id: 1, left_kind: 'participant', right_id: 2, right_kind: 'participant', basis: 'email', source: 'user', state: 'candidate', actionable: true, application_pending: false, review_token: 'review-17', evidence: [], created_at: when, updated_at: when };
+it('refreshes Saved after merging a pair through Possible duplicates', async () => {
+  let merged = false, decided = false;
+  const profile = (id: number) => person(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]);
+  const conflict = { error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: profile(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) };
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [profile(7)] : [profile(7), profile(9)] });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: decided ? [] : [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/17/review/accept')) { if (!merged) return Response.json(conflict, { status: 409 }); expect(await request.json()).toEqual({ review_token: 'refreshed-17' }); decided = true; return Response.json({ candidate: { ...pair, state: 'accepted' }, cache_state: 'ready', identity_revision: 3 }); }
+    if (path.endsWith('/people/7/merge')) { merged = true; return Response.json({ person: { ...profile(7), revision: 5, participant_ids: [1, 2] }, cache_state: 'ready', identity_revision: 2, merge: { id: 41 }, review_candidates: [] }, { headers: { ETag: '"person-7-r5"' } }); }
+    if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
+    if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? 'Synthetic One' : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+    return Response.json({ rows: [] });
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const view = render(AppShell, { client, state });
+  try {
+    const grid = await screen.findByRole('grid', { name: 'People results' });
+    await within(grid).findByText('Synthetic Two');
+    await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
+    await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    await fireEvent(window, new Event('pagehide'));
+    const modal = await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    await fireEvent.click(within(modal).getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+    await fireEvent.click(within(modal).getByRole('checkbox', { name: /I understand/ }));
+    await fireEvent.click(within(modal).getByRole('button', { name: 'Merge into selected survivor' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
+    expect(merged).toBe(true);
+    await waitFor(() => expect(screen.queryByText(/Both are saved as different people/)).toBeNull());
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    await fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(decided).toBe(true));
+    await screen.findByText('No possible duplicates');
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
+    const savedGrid = await screen.findByRole('grid', { name: 'People results' });
+    await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
+  } finally { view.unmount(); state.destroy(); }
 });

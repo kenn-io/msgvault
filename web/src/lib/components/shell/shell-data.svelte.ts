@@ -42,6 +42,7 @@ export class ShellData {
   #client: APIClient;
   #timer: ReturnType<typeof setInterval> | undefined;
   #controller: AbortController | undefined;
+  #duplicateRequest = 0;
 
   constructor(client: APIClient, operations = new OperationsController(client)) {
     this.#client = client;
@@ -60,6 +61,7 @@ export class ShellData {
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
     this.#controller?.abort();
+    ++this.#duplicateRequest;
     this.deletions.destroy();
     this.jobs.dispose();
   }
@@ -78,9 +80,10 @@ export class ShellData {
   }
 
   async refreshDuplicates(signal?: AbortSignal): Promise<void> {
+    const request = ++this.#duplicateRequest;
     try {
       const result = await listIdentityMatchCandidates({ state: 'candidate,conflict', limit: 500, offset: 0 }, { ...this.#client, signal });
-      if (result.data && !signal?.aborted) this.duplicateCount = result.data.candidates?.length ?? 0;
+      if (result.data && !signal?.aborted && request === this.#duplicateRequest) this.duplicateCount = result.data.candidates?.length ?? 0;
     } catch { /* Keep the last count while offline. */ }
   }
   refreshDeletions(): Promise<void> { return this.deletions.refresh(); }

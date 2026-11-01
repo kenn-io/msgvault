@@ -237,3 +237,18 @@ it('counts one waiting page and retains its badge after an offline read', async 
     expect(data.duplicateCount).toBe(count);
   } finally { data.stop(); }
 });
+
+it('keeps the post-decision badge when an earlier read completes late', async () => {
+  let finish!: (response: Response) => void;
+  let reads = 0;
+  const data = new ShellData(createAPIClient(async () => ++reads === 1 ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json({ candidates: [] })));
+  try {
+    const initial = data.refreshDuplicates();
+    await vi.waitFor(() => expect(reads).toBe(1));
+    await data.refreshDuplicates();
+    expect(data.duplicateCount).toBe(0);
+    finish(Response.json({ candidates: [{ id: 17 }] }));
+    await initial;
+    expect(data.duplicateCount).toBe(0);
+  } finally { data.stop(); }
+});

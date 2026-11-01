@@ -13,6 +13,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PageHeader from '../shell/PageHeader.svelte';
   import PeopleList, { type PeopleRow } from './PeopleList.svelte';
+  import { messageCount } from '../../people/format';
   import PossibleDuplicates from './PossibleDuplicates.svelte';
   import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import PersonPage from './PersonPage.svelte';
@@ -84,10 +85,10 @@
     }
     if ('domain' in row) {
       const domain = row as DomainSummary;
-      return { key: `domain:${domain.domain}`, label: domain.domain, detail: `${domain.activity_count.toLocaleString()} ${domain.activity_count === 1 ? 'message' : 'messages'}`, lastAt: domain.last_at, saved: false, domain: true };
+      return { key: `domain:${domain.domain}`, label: domain.domain, detail: messageCount(domain.activity_count), lastAt: domain.last_at, saved: false, domain: true };
     }
     const person = row as PersonSummary;
-    return { key: `cluster:${person.id}`, label: person.display_label, detail: `${person.activity_count.toLocaleString()} ${person.activity_count === 1 ? 'message' : 'messages'}`, lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
+    return { key: `cluster:${person.id}`, label: person.display_label, detail: messageCount(person.activity_count), lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
   }));
   const loading = $derived(directoryMode ? directory.loading : controller.listLoading);
   const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
