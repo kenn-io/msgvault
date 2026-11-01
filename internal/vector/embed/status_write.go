@@ -2,8 +2,6 @@ package embed
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -23,7 +21,7 @@ func (w *Worker) upsertMeasured(ctx context.Context, gen vector.GenerationID, ch
 // is reused instead of requested again.
 func (w *ContextWorker) embedDocumentsMeasured(ctx context.Context, inputs []DocumentInput, page *contextEmbeddingPage) ([][][]float32, error) {
 	if page.vectors == nil {
-		page.vectors = make(map[[sha256.Size]byte][][]float32)
+		page.vectors = make(map[string][][]float32)
 	}
 	var requested []DocumentInput
 	var chunks []string
@@ -43,14 +41,14 @@ func (w *ContextWorker) embedDocumentsMeasured(ctx context.Context, inputs []Doc
 					first+len(vectors), len(requested))
 			}
 			var entries []vector.EmbeddingCheckpoint
-			completed := make(map[[sha256.Size]byte][][]float32)
+			completed := make(map[string][][]float32)
 			for i, documentVectors := range vectors {
 				input := requested[first+i]
 				// A malformed document is requested again on the next pass.
 				if len(documentVectors) == len(input.Chunks) {
 					key := savedDocumentKey(input)
 					for _, identity := range page.identities[key] {
-						entries = append(entries, vector.EmbeddingCheckpoint{Owner: identity.owner, Revision: identity.revision, Key: hex.EncodeToString(key[:]), Vectors: documentVectors})
+						entries = append(entries, vector.EmbeddingCheckpoint{Owner: identity.owner, Revision: identity.revision, Key: key, Vectors: documentVectors})
 					}
 					completed[key] = documentVectors
 				}

@@ -434,10 +434,7 @@ func (w *Worker) run(
 			return res, err
 		}
 		if err != nil {
-			if w.stopIfYielded(ctx, gen) {
-				return res, stopError(ctx, err)
-			}
-			if jobctx.StopRequested(ctx) {
+			if w.stopIfYielded(ctx, gen) || jobctx.StopRequested(ctx) {
 				return res, stopError(ctx, err)
 			}
 			// The downshift drain below recovers a rejected batch one message
@@ -900,28 +897,23 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 			empty = append(empty, m.ID)
 		}
 	}
-	vecs := make([][]float32, len(pieces))
-	revisions := make(map[int64]string)
+	// Each message's revision is the hash of its chunk inputs, so a saved
+	// response is reused only for unchanged input.
+	messageChunks := make(map[int64][]string, len(ids))
+	for _, p := range pieces {
+		messageChunks[p.ID] = append(messageChunks[p.ID], p.Text)
+	}
+	revisions := make(map[string]string, len(ids))
 	for _, id := range ids {
-		var messageInputs []string
-		for _, p := range pieces {
-			if p.ID == id {
-				messageInputs = append(messageInputs, p.Text)
-			}
-		}
-		revision := fmt.Sprintf("%x", savedDocumentKey(DocumentInput{Chunks: messageInputs}))
-		revisions[id] = revision
+		revisions[messageOwner(id)] = savedDocumentKey(DocumentInput{Chunks: messageChunks[id]})
 	}
-	ownerRevisions := make(map[string]string, len(revisions))
-	for id, revision := range revisions {
-		ownerRevisions[fmt.Sprintf("message:%d", id)] = revision
-	}
-	saved, err := w.deps.Backend.EmbeddingCheckpoints().LoadMany(ctx, gen, ownerRevisions)
+	saved, err := w.deps.Backend.EmbeddingCheckpoints().LoadMany(ctx, gen, revisions)
 	if err != nil {
 		return embedBatchResult{}, err
 	}
+	vecs := make([][]float32, len(pieces))
 	for i, p := range pieces {
-		if vectors, ok := saved[fmt.Sprintf("message:%d", p.ID)][strconv.Itoa(p.ChunkIndex)]; ok && len(vectors) == 1 {
+		if vectors, ok := saved[messageOwner(p.ID)][strconv.Itoa(p.ChunkIndex)]; ok && len(vectors) == 1 {
 			vecs[i] = vectors[0]
 		}
 	}
@@ -986,7 +978,8 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 		entries := make([]vector.EmbeddingCheckpoint, 0, len(batch))
 		for j, i := range batch {
 			p := pieces[i]
-			entries = append(entries, vector.EmbeddingCheckpoint{Owner: fmt.Sprintf("message:%d", p.ID), Revision: revisions[p.ID], Key: strconv.Itoa(p.ChunkIndex), Vectors: [][]float32{got[j]}})
+			owner := messageOwner(p.ID)
+			entries = append(entries, vector.EmbeddingCheckpoint{Owner: owner, Revision: revisions[owner], Key: strconv.Itoa(p.ChunkIndex), Vectors: [][]float32{got[j]}})
 		}
 		if err := w.deps.Backend.EmbeddingCheckpoints().Save(ctx, gen, entries); err != nil {
 			return embedBatchResult{}, err
@@ -1570,10 +1563,12 @@ func chunkOverlapFor(maxRunes int) int {
 	return maxRunes / 30
 }
 
+func messageOwner(id int64) string { return "message:" + strconv.FormatInt(id, 10) }
+
 func (w *Worker) deleteCheckpoints(ctx context.Context, gen vector.GenerationID, ids []int64) error {
 	owners := make([]string, len(ids))
 	for i, id := range ids {
-		owners[i] = fmt.Sprintf("message:%d", id)
+		owners[i] = messageOwner(id)
 	}
 	return w.deps.Backend.EmbeddingCheckpoints().Delete(ctx, gen, owners)
 }
@@ -1587,6 +1582,9 @@ func (w *Worker) pruneDeletedCheckpoints(ctx context.Context, gen vector.Generat
 		if err != nil {
 			return err
 		}
+		if len(owners) == 0 {
+			return nil
+		}
 		args := make([]any, 0, len(owners)+1)
 		args = append(args, int64(gen))
 		for _, owner := range owners {
@@ -1595,9 +1593,6 @@ func (w *Worker) pruneDeletedCheckpoints(ctx context.Context, gen vector.Generat
 				return fmt.Errorf("decode message checkpoint owner: %w", err)
 			}
 			args = append(args, id)
-		}
-		if len(owners) == 0 {
-			return nil
 		}
 		present := make(map[string]bool, len(owners))
 		err = func() error {
@@ -1611,7 +1606,7 @@ func (w *Worker) pruneDeletedCheckpoints(ctx context.Context, gen vector.Generat
 				if err := live.Scan(&id); err != nil {
 					return err
 				}
-				present[fmt.Sprintf("message:%d", id)] = true
+				present[messageOwner(id)] = true
 			}
 			return live.Err()
 		}()

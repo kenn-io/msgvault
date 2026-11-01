@@ -245,25 +245,22 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 	}
 
 	if err := j.maintainActivePeopleDuringBuild(ctx, log, occurrence); jobctx.StopRequested(ctx) {
-		return embeddingContinuation(ctx, err)
+		return err
 	}
 
 	target, isBuilding, ok, targetErr := j.pickTarget(ctx, log)
 	if !ok {
 		if jobctx.StopRequested(ctx) {
-			return embeddingContinuation(ctx, targetErr)
+			return targetErr
 		}
 		return nil
 	}
 
 	res, err := j.Worker.RunOnce(ctx, target, scheduledEmbeddingPassScope(occurrence, target, "forward"))
-	// The scheduler stop takes precedence over an operation error: drivers
-	// can return unwrapped errors after cancellation, so the cause at this
-	// operation boundary is authoritative.
+	// The scheduler yield cause takes precedence over an operation error:
+	// drivers can return unwrapped errors after cancellation, so the cause at
+	// this operation boundary is authoritative.
 	if jobctx.StopRequested(ctx) {
-		if isBuilding || res.PersonsPending || (!res.ScanComplete && (res.Contextual == nil || !res.Contextual.Converged)) {
-			return embeddingContinuation(ctx, err)
-		}
 		return err
 	}
 	if generationErr, ok := errors.AsType[*embed.GenerationRunError](err); ok {
@@ -300,17 +297,14 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 	if isBuilding && j.Convergence != nil {
 		state, err := j.Convergence.CheckConvergence(ctx, target)
 		if jobctx.StopRequested(ctx) {
-			return embeddingContinuation(ctx, err)
+			return err
 		}
 		if err != nil {
 			log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
 		} else {
 			contextualState = &state
 			if state.Complete() {
-				if interrupted, activationErr := j.activateBuilding(ctx, target, &state, log); interrupted {
-					return embeddingContinuation(ctx, activationErr)
-				}
-				return nil
+				return j.activateBuilding(ctx, target, &state, log)
 			}
 		}
 	}
@@ -326,9 +320,6 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 	// skipped) so it never re-embeds stamped messages.
 	backstopRan, backstopErr := j.maybeRunBackstop(ctx, target, log, occurrence)
 	if jobctx.StopRequested(ctx) {
-		if isBuilding && !errors.Is(backstopErr, ErrReschedule) {
-			return embeddingContinuation(ctx, backstopErr)
-		}
 		return backstopErr
 	}
 
@@ -348,7 +339,7 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 		if backstopRan || contextualState == nil {
 			state, err := j.Convergence.CheckConvergence(ctx, target)
 			if jobctx.StopRequested(ctx) {
-				return embeddingContinuation(ctx, err)
+				return err
 			}
 			if err != nil {
 				log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
@@ -389,10 +380,7 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 			return nil
 		}
 	}
-	if interrupted, activationErr := j.activateBuilding(ctx, target, contextualState, log); interrupted {
-		return embeddingContinuation(ctx, activationErr)
-	}
-	return nil
+	return j.activateBuilding(ctx, target, contextualState, log)
 }
 
 // maintainActivePeopleDuringBuild returns the error of a stopped pass; it
@@ -439,23 +427,24 @@ func (j *EmbedJob) maintainActivePeopleDuringBuild(
 	return nil
 }
 
-// activateBuilding reports whether a scheduler stop interrupted activation.
+// activateBuilding returns an activation failure only when a scheduler stop
+// interrupted it; it logs the failures of a completed pass.
 func (j *EmbedJob) activateBuilding(
 	ctx context.Context, target vector.GenerationID, contextualState *ConvergenceResult, log *slog.Logger,
-) (bool, error) {
+) error {
 	if jobctx.StopRequested(ctx) {
-		return true, nil
+		return nil
 	}
 	var activateErr error
 	if j.SequenceBoundActivation {
 		if contextualState == nil {
 			log.Warn("embed: contextual activation lacks convergence state", "gen", target)
-			return false, nil
+			return nil
 		}
 		activator, ok := j.Backend.(vector.ConvergedGenerationActivator)
 		if !ok {
 			log.Warn("embed: contextual backend lacks sequence-bound activation", "gen", target)
-			return false, nil
+			return nil
 		}
 		activateErr = activator.ActivateGenerationIfConverged(ctx, target, contextualState.LatestJournalSequence)
 	} else {
@@ -463,16 +452,16 @@ func (j *EmbedJob) activateBuilding(
 	}
 	if activateErr != nil {
 		if jobctx.StopRequested(ctx) {
-			return true, activateErr
+			return activateErr
 		}
 		log.Warn("embed: activation failed", "gen", target, "error", activateErr)
-		return false, nil
+		return nil
 	}
 	if jobctx.StopRequested(ctx) {
-		return false, nil
+		return nil
 	}
 	log.Info("embed: building generation activated", "gen", target)
-	return false, nil
+	return nil
 }
 
 func (j *EmbedJob) missingCount(ctx context.Context, target vector.GenerationID) (int64, error) {
@@ -522,7 +511,7 @@ func (j *EmbedJob) maybeRunBackstop(
 			}
 			j.interruptedBackstop[gen] = true
 		}
-		return true, embeddingContinuation(ctx, err)
+		return true, err
 	}
 	if generationErr, ok := errors.AsType[*embed.GenerationRunError](err); ok {
 		if generationErr.Person != nil {
@@ -636,13 +625,4 @@ func (j *EmbedJob) pickTarget(
 		log.Warn("embed: active generation lookup failed", "error", err)
 		return 0, false, false, err
 	}
-}
-
-// embeddingContinuation preserves independent failures while asking for the
-// unfinished pass to resume behind queued work.
-func embeddingContinuation(ctx context.Context, err error) error {
-	if failure := jobctx.ErrorAfterYield(ctx, err); failure != nil {
-		return &RescheduleError{Err: failure}
-	}
-	return ErrReschedule
 }

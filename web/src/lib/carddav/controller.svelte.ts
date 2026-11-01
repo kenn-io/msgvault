@@ -29,8 +29,8 @@ interface VisibilityDocument {
 const FIRST_PAGE_LIMIT = 25;
 const MIN_POLL_MS = 500;
 const MAX_POLL_MS = 8000;
+// While idle, a scheduled connection is re-read so a queued scheduled sync shows up.
 const IDLE_POLL_MS = 30_000;
-const IDLE_GRACE_POLLS = 3;
 export class CardDAVController {
   status = $state<CardDAVStatus>();
   books = $state<CardDAVBook[]>([]);
@@ -67,8 +67,6 @@ export class CardDAVController {
   private pollGeneration = 1;
   private pollDelay = MIN_POLL_MS;
   private pollFingerprint = '';
-  private idlePollAt?: number;
-  private idleGracePolls = IDLE_GRACE_POLLS;
   private statusCommitGeneration = 0;
   private successfulStatusCommitGeneration = 0;
   private syncKnownAfterStatusCommit?: number;
@@ -78,12 +76,9 @@ export class CardDAVController {
       this.stopPolling();
       return;
     }
-    if (this.hasWork()) {
+    if (this.shouldPoll()) {
       this.pollDelay = MIN_POLL_MS;
       this.schedulePoll(MIN_POLL_MS);
-    } else if (!this.disposed && this.status) {
-      // A scheduled run may have queued, run, or finished while hidden.
-      void this.poll(++this.pollGeneration, true);
     }
   };
   constructor(
@@ -467,34 +462,19 @@ export class CardDAVController {
     return Boolean(this.status?.active || this.status?.queued_at || this.status?.scheduler_running || this.syncPending);
   }
   private shouldPoll(): boolean {
-    return !this.disposed && !this.visibilityDocument?.hidden && Boolean(this.hasWork() || this.status?.scheduled || this.status?.next_scheduled_at);
+    return !this.disposed && !this.visibilityDocument?.hidden && Boolean(this.hasWork() || this.status?.scheduled);
   }
-  private schedulePoll(delay: number, revalidate = false): void {
-    if (this.disposed || this.visibilityDocument?.hidden || (!revalidate && !this.shouldPoll())) return;
-    if (!revalidate && !this.hasWork()) {
-      const untilNext = Date.parse(this.status?.next_scheduled_at ?? '') - Date.now();
-      if (this.idlePollAt !== undefined && this.idlePollAt <= Date.now() && this.idleGracePolls > 0) {
-        this.idleGracePolls -= 1;
-        delay = IDLE_POLL_MS;
-      } else if (untilNext > 0) {
-        this.idlePollAt = Date.now() + untilNext;
-        this.idleGracePolls = IDLE_GRACE_POLLS;
-        delay = Math.min(2_147_483_647, Math.max(MIN_POLL_MS, untilNext));
-      } else {
-        if (this.idleGracePolls === 0) return;
-        this.idleGracePolls -= 1;
-        delay = IDLE_POLL_MS;
-      }
-    }
+  private schedulePoll(delay: number): void {
+    if (!this.shouldPoll()) return;
+    if (!this.hasWork()) delay = Math.max(delay, IDLE_POLL_MS);
     if (this.pollTimer !== undefined) clearTimeout(this.pollTimer);
     const generation = ++this.pollGeneration;
     this.pollTimer = setTimeout(() => {
       this.pollTimer = undefined;
-      void this.poll(generation, revalidate);
+      void this.poll(generation);
     }, delay);
   }
-  // Revalidation also discovers work that finished while the page was hidden.
-  private async poll(generation: number, revalidate = false): Promise<void> {
+  private async poll(generation: number): Promise<void> {
     if (this.disposed || generation !== this.pollGeneration || this.visibilityDocument?.hidden) return;
     const context = this.generation;
     const statusCommit = ++this.statusCommitGeneration;
@@ -502,7 +482,7 @@ export class CardDAVController {
     const requestController = new AbortController();
     this.pollAbort = requestController;
     const hadWork = this.hasWork();
-    const previousLatest = this.status?.latest;
+    const priorLatest = this.status?.latest;
     try {
       const { data } = await generatedGetCardDAVStatus(
         this.connection ? { connection: this.connection } : undefined,
@@ -520,7 +500,7 @@ export class CardDAVController {
       if (!data) {
         this.statusError = 'Unable to load CardDAV status.';
         this.pollDelay = Math.min(MAX_POLL_MS, this.pollDelay * 2);
-        this.schedulePoll(this.pollDelay, true);
+        this.schedulePoll(this.pollDelay);
         return;
       }
       const becameAvailable = !this.status?.available && data.available;
@@ -530,8 +510,8 @@ export class CardDAVController {
       this.statusError = null;
       this.pollFingerprint = fingerprint;
       this.recordSuccessfulStatusCommit(statusCommit);
-      const latestChanged = Boolean(data.latest) &&
-        (data.latest?.id !== previousLatest?.id || data.latest?.state !== previousLatest?.state);
+      // A scheduled run can also start and finish between idle reads.
+      const latestChanged = data.latest?.id !== priorLatest?.id || data.latest?.state !== priorLatest?.state;
       if ((hadWork || latestChanged) && !this.hasWork()) {
         this.stopPolling(false);
         this.schedulePoll(IDLE_POLL_MS);
@@ -552,7 +532,7 @@ export class CardDAVController {
       this.statusLoading = false;
       this.statusError = 'Unable to load CardDAV status.';
       this.pollDelay = Math.min(MAX_POLL_MS, this.pollDelay * 2);
-      this.schedulePoll(this.pollDelay, true);
+      this.schedulePoll(this.pollDelay);
     } finally {
       if (this.pollAbort === requestController) this.pollAbort = undefined;
     }

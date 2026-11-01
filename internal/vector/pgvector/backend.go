@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -159,6 +160,10 @@ func (b *Backend) Close() error { return nil }
 // surface; callers that need the shared pool (e.g. the embed worker)
 // can retrieve it here instead of carrying the main handle separately.
 func (b *Backend) DB() *sql.DB { return b.db }
+
+func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{DB: b.db, Rebind: sqldialect.RebindPostgreSQL, LockGeneration: true}
+}
 
 // CreateGeneration allocates a new building generation. Under the
 // scan-and-fill design there is no pending_embeddings seed: the embed

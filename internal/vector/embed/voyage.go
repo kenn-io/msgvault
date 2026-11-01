@@ -132,11 +132,8 @@ func (c *VoyageClient) EmbedDocumentRequests(
 	}
 	first := 0
 	for _, batch := range batches {
-		if err := ctx.Err(); err != nil {
+		if err := waitForVoyageRetry(ctx, 0); err != nil {
 			return err
-		}
-		if jobctx.PreemptionRequested(ctx) {
-			return jobctx.ErrYieldedToWaiter
 		}
 		if started != nil {
 			started(first, len(batch))
@@ -230,35 +227,21 @@ func (c *VoyageClient) embedWithRetry(ctx context.Context, inputs [][]string, in
 	return nil, fmt.Errorf("embed: giving up after %d attempts: %w", c.cfg.MaxRetries, lastErr)
 }
 
+// waitForVoyageRetry waits out a retry backoff, returning early when the job
+// is asked to yield or its context ends.
 func waitForVoyageRetry(ctx context.Context, backoff time.Duration) error {
+	if backoff > 0 {
+		waitCtx, cancel := context.WithTimeout(ctx, backoff)
+		waitForPreemption(waitCtx)
+		cancel()
+	}
 	if jobctx.PreemptionRequested(ctx) {
 		return jobctx.ErrYieldedToWaiter
 	}
 	if err := ctx.Err(); err != nil {
-		if jobctx.PreemptionRequested(ctx) {
-			return jobctx.ErrYieldedToWaiter
-		}
 		return fmt.Errorf("embed: context canceled during backoff: %w", err)
 	}
-	if backoff <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(backoff)
-	defer timer.Stop()
-	select {
-	case <-jobctx.PreemptionSignal(ctx):
-		return jobctx.ErrYieldedToWaiter
-	case <-ctx.Done():
-		if jobctx.PreemptionRequested(ctx) {
-			return jobctx.ErrYieldedToWaiter
-		}
-		return fmt.Errorf("embed: context canceled during backoff: %w", ctx.Err())
-	case <-timer.C:
-		if jobctx.PreemptionRequested(ctx) {
-			return jobctx.ErrYieldedToWaiter
-		}
-		return nil
-	}
+	return nil
 }
 
 func (c *VoyageClient) doVoyageOnce(ctx context.Context, body []byte, inputs [][]string) ([][][]float32, error) {

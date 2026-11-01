@@ -476,9 +476,8 @@ func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedu
 	if job != nil {
 		run = func(ctx context.Context) error {
 			err := job(ctx)
-			callbackErr := jobctx.ErrorAfterYield(ctx, err, ErrReschedule)
-			if _, failed := errors.AsType[*RescheduleError](callbackErr); failed || (callbackErr != nil && !errors.Is(callbackErr, ErrReschedule)) {
-				s.logger.Error("scheduled document vector reconciliation failed", "error", callbackErr)
+			if failure := jobctx.ErrorAfterYield(ctx, err, ErrReschedule); failure != nil {
+				s.logger.Error("scheduled document vector reconciliation failed", "error", failure)
 			}
 			return err
 		}

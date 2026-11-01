@@ -19,6 +19,8 @@ func (f embeddingRoundTripperFunc) RoundTrip(r *http.Request) (*http.Response, e
 	return f(r)
 }
 
+// A Retry-After wait of an hour ends within one poll interval of a request
+// to yield, without another HTTP attempt.
 func TestClientsRetryWaitReturnsOnPreemption(t *testing.T) {
 	for _, provider := range []string{"openai", "voyage"} {
 		t.Run(provider, func(t *testing.T) {

@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
-	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -335,12 +334,10 @@ func runScheduledSlackAttempts(
 	var errs []error
 	attempted := false
 	resumeAt := ""
-	unfinished := false
 	ordered := rotation.order(sources)
 	for idx, src := range ordered {
 		if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
 			resumeAt = src.Identifier
-			unfinished = true
 			break
 		}
 		started, err := attempt(src)
@@ -351,7 +348,6 @@ func runScheduledSlackAttempts(
 		}
 		if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
 			resumeAt = ordered[(idx+1)%len(ordered)].Identifier
-			unfinished = idx+1 < len(ordered)
 			break
 		}
 	}
@@ -361,14 +357,10 @@ func runScheduledSlackAttempts(
 			errs = append(errs, err)
 		}
 	}
-	runErr := errors.Join(errs...)
-	if unfinished && ctx.Err() == nil && jobctx.PreemptionRequested(ctx) {
-		if runErr == nil {
-			return scheduler.ErrReschedule
-		}
-		return &scheduler.RescheduleError{Err: runErr}
+	if ctx.Err() != nil {
+		errs = append(errs, ctx.Err())
 	}
-	return errors.Join(runErr, ctx.Err())
+	return errors.Join(errs...)
 }
 
 func init() {

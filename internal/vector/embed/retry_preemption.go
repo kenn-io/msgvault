@@ -9,76 +9,62 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 )
 
-// cooperativeRetryState stops a retry wait when a scheduled embedding job is
-// asked to yield. It waits for an in-flight HTTP response to finish before
-// canceling the retry context so completed provider work can still be used.
-type cooperativeRetryState struct {
-	mu       sync.Mutex
-	inFlight bool
-	pending  bool
-	cancel   context.CancelCauseFunc
-}
-
-func (s *cooperativeRetryState) request() {
-	s.mu.Lock()
-	if s.inFlight {
-		s.pending = true
-		s.mu.Unlock()
-		return
-	}
-	s.pending = true
-	s.mu.Unlock()
-	s.cancel(jobctx.ErrYieldedToWaiter)
-}
-
-func (s *cooperativeRetryState) begin(ctx context.Context) bool {
-	s.mu.Lock()
-	if s.pending || jobctx.PreemptionRequested(ctx) {
-		s.pending = true
-		s.mu.Unlock()
-		s.cancel(jobctx.ErrYieldedToWaiter)
+// waitForPreemption blocks until the job under ctx is asked to yield or ctx
+// ends, and reports whether a yield was requested.
+func waitForPreemption(ctx context.Context) bool {
+	select {
+	case <-jobctx.PreemptionSignal(ctx):
+		return true
+	case <-ctx.Done():
 		return false
 	}
-	s.inFlight = true
-	s.mu.Unlock()
-	return true
 }
 
-func (s *cooperativeRetryState) finish(ctx context.Context) {
-	s.mu.Lock()
-	s.inFlight = false
-	shouldYield := s.pending || jobctx.PreemptionRequested(ctx)
-	if shouldYield {
-		s.pending = true
-	}
-	s.mu.Unlock()
-	if shouldYield {
-		s.cancel(jobctx.ErrYieldedToWaiter)
-	}
-}
-
+// cooperativeRetryTransport cancels the retry context once a scheduled
+// embedding job is asked to yield, but never while an HTTP response is in
+// flight, so completed provider work can still be used.
 type cooperativeRetryTransport struct {
-	base  http.RoundTripper
-	state *cooperativeRetryState
+	base   http.RoundTripper
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+
+	mu       sync.Mutex
+	inFlight bool
 }
 
-func (t cooperativeRetryTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if !t.state.begin(request.Context()) {
+// yieldIfIdle cancels the retry context when preemption was requested and no
+// request is in flight. Preemption requests are sticky, so a request that was
+// in flight yields when its response body closes.
+func (t *cooperativeRetryTransport) yieldIfIdle() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.inFlight && jobctx.PreemptionRequested(t.ctx) {
+		t.cancel(jobctx.ErrYieldedToWaiter)
+	}
+}
+
+func (t *cooperativeRetryTransport) finish() {
+	t.mu.Lock()
+	t.inFlight = false
+	t.mu.Unlock()
+	t.yieldIfIdle()
+}
+
+func (t *cooperativeRetryTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	if jobctx.PreemptionRequested(t.ctx) {
+		t.mu.Unlock()
+		t.cancel(jobctx.ErrYieldedToWaiter)
 		return nil, jobctx.ErrYieldedToWaiter
 	}
+	t.inFlight = true
+	t.mu.Unlock()
 	response, err := t.base.RoundTrip(request)
-	if err != nil {
-		t.state.finish(request.Context())
-		return nil, err
+	if err != nil || response == nil || response.Body == nil {
+		t.finish()
+		return response, err
 	}
-	if response == nil || response.Body == nil {
-		t.state.finish(request.Context())
-		return response, nil
-	}
-	response.Body = &cooperativeRetryBody{
-		ReadCloser: response.Body,
-		finish:     func() { t.state.finish(request.Context()) },
-	}
+	response.Body = &cooperativeRetryBody{ReadCloser: response.Body, finish: t.finish}
 	return response, nil
 }
 
@@ -100,27 +86,25 @@ func (b *cooperativeRetryBody) Close() error {
 func cooperativeRetryContext(
 	ctx context.Context, base http.RoundTripper,
 ) (context.Context, http.RoundTripper, func()) {
-	signal := jobctx.PreemptionSignal(ctx)
-	if signal == nil {
+	if jobctx.PreemptionSignal(ctx) == nil {
 		return ctx, base, func() {}
 	}
-
+	if base == nil {
+		base = http.DefaultTransport
+	}
 	retryCtx, cancel := context.WithCancelCause(ctx)
-	state := &cooperativeRetryState{cancel: cancel}
-	stop := make(chan struct{})
-	monitorDone := make(chan struct{})
+	transport := &cooperativeRetryTransport{base: base, ctx: ctx, cancel: cancel}
+	pollCtx, stopPolling := context.WithCancel(ctx)
+	polled := make(chan struct{})
 	go func() {
-		defer close(monitorDone)
-		select {
-		case <-signal:
-			state.request()
-		case <-stop:
+		defer close(polled)
+		if waitForPreemption(pollCtx) {
+			transport.yieldIfIdle()
 		}
 	}()
-	cleanup := func() {
-		close(stop)
-		<-monitorDone
+	return retryCtx, transport, func() {
+		stopPolling()
+		<-polled
 		cancel(nil)
 	}
-	return retryCtx, cooperativeRetryTransport{base: base, state: state}, cleanup
 }

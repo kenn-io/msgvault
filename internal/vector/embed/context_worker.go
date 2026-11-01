@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -89,19 +90,21 @@ type ContextWorker struct {
 // contextEmbeddingPage assembles only the current page's checkpointed output.
 type contextEmbeddingPage struct {
 	gen         vector.GenerationID
-	vectors     map[[sha256.Size]byte][][]float32
-	identities  map[[sha256.Size]byte][]savedDocumentIdentity
+	vectors     map[string][][]float32
+	identities  map[string][]savedDocumentIdentity
 	checkpoints vector.EmbeddingCheckpoints
 }
 
 type savedDocumentIdentity struct{ owner, revision string }
 
-func savedDocumentKey(input DocumentInput) [sha256.Size]byte {
+// savedDocumentKey identifies a document's exact provider input. It is the
+// checkpoint key, and the revision that invalidates output for older input.
+func savedDocumentKey(input DocumentInput) string {
 	hash := sha256.New()
 	for _, chunk := range input.Chunks {
 		_, _ = fmt.Fprintf(hash, "%d:%s", len(chunk), chunk)
 	}
-	return [sha256.Size]byte(hash.Sum(nil))
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // NewContextWorker applies bounded defaults. Configuration errors are returned
@@ -210,10 +213,14 @@ var (
 	errContextRunBudgetExhausted = errors.New("context worker: per-run input budget exhausted")
 )
 
-// isContextRunStop reports a pass that stopped at its input budget or at a
-// request to yield. Both leave the remaining work for the next pass.
-func isContextRunStop(err error) bool {
-	return errors.Is(err, errContextRunBudgetExhausted) || errors.Is(err, jobctx.ErrYieldedToWaiter)
+// contextRunError reports err from a pass phase. A pass that stopped at its
+// input budget or at a request to yield leaves the remaining work for the
+// next pass, so only independent failures are returned.
+func contextRunError(ctx context.Context, err error) error {
+	if errors.Is(err, errContextRunBudgetExhausted) || errors.Is(err, jobctx.ErrYieldedToWaiter) {
+		return contextRunStopFailure(ctx, err)
+	}
+	return err
 }
 
 // contextRunStopFailure removes stop signals from an error tree while keeping
@@ -270,10 +277,7 @@ func (w *ContextWorker) run(ctx context.Context, gen vector.GenerationID) (res R
 	}
 	if !fresh {
 		if err := w.drainJournal(ctx, gen, &res); err != nil {
-			if isContextRunStop(err) {
-				return res, contextRunStopFailure(ctx, err)
-			}
-			return res, err
+			return res, contextRunError(ctx, err)
 		}
 	}
 	needsOrdinaryDiscovery := fresh
@@ -294,24 +298,15 @@ func (w *ContextWorker) run(ctx context.Context, gen vector.GenerationID) (res R
 	// Once source or orphan reconciliation begins, resume that phase directly.
 	if needsOrdinaryDiscovery {
 		if err := w.drainOrdinaryDiscovery(ctx, gen, &res); err != nil {
-			if isContextRunStop(err) {
-				return res, contextRunStopFailure(ctx, err)
-			}
-			return res, err
+			return res, contextRunError(ctx, err)
 		}
 	}
 	if err := w.reconcile(ctx, gen, &res); err != nil {
-		if isContextRunStop(err) {
-			return res, contextRunStopFailure(ctx, err)
-		}
-		return res, err
+		return res, contextRunError(ctx, err)
 	}
 	// Catch mutations committed while the bounded reconciliation pages ran.
 	if err := w.drainJournal(ctx, gen, &res); err != nil {
-		if isContextRunStop(err) {
-			return res, contextRunStopFailure(ctx, err)
-		}
-		return res, err
+		return res, contextRunError(ctx, err)
 	}
 	convergence, err := w.convergence(ctx, gen)
 	if err != nil {
@@ -896,29 +891,20 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 	}
 	page := &contextEmbeddingPage{
 		gen:         gen,
-		vectors:     make(map[[sha256.Size]byte][][]float32),
-		identities:  make(map[[sha256.Size]byte][]savedDocumentIdentity),
+		vectors:     make(map[string][][]float32),
+		identities:  make(map[string][]savedDocumentIdentity),
 		checkpoints: w.deps.Backend.EmbeddingCheckpoints(),
 	}
 	for i, target := range targets {
 		doc := plans[target.scopeIndex].scope.docs[target.docIndex]
 		key := savedDocumentKey(inputs[i])
-		revision := hex.EncodeToString(key[:])
 		owner := "context:" + doc.Key
-		page.identities[key] = append(page.identities[key], savedDocumentIdentity{owner, revision})
-		saved, err := page.checkpoints.Load(ctx, gen, owner, revision)
+		page.identities[key] = append(page.identities[key], savedDocumentIdentity{owner, key})
+		saved, err := page.checkpoints.Load(ctx, gen, owner, key)
 		if err != nil {
 			return 0, admitted, err
 		}
-		for inputKey, vectors := range saved {
-			decoded, err := hex.DecodeString(inputKey)
-			if err != nil || len(decoded) != sha256.Size {
-				return 0, admitted, fmt.Errorf("invalid contextual checkpoint key %q", inputKey)
-			}
-			var savedKey [sha256.Size]byte
-			copy(savedKey[:], decoded)
-			page.vectors[savedKey] = vectors
-		}
+		maps.Copy(page.vectors, saved)
 	}
 	results, embedErr := w.embedDocuments(ctx, inputs, page)
 	if len(results) > len(targets) || (embedErr == nil && len(results) != len(targets)) {
@@ -1454,9 +1440,8 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 		if len(owners) == 0 {
 			return nil
 		}
-		if err := w.checkpointReconcileCursor(ctx, gen, "checkpoints:"); err != nil {
-			return fmt.Errorf("start contextual checkpoint cleanup: %w", err)
-		}
+		// Cleanup rewrites the done cursor when it finishes, so an
+		// interrupted cleanup starts again from here.
 		return w.reconcileContextCheckpoints(ctx, gen, "")
 	}
 	if !strings.HasPrefix(cursor, "orphan:") {

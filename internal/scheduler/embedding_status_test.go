@@ -12,7 +12,7 @@ import (
 )
 
 func TestEmbeddingJobStatus(t *testing.T) {
-	t.Run("keeps the first queue time while triggers coalesce", func(t *testing.T) {
+	t.Run("shows queue before slot acquisition", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -34,7 +34,8 @@ func TestEmbeddingJobStatus(t *testing.T) {
 			assert.Equal(queuedAt, *status.Job.QueuedAt)
 			release()
 			synctest.Wait()
-			assert.Equal("idle", s.EmbeddingStatus().Job.State)
+			status = s.EmbeddingStatus()
+			assert.Equal("idle", status.Job.State)
 		})
 	})
 	t.Run("post-sync run waits for the sync to release the slot", func(t *testing.T) {
@@ -47,7 +48,7 @@ func TestEmbeddingJobStatus(t *testing.T) {
 			s := New(func(context.Context, string) error { return nil }).WithWorkTracker(gate)
 			defer func() { <-s.Stop().Done() }()
 			require.NoError(s.SetEmbedJob(&EmbedJob{Worker: runner, Backend: backend}, "", true))
-			require.NoError(s.AddAccount("synthetic@example.com", "0 0 1 1 *"))
+			require.NoError(s.AddAccount("synthetic@example.com", "0 0 * * *"))
 			require.NoError(s.TriggerSync("synthetic@example.com", false))
 			<-runner.gate
 			status := s.EmbeddingStatus()
@@ -65,19 +66,8 @@ func TestEmbeddingJobStatus(t *testing.T) {
 }
 
 func TestJobStatusIncludesPostSyncOnlyCallbacks(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
 	s := New(nil)
 	defer func() { <-s.Stop().Done() }()
-	require.NoError(s.SetEmbedJob(&EmbedJob{}, "", true))
-	require.NoError(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "", true))
-
-	statuses := s.JobStatus()
-	require.Len(statuses, 2)
-	assert.Equal([]string{documentVectorJobName, embedJobName}, []string{statuses[0].Name, statuses[1].Name})
-	for _, status := range statuses {
-		assert.Empty(status.Schedule)
-		assert.True(status.NextRun.IsZero())
-		assert.False(s.IsJobScheduled(status.Name), "callback registration does not create a cron schedule")
-	}
+	require.NoError(t, s.SetEmbedJob(&EmbedJob{}, "", true))
+	assert.Equal(t, []JobStatus{{Name: embedJobName}}, s.JobStatus(), "a post-sync-only job reports status without a schedule")
 }

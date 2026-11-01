@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
-	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -510,7 +509,6 @@ func runScheduledBeeperAttempts(
 	var errs []error
 	attempted := 0
 	resumeAt := ""
-	unfinished := false
 	ordered := rotation.order(accountIDs)
 	for idx, accountID := range ordered {
 		if ctx.Err() != nil {
@@ -520,7 +518,6 @@ func runScheduledBeeperAttempts(
 		}
 		if attempted > 0 && shouldStop != nil && shouldStop() {
 			resumeAt = accountID
-			unfinished = true
 			break
 		}
 		attempted++
@@ -535,7 +532,6 @@ func runScheduledBeeperAttempts(
 			// A large account must not consume every tick. Its own cursors
 			// preserve progress while the next account gets a turn.
 			resumeAt = ordered[(idx+1)%len(ordered)]
-			unfinished = stopped
 			break
 		}
 	}
@@ -547,19 +543,6 @@ func runScheduledBeeperAttempts(
 	}
 	if ctx.Err() != nil {
 		errs = append(errs, ctx.Err())
-		return errors.Join(errs...)
-	}
-	if unfinished {
-		if !jobctx.HasProgress(ctx) && !jobctx.PreemptionRequested(ctx) {
-			if err := errors.Join(errs...); err != nil {
-				return err
-			}
-			return scheduler.ErrDeferUntilNextTrigger
-		}
-		if err := errors.Join(errs...); err != nil {
-			return &scheduler.RescheduleError{Err: err}
-		}
-		return scheduler.ErrReschedule
 	}
 	return errors.Join(errs...)
 }

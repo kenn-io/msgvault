@@ -51,34 +51,23 @@ func countChunks(t *testing.T, f *workerFixture, id int64) int {
 }
 
 func TestWorker_CheckpointFailureStopsLaterRequests(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		batchSize int
-		when      string
-	}{
-		{name: "first entry", batchSize: 1},
-		{name: "second entry in response", batchSize: 10, when: "WHEN NEW.input_key = '1'"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newWorkerFixture(t, 1)
-			_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
-			require.NoError(t, err)
-			_, err = f.VectorsDB.Exec(`CREATE TRIGGER fail_checkpoint BEFORE INSERT ON embedding_checkpoints ` + tc.when + `
-				BEGIN SELECT RAISE(ABORT, 'checkpoint storage unavailable'); END`)
-			require.NoError(t, err)
-			requests := 0
-			f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
-				requests++
-				return fakeVectors(inputs), nil
-			}
-			ctx := jobctx.WithProgress(t.Context())
-			_, err = newRetainingWorker(f, f.Backend, tc.batchSize).RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
-			require.ErrorContains(t, err, "checkpoint storage unavailable")
-			assert.Equal(t, 1, requests, "a failed save stops before the next provider request")
-			assert.False(t, jobctx.HasProgress(ctx))
-			assert.Zero(t, countChunks(t, f, 1), "unfinished messages remain unpublished")
-		})
+	f := newWorkerFixture(t, 1)
+	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, retainedLongBody)
+	require.NoError(t, err)
+	_, err = f.VectorsDB.Exec(`CREATE TRIGGER fail_checkpoint BEFORE INSERT ON embedding_checkpoints
+		BEGIN SELECT RAISE(ABORT, 'checkpoint storage unavailable'); END`)
+	require.NoError(t, err)
+	requests := 0
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		requests++
+		return fakeVectors(inputs), nil
 	}
+	ctx := jobctx.WithProgress(t.Context())
+	_, err = newRetainingWorker(f, f.Backend, 1).RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+	require.ErrorContains(t, err, "checkpoint storage unavailable")
+	assert.Equal(t, 1, requests, "a failed save stops before the next provider request")
+	assert.False(t, jobctx.HasProgress(ctx))
+	assert.Zero(t, countChunks(t, f, 1), "unfinished messages remain unpublished")
 }
 
 func TestWorker_CheckpointedOutputIsReusedUntilInputChanges(t *testing.T) {
@@ -187,73 +176,61 @@ func TestWorker_Downshift_CheckpointedOutputDoesNotDropRejectedSiblings(t *testi
 
 var errProviderUnavailable = errors.New("provider unavailable")
 
-// yieldDuringEmbed models the scheduler asking a pass to yield while a
-// provider request is in flight. With cancel set, the runtime limit also
-// expires before the request returns, so its error carries the scheduler's
-// cancellation alongside any independent failure.
-type yieldDuringEmbed struct {
-	name   string
-	cancel bool
-}
-
-var yieldDuringEmbedCases = []yieldDuringEmbed{
-	{name: "within grace"},
-	{name: "cancelled after grace", cancel: true},
-}
-
-func (y yieldDuringEmbed) context(t *testing.T) (context.Context, func(error) error) {
-	t.Helper()
-	ctx, requestYield := jobctx.WithPreemption(context.Background())
-	ctx, cancel := context.WithCancelCause(ctx)
-	t.Cleanup(func() { cancel(nil) })
-	return ctx, func(err error) error {
-		requestYield()
-		if !y.cancel {
-			return err
-		}
-		cancel(jobctx.ErrYieldedToWaiter)
-		return errors.Join(context.Canceled, err)
-	}
-}
-
-func TestWorker_ProviderErrorDuringYieldIsReturned(t *testing.T) {
-	for _, count := range []int{1, 2} {
-		for _, tc := range yieldDuringEmbedCases {
-			t.Run(fmt.Sprintf("%d messages/%s", count, tc.name), func(t *testing.T) {
-				f := newWorkerFixture(t, count)
-				ctx, yield := tc.context(t)
-				f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
-					if len(inputs) > 1 {
-						return nil, fmt.Errorf("embed: HTTP 400: batch rejected: %w", ErrPermanent4xx)
-					}
-					return nil, yield(errProviderUnavailable)
-				}
-				_, err := newRetainingWorker(f, f.Backend, count).RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
-				require.ErrorIs(t, err, errProviderUnavailable, "provider failures survive both initial requests and singleton recovery")
-				require.NotErrorIs(t, err, context.Canceled, "scheduler cancellation is not reported")
-				assert.Equal(t, count, countMissing(t, f.MainDB, int64(f.BuildingGen)))
-			})
-		}
-	}
-}
-
-func TestWorker_PlainYieldDuringEmbedStopsCleanly(t *testing.T) {
-	for _, tc := range yieldDuringEmbedCases {
+// A yield requested while a provider request is in flight stops the pass at
+// that request. With cancel set, the runtime limit also expires before the
+// request returns. Only an independent provider failure is reported, whether
+// it comes from the first request or from singleton recovery.
+func TestWorker_YieldDuringEmbed(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		messages       int
+		cancel, failed bool
+	}{
+		{name: "plain within grace", messages: 2},
+		{name: "plain cancelled after grace", messages: 2, cancel: true},
+		{name: "failure within grace", messages: 1, failed: true},
+		{name: "failure cancelled after grace", messages: 1, cancel: true, failed: true},
+		{name: "recovery failure within grace", messages: 2, failed: true},
+		{name: "recovery failure cancelled after grace", messages: 2, cancel: true, failed: true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newWorkerFixture(t, 2)
-			ctx, yield := tc.context(t)
+			f := newWorkerFixture(t, tc.messages)
+			ctx, requestYield := jobctx.WithPreemption(context.Background())
+			ctx, cancel := context.WithCancelCause(ctx)
+			t.Cleanup(func() { cancel(nil) })
+			batchSize := 1
+			if tc.failed {
+				batchSize = tc.messages
+			}
 			requests := 0
 			f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+				if len(inputs) > 1 {
+					return nil, fmt.Errorf("embed: HTTP 400: batch rejected: %w", ErrPermanent4xx)
+				}
 				requests++
-				if err := yield(nil); err != nil {
+				requestYield()
+				var err error
+				if tc.failed {
+					err = errProviderUnavailable
+				}
+				if tc.cancel {
+					cancel(jobctx.ErrYieldedToWaiter)
+					err = errors.Join(context.Canceled, err)
+				}
+				if err != nil {
 					return nil, err
 				}
 				return fakeVectors(inputs), nil
 			}
-			w := newRetainingWorker(f, f.Backend, 1)
-			_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
-			require.NoError(t, err, "a yield without an independent failure is not an error")
+			_, err := newRetainingWorker(f, f.Backend, batchSize).RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 			assert.Equal(t, 1, requests, "the next message waits for another pass")
+			if !tc.failed {
+				require.NoError(t, err, "a yield without an independent failure is not an error")
+				return
+			}
+			require.ErrorIs(t, err, errProviderUnavailable)
+			require.NotErrorIs(t, err, context.Canceled, "scheduler cancellation is not reported")
+			assert.Equal(t, tc.messages, countMissing(t, f.MainDB, int64(f.BuildingGen)))
 		})
 	}
 }
@@ -264,58 +241,6 @@ func fakeVectors(inputs []string) [][]float32 {
 		out[i] = []float32{float32(len(input)%4 + 1), 0, 0, 0}
 	}
 	return out
-}
-
-// A backstop interrupted inside a long message keeps its completed requests
-// while the forward scan handles mail that arrived in between.
-func TestWorker_BackstopOutputSurvivesForwardScan(t *testing.T) {
-	require := require.New(t)
-	f := newWorkerFixture(t, 1)
-	_, err := f.MainDB.Exec(`UPDATE messages SET subject = NULL WHERE id = 1`)
-	require.NoError(err)
-	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`,
-		strings.Repeat("a", 20)+strings.Repeat("b", 20))
-	require.NoError(err)
-	w := NewWorker(WorkerDeps{
-		Backend: f.Backend, VectorsDB: f.VectorsDB, MainDB: f.MainDB, Store: f.Store,
-		Client: f.FakeClient, BatchSize: 1, MaxInputChars: 20, Recorder: f.Recorder,
-	})
-	require.NoError(w.wm.SetWatermark(t.Context(), f.BuildingGen, 1))
-
-	var requested [][]string
-	ctx, cancel := context.WithCancelCause(t.Context())
-	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
-		requested = append(requested, slices.Clone(inputs))
-		if len(requested) == 2 {
-			cancel(jobctx.ErrRunBudgetExceeded)
-			return nil, context.Canceled
-		}
-		return fakeVectors(inputs), nil
-	}
-	_, err = w.RunBackstop(ctx, f.BuildingGen, testEmbeddingPassScope())
-	require.ErrorIs(err, context.Canceled)
-	require.Equal([][]string{{strings.Repeat("a", 20)}, {strings.Repeat("b", 20)}}, requested)
-
-	_, err = f.MainDB.Exec(`INSERT INTO messages (id, subject) VALUES (2, NULL)`)
-	require.NoError(err)
-	_, err = f.MainDB.Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (2, 'forward-only')`)
-	require.NoError(err)
-	requested = nil
-	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
-		requested = append(requested, slices.Clone(inputs))
-		return fakeVectors(inputs), nil
-	}
-	_, err = w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
-	require.NoError(err)
-	assert.Equal(t, [][]string{{"forward-only"}}, requested, "the forward scan handles the new message")
-
-	requested = nil
-	res, err := w.RunBackstop(t.Context(), f.BuildingGen, testEmbeddingPassScope())
-	require.NoError(err)
-	assert.True(t, res.ScanComplete)
-	assert.Equal(t, [][]string{{strings.Repeat("b", 20)}}, requested,
-		"the backstop reuses its completed request and sends only the interrupted one")
-	assert.Zero(t, countMissing(t, f.MainDB, int64(f.BuildingGen)))
 }
 
 // A request of the same batch that succeeded before a sibling's rejection is

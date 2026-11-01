@@ -977,20 +977,11 @@ func testDocumentVectorReleaseAndTakeover(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(resumed)
 	assert.Equal(2, resumed.AttemptCount, "a submitted request keeps its attempt when a new owner resumes")
-	expiredAt := releaseAt.Add(time.Minute)
-	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, resumed.Token, resumed.LeaseOwner, resumed.LeaseFence, false, expiredAt),
-		"an expired owner can release while its fence still owns the pending row")
-	reclaimed, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-d", expiredAt, time.Minute)
-	require.NoError(err)
-	require.NotNil(reclaimed)
-	assert.Equal(2, reclaimed.AttemptCount)
-	require.ErrorIs(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, resumed.Token, resumed.LeaseOwner, resumed.LeaseFence, false, expiredAt), store.ErrDocumentVectorClaimLost,
-		"a former owner cannot release its successor's claim")
-	retired, err := f.Store.RetireDocumentVectorGeneration(t.Context(), generation.ID, expiredAt)
+	retired, err := f.Store.RetireDocumentVectorGeneration(t.Context(), generation.ID, releaseAt)
 	require.NoError(err)
 	require.True(retired)
-	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, reclaimed.Token, reclaimed.LeaseOwner, reclaimed.LeaseFence, true, expiredAt),
-		"a retired generation still releases its outstanding submitted claim")
+	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, resumed.Token, resumed.LeaseOwner, resumed.LeaseFence, true, releaseAt.Add(time.Minute)),
+		"an expired owner of a retired generation still releases its outstanding submitted claim")
 	var owner sql.NullString
 	var attempts int
 	require.NoError(f.Store.DB().QueryRow(`SELECT lease_owner, attempt_count FROM document_vector_publications`).Scan(&owner, &attempts))

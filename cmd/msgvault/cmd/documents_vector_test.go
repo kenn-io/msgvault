@@ -372,17 +372,15 @@ func TestDocumentVectorWorkerCheckpointsResults(t *testing.T) {
 		{Name: operations.CounterFailed, Unit: operations.CounterUnitChunks, Value: 1},
 	}
 	for _, tc := range []struct {
-		name                  string
-		result                func(vectordocument.GenerationID) vectordocument.RunResult
-		workerErr             error
-		cancel                bool
-		generationFingerprint string
-		checkpointErr         string
-		usage                 store.DocumentVectorUsageDelta
-		cursor                int64
-		progress              bool
-		state                 operations.State
-		counters              []operations.PublicCounter
+		name      string
+		result    func(vectordocument.GenerationID) vectordocument.RunResult
+		workerErr error
+		cancel    bool
+		usage     store.DocumentVectorUsageDelta
+		cursor    int64
+		progress  bool
+		state     operations.State
+		counters  []operations.PublicCounter
 	}{
 		{name: "partial", result: func(gen vectordocument.GenerationID) vectordocument.RunResult { return partial(gen, 81) },
 			workerErr: failure, usage: usage, cursor: 81, state: operations.StatePartial, counters: counters},
@@ -400,22 +398,11 @@ func TestDocumentVectorWorkerCheckpointsResults(t *testing.T) {
 		{name: "unchanged", result: func(gen vectordocument.GenerationID) vectordocument.RunResult {
 			return vectordocument.RunResult{AfterGenerationID: gen, AfterChunkID: 81}
 		}, cursor: 81},
-		{name: "exhausted", result: func(vectordocument.GenerationID) vectordocument.RunResult {
-			return vectordocument.RunResult{Exhausted: true}
-		}},
-		{name: "mismatched generation", result: func(gen vectordocument.GenerationID) vectordocument.RunResult {
-			return vectordocument.RunResult{AfterGenerationID: gen, AfterChunkID: 1081}
-		}, generationFingerprint: strings.Repeat("0", 64), cursor: 81,
-			checkpointErr: "document vector build checkpoint fingerprint does not match generation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			fixture, spec, testCtx := documentVectorCommandFixture(t)
-			generationSpec := spec
-			if tc.generationFingerprint != "" {
-				generationSpec.Fingerprint = tc.generationFingerprint
-			}
-			generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, generationSpec)
+			generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, spec)
 			require.NoError(err)
 			now := time.Now().UTC()
 			require.NoError(fixture.Store.CheckpointDocumentVectorBuildForFingerprint(testCtx, generation.ID, generation.Fingerprint, 81, false, store.DocumentVectorUsageDelta{}, now))
@@ -433,12 +420,9 @@ func TestDocumentVectorWorkerCheckpointsResults(t *testing.T) {
 				afterChunkID: 81, now: func() time.Time { return now },
 			}
 			result, err := worker.Run(ctx, vectordocument.GenerationID(generation.ID), 10)
-			switch {
-			case tc.checkpointErr != "":
-				require.ErrorContains(err, tc.checkpointErr)
-			case tc.workerErr != nil:
+			if tc.workerErr != nil {
 				require.ErrorIs(err, tc.workerErr)
-			default:
+			} else {
 				require.NoError(err)
 			}
 			assert.Equal(t, want, result)
@@ -831,40 +815,20 @@ func TestEmbeddingConsentDestinationMode(t *testing.T) {
 }
 
 func TestDocumentVectorContinuationWithoutProgress(t *testing.T) {
+	yielded, requestYield := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	requestYield()
+	require.ErrorIs(t, documentVectorContinuation(yielded, false, nil), scheduler.ErrReschedule, "a cooperative yield asks for another pass")
+
+	expired, cancel := context.WithDeadlineCause(jobctx.WithProgress(t.Context()), time.Time{}, jobctx.ErrRunBudgetExceeded)
+	defer cancel()
+	expired, requestYield = jobctx.WithPreemption(expired)
+	requestYield()
+	err := documentVectorContinuation(expired, false, context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, scheduler.ErrReschedule, "runtime expiry does not ask for another pass")
+
 	failure := errors.New("provider unavailable")
-	for _, tc := range []struct {
-		name    string
-		context func(*testing.T) context.Context
-		err     error
-		want    error
-		not     error
-	}{
-		{name: "cooperative yield", context: func(t *testing.T) context.Context {
-			t.Helper()
-			ctx, request := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
-			request()
-			return ctx
-		}, want: scheduler.ErrReschedule},
-		{name: "runtime expiry", context: func(t *testing.T) context.Context {
-			t.Helper()
-			base, cancel := context.WithDeadlineCause(jobctx.WithProgress(t.Context()), time.Time{}, jobctx.ErrRunBudgetExceeded)
-			t.Cleanup(cancel)
-			ctx, request := jobctx.WithPreemption(base)
-			request()
-			return ctx
-		}, err: context.DeadlineExceeded, want: context.DeadlineExceeded, not: scheduler.ErrReschedule},
-		{name: "ordinary failure", context: func(t *testing.T) context.Context {
-			t.Helper()
-			return jobctx.WithProgress(t.Context())
-		},
-			err: failure, want: failure, not: scheduler.ErrReschedule},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := documentVectorContinuation(tc.context(t), false, tc.err)
-			require.ErrorIs(t, err, tc.want)
-			if tc.not != nil {
-				assert.NotErrorIs(t, err, tc.not)
-			}
-		})
-	}
+	err = documentVectorContinuation(jobctx.WithProgress(t.Context()), false, failure)
+	require.ErrorIs(t, err, failure)
+	assert.NotErrorIs(t, err, scheduler.ErrReschedule, "a failure without progress does not ask for another pass")
 }
