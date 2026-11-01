@@ -14,7 +14,9 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
       if (unavailable) { unavailable = false; return Response.json({ message: 'Queue unavailable' }, { status: 503 }); }
       return Response.json({ candidates: [row], limit: 10, offset: 0 });
     }
-    return Response.json({ id: 1, display_name: 'Synthetic person', email_address: 'person@example.com', ...(new URL(request.url).pathname.includes('/participants/') ? { activity_count: 3, identifiers: [{ participant_id: 2, participant_display_name: 'Absorbed person', type: 'email', value: 'absorbed@example.com', is_primary: true }] } : {}) });
+    if (new URL(request.url).pathname === '/api/v1/people/1') return Response.json(person(1));
+    if (new URL(request.url).pathname === '/api/v1/participants/2') return Response.json({ id: 2, display_label: 'Absorbed person', activity_count: 3, identifiers: [{ participant_id: 2, participant_display_name: 'Absorbed person', type: 'email', value: 'absorbed@example.com', is_primary: true }] });
+    throw new Error(`Unexpected ${request.url}`);
   }));
   await controller.loadIdentityPage();
   const onDecide = vi.fn();
@@ -34,7 +36,7 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
 
 const pair = { id: 17, left_id: 1, left_kind: 'participant', right_id: 2, right_kind: 'participant', basis: 'email', source: 'user', state: 'candidate', actionable: true, application_pending: false, review_token: 'review-17', evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
 
-it('waits for refreshed evidence before enabling the post-merge decision', async () => {
+it('disables Merge while the post-merge page reloads', async () => {
   let finish!: (response: Response) => void;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
