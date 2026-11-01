@@ -156,9 +156,12 @@ describe('AttributeDefinitionDialog', () => {
     else expect(body).not.toHaveProperty('record_target');
   });
 
-  it('sends trimmed labeled text choices with multi-select cardinality', async () => {
+  it.each([
+    { type: 'Text', valueType: 'text', cardinality: 'multi', fieldType: 'multiselect', choices: ' email | Email\n phone | Phone ', expected: [{ value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' }] },
+    { type: 'Integer', valueType: 'integer', cardinality: 'single', fieldType: 'select', choices: '1 | One', expected: [{ value: '1', label: 'One' }] },
+  ] as const)('sends trimmed labeled $type choices with $cardinality cardinality', async ({ type, valueType, cardinality, fieldType, choices, expected }) => {
     const requests: Request[] = [];
-    const created = definition({ cardinality: 'multi', field_type: 'multiselect', is_sensitive: false });
+    const created = definition({ value_type: valueType, cardinality, field_type: fieldType, is_sensitive: false });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
@@ -169,20 +172,14 @@ describe('AttributeDefinitionDialog', () => {
 
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Preferred channel' } });
-    await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
-    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: ' email | Email\n phone | Phone ' } });
+    await chooseSelectOption(screen.getByLabelText('Value type'), type);
+    if (cardinality === 'multi') await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
+    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: choices } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
 
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      cardinality: 'multi',
-      field_type: 'multiselect',
-      options: {
-        choices: [
-          { value: 'email', label: 'Email' },
-          { value: 'phone', label: 'Phone' },
-        ],
-      },
+      value_type: valueType, cardinality, field_type: fieldType, options: { choices: expected },
     });
   });
 
@@ -417,38 +414,6 @@ describe('AttributeDefinitionDialog', () => {
 
     expect(screen.getByRole('alert').textContent).toContain(message);
     expect(fetchFn).not.toHaveBeenCalled();
-  });
-
-  it('sends labeled integer choices', async () => {
-    const requests: Request[] = [];
-    const created = definition({
-      label: 'Boundary count',
-      slug: 'boundary_count',
-      value_type: 'integer',
-      field_type: 'select',
-      is_sensitive: false,
-      options: { choices: [{ value: '1', label: 'One' }] },
-    });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST'
-        ? Response.json(created, { status: 201 })
-        : Response.json({ definitions: [created] });
-    });
-    render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Boundary count' } });
-    await chooseSelectOption(screen.getByLabelText('Value type'), 'Integer');
-    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: '1 | One' } });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await waitFor(() => expect(requests).toHaveLength(2));
-
-    await expect(requests[0]!.clone().json()).resolves.toMatchObject({
-      value_type: 'integer',
-      field_type: 'select',
-      options: { choices: [{ value: '1', label: 'One' }] },
-    });
   });
 
   it('rejects a created definition that is not returned user-owned', async () => {
