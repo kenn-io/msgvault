@@ -207,7 +207,7 @@
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
-    onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); void controller.loadList(page.predicate); }}
+    onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); }}
     onSplitCommitted={async (context) => { onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
