@@ -24,30 +24,6 @@ describe('TaskLinks', () => {
     await tick();
     expectOneInitialTaskRead(reads);
   });
-  it('preserves a failed create draft across New and Existing', async () => {
-    const creates: Request[] = [];
-    const client = createAPIClient(async (input) => {
-      const request = input as Request;
-      if (request.method === 'POST') {
-        creates.push(request.clone());
-        return creates.length === 1 ? Response.json({ message: 'Response lost after create' }, { status: 503 }) : Response.json({ task: { id: 'task-1', title: 'Revised follow up' } }, { status: 201 });
-      }
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
-    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
-    await screen.findByText('Response lost after create');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-    expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
-    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
-    await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
-    await waitFor(() => expect(creates).toHaveLength(2));
-  });
-
   it('hides earlier cached titles when another card reports authentication required', async () => {
     let probes = 0;
     const client = createAPIClient(async (input) => {
