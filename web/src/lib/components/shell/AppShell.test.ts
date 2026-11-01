@@ -55,38 +55,6 @@ function operationAuthorityResponse(path: string): Response | undefined {
 }
 
 describe('AppShell', () => {
-  it('rechecks inconclusive visual readiness on focus without remounting Files', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    window.history.replaceState(null, '', '/?workspace=files');
-    const state = new ExploreState(window);
-    const probe = vi.fn<() => Promise<boolean | undefined>>()
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValue(true);
-    const visual = new IntegrationReadiness(probe);
-    const client = createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'files-1', search_provenance: {} });
-      return Response.json({});
-    });
-    const rendered = render(AppShell, { props: { client, state }, context: new Map([[visualReadinessKey, visual]]) });
-    try {
-      const grid = await screen.findByRole('grid', { name: 'Files results' });
-      await waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
-      expect(screen.queryByRole('switch', { name: 'Visual search' })).toBeNull();
-
-      await fireEvent(window, new Event('focus'));
-
-      expect(await screen.findByRole('switch', { name: 'Visual search' })).toBeDefined();
-      expect(probe).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole('grid', { name: 'Files results' })).toBe(grid);
-    } finally {
-      rendered.unmount();
-      visual.dispose();
-      state.destroy();
-      vi.useRealTimers();
-    }
-  });
-
   it('keeps confirmation focus through held Back and its restoring traversal', async () => {
     window.history.replaceState({ exploreIndex: 0 }, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 1 }, '', '/?workspace=settings');
@@ -118,6 +86,38 @@ describe('AppShell', () => {
       window.removeEventListener('popstate', recordFocus);
       rendered.unmount();
       state.destroy();
+    }
+  });
+
+  it('rechecks inconclusive visual readiness on focus without remounting Files', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.history.replaceState(null, '', '/?workspace=files');
+    const state = new ExploreState(window);
+    const probe = vi.fn<() => Promise<boolean | undefined>>()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue(true);
+    const visual = new IntegrationReadiness(probe);
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'files-1', search_provenance: {} });
+      return Response.json({});
+    });
+    const rendered = render(AppShell, { props: { client, state }, context: new Map([[visualReadinessKey, visual]]) });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      await waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole('switch', { name: 'Visual search' })).toBeNull();
+
+      await fireEvent(window, new Event('focus'));
+
+      expect(await screen.findByRole('switch', { name: 'Visual search' })).toBeDefined();
+      expect(probe).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('grid', { name: 'Files results' })).toBe(grid);
+    } finally {
+      rendered.unmount();
+      visual.dispose();
+      state.destroy();
+      vi.useRealTimers();
     }
   });
 

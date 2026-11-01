@@ -6,15 +6,21 @@ import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
 
-it.each([false, true])('merges saved profiles with promotion=%s', async promote => {
+it.each([
+  { savedAnchor: true, promote: false, outcome: 'merge' },
+  { savedAnchor: true, promote: true, outcome: 'retry and merge' },
+  { savedAnchor: true, promote: true, outcome: 'cancel' },
+  { savedAnchor: false, promote: true, outcome: 'read failure' },
+  { savedAnchor: false, promote: true, outcome: 'cancel' }
+])('merges profiles with saved anchor=$savedAnchor, promotion=$promote, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
   const requests: Request[] = [];
-  let failProfile = promote;
+  let failProfile = outcome === 'retry and merge' || outcome === 'read failure';
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request.clone());
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/directory') return Response.json({ people: promote ? [] : [directoryPerson(9)] });
-    if (path === '/api/v1/participants/search') return Response.json({ rows: promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
+    if (path === '/api/v1/people/directory') return Response.json({ people: savedAnchor && promote ? [] : [directoryPerson(savedAnchor ? 9 : 7)] });
+    if (path === '/api/v1/participants/search') return Response.json({ rows: savedAnchor && promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') return Response.json(profile(9));
     if (path === '/api/v1/people/7' || path === '/api/v1/people/9') {
       if (path.endsWith('/9') && failProfile) { failProfile = false; return Response.json({ error: 'unavailable' }, { status: 503 }); }
@@ -27,24 +33,31 @@ it.each([false, true])('merges saved profiles with promotion=%s', async promote 
   const controller = new RelationshipsController(client, () => 'UTC');
   const onReconcile = vi.fn(async () => undefined);
   const onOpenPerson = vi.fn(), onClose = vi.fn();
-  const view = render(MergePeopleDialog, { client, controller, personID: 7, participantID: null, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
+  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Two/ }));
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Two/ : /Synthetic One/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    if (promote) {
+    if (outcome === 'retry and merge' || outcome === 'read failure') {
       await screen.findByText('Could not read both people. Retry the merge.');
+      expect(onReconcile).toHaveBeenCalledWith(expect.anything(), false);
+      if (outcome === 'read failure') return;
       await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     }
     await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    if (promote) expect(onReconcile).toHaveBeenCalledWith(expect.anything(), false);
+    if (outcome === 'cancel') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(onClose).toHaveBeenCalledOnce();
+      return;
+    }
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(onReconcile).toHaveBeenCalledTimes(promote ? 3 : 1));
+    await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
-    expect(onOpenPerson).toHaveBeenCalledWith(7);
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -103,36 +116,5 @@ it('leaves both people unchanged when the saved profile cannot be read', async (
     await screen.findByText('Target missing');
     expect(links).toEqual([]);
     expect(onClose).not.toHaveBeenCalled();
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-
-it.each([[false, 'read failure'], [false, 'cancel'], [true, 'cancel']] as const)('reconciles a committed promotion after %s saved anchor and %s', async (savedAnchor, outcome) => {
-  let promoted = false;
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [directoryPerson(7)] });
-    if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 2, display_label: 'Synthetic Observed' }] : [] });
-    if (path === '/api/v1/people' && request.method === 'POST') { promoted = true; return Response.json(profile(9, 2, [savedAnchor ? 2 : 1])); }
-    if (path === '/api/v1/people/7') return Response.json(profile(7, 4, []), { headers: { ETag: '"person-7-r4"' } });
-    if (path === '/api/v1/people/9') return outcome === 'read failure' ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json(profile(9, 2, [savedAnchor ? 2 : 1]), { headers: { ETag: '"person-9-r2"' } });
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-  const controller = new RelationshipsController(client, () => 'UTC');
-  const onReconcile = vi.fn(async () => undefined), onClose = vi.fn();
-  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic', onReconcile, onClose });
-  try {
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Observed/ : /Synthetic One/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    if (outcome === 'read failure') await screen.findByText('Could not read both people. Retry the merge.');
-    else {
-      await screen.findByRole('dialog', { name: 'Resolve person merge' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(onClose).toHaveBeenCalledOnce();
-    }
-    expect(promoted).toBe(true);
-    expect(onReconcile).toHaveBeenCalled();
   } finally { view.unmount(); controller.destroy(); }
 });

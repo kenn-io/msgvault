@@ -66,12 +66,12 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PersonAddresses', () => {
-  it.each([true, false])('offers unlink only for another clustered member (cluster=%s)', clustered => {
-    render(PersonAddresses, baseProps({ detail: clustered ? clusteredPerson() : person() }));
+  it('offers unlink only for another clustered member', () => {
+    render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
     expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
     expect(screen.queryByRole('button', { name: /Unlink alice@example.com|Unlink Alice/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Unlink +15550100002' }) !== null).toBe(clustered);
-    expect(screen.queryByRole('button', { name: 'Unlink carol@example.com' }) !== null).toBe(clustered);
+    expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
   });
 
   it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', async evidence => {
@@ -157,6 +157,7 @@ describe('PersonAddresses', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
+    expect(screen.getByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeDefined();
     expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
   });
 

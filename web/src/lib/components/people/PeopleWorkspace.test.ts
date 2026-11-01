@@ -565,7 +565,7 @@ it('refreshes retained Saved rows when the workspace remounts', async () => {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Before sync');
     view.unmount();
     synced = true;
-    view = render(PeopleWorkspace, { props: { ...props, restorationEpoch: 1 } });
+    view = render(PeopleWorkspace, { props });
     const grid = await screen.findByRole('grid', { name: 'People results' });
     await within(grid).findByText('After sync');
     expect(within(grid).queryByText('Before sync')).toBeNull();

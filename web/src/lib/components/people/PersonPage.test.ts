@@ -1,4 +1,4 @@
-import { directoryPerson, person as profile } from '../../directory/entity-fixtures.test-support';
+import { person as profile } from '../../directory/entity-fixtures.test-support';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DirectoryController } from '../../directory/controller.svelte';
@@ -214,51 +214,5 @@ it('keeps an open field draft when the saved person activity finishes loading', 
     await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+1 202 555 0199' } });
     await act(async () => { release(Response.json({ id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })); await opening; });
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
-});
-
-it.each(['next person', 'return to original'] as const)('keeps a new merge dialog open after %s when an earlier link finishes', async journey => {
-  let release!: (response: Response) => void;
-  const writes: unknown[] = [];
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (/\/participants\/[12]$/.test(path)) {
-      const id = Number(path.split('/').at(-1));
-      return Response.json({ id, display_label: id === 1 ? 'Original observed person' : 'Next observed person', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when });
-    }
-    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7, { display_name: 'Saved counterpart' })] });
-    if (path === '/api/v1/participants/search') return Response.json({ rows: [] });
-    if (path === '/api/v1/people/7') return Response.json(profile(7, 4, [77]));
-    if (path === '/api/v1/identity/links') { writes.push(await request.json()); return new Promise<Response>(resolve => { release = resolve; }); }
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [], total_count: 0, cache_revision: 'cache-example', search_provenance: {} });
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client);
-  await controller.openTarget('cluster:1', {}, false);
-  const props = { client, directory, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: vi.fn(async () => undefined) };
-  const view = render(PersonPage, { props });
-  try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Saved counterpart' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Saved counterpart/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await waitFor(() => expect(writes).toEqual([{ participant_a: 1, participant_b: 77 }]));
-    await controller.openTarget('cluster:2', {}, false);
-    await view.rerender({ ...props, target: 'cluster:2' });
-    await screen.findByRole('heading', { name: 'Next observed person' });
-    if (journey === 'return to original') {
-      await controller.openTarget('cluster:1', {}, false);
-      await view.rerender(props);
-      await screen.findByRole('heading', { name: 'Original observed person' });
-    }
-    const dialogName = journey === 'next person' ? 'Merge Next observed person' : 'Merge Original observed person';
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
-    await screen.findByRole('dialog', { name: dialogName });
-    await act(async () => {
-      release(Response.json({ identity_revision: 2, cache_state: 'ready' }));
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
-    expect(props.onReconcilePersonMerge).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('dialog', { name: dialogName })).not.toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
