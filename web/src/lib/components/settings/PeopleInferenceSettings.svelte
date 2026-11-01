@@ -19,7 +19,7 @@
   let trainingPosture = $state('');
   let removeConfirmationName = $state('');
 
-  onMount(() => { if (!controller.status) void controller.load(); });
+  onMount(() => { void controller.load(); });
 
   async function createProfile(): Promise<void> {
     const stableName = name.trim();
