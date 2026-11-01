@@ -255,6 +255,26 @@ describe('RelationshipsTab', () => {
     }
   });
 
+  it('reloads relationship types when Add connection opens after the first load failed', async () => {
+    let reads = 0;
+    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/relationship-types') {
+        reads += 1;
+        return Response.json({ relationship_types: [relationshipType()] });
+      }
+      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [] });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    }));
+    controller.errors.relationshipTypes = 'relationship types unavailable';
+    render(RelationshipsTab, { client, controller, personID: 7 });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await waitFor(() => expect(reads).toBe(1));
+    await waitFor(() => expect(controller.relationshipTypes).toHaveLength(1));
+    expect(controller.errors.relationshipTypes).toBeFalsy();
+  });
+
   it('creates an outgoing edge at the collection endpoint with the selected person as source', async () => {
     const requests: Request[] = [];
     const created = relationship(45, 1, { source_person_id: 7, target_person_id: 9 });
