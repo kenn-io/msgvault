@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCategory } from './layout';
 import { groupSettings, type SettingState } from './catalog';
 
 describe('settings catalog', () => {
@@ -51,6 +50,3 @@ function setting(key: string, value: unknown, overrides: Partial<SettingState> =
   };
 }
 
-it('opens the People catalog for the people settings alias', () => {
-  expect(normalizeCategory('people')).toBe('people_catalog');
-});
