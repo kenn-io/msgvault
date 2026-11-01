@@ -106,7 +106,7 @@ describe('PersonRecordActions', () => {
 
     await choose('Rename');
     await choose('Delete');
-    expect(screen.queryByRole('group', { name: 'Rename' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
     expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
 
     await choose('Rename');
@@ -123,7 +123,7 @@ describe('PersonRecordActions', () => {
     expect(screen.getByRole('menuitem', { name: 'History' }).getAttribute('aria-disabled')).toBeNull();
 
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    expect(screen.queryByRole('group', { name: 'Rename' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
   });
 
   it('opens history and returns focus to the More actions trigger when it closes', async () => {

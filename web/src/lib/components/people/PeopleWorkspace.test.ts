@@ -14,7 +14,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     requests?.push(path);
-    return routes[path]?.(request) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/contact-state') ? Response.json({ cadence_status: 'unknown', interaction_count: 0 }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
@@ -166,6 +166,7 @@ it('opening a saved person reads its profile once and opens Details', async () =
     paths.push(path);
     if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
     if (path === '/api/v1/people/91') return Response.json(profile);
+    if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'overdue', interaction_count: 3 });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
@@ -181,6 +182,9 @@ it('opening a saved person reads its profile once and opens Details', async () =
     expect(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
     expect(paths).toContain('/api/v1/people/91/profile');
     expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
+    expect(screen.getByText('Overdue · 3 interactions')).toBeDefined();
+    expect(await screen.findByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeDefined();
+    expect(paths).toContain('/api/v1/meetings/metrics');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
