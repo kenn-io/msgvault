@@ -374,17 +374,29 @@ describe('DirectoryProfileController', () => {
     const seeded = bundle();
     seeded.attributes = { person_id: 7, attributes: [] };
     seeded.definitions = { definitions: [createdDefinition] };
-    const controller = new DirectoryProfileController(createAPIClient(vi.fn<typeof fetch>(async () =>
-      Response.json({ dry_run: false, value })
-    )), 7, seeded);
+    const group = { definition: createdDefinition, current: [value], history: [] };
+    let finishAttributes!: (response: Response) => void;
+    const refreshedAttributes = new Promise<Response>(resolve => { finishAttributes = resolve; });
+    const controller = new DirectoryProfileController(createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (request.method === 'PUT') return Response.json({ dry_run: false, value });
+      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
+      if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r3"' } });
+      if (path.endsWith('/attributes')) return refreshedAttributes;
+      if (path.endsWith('/attribute-definitions')) return Response.json(seeded.definitions);
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: value.created_at, stale: false });
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }), 7, seeded);
 
-    await controller.setAttribute(createdDefinition.slug, { value: { type: 'text', text: 'First value' } });
-
-    expect(controller.attributes?.attributes).toEqual([{
-      definition: createdDefinition,
-      current: [value],
-      history: []
-    }]);
+    const saving = controller.setAttribute(createdDefinition.slug, { value: { type: 'text', text: 'First value' } });
+    try {
+      await vi.waitFor(() => expect(controller.attributes?.attributes).toEqual([group]));
+    } finally {
+      finishAttributes(Response.json({ person_id: 7, attributes: [group] }));
+      await saving;
+      controller.destroy();
+    }
   });
 
   it('rejects a rapid second rename without letting the first response erase its draft', async () => {
