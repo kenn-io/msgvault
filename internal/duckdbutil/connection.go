@@ -122,7 +122,12 @@ func Open(ctx context.Context, policy Policy) (*sql.DB, error) {
 	if !Available {
 		return nil, errors.New("DuckDB requires a build with CGO enabled")
 	}
-	db, err := sql.Open("duckdb", "")
+	if err := policy.validate(); err != nil {
+		return nil, err
+	}
+	// Bound both pools before DuckDB starts them; applying limits after opening
+	// still pays for the host-sized default pools during initialization.
+	db, err := sql.Open("duckdb", fmt.Sprintf("?threads=%d&async_threads=%d", policy.Threads, policy.Threads))
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
@@ -140,17 +145,8 @@ func Apply(ctx context.Context, db *sql.DB, policy Policy) error {
 	if db == nil {
 		return errors.New("apply duckdb policy: nil database")
 	}
-	if policy.Threads <= 0 {
-		return errors.New("apply duckdb policy: threads must be positive")
-	}
-	if !ValidSize(policy.MemoryLimit) {
-		return fmt.Errorf("apply duckdb policy: invalid memory limit %q", policy.MemoryLimit)
-	}
-	if !ValidSize(policy.MaxTempDirectorySize) {
-		return fmt.Errorf("apply duckdb policy: invalid temp-directory limit %q", policy.MaxTempDirectorySize)
-	}
-	if policy.TempDirectory == "" || !filepath.IsAbs(policy.TempDirectory) {
-		return errors.New("apply duckdb policy: temp directory must be absolute")
+	if err := policy.validate(); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(policy.TempDirectory, 0o700); err != nil {
 		return fmt.Errorf("create duckdb temp directory: %w", err)
@@ -163,6 +159,7 @@ func Apply(ctx context.Context, db *sql.DB, policy Policy) error {
 	}{
 		{name: "memory_limit", sql: "SET memory_limit = '" + policy.MemoryLimit + "'"},
 		{name: "threads", sql: fmt.Sprintf("SET threads = %d", policy.Threads)},
+		{name: "async_threads", sql: fmt.Sprintf("SET async_threads = %d", policy.Threads)},
 		{name: "preserve_insertion_order", sql: "SET preserve_insertion_order = false"},
 		{name: "temp_directory", sql: "SET temp_directory = '" + quotedTemp + "'"},
 		{name: "max_temp_directory_size", sql: "SET max_temp_directory_size = '" + policy.MaxTempDirectorySize + "'"},
@@ -171,6 +168,22 @@ func Apply(ctx context.Context, db *sql.DB, policy Policy) error {
 		if _, err := db.ExecContext(ctx, setting.sql); err != nil {
 			return fmt.Errorf("set duckdb %s: %w", setting.name, err)
 		}
+	}
+	return nil
+}
+
+func (policy Policy) validate() error {
+	if policy.Threads <= 0 {
+		return errors.New("apply duckdb policy: threads must be positive")
+	}
+	if !ValidSize(policy.MemoryLimit) {
+		return fmt.Errorf("apply duckdb policy: invalid memory limit %q", policy.MemoryLimit)
+	}
+	if !ValidSize(policy.MaxTempDirectorySize) {
+		return fmt.Errorf("apply duckdb policy: invalid temp-directory limit %q", policy.MaxTempDirectorySize)
+	}
+	if policy.TempDirectory == "" || !filepath.IsAbs(policy.TempDirectory) {
+		return errors.New("apply duckdb policy: temp directory must be absolute")
 	}
 	return nil
 }
