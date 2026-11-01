@@ -51,7 +51,7 @@ function controllerWith(fetchFn: typeof fetch): { client: ReturnType<typeof crea
 }
 
 describe('RelationshipsTab', () => {
-  it('renders returned directional labels once and keeps system relationship types read-only', () => {
+  it.each([false, true])('renders one relationship mode and keeps system types read-only, catalog: %s', (catalogOnly) => {
     const { client, controller } = controllerWith(vi.fn());
     controller.relationships = [
       view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
@@ -65,14 +65,15 @@ describe('RelationshipsTab', () => {
       relationshipType({ id: 32, slug: 'custom', forward_label: 'supports', reverse_label: 'is supported by' })
     ];
 
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly });
+    if (!catalogOnly) {
     expect(screen.getByText('Synthetic Learner · mentors')).toBeDefined();
     expect(screen.getByText('Synthetic Guide · is mentored by')).toBeDefined();
     expect(screen.getByText('Synthetic Peer · works with')).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
+      return;
+    }
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete mentor relationship type' })).toBeNull();
     expect(screen.getByText('Built in')).toBeDefined();

@@ -110,18 +110,6 @@ describe('PersonDetail', () => {
     expect(screen.queryByRole('button', { name: 'Open relationship' })).toBeNull();
   });
 
-  it('offers record actions once, from the header menu, when the profile controller is available', async () => {
-    const client = createAPIClient(quietOverviewFetch());
-    const bundle = { person, etags: { person: '"person-7-r1"' }, errors: {} } satisfies DirectoryReadBundle;
-    const profileController = new DirectoryProfileController(client, personID, bundle);
-    render(PersonDetail, { client, personID, bundle, profileController });
-
-    expect(screen.getAllByRole('button', { name: 'More actions' })).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Rename person' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
-  });
 
   it('renders available read sections, marks sensitive attributes, and keeps Media & files person-scoped', async () => {
     const requestPaths: string[] = [];

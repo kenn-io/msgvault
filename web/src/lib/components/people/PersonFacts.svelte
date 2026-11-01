@@ -16,7 +16,6 @@
   let { client, personID, onSetUp = undefined }: Props = $props();
 
   const controller = new FactLedgerController(untrack(() => client));
-  controller.selectedSection = 'claims';
   let open = $state(false);
 
   // Nothing loads until the section opens.

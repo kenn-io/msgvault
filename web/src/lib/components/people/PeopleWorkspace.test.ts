@@ -319,11 +319,11 @@ it.each([false, true])('offers Retry without the previous person page when a Dir
     await screen.findByText('Could not load selected person.');
     expect.soft(screen.queryByRole('button', { name: 'Retry' })).not.toBeNull();
     expect.soft(screen.queryByRole('group', { name: 'Person page' })).toBeNull();
-    expect.soft(screen.queryByRole('heading', { name: 'Alice Example' })).toBeNull();
+    expect.soft(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('loads a saved person deep link before showing its person page', async () => {
+it('loads a saved person deep link inside its person page', async () => {
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
   const client = clientFor({
@@ -335,8 +335,8 @@ it('loads a saved person deep link before showing its person page', async () => 
   await controller.openTarget('cluster:1', {}, false);
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByText('Loading person…');
-    expect(screen.queryByRole('group', { name: 'Person page' })).toBeNull();
+    await screen.findByText('Loading details…');
+    expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
     release(Response.json(profile(7, 1, [1])));
     await screen.findByRole('heading', { name: 'Synthetic One' });
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
@@ -407,7 +407,7 @@ it.each([
 });
 
 
-it('refreshes the same selected person after editing a connection type in Settings', async () => {
+it('rereads relationships and network when reopening the selected person', async () => {
   let label = 'mentors';
   const type = () => ({ id: 31, revision: 1, slug: 'mentor', forward_label: label, reverse_label: 'is mentored by', is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'mentor-type', created_at: when, updated_at: when });
   const client = clientFor({
@@ -446,4 +446,29 @@ it.each([false, true, undefined])('offers shared setup only when sweep configura
     }
     if (sweepConfigured === false) expect(onOpenSettings.mock.calls).toEqual([['enrichment'], ['enrichment']]);
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
+});
+
+it('keeps Messages mounted across a profile reload', async () => {
+  let releaseProfile!: (value: Response) => void; let personReads = 0;
+  const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
+  const saved = profile(7, 1, [1]);
+  const client = clientFor({
+    '/api/v1/people/7': () => ++personReads === 1 ? Response.json(saved) : pendingProfile,
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
+    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+  });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const messages = await screen.findByRole('radio', { name: 'Messages' });
+    await waitFor(() => expect(directory.detailLoading).toBe(false));
+    let reload!: Promise<void>;
+    await act(() => { reload = directory.loadSelection(7); });
+    expect(messages.isConnected).toBe(true);
+    expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);
+    await act(async () => { releaseProfile(Response.json(saved)); await reload; });
+    expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);
+  } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

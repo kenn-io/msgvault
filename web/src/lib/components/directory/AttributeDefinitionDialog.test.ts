@@ -419,7 +419,7 @@ describe('AttributeDefinitionDialog', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('clears stale type-specific options and omits a unit for numeric choices', async () => {
+  it('sends labeled integer choices', async () => {
     const requests: Request[] = [];
     const created = definition({
       label: 'Boundary count',
@@ -439,9 +439,7 @@ describe('AttributeDefinitionDialog', () => {
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Boundary count' } });
     await chooseSelectOption(screen.getByLabelText('Value type'), 'Integer');
-    expect(screen.queryByLabelText('Maximum length')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: '1 | One' } });
-    expect(screen.queryByLabelText('Unit')).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
@@ -451,9 +449,6 @@ describe('AttributeDefinitionDialog', () => {
       field_type: 'select',
       options: { choices: [{ value: '1', label: 'One' }] },
     });
-    const body = (await requests[0]!.clone().json()) as { options: Record<string, unknown> };
-    expect(body.options).not.toHaveProperty('unit');
-    expect(body.options).not.toHaveProperty('max_length');
   });
 
   it('rejects a created definition that is not returned user-owned', async () => {

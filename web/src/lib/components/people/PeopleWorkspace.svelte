@@ -201,7 +201,7 @@
   </div>
 {/snippet}
 {#snippet person()}
-  {#if selectedProfileID !== null && (directory.selectedPersonID !== selectedProfileID || directory.detailLoading)}
+  {#if selectedProfileID !== null && directory.selectedPersonID !== selectedProfileID}
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else if selectedProfileID !== null && !directory.profile?.person && directory.detail?.errors.person}
     <section class="solo"><p role="alert">{directory.detail.errors.person}</p><Button label="Retry" onclick={() => void directory.loadSelection(selectedProfileID)} /><Button label="Back to People" onclick={close} /></section>
