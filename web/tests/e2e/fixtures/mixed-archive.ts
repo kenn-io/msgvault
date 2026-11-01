@@ -731,7 +731,7 @@ export async function installDirectoryReviewArchive(page: Page) {
       return route.fulfill({ status: 503, json: { error: 'unavailable', message: 'forbidden-remote-error-marker' } });
     }
     const reviews =
-      status === 'pending'
+      status === 'pending' || status === null && url.searchParams.get('person_id') === '7'
         ? [
             {
               id: 41,
@@ -966,8 +966,8 @@ export async function installDirectoryReviewArchive(page: Page) {
     const offset = Number(url.searchParams.get('offset') ?? 0);
     return route.fulfill({
       json: {
-        candidates: candidates.filter((candidate) => candidate.state === state),
-        limit: 100,
+        candidates: candidates.filter((candidate) => state.split(',').includes(candidate.state)).slice(offset, offset + Number(url.searchParams.get('limit') ?? 100)),
+        limit: Number(url.searchParams.get('limit') ?? 100),
         offset,
       },
     });

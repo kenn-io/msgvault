@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as requestID from '../api/request-id';
 import { createAPIClient } from '../api/client';
 import type {
   Person as GeneratedPerson,
@@ -166,7 +167,7 @@ describe('PersonMergeHistoryController', () => {
         headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' },
       });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('11111111-1111-4111-8111-111111111111');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
 
     await controller.selectMerge(41);
@@ -219,7 +220,7 @@ describe('PersonMergeHistoryController', () => {
       if (postAttempts === 1) throw new TypeError('connection reset');
       return Response.json(splitResult());
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('11111111-1111-4111-8111-111111111111');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -249,7 +250,7 @@ describe('PersonMergeHistoryController', () => {
       if (postAttempts === 1) throw new SyntaxError('invalid response JSON');
       return Response.json(splitResult());
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
+    vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
@@ -334,7 +335,7 @@ describe('PersonMergeHistoryController', () => {
         ? Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 })
         : Response.json(splitResult());
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
+    vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
@@ -394,7 +395,7 @@ describe('PersonMergeHistoryController', () => {
       if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
       return Response.json({ error, message: 'Application failure' }, { status });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
+    vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
       .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);

@@ -133,10 +133,10 @@ it('keeps a stale identity mutation retry across Details and Messages', async ()
   const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Bob' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
     await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));

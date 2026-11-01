@@ -103,8 +103,6 @@ export type IdentitySearchSort = GeneratedIdentitySearchSort;
 
 export type ExploreWorkspace =
   | 'everything'
-  | 'directory'
-  | 'directory_review'
   | 'files'
   | 'relationships'
   | 'sources'
@@ -139,9 +137,7 @@ export interface ExploreURLState {
   directoryLastContactBefore: string;
   directorySort: 'name' | 'last_contact_desc' | 'last_contact_asc';
   directoryPersonID: number | null;
-  reviewKind: DirectoryReviewKind;
   identityState: IdentityReviewState;
-  relationshipReviewState: RelationshipReviewState;
   query: string;
   searchMode: ExploreSearchMode;
   filters: ExploreFilter[];
@@ -162,6 +158,7 @@ export interface ExploreURLState {
   relationshipShowAll: boolean;
   relationshipFiles: boolean;
   relationshipSaved: boolean;
+  peopleDuplicates: boolean;
   relationshipSort: 'closest' | 'recent' | 'name';
   operationHistory: boolean;
   operationLane: '' | OperationLane;

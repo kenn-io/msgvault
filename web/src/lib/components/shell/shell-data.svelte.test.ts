@@ -220,3 +220,19 @@ it('refreshes jobs on the timer and deletions on explicit refresh', async () => 
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
   } finally { data.stop(); vi.useRealTimers(); }
 });
+
+it('counts one waiting page and retains its badge after an offline read', async () => {
+  const queries: string[] = [];
+  const data = new ShellData(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    queries.push(new URL(request.url).search);
+    if (queries.length > 1) return Response.json({ error: 'unavailable' }, { status: 503 });
+    return Response.json({ candidates: Array.from({ length: 100 }, (_, id) => ({ id })) });
+  }));
+  try {
+    await data.refreshDuplicates();
+    await data.refreshDuplicates();
+    expect(queries).toEqual(['?state=candidate%2Cconflict&limit=100&offset=0', '?state=candidate%2Cconflict&limit=100&offset=0']);
+    expect(data.duplicateCount).toBe(100);
+  } finally { data.stop(); }
+});

@@ -7,7 +7,8 @@
   import type { MeetingRef } from '../../api/generated/models';
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
-  import RelationshipHeader from '../relationships/RelationshipHeader.svelte';
+  import PersonAddresses from './PersonAddresses.svelte';
+  import MergePeopleDialog from './MergePeopleDialog.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
   import { localDayBoundsUTC } from '../relationships/timeline-support';
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
@@ -41,6 +42,19 @@
   const savedProfile = $derived(directory.selectedPersonID === profileID ? directory.profile : null);
   const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
   let saving = $state(false);
+  let mergeOpen = $state(false);
+  let staleLink = $state<{ a: number; b: number }>();
+  let linkError = $state('');
+  $effect(() => { void target; staleLink = undefined; linkError = ''; mergeOpen = false; });
+  function linked(a: number, b: number, result: import('../../relationships/controller.svelte').LinkOutcome): void {
+    if (result.ok) staleLink = result.cacheState === 'stale' ? { a, b } : undefined;
+  }
+  async function retryLink(): Promise<void> {
+    if (!staleLink) return;
+    const { a, b } = staleLink;
+    const result = await controller.linkParticipants(a, b);
+    if (result.ok) linked(a, b, result); else linkError = result.message;
+  }
   async function savePerson(): Promise<void> {
     if (!person || saving) return;
     saving = true;
@@ -75,9 +89,11 @@
 {/snippet}
 
 <section class="person-page" role="group" aria-label="Person page">
+  {#if staleLink}<div class="summary-error" role="alert">Identity saved; the cache refresh failed.<Button label="Retry" onclick={() => void retryLink()} />{linkError}</div>{/if}
   {#if durablePersonID !== null || (detail && !controller.detailMissing)}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}
+        {#if !domain}<Button label="Merge with…" onclick={() => mergeOpen = true} />{/if}
         {#if profileID !== null && savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}
         {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
       {/snippet}
@@ -134,11 +150,10 @@
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
-      <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} title="Identities" {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
-        capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
-        onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+      <PersonAddresses {detail} {onAnnounce} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
     {/if}
   </div>
+  {#if mergeOpen}<MergePeopleDialog {client} {controller} personID={profileID} participantID={person?.id ?? null} {name} onReconcile={onReconcilePersonMerge} onLinked={linked} onOpenPerson={onOpenDirectoryPerson} onClose={() => mergeOpen = false} />{/if}
 </section>
 
 <style>

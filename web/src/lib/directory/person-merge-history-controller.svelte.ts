@@ -5,6 +5,7 @@ import {
   listPersonMerges as generatedListPersonMerges,
   splitPersonMerge as generatedSplitPersonMerge,
 } from '../api/generated/api/api';
+import { createBrowserRequestID } from '../api/request-id';
 import type { APIClient } from '../api/client';
 import type {
   Person as GeneratedPerson,
@@ -365,7 +366,7 @@ export class PersonMergeHistoryController {
       !sameSnapshot(snapshot, this.currentSplitSnapshot())
     )
       return;
-    const key = this.retryKey && sameSnapshot(this.retrySnapshot, snapshot) ? this.retryKey : crypto.randomUUID();
+    const key = this.retryKey && sameSnapshot(this.retrySnapshot, snapshot) ? this.retryKey : createBrowserRequestID();
     this.retryKey = key;
     this.retrySnapshot = cloneSnapshot(snapshot);
     this.splitPending = true;

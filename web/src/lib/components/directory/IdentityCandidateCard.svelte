@@ -7,11 +7,12 @@
   interface Props {
     candidate: IdentityMatchCandidate;
     pending: boolean;
+    showActions?: boolean;
     onAccept: () => void;
     onReject: () => void;
   }
 
-  let { candidate, pending, onAccept, onReject }: Props = $props();
+  let { candidate, pending, showActions = true, onAccept, onReject }: Props = $props();
   const headingID = $derived(`identity-match-${candidate.id}-heading`);
   const chip = $derived(reviewStateChip(candidate.state));
   const evidence = $derived(candidate.evidence ?? []);
@@ -72,7 +73,7 @@
       {/if}
     </section>
 
-    {#if (candidate.state === 'candidate' || candidate.state === 'conflict') && (candidate.actionable || candidate.blocker === 'person_merge_required')}
+    {#if showActions && (candidate.state === 'candidate' || candidate.state === 'conflict') && (candidate.actionable || candidate.blocker === 'person_merge_required')}
       <div class="actions">
         <Button label="Keep separate" size="sm" disabled={pending} onclick={onReject} />
         <Button label="Link identities" size="sm" tone="info" surface="solid" disabled={pending} onclick={onAccept} />
