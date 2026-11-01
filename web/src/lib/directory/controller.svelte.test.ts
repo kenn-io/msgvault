@@ -1235,6 +1235,36 @@ describe('DirectoryController', () => {
     expect(controller.promotionError).toBeNull();
   });
 
+  it('keeps person B selected when an earlier deletion of person A completes', async () => {
+    const pending = deferredResponse();
+    const commit = vi.fn();
+    const onWrite = vi.fn();
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7), directoryPerson(9)] });
+      if (path === '/api/v1/people/7' && request.method === 'DELETE') return pending.promise;
+      return editableDetailResponse(path, path.includes('/people/9') ? 9 : 7);
+    });
+    const controller = new DirectoryController(client, commit, onWrite);
+    try {
+      await controller.loadFirstPage();
+      await controller.selectPerson(7);
+      const deletion = controller.profile!.deletePerson();
+      await controller.selectPerson(9);
+      const selected = controller.profile;
+      commit.mockClear();
+      pending.resolve(new Response(null, { status: 204 }));
+      await deletion;
+      expect(controller.selectedPersonID).toBe(9);
+      expect(controller.profile).toBe(selected);
+      expect(controller.detail?.person?.id).toBe(9);
+      expect(controller.rows).toEqual([directoryPerson(9)]);
+      expect(commit).not.toHaveBeenCalled();
+      expect(onWrite).toHaveBeenCalledOnce();
+    } finally { pending.resolve(new Response(null, { status: 204 })); controller.destroy(); }
+  });
+
   it('removes a confirmed deleted person from the Directory and clears its URL selection', async () => {
     const commits: Array<Record<string, unknown>> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
