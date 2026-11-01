@@ -155,7 +155,7 @@
   function editorKey(target: Editing | undefined): string {
     if (!target) return '';
     if (target.kind === 'profile') return `${target.section}:${target.current?.envelope.id ?? 'new'}:${target.contactKind ?? ''}:${target.nameKind ?? ''}`;
-    return `${target.universalID}:${activeEditor?.definition.revision}:${target.current?.id ?? 'new'}`;
+    return `${target.universalID}:${target.current?.id ?? 'new'}`;
   }
 
   function editingRow(row: Row): boolean {

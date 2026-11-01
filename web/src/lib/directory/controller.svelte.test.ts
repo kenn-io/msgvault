@@ -1179,7 +1179,7 @@ describe('DirectoryController', () => {
     expect(controller.detail).toBeNull();
   });
 
-  it('ignores a late promotion success after resetting for a new relationship candidate', async () => {
+  it.each(['relationship candidate', 'saved selection'])('ignores a late promotion success after opening a new %s', async destination => {
     const commits: Array<Record<string, unknown>> = [];
     let resolvePromotion: ((response: Response) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1189,17 +1189,17 @@ describe('DirectoryController', () => {
       }
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(42)] });
       if (pathOf(request) === '/api/v1/people/42/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
-      return detailResponse(pathOf(request), 42);
+      return detailResponse(pathOf(request), pathOf(request).startsWith('/api/v1/people/7') ? 7 : 42);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
 
     const promotion = controller.promote(11);
     await vi.waitFor(() => expect(resolvePromotion).toBeDefined());
-    controller.resetForPromotion();
+    if (destination === 'saved selection') await controller.loadSelection(7); else controller.resetForPromotion();
     resolvePromotion?.(Response.json({ id: 42, revision: 1 }, { status: 201 }));
     await promotion;
 
-    expect(controller.selectedPersonID).toBeNull();
+    expect(controller.selectedPersonID).toBe(destination === 'saved selection' ? 7 : null);
     expect(controller.promotionResult).toBeNull();
     expect(controller.promotionError).toBeNull();
     expect(commits).not.toContainEqual({ directoryPersonID: 42 });
