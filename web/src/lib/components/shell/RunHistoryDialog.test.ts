@@ -1,5 +1,5 @@
 import { documentStatus, lane, lanes } from '../../../test/operations';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
@@ -36,7 +36,7 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
-  it('keeps the same title while a deep-linked run loads', async () => {
+  it('keeps the same title while a deep-linked run loads and identifies its kind', async () => {
     let resolveDetail!: (response: Response) => void;
     const client = createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -52,7 +52,8 @@ describe('Past runs', () => {
     await vi.waitFor(() => expect(resolveDetail).toBeDefined());
     expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
     resolveDetail(Response.json({ ...run, supported_actions: [] }));
-    await screen.findByRole('region', { name: 'Operation run detail' });
+    const detail = await screen.findByRole('region', { name: 'Operation run detail' });
+    expect(within(detail).getByText('Document extraction')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
   });
 
