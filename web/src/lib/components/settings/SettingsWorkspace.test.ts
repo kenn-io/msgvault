@@ -608,6 +608,43 @@ it('keeps edited People search details visible when switching the feature off', 
   await waitFor(() => expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull());
 });
 
+it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People profiles after saving %s while People lookups stays open', async (save) => {
+  let revision = '"s1"';
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider] });
+  const { client, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' || path.endsWith('/person-enrichment/providers/primary')) {
+      if (request.method !== 'GET') revision = '"s2"';
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, category: 'enrichment' });
+  await screen.findByText('model-one');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  if (save === 'ordinary settings') {
+    await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  } else {
+    await fireEvent.input(screen.getByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
+  }
+  await screen.findByText('model-two');
+  expect(screen.queryByLabelText('I confirm this exact disclosure')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(seen.filter(request => request.path.endsWith('/check')).map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
+});
+
 it('selects a refreshed People profile after saving Server settings and returning', async () => {
   let revision = '"s1"';
   let consented = false;
@@ -737,6 +774,26 @@ it('shows unavailable message coverage after a failed initial read', async () =>
   await screen.findByRole('list', { name: 'Features' });
   const row = screen.getByText('Message search').closest('li')!;
   expect(await within(row).findByText('Unavailable')).toBeDefined();
+});
+
+it('marks failed coverage refreshes unavailable without hiding Overview', async () => {
+  let coverageReads = 0;
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.includes('/search/coverage')) {
+      return ++coverageReads === 1
+        ? Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] })
+        : Response.json({ error: 'vector_generation_changed' }, { status: 503 });
+    }
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  const features = screen.getByRole('list', { name: 'Features' });
+  const row = within(features).getByText('Message search').closest('li')!;
+  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
+  expect(within(row).getByText('Unavailable')).toBeDefined();
+  expect(within(features).getByText('Source sync')).toBeDefined();
 });
 
 it('refreshes a pending message rebuild and keeps Contacts available', async () => {

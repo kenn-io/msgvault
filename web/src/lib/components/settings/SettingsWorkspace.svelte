@@ -172,7 +172,7 @@
     void [statusRevision, Object.keys(building)];
     const controller = new AbortController();
     void createExploreAPI(client).coverage([], controller.signal)
-      .catch(() => coverage ?? { status: 'unavailable' as const, actions: [] })
+      .catch(() => ({ status: 'unavailable' as const, actions: [] }))
       .then(value => { if (!controller.signal.aborted) coverage = value; });
     void generatedGetEmbeddingStatus(undefined, { ...client, signal: controller.signal })
       .then(({ data, response }) => {
@@ -372,7 +372,7 @@
       etag = response.headers.get('ETag') ?? etag;
       credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
       discardChanges();
-      void focusCategoryHeading();
+      void Promise.all([focusCategoryHeading(), inference.load()]);
       const appearance = savedAppearance(result.settings, new Set(updates.map(({ key }) => key)));
       if (appearance) onAppearanceSaved(appearance);
     } catch (cause) {
@@ -407,8 +407,8 @@
     settings = document.settings;
     providers = document.person_enrichment_providers ?? providers;
     pendingRestart = document.pending_restart;
-    etag = nextETag;
-    credentialETag = document.credential_etag || credentialETag;
+    [etag, credentialETag] = [nextETag, document.credential_etag || credentialETag];
+    void inference.load();
   }
   function rowLabel(setting: SettingState): string {
     if (Object.hasOwn(LABELS, setting.key)) return LABELS[setting.key]!;

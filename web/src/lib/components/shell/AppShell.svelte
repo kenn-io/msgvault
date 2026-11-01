@@ -794,9 +794,9 @@
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
+    if (exploreState.current.workspace === 'settings' && document.activeElement?.closest('.app-main')) return;
     const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
-      ? focusableResultsGrid()
-      : null;
+      ? focusableResultsGrid() : null;
     (grid ?? navigationFocusTarget())?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
