@@ -171,20 +171,21 @@ export class DirectoryProfileController {
         (!profileRequiresFreshETag || profileResponseETag !== profileETagBeforeReload);
       const attributesReady = attributes.data !== undefined;
       const definitionsReady = definitions.data !== undefined;
+      const errors = { ...this.bundle.errors };
       let refreshed = false;
       if (personReady && person.data) {
-        this.person = person.data;
+        this.person = person.data; delete errors.person;
         this.personETag = person.response?.headers.get('ETag') ?? null;
         refreshed = true;
       }
       if (structuredProfileReady && structuredProfile.data) {
-        this.structuredProfile = structuredProfile.data;
+        this.structuredProfile = structuredProfile.data; delete errors.structuredProfile;
         this.structuredProfileETag = structuredProfile.response?.headers.get('ETag') ?? null;
         refreshed = true;
       }
       if (attributes.data) {
         this.attributes = attributes.data;
-        this.attributesError = null;
+        this.attributesError = null; delete errors.attributes;
         refreshed = true;
       } else this.attributesError = failureMessage(attributes.error, attributes.response?.status ?? 0);
       if (definitions.data) {
@@ -192,7 +193,6 @@ export class DirectoryProfileController {
         this.definitionsError = null;
         refreshed = true;
       } else this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
-      const errors = { ...this.bundle.errors };
       if (contactState.data) {
         this.bundle = { ...this.bundle, contactState: contactState.data };
         delete errors.contactState;
