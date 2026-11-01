@@ -49,7 +49,7 @@ func TestLinkTelegramUser(t *testing.T) {
 
 			require.NoError(st.RemoveSource(export.ID))
 			assert.False(linked(t, st, participant, bridge))
-			assert.True(linked(t, st, bridge, secondBridge))
+			assert.False(linked(t, st, bridge, secondBridge))
 		})
 	}
 }

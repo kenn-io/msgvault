@@ -31,7 +31,7 @@ import (
 const providerNativeKey = "providerID"
 
 // telegramSharedKey has no account scope: Telegram user IDs are global,
-// so two Beeper logins seeing the same user can link.
+// so export users can link to Beeper users across logins.
 func telegramSharedKey(serviceSlug string, u *User) string {
 	if serviceSlug != "telegram" {
 		return ""
