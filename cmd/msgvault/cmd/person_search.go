@@ -40,8 +40,8 @@ var personSearchCmd = &cobra.Command{
 	Short: "Search durable person profiles semantically",
 	Long: `Rank durable people by semantic similarity to free text. Needs the semantic
 people lane; 'msgvault setup status' shows whether it is on and how to
-enable it. To match an exact address, use the participants query in
-'msgvault person --help'.`,
+enable it. For saved names or address fragments without semantic search,
+use 'person directory --query <name>' or '--address <address>'.`,
 	Example: `  msgvault person search "works on billing" --json`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

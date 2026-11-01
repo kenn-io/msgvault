@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,14 +17,22 @@ import (
 )
 
 func newPersonDirectoryCommand() *cobra.Command {
-	var after, before, sort, cursor string
+	var after, before, sort, cursor, queryText, address string
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "directory",
-		Short: "Browse durable people by last contact",
-		Args:  cobra.NoArgs,
+		Short: "Find saved people by name, address, or last contact",
+		Long: `Find durable people without semantic search or changing profiles.
+--query uses lexical matching over current curated names, contact points,
+and organizations. --address matches a literal, case-insensitive substring
+of current bound participant addresses and identifiers or curated contact
+points. Observed participants without a saved person are not returned.
+Filters combine to narrow the existing Directory page.`,
+		Example: `  msgvault person directory --query "Alex Example"
+  msgvault person directory --address alex@example.test --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			query, err := personDirectoryQuery(cmd, after, before, sort, cursor)
+			query, err := personDirectoryQuery(cmd, after, before, sort, cursor, queryText, address)
 			if err != nil {
 				return err
 			}
@@ -32,6 +41,9 @@ func newPersonDirectoryCommand() *cobra.Command {
 				return err
 			}
 			defer func() { _ = client.Close() }()
+			if err := client.RequireDirectoryAddress(cmd.Context(), address); err != nil {
+				return err
+			}
 			response, err := daemonclient.APIResponse(client,
 				func(api *apiclient.Client) (*generated.ListDirectoryPeopleResp, error) {
 					return api.ListDirectoryPeopleWithResponse(cmd.Context(), &generated.ListDirectoryPeopleRequestOptions{Query: query})
@@ -42,6 +54,8 @@ func newPersonDirectoryCommand() *cobra.Command {
 			return writePersonDirectoryPage(cmd, response.JSON200, jsonOutput)
 		},
 	}
+	command.Flags().StringVar(&queryText, "query", "", "Lexical query over current curated names, contact points, and organizations")
+	command.Flags().StringVar(&address, "address", "", "Literal case-insensitive address or identifier substring (saved people only)")
 	command.Flags().StringVar(&after, "last-contact-after", "", "Contacted at or after this inclusive date (YYYY-MM-DD or RFC3339)")
 	command.Flags().StringVar(&before, "last-contact-before", "", "Contacted at or before this inclusive date (YYYY-MM-DD or RFC3339)")
 	command.Flags().StringVar(&sort, "sort", string(generated.LastContactDesc), "Directory order: name, last_contact_desc, or last_contact_asc")
@@ -50,7 +64,7 @@ func newPersonDirectoryCommand() *cobra.Command {
 	return command
 }
 
-func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor string) (*generated.ListDirectoryPeopleQuery, error) {
+func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor, queryText, address string) (*generated.ListDirectoryPeopleQuery, error) {
 	lower, err := parseDocumentSearchDate(after)
 	if err != nil {
 		return nil, usageErr(cmd, fmt.Errorf("--last-contact-after: %w", err))
@@ -67,6 +81,12 @@ func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor string
 		return nil, usageErr(cmd, errors.New("--sort: must be name, last_contact_desc, or last_contact_asc"))
 	}
 	query := &generated.ListDirectoryPeopleQuery{LastContactAfter: lower, LastContactBefore: upper, Sort: &order}
+	if queryText != "" {
+		query.Q = &queryText
+	}
+	if address = strings.TrimSpace(address); address != "" {
+		query.Address = &address
+	}
 	if cursor != "" {
 		query.Cursor = &cursor
 	}

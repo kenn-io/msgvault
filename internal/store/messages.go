@@ -427,6 +427,8 @@ type Message struct {
 	SenderID         sql.NullInt64
 	ReplyToMessageID sql.NullInt64
 	IsFromMe         bool
+	// IsSent is whether the message left the sender; invalid keeps the stored value.
+	IsSent sql.NullBool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
 	// account identity rather than a source-native sent-by-me signal.
 	IdentityDerivedIsFromMe bool
@@ -1377,12 +1379,12 @@ func upsertMessageSQL(now string) string {
 		reply_to_message_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
 		subject, snippet, size_estimate,
-		has_attachments, attachment_count, archived_at, last_modified
+		has_attachments, attachment_count, archived_at, last_modified, is_sent
 	)
 	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
-	       ?, ?, ?, ?, ?, %[1]s, %[1]s
+	       ?, ?, ?, ?, ?, %[1]s, %[1]s, COALESCE(CAST(? AS BOOLEAN), TRUE)
 	FROM attribution
 	WHERE TRUE
 	ON CONFLICT(source_id, source_message_id) DO UPDATE SET
@@ -1407,7 +1409,8 @@ func upsertMessageSQL(now string) string {
 		snippet = excluded.snippet,
 		size_estimate = excluded.size_estimate,
 		has_attachments = CASE WHEN ? THEN messages.has_attachments ELSE excluded.has_attachments END,
-		attachment_count = CASE WHEN ? THEN messages.attachment_count ELSE excluded.attachment_count END`, now)
+		attachment_count = CASE WHEN ? THEN messages.attachment_count ELSE excluded.attachment_count END,
+		is_sent = COALESCE(CAST(? AS BOOLEAN), messages.is_sent)`, now)
 }
 
 // UpsertMessage inserts or updates a message.
@@ -1499,8 +1502,8 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.SentAt, msg.ReceivedAt, msg.InternalDate, msg.SenderID,
 		msg.ReplyToMessageID,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
-		msg.HasAttachments, msg.AttachmentCount,
-		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
+		msg.HasAttachments, msg.AttachmentCount, msg.IsSent,
+		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats, msg.IsSent,
 	}
 
 	// Use RETURNING to avoid an extra SELECT per message when supported.
