@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { getContext } from 'svelte';
+  import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
+  import { createBrowserRequestID } from '../../api/request-id';
   import {
     createOrLinkMessageTask as generatedCreateOrLinkMessageTask,
     getTaskIntegrationStatus as generatedGetTaskIntegrationStatus,
@@ -6,7 +9,7 @@
     searchIntegrationTasks as generatedSearchIntegrationTasks,
     unlinkMessageTask as generatedUnlinkMessageTask,
   } from '../../api/generated/api/api';
-  import { Button, TextInput } from '@kenn-io/kit-ui';
+  import { Button, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     TaskLinkLookupResponse as GeneratedTaskLinkLookupResponse,
@@ -19,34 +22,43 @@
   type Task = GeneratedTaskSummary;
   let {
     client,
+    mode = 'list',
+    showSetup = true,
+    busy = $bindable(false),
+    oncomplete = undefined,
+    oncancel = undefined,
     messageId,
     title,
-    sourceType,
-    sourceIdentifier,
     onsettings = () => undefined,
   }: {
     client: APIClient;
+    mode?: 'list' | 'add';
+    showSetup?: boolean;
+    busy?: boolean;
+    oncomplete?: () => void;
+    oncancel?: () => void;
     messageId: number;
     title: string;
-    sourceType: string;
-    sourceIdentifier: string;
     onsettings?: () => void;
   } = $props();
+  const conversationStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
+  let action = $state('create');
   let loading = $state(true);
-  let integrationState = $state('loading');
-  let integrationMessage = $state('');
+  let localStatus = $state<{ state: string; project?: string; message?: string }>({ state: 'loading' });
+  const status = $derived(conversationStatus?.latest ?? localStatus);
+  const integrationState = $derived(status.state);
+  const integrationMessage = $derived(status.message ?? 'Task integration status is unavailable.');
+  const project = $derived(status.project ?? '');
   let indexState = $state('loading');
   let complete = $state(false);
   let reason = $state('');
   let lastScan = $state('');
   let tasks = $state<Task[]>([]);
-  let project = $state('');
   let searchQuery = $state('');
   let searchResults = $state<Task[]>([]);
   let searching = $state(false);
   let mutating = $state(false);
   let error = $state('');
-  let creating = $state(false);
   let outboundMetadata = $state<OutboundMetadata | null>(null);
   let generation = 0;
   let activeController: AbortController | null = null;
@@ -66,20 +78,17 @@
   });
   function resetForSelection(): void {
     loading = true;
-    integrationState = 'loading';
-    integrationMessage = '';
+    localStatus = { state: 'loading' };
     indexState = 'loading';
     complete = false;
     reason = '';
     lastScan = '';
     tasks = [];
-    project = '';
     searchQuery = '';
     searchResults = [];
     searching = false;
     mutating = false;
     error = '';
-    creating = false;
     outboundMetadata = null;
     existingLinkRetry = undefined;
   }
@@ -90,14 +99,12 @@
     activeController = controller;
     resetForSelection();
     try {
-      const status = await generatedGetTaskIntegrationStatus({
+      const status = await (conversationStatus?.load() ?? generatedGetTaskIntegrationStatus({
         ...client,
         signal: controller.signal,
-      });
-      if (currentGeneration !== generation) return;
-      project = status.data?.project ?? '';
-      integrationState = status.data?.state ?? 'unavailable';
-      integrationMessage = status.data?.message ?? 'Task integration status is unavailable.';
+      }));
+      if (currentGeneration !== generation || controller.signal.aborted) return;
+      localStatus = status.data ?? { state: 'unavailable' };
       // The reverse-index response is independently authoritative and may
       // contain a safe last-good snapshot even when the live integration is down.
       const { data, error: responseError } = await generatedListMessageTasks(
@@ -159,9 +166,10 @@
     const retry =
       existingLinkRetry?.taskID === taskID
         ? existingLinkRetry
-        : { taskID, requestID: globalThis.crypto.randomUUID(), addedAt: new Date().toISOString() };
+        : { taskID, requestID: createBrowserRequestID(), addedAt: new Date().toISOString() };
     existingLinkRetry = retry;
     mutating = true;
+    busy = true;
     error = '';
     try {
       const { data, error: responseError } = await generatedCreateOrLinkMessageTask(
@@ -178,12 +186,15 @@
       existingLinkRetry = undefined;
       searchQuery = '';
       searchResults = [];
-      await loadFor(selectedMessageID);
+      oncomplete?.();
     } catch (cause) {
       if (currentGeneration !== generation || activeController?.signal.aborted) return;
       error = cause instanceof Error ? cause.message : 'Unable to link task.';
     } finally {
-      if (currentGeneration === generation) mutating = false;
+      if (currentGeneration === generation) {
+        mutating = false;
+        busy = false;
+      }
     }
   }
   async function unlink(taskID: string): Promise<void> {
@@ -222,7 +233,8 @@
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const stateMessage = $derived(
-    integrationState !== 'ready' && integrationState !== 'loading'
+    integrationState === 'disabled' ? integrationMessage || 'Task integration is disabled.'
+      : integrationState !== 'ready' && integrationState !== 'loading'
       ? `Task integration ${integrationState}: ${integrationMessage || 'No status detail was provided.'}`
       : reason === 'cache_persistence_unsupported'
         ? 'Linked-task cache persistence is unavailable on this platform; current-session links may be shown.'
@@ -248,28 +260,22 @@
   );
 </script>
 
+{#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
 <section class="task-links" aria-label="Linked tasks">
-  <header>
+  {#if mode !== 'add' && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
-    {#if mutationReady}<Button
-        size="sm"
-        surface="soft"
-        label="Create task"
-        onclick={() => {
-          creating = true;
-        }}
-      />{/if}
-  </header>
+  </header>{/if}
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
-    {#if degraded}<div class="degraded" role="alert">
-        <p>{stateMessage} Mutations are disabled.</p>
-        <Button size="sm" surface="soft" label="Open Settings" onclick={onsettings} />
+    {#if degraded && (showSetup || integrationState === 'ready')}<div class="degraded" role={integrationState === 'disabled' ? 'status' : 'alert'}>
+        <p>{stateMessage}</p>
+        <Button size="sm" surface="soft" label={integrationState === 'disabled' ? 'Set up' : 'Open Settings'} onclick={onsettings} />
       </div>{/if}
     {#if partialIndex}<p role="alert">{stateMessage}</p>{/if}
     {#if sessionOnlyIndex}<p role="status">
         Linked-task index updates are available for this session but are not persisted to disk on this platform.
       </p>{/if}
+    {#if mode !== 'add' && integrationState !== 'authentication_required'}
     {#if tasks.length > 0}
       <ul>
         {#each tasks as task (task.id)}<li>
@@ -283,7 +289,10 @@
           </li>{/each}
       </ul>
     {:else if complete}<p>No linked tasks.</p>{/if}
-    {#if mutationReady}
+    {/if}
+    {#if mutationReady && mode === 'add'}
+      <SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
+      {#if action !== 'create'}
       <form
         onsubmit={(event) => {
           event.preventDefault();
@@ -308,33 +317,33 @@
             </li>{/each}
         </ul>
       {/if}
+      {/if}
     {/if}
     {#if error}<p role="alert">{error}</p>{/if}
   {/if}
 </section>
+{/if}
 
-{#if creating && outboundMetadata}
-  <CreateTaskDialog
-    {client}
-    {messageId}
-    {project}
-    defaultTitle={title}
-    archiveUID={outboundMetadata.archive_uid}
-    conversationId={outboundMetadata.conversation_id}
-    sourceType={outboundMetadata.source_type}
-    sourceIdentifier={outboundMetadata.source_identifier}
-    sourceMessageId={outboundMetadata.source_message_id}
-    subject={outboundMetadata.subject}
-    from={outboundMetadata.from}
-    sentAt={outboundMetadata.sent_at}
-    onclose={() => {
-      creating = false;
-    }}
-    oncreated={() => {
-      creating = false;
-      void loadFor(messageId);
-    }}
-  />
+{#if mode === 'add' && mutationReady && outboundMetadata}
+  <div hidden={action !== 'create'}>
+    <CreateTaskDialog
+      bind:pending={busy}
+      {client}
+      {messageId}
+      {project}
+      defaultTitle={title}
+      archiveUID={outboundMetadata.archive_uid}
+      conversationId={outboundMetadata.conversation_id}
+      sourceType={outboundMetadata.source_type}
+      sourceIdentifier={outboundMetadata.source_identifier}
+      sourceMessageId={outboundMetadata.source_message_id}
+      subject={outboundMetadata.subject}
+      from={outboundMetadata.from}
+      sentAt={outboundMetadata.sent_at}
+      onclose={oncancel}
+      oncreated={() => oncomplete?.()}
+    />
+  </div>
 {/if}
 
 <style>

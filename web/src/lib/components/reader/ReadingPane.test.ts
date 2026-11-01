@@ -40,158 +40,27 @@ function renderPane(row: EntryRow) {
   });
 }
 
-describe('ReadingPane task gating', () => {
-  it('offers Tasks for a typed email entry', () => {
-    renderPane(entryRow());
-    expect(screen.getByLabelText('Tasks for this message')).toBeDefined();
-  });
-
-  it('offers Tasks for a legacy entry with a blank message type', () => {
-    renderPane(entryRow({ message_type: '' }));
-    expect(screen.getByLabelText('Tasks for this message')).toBeDefined();
-  });
-
-  it('hides Tasks for non-email entries', () => {
-    renderPane(entryRow({ message_type: 'imessage' }));
-    expect(screen.queryByLabelText('Tasks for this message')).toBeNull();
-  });
-
-  it('hides Tasks when the entry has no anchor message', () => {
-    renderPane(entryRow({ anchor_message_id: undefined }));
-    expect(screen.queryByLabelText('Tasks for this message')).toBeNull();
-  });
-});
-
 describe('ReadingPane header', () => {
-  function taskFetch(tasks: unknown[]) {
-    return vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (request.url.endsWith('/integrations/tasks/status')) {
-        return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      }
-      return Response.json({ state: 'ready', complete: true, last_scan: '2026-07-19T01:00:00Z', tasks });
-    });
-  }
-
-  it('opens the linked tasks from a Tasks button without a count', async () => {
-    const fetchFn = taskFetch([
-      { id: 'task-1', title: 'Follow up', revision: 'r1' },
-      { id: 'task-2', title: 'Reply', revision: 'r2' }
-    ]);
-    render(ReadingPane, {
-      props: {
-        client: createAPIClient(fetchFn),
-        selection: { kind: 'entry', row: entryRow() },
-        predicate: {} satisfies ExplorePredicate
-      }
-    });
-    const button = screen.getByRole('button', { name: 'Tasks for this message' });
-    expect(button.getAttribute('aria-expanded')).toBe('false');
-    expect(button.textContent?.trim()).toBe('Tasks');
-
-    await fireEvent.click(button);
-    expect(button.getAttribute('aria-expanded')).toBe('true');
-    expect(await screen.findByRole('region', { name: 'Linked tasks' })).toBeDefined();
-    await screen.findByText('Reply');
-    expect(button.textContent?.trim()).toBe('Tasks');
-    expect(screen.getByRole('button', { name: 'Tasks for this message' })).toBe(button);
-  });
-
-  it('closes the sheet when the selection changes', async () => {
-    const fetchFn = taskFetch([{ id: 'task-1', title: 'Follow up', revision: 'r1' }]);
-    const view = render(ReadingPane, {
-      props: {
-        client: createAPIClient(fetchFn),
-        selection: { kind: 'entry', row: entryRow() },
-        predicate: {} satisfies ExplorePredicate
-      }
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Tasks for this message' }));
-    await screen.findByText('Follow up');
-
-    await view.rerender({ selection: { kind: 'entry', row: entryRow({ key: 'entry-2', anchor_message_id: 43 }) } });
-    const button = screen.getByRole('button', { name: 'Tasks for this message' });
-    expect(button.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
-  });
-
   it.each([
     ['email', 'message', 'Email'],
     ['imessage', 'conversation', 'Conversation'],
     ['calendar', 'event', 'Calendar event'],
     ['meeting', 'meeting', 'Meeting']
   ])('labels %s (%s) entries %s in the meta strip', (messageType, kind, name) => {
-    renderPane(entryRow({ message_type: messageType, kind, anchor_message_id: undefined }));
+    renderPane(entryRow({ message_type: messageType, kind, attachment_count: 2, anchor_message_id: undefined }));
     const meta = document.querySelector('.pane-meta')?.textContent ?? '';
     expect(meta.startsWith(`${name} · `)).toBe(true);
     expect(meta).not.toContain(messageType === 'email' ? 'email ·' : messageType);
   });
-});
-
-describe('ReadingPane meeting evidence', () => {
-  it('uses only an exact meeting transcript anchor for context and archived actions', async () => {
-    const requests: Request[] = [];
-    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:reader-meeting-context');
-    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/actions')) {
-        return Response.json({
-          schema_version: 1,
-          archive_uid: 'archive-test',
-          rows: [],
-          total_count: 0,
-          coverage: { meeting_count: 1, available: 1, partial: 0, unsupported: 0, unavailable: 0 },
-          scope: { kind: 'direct' },
-        });
-      }
-      return Response.json({
-        schema_version: 1,
-        format: 'json',
-        content: '{"meeting":42}',
-        content_bytes: 14,
-        truncated: false,
-        omitted_message_ids: [],
-      });
-    });
+  it('opens the header counterpart through onOpenPerson', async () => {
+    const onOpenPerson = vi.fn();
     render(ReadingPane, {
-      client: createAPIClient(fetchFn),
-      selection: {
-        kind: 'entry',
-        row: entryRow({
-          message_type: 'meeting_transcript',
-          anchor_message_id: 42,
-          conversation_id: undefined,
-        }),
-      },
-      predicate: {},
+      selection: { kind: 'entry', row: entryRow({ anchor_message_id: undefined, counterpart_participant_id: 22 }) },
+      client: createAPIClient(vi.fn<typeof fetch>()),
+      predicate: {}, onOpenPerson,
     });
-
-    expect(await screen.findByText('No recorded action items')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-    await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
-    const bodies = await Promise.all(requests.map((request) => request.clone().json()));
-    expect(bodies).toContainEqual({ scope: { message_ids: [42] }, limit: 200 });
-    expect(bodies).toContainEqual({ message_ids: [42], format: 'json', include_transcript: false });
-  });
-
-  it.each(['meeting_notes', 'email'])('does not treat %s as a meeting transcript', (messageType) => {
-    const fetchFn = vi.fn<typeof fetch>();
-    render(ReadingPane, {
-      client: createAPIClient(fetchFn),
-      selection: {
-        kind: 'entry',
-        row: entryRow({ message_type: messageType, anchor_message_id: 42, conversation_id: undefined }),
-      },
-      predicate: {},
-    });
-
-    expect(screen.queryByRole('region', { name: 'Meeting context export' })).toBeNull();
-    expect(screen.queryByText('Archived action items')).toBeNull();
-    expect(fetchFn).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open person' }));
+    expect(onOpenPerson).toHaveBeenCalledWith(22);
   });
 });
 

@@ -134,7 +134,7 @@ export class MeetingsController {
     const normalized = { ...filters, assigneeEmail: filters.assigneeEmail?.trim().toLowerCase() || undefined };
     if (canonicalFingerprint(normalized) === canonicalFingerprint(this.filters)) return;
     this.filters = normalized;
-    await this.reload();
+    if (this.scope) await this.actionPages.load(this.actionRequest());
   }
 
   async reload(): Promise<void> {
