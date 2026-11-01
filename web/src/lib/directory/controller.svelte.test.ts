@@ -596,7 +596,7 @@ describe('DirectoryController', () => {
       }
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
-      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [] }] });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: attributeWrite === 1 ? [current] : [], history: [] }] });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1146,6 +1146,53 @@ describe('DirectoryController', () => {
       expect(controller.promotionError).toBeNull();
       expect(controller.promotionResult).toBeNull();
     } finally { controller.destroy(); }
+  });
+
+  it('refreshes linked bindings after a pending attribute save and uses the current ETag for the next structured edit', async () => {
+    const pendingSave = deferredResponse();
+    let linked = false;
+    const patches: Request[] = [];
+    const definition = { id: 1, universal_id: '00000000-0000-4000-8000-000000000001', object_type: 'person', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_sensitive: false, is_active: true, revision: 1 };
+    const value = { id: 41, person_id: 7, definition_id: 1, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'A note' }, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', source: 'user' };
+    const person = () => ({ id: 7, revision: linked ? 4 : 3, display_name: 'Synthetic Person', participant_ids: linked ? [11, 12] : [11], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
+    const profile = () => ({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/7/attributes/note') return pendingSave.promise;
+      if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') {
+        patches.push(request);
+        if (request.headers.get('If-Match') !== '"person-7-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
+      }
+      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+      if (path === '/api/v1/people/7/profile') return Response.json(profile(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+      if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [definition] });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: linked ? [value] : [], history: [] }] });
+      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
+      return detailResponse(path);
+    });
+    const controller = new DirectoryController(client);
+    let save: ReturnType<NonNullable<typeof controller.profile>['setAttribute']> | undefined;
+    try {
+      await controller.loadSelection(7);
+      save = controller.profile!.setAttribute('note', { value: { type: 'text', text: 'A note' } });
+      expect(controller.profile!.mutationPending).toBe(true);
+      linked = true;
+      await controller.refreshSelectedPerson();
+      pendingSave.resolve(Response.json({ dry_run: false, value }));
+      await save;
+      expect(controller.detail?.person?.participant_ids).toEqual([11, 12]);
+      expect(controller.detail?.structuredProfile?.person.participant_ids).toEqual([11, 12]);
+      expect(controller.detail?.etags).toMatchObject({ person: '"person-7-r4"', structuredProfile: '"person-7-r4"' });
+      await controller.profile!.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
+      expect(patches).toHaveLength(1);
+      expect(patches[0]!.headers.get('If-Match')).toBe('"person-7-r4"');
+      expect(controller.profile!.conflict).toBeNull();
+    } finally {
+      pendingSave.resolve(Response.json({ message: 'Save unavailable' }, { status: 503 }));
+      await save;
+      controller.destroy();
+    }
   });
 
   it('keeps the selected split source and permits its next field write', async () => {
