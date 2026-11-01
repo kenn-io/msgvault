@@ -27,7 +27,6 @@ function detailResponse(path: string, personID = 7): Response {
   if (path.endsWith('/contact-state')) return Response.json({ person_id: personID, state: 'active' });
   if (path.endsWith('/employments')) return Response.json({ employments: [] });
   if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
-  if (path.endsWith('/days')) return Response.json({ person_id: personID, days: [], total_count: 0 });
   throw new Error(`unexpected detail path ${path}`);
 }
 
@@ -234,7 +233,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7/profile') return Response.json({ error: 'down', message: 'structured down' }, { status: 503 });
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-etag"' } });
       if (path === '/api/v1/people/7/attributes') return new Response(JSON.stringify({ person_id: 7, attributes: [] }), { headers: { ETag: '"attributes-etag"' } });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -259,7 +257,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7/profile') throw new TypeError('profile network down');
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-etag"' } });
       if (path === '/api/v1/people/7/attributes') return new Response(JSON.stringify({ person_id: 7, attributes: [] }), { headers: { ETag: '"attributes-etag"' } });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -282,7 +279,6 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/7/employments') return oldEmployments.promise;
       if (path === '/api/v1/people/8/employments') return Response.json({ employments: [{ id: 80, person_id: 8, organization_id: 1, is_current: true, is_primary: true, source: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path, path.includes('/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -303,13 +299,12 @@ describe('DirectoryController', () => {
     expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]);
   });
 
-  it('requests each person detail section once and leaves the network to the Network tab', async () => {
+  it('requests each person detail section once and rereads relationships when reopening', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -325,11 +320,16 @@ describe('DirectoryController', () => {
     expect(paths).not.toContain('/api/v1/people/7/network');
     expect(controller.detail).not.toHaveProperty('employments');
     expect(controller.detail).not.toHaveProperty('relationships');
+
+    await controller.loadSelection(7);
+    expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
+    controller.destroy();
   });
 
-  it('reloads Directory ordering and cursor membership after a person rename', async () => {
+  it('reloads Directory ordering, cursor membership, and the open Network after a person rename', async () => {
     const requests: Request[] = [];
     let directoryRead = 0;
+    let renamed = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
@@ -343,21 +343,24 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7' && request.method === 'GET') {
         return new Response(JSON.stringify({ id: 7, revision: 3, display_name: 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r3"' } });
       }
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: renamed ? 'Zed Example' : 'Person 7', hop: 0 }], edges: [] });
       if (path === '/api/v1/people/7' && request.method === 'PATCH') {
+        renamed = true;
         return new Response(JSON.stringify({ id: 7, revision: 4, display_name: 'Zed Example', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r4"' } });
       }
       if (path === '/api/v1/people/7/profile') {
         return new Response(JSON.stringify({ person: { id: 7, revision: 3, display_name: 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       }
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
     await controller.loadFirstPage();
     await controller.selectPerson(7);
+    await controller.entity?.loadNetwork();
     await controller.profile?.rename('Zed Example');
+    expect(controller.entity?.network?.nodes[0]?.label).toBe('Zed Example');
 
     expect(controller.rows).toEqual([directoryPerson(8), { ...directoryPerson(7), revision: 5, display_name: 'Concurrent Name' }]);
     expect(controller.detail?.person?.display_name).toBe('Zed Example');
@@ -440,7 +443,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7/employments') {
         return Response.json({ employments: employmentCreated ? [createdEmployment] : [] });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -455,10 +457,10 @@ describe('DirectoryController', () => {
     expect(directoryRead).toBe(2);
   });
 
-  it('trusts Unicode-folded category membership returned by the server across loaded pages', async () => {
+  function categoryHarness(filtered: boolean, failReconcile = false) {
     const commits: Array<Record<string, unknown>> = [];
     const directoryRequests: Request[] = [];
-    let directoryRead = 0;
+    let directoryRead = 0; let failed = false;
     let profileWrite = 0;
     const category = {
       person_id: 7, original_value: 'Straße', normalized_value: 'strasse',
@@ -469,7 +471,9 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') {
         directoryRequests.push(request);
+        if (failReconcile && directoryRead === 2 && !failed) { failed = true; return Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 }); }
         directoryRead += 1;
+        if (!filtered) return Response.json({ people: [directoryPerson(7)] });
         if (directoryRead === 1) return Response.json({ people: [directoryPerson(8)], next_cursor: 'initial-page-2' });
         if (directoryRead === 2) return Response.json({ people: [directoryPerson(9)], next_cursor: 'initial-page-3' });
         if (directoryRead === 3) return Response.json({ people: [directoryPerson(7), directoryPerson(8)], next_cursor: 'added-page-2' });
@@ -487,21 +491,25 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
-    controller.query = 'synthetic person';
-    controller.contactState = 'active';
-    controller.category = 'STRASSE';
-    controller.organization = 'Example Org';
-    controller.primaryChannel = 'email';
+    if (filtered) {
+      controller.query = 'synthetic person';
+      controller.contactState = 'active';
+      controller.category = 'STRASSE';
+      controller.organization = 'Example Org';
+      controller.primaryChannel = 'email';
+    }
+    return { controller, commits, directoryRequests, category };
+  }
+
+  it('reconciles filtered Unicode category membership after add and close', async () => {
+    const { controller, commits, directoryRequests, category } = categoryHarness(true);
     await controller.loadFirstPage();
     await controller.loadNextPage();
     await controller.selectPerson(7);
-
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
-
     expect(controller.rows.map((row) => row.id)).toEqual([7, 8, 9]);
     expect(controller.rows[0]?.categories).toEqual(['Straße']);
     expect(controller.cursor).toBe('added-page-3');
@@ -523,6 +531,31 @@ describe('DirectoryController', () => {
       expect(parameters.get('organization')).toBe('Example Org');
       expect(parameters.get('primary_channel')).toBe('email');
     }
+  });
+
+  it('updates unfiltered Unicode categories locally after add and close', async () => {
+    const { controller, directoryRequests } = categoryHarness(false);
+    await controller.loadFirstPage();
+    await controller.selectPerson(7);
+    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
+    expect(controller.rows[0]?.categories).toEqual(['Straße']);
+    await controller.profile?.patchProfile({ categories: { supersede: [31] } });
+    expect(controller.rows[0]?.categories).toEqual([]);
+    expect(directoryRequests).toHaveLength(1);
+  });
+
+  it('retains Directory filters when reloading after a failed reconciliation', async () => {
+    const { controller, directoryRequests } = categoryHarness(true, true);
+    await controller.loadFirstPage();
+    await controller.loadNextPage();
+    await controller.selectPerson(7);
+    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
+    expect(controller.pageError).toBe('Directory reconciliation unavailable.');
+    await controller.reloadFirstPage();
+    expect(directoryRequests).toHaveLength(4);
+    expect(controller.pageError).toBeNull();
+    const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
+    expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic person', contact_state: 'active', category: 'STRASSE', organization: 'Example Org', primary_channel: 'email' });
   });
 
   it('keeps the observed Directory channel after a preferred-channel set and clear', async () => {
@@ -564,7 +597,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [] }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -604,7 +636,6 @@ describe('DirectoryController', () => {
           : Response.json({ people: [{ ...directoryPerson(7), categories: ['stale'] }, directoryPerson(8)], next_cursor: 'new-next' });
       }
       if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') return writeResponse.promise;
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, path.startsWith('/api/v1/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -659,7 +690,6 @@ describe('DirectoryController', () => {
           person: { id: 7, revision: 4 }, names: [], contact_points: [], addresses: [], dates: [], categories: [category], media: []
         }), { headers: { ETag: '"person-7-r4"' } });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, path.startsWith('/api/v1/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -717,7 +747,6 @@ describe('DirectoryController', () => {
           categories: [categoryFor(8, 'VIP Eight', 32)], media: []
         }), { headers: { ETag: '"person-8-r4"' } });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return editableDetailResponse(path, path.startsWith('/api/v1/people/8') ? 8 : 7);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -782,7 +811,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -854,7 +882,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -928,7 +955,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -999,7 +1025,6 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1033,7 +1058,6 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 3 });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition: { slug: 'alias' }, current: [], history: [{ id: 19 }] }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1056,7 +1080,6 @@ describe('DirectoryController', () => {
         if (cursor === 'page-2') return Response.json({ people: [directoryPerson(2)], next_cursor: 'page-3' });
         return Response.json({ people: [directoryPerson(1)], next_cursor: 'page-2' });
       }
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
@@ -1086,7 +1109,6 @@ describe('DirectoryController', () => {
       if (pathOf(request) === '/api/v1/people') return Response.json({ id: 42, revision: 1 }, { status });
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(42)] });
       if (pathOf(request) === '/api/v1/people/42') return detailResponse(pathOf(request), 42);
-      if (pathOf(request) === '/api/v1/people/42/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
       return detailResponse(pathOf(request), 42);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
@@ -1108,27 +1130,71 @@ describe('DirectoryController', () => {
     expect(controller.selectedPersonID).toBeNull();
   });
 
-  it('reconciles a committed split through a fresh Directory projection without seeding detail state', async () => {
-    const requests: Request[] = [];
-    let reads = 0;
+  it('clears failed promotion feedback when selecting a saved person', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST' && pathOf(request) === '/api/v1/people') return Response.json({ message: 'Save unavailable' }, { status: 503 });
+      return detailResponse(pathOf(request));
+    }));
+    const controller = new DirectoryController(client);
+    try {
+      await expect(controller.promote(11)).resolves.toMatchObject({ ok: false });
+      expect(controller.promotionError).toBe('Save unavailable');
+      expect(controller.promotionResult).toMatchObject({ ok: false });
+      await controller.selectPerson(7);
+      expect(controller.selectedPersonID).toBe(7);
+      expect(controller.promotionError).toBeNull();
+      expect(controller.promotionResult).toBeNull();
+    } finally { controller.destroy(); }
+  });
+
+  it('keeps the selected split source and permits its next field write', async () => {
+    let reads = 0; let split = false;
+    const person = () => ({ id: 12, revision: split ? 4 : 3, display_name: 'Synthetic Source', participant_ids: split ? [701] : [701, 702], vcard_uid: 'synthetic-12', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
+    const profile = () => ({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (pathOf(request) !== '/api/v1/people/directory') throw new Error(`unexpected ${pathOf(request)}`);
-      reads += 1;
-      return Response.json({ people: reads === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
+      const path = pathOf(request);
+      if (path === '/api/v1/people/directory') {
+        reads += 1;
+        return Response.json({ people: reads === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
+      }
+      if (path === '/api/v1/people/12/profile' && request.method === 'PATCH' && request.headers.get('If-Match') !== '"person-12-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
+      if (path === '/api/v1/people/12/contact-state') return Response.json({ person_id: 12, interaction_count: split ? 1 : 3, last_contact_at: split ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: split ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
+      if (path === '/api/v1/people/12') return Response.json(person(), { headers: { ETag: `"person-12-r${person().revision}"` } });
+      if (path === '/api/v1/people/12/profile') return Response.json(profile(), { headers: { ETag: `"person-12-r${person().revision}"` } });
+      return detailResponse(path, 12);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
     await controller.loadFirstPage();
-
+    await controller.selectPerson(12);
+    const owner = controller.profile;
+    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 3, last_contact_at: '2026-08-15T00:00:00Z', cadence_status: 'ok' });
+    split = true;
     await controller.reconcilePersonSplit({ sourcePersonID: 12, newPersonID: 19 });
+    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
 
-    expect(controller.rows.map((row) => row.id)).toEqual([12, 19]);
+    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Friend', envelope: { source: 'user' } }] } });
+    expect(controller.profile?.conflict).toBeNull();
+    expect(controller.profile).toBe(owner);
+    expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
+  });
+
+  it('reconciles a committed split without fetching an unselected profile', async () => {
+    const requests: Request[] = [];
+    const controller = new DirectoryController(createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json({ people: requests.length === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
+    }));
+    await controller.loadFirstPage();
+    await controller.reconcilePersonSplit({ sourcePersonID: 12, newPersonID: 19 });
+    expect(controller.rows.map(row => row.id)).toEqual([12, 19]);
     expect(requests.map(pathOf)).toEqual(['/api/v1/people/directory', '/api/v1/people/directory']);
     expect(controller.detail).toBeNull();
   });
 
-  it('ignores a late promotion success after resetting for a new relationship candidate', async () => {
+  it.each(['relationship candidate', 'saved selection'])('ignores a late promotion success after opening a new %s', async destination => {
     const commits: Array<Record<string, unknown>> = [];
     let resolvePromotion: ((response: Response) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1137,18 +1203,17 @@ describe('DirectoryController', () => {
         return new Promise<Response>((resolve) => { resolvePromotion = resolve; });
       }
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(42)] });
-      if (pathOf(request) === '/api/v1/people/42/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
-      return detailResponse(pathOf(request), 42);
+      return detailResponse(pathOf(request), pathOf(request).startsWith('/api/v1/people/7') ? 7 : 42);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
 
     const promotion = controller.promote(11);
     await vi.waitFor(() => expect(resolvePromotion).toBeDefined());
-    controller.resetForPromotion();
+    if (destination === 'saved selection') await controller.loadSelection(7); else controller.resetForPromotion();
     resolvePromotion?.(Response.json({ id: 42, revision: 1 }, { status: 201 }));
     await promotion;
 
-    expect(controller.selectedPersonID).toBeNull();
+    expect(controller.selectedPersonID).toBe(destination === 'saved selection' ? 7 : null);
     expect(controller.promotionResult).toBeNull();
     expect(controller.promotionError).toBeNull();
     expect(commits).not.toContainEqual({ directoryPersonID: 42 });
@@ -1168,5 +1233,24 @@ describe('DirectoryController', () => {
     expect(controller.selectedPersonID).toBeNull();
     expect(controller.promotionResult).toBeNull();
     expect(controller.promotionError).toBeNull();
+  });
+
+  it('removes a confirmed deleted person from the Directory and clears its URL selection', async () => {
+    const commits: Array<Record<string, unknown>> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
+      if (path === '/api/v1/people/7' && request.method === 'DELETE') return new Response(null, { status: 204 });
+      return editableDetailResponse(path, 7);
+    });
+    const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
+    await controller.loadFirstPage();
+    await controller.selectPerson(7);
+    await controller.profile?.deletePerson();
+
+    await vi.waitFor(() => expect(controller.selectedPersonID).toBeNull());
+    expect(controller.rows).toEqual([]);
+    expect(commits).toContainEqual({ directoryPersonID: null });
   });
 });

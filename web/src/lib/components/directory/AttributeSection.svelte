@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { historySource, historyTime } from './history-format';
   import { Button } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
@@ -10,7 +11,7 @@
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import AttributeDefinitionDialog from './AttributeDefinitionDialog.svelte';
   import AttributeEditor from './AttributeEditor.svelte';
-  import { displayAttributeValue } from './attribute-value';
+  import { displayAttributeValue, joinDefinitions, isAttributeRevealed, canAddAttribute, canEditAttribute, canCloseAttribute, type JoinedAttribute } from './attribute-value';
 
   type AttributeDefinition = GeneratedAttributeDefinition;
   type AttributeGroup = GeneratedPersonAttributeGroup;
@@ -18,15 +19,10 @@
 
   interface Props {
     controller: DirectoryProfileController;
+    historyOnly?: boolean;
   }
 
-  interface JoinedAttribute {
-    definition: AttributeDefinition;
-    current: PersonAttributeValue[];
-    history: PersonAttributeValue[];
-  }
-
-  let { controller }: Props = $props();
+  let { controller, historyOnly = false }: Props = $props();
   let editing = $state<{ universalID: string; current?: PersonAttributeValue }>();
   let confirming = $state<{ universalID: string; current: PersonAttributeValue; position: number }>();
   let revealed = $state<Record<string, boolean>>({});
@@ -48,7 +44,7 @@
   let showEmpty = $state(false);
   let recentlyCreatedID = $state<string | null>(null);
   const emptyCount = $derived(fields.filter((field) => field.current.length === 0).length);
-  const visibleFields = $derived(showEmpty ? fields : fields.filter((field) =>
+  const visibleFields = $derived(historyOnly ? fields.filter((field) => field.history.length > 0) : showEmpty ? fields : fields.filter((field) =>
     field.current.length > 0 || editing?.universalID === field.definition.universal_id || recentlyCreatedID === field.definition.universal_id
   ));
 
@@ -57,39 +53,7 @@
     if (controller.createdDefinition) recentlyCreatedID = controller.createdDefinition.universal_id;
   });
 
-  function joinDefinitions(definitions: AttributeDefinition[], groups: AttributeGroup[]): JoinedAttribute[] {
-    const byUniversalID = new Map(groups.map((group) => [group.definition.universal_id, group]));
-    const joined = new Map<string, JoinedAttribute>();
-    for (const definition of definitions) {
-      const group = byUniversalID.get(definition.universal_id);
-      joined.set(definition.universal_id, {
-        definition,
-        current: [...(group?.current ?? [])],
-        history: historical(group?.history ?? []),
-      });
-    }
-    for (const group of groups) {
-      if (joined.has(group.definition.universal_id)) continue;
-      joined.set(group.definition.universal_id, {
-        definition: group.definition,
-        current: [...(group.current ?? [])],
-        history: historical(group.history ?? []),
-      });
-    }
-    return [...joined.values()].sort(
-      (left, right) =>
-        left.definition.display_order - right.definition.display_order ||
-        left.definition.slug.localeCompare(right.definition.slug),
-    );
-  }
-
-  function historical(values: PersonAttributeValue[]): PersonAttributeValue[] {
-    return values.filter((value) => value.active_until !== undefined || value.superseded_at !== undefined);
-  }
-
-  function isRevealed(definition: AttributeDefinition): boolean {
-    return !definition.is_sensitive || revealed[definition.universal_id] === true;
-  }
+  function isRevealed(definition: AttributeDefinition): boolean { return isAttributeRevealed(definition, revealed); }
 
   function toggleReveal(definition: AttributeDefinition): void {
     const next = !revealed[definition.universal_id];
@@ -138,64 +102,9 @@
     return draft.slug === definition.slug ? controller.conflict : null;
   }
 
-  function supported(definition: AttributeDefinition): boolean {
-    if (definition.options?.choices?.length) {
-      return ['text', 'integer', 'real', 'boolean', 'date', 'timestamp'].includes(definition.value_type);
-    }
-    return (
-      definition.value_type === 'boolean' ||
-      definition.value_type === 'integer' ||
-      definition.value_type === 'real' ||
-      definition.value_type === 'date' ||
-      definition.value_type === 'timestamp' ||
-      definition.value_type === 'json' ||
-      definition.value_type === 'text' ||
-      (definition.value_type === 'record_reference' && definition.record_target === 'person')
-    );
-  }
-
-  function canAdd(field: JoinedAttribute): boolean {
-    const definition = field.definition;
-    return (
-      definition.is_active &&
-      definition.api_mutable &&
-      definition.ui_creatable &&
-      supported(definition) &&
-      (!definition.is_sensitive || isRevealed(definition)) &&
-      (definition.cardinality === 'multi' || field.current.length === 0) &&
-      !controller.mutationPending &&
-      !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !operationNeedsReload(definition)
-    );
-  }
-
-  function canEdit(definition: AttributeDefinition): boolean {
-    return (
-      definition.is_active &&
-      definition.api_mutable &&
-      definition.ui_editable &&
-      supported(definition) &&
-      !controller.mutationPending &&
-      !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !operationNeedsReload(definition)
-    );
-  }
-
-  function canClose(definition: AttributeDefinition): boolean {
-    // The store deliberately permits retiring a current value from an
-    // inactive definition, but derived/non-API-mutable definitions remain
-    // non-retractable.
-    return (
-      definition.api_mutable &&
-      definition.ui_editable &&
-      !controller.mutationPending &&
-      !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !operationNeedsReload(definition)
-    );
-  }
+  function canAdd(field: JoinedAttribute): boolean { return canAddAttribute(field, controller, revealed); }
+  function canEdit(definition: AttributeDefinition): boolean { return canEditAttribute(definition, controller); }
+  function canClose(definition: AttributeDefinition): boolean { return canCloseAttribute(definition, controller); }
 
   function openEditor(field: JoinedAttribute, current: PersonAttributeValue | undefined = undefined): void {
     if (current ? !canEdit(field.definition) : !canAdd(field)) return;
@@ -226,10 +135,34 @@
   }
 </script>
 
+{#if historyOnly}
+  {#each visibleFields as field (field.definition.universal_id)}
+    {@const shown = isRevealed(field.definition)}
+    <section class="history-field" aria-labelledby={`attribute-title-${field.definition.id}`}>
+      <header class="section-header">
+        <h3 id={`attribute-title-${field.definition.id}`}>{field.definition.label}</h3>
+        {#if field.definition.is_sensitive}
+          <Button size="sm" label={shown ? 'Hide' : 'Show'} ariaLabel={`${shown ? 'Hide' : 'Reveal'} ${field.definition.label} values`} onclick={() => toggleReveal(field.definition)} />
+        {/if}
+      </header>
+      <details>
+      <summary>{field.history.length} earlier {field.history.length === 1 ? 'value' : 'values'}</summary>
+      <ul class="history-rows">
+        {#each field.history as value (value.id)}
+          <li>
+            <span class={shown ? '' : 'concealed'}>{shown ? displayAttributeValue(field.definition, value.value) : 'Hidden'}</span>
+            <span class="meta">{#if value.superseded_at ?? value.active_until}Removed {historyTime(value.superseded_at ?? value.active_until)}{:else}{historySource(value.source)} · {historyTime(value.created_at)}{/if}</span>
+          </li>
+        {/each}
+      </ul>
+      </details>
+    </section>
+  {/each}
+{:else}
 <section id="person-attributes" class="attribute-section" aria-label="Attributes" tabindex="-1">
   <header class="section-header">
     <h3>Attributes</h3>
-    <Button
+    {#if !historyOnly}<Button
       label="Create attribute field"
       size="sm"
       disabled={!canCreateDefinition()}
@@ -237,6 +170,7 @@
         creatingDefinition = true;
       }}
     />
+    {/if}
   </header>
 
   {#if creatingDefinition}
@@ -271,16 +205,16 @@
               onclick={() => toggleReveal(field.definition)}
             />
           {/if}
-          <Button
+          {#if !historyOnly}<Button
             label={`Add ${field.definition.label} value`}
             size="sm"
             disabled={!canAdd(field)}
             onclick={() => openEditor(field)}
-          />
+          />{/if}
         </div>
       </header>
 
-      <ul class="current-values">
+      {#if !historyOnly}<ul class="current-values">
         {#each field.current as value, index (value.id)}
           <li>
             <div class="value-copy">
@@ -344,7 +278,7 @@
       </ul>
 
       {#if editing?.universalID === field.definition.universal_id}
-        {#key editing.current?.id ?? 'new'}
+        {#key `${field.definition.revision}:${editing.current?.id ?? 'new'}`}
           <AttributeEditor
             {controller}
             definition={field.definition}
@@ -358,6 +292,7 @@
         {/key}
       {/if}
 
+      {/if}
       {#if field.history.length}
         <details>
           <summary>History ({field.history.length})</summary>
@@ -397,7 +332,7 @@
   {:else}
     {#if fields.length === 0}<p class="empty">No attribute definitions are available.</p>{/if}
   {/each}
-  {#if emptyCount > 0}
+  {#if !historyOnly && emptyCount > 0}
     <Button
       label={showEmpty ? 'Hide empty fields' : `Show empty fields (${emptyCount})`}
       surface="soft"
@@ -407,6 +342,7 @@
     />
   {/if}
 </section>
+{/if}
 
 <style>
   .attribute-section,
@@ -498,5 +434,31 @@
   }
   .attribute-error {
     justify-content: space-between;
+  }
+  .history-field {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .history-field summary {
+    padding: var(--space-2) 0;
+  }
+  .history-rows {
+    display: grid;
+    padding: 0;
+    list-style: none;
+  }
+  .history-rows li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--field-gap);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-muted);
+    color: var(--text-secondary);
+  }
+  .history-rows .meta,
+  .concealed {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 </style>
