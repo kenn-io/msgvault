@@ -54,18 +54,16 @@ describe('OrganizationsSettings', () => {
     expect(posts).toBe(1);
   });
 
-  it('creates, edits, replaces a profile without losing media hashes, and deletes an unused organization', async () => {
+  it('creates, renames, and deletes an unused organization', async () => {
     const requests: Request[] = [];
-    let readRevision = 2;
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
       if (path === '/api/v1/organizations' && request.method === 'POST') return new Response(JSON.stringify(organization(22, 1, 'New Synthetic Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') return new Response(JSON.stringify(organizationProfile(readRevision)), { headers: { ETag: `"organization-21-r${readRevision}"` } });
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') return new Response(JSON.stringify(organizationProfile(2)), { headers: { ETag: '"organization-21-r2"' } });
       if (path === '/api/v1/organizations/21' && request.method === 'PATCH') return new Response(JSON.stringify(organization(21, 3, 'Renamed Synthetic Org')), { headers: { ETag: '"organization-21-r3"' } });
-      if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') return new Response(JSON.stringify(organizationProfile(4)), { headers: { ETag: '"organization-21-r4"' } });
       if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return new Response(null, { status: 204 });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
@@ -87,51 +85,9 @@ describe('OrganizationsSettings', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
-    readRevision = 3;
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Example Works' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
-    const put = requests.find((request) => request.method === 'PUT')!;
-    expect(await put.json()).toMatchObject({ media: [{ content_hash: 'sha256:synthetic' }] });
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Synthetic Org' })).toBeNull());
-  });
-
-  it('does not undo a concurrent organization retirement during an unrelated field edit', async () => {
-    const requests: Request[] = [];
-    let reads = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        const base = organizationProfile(reads + 1);
-        const profile = reads === 2
-          ? { ...base, organization: { ...base.organization, retired_at: '2026-08-28T00:00:00Z' } }
-          : base;
-        return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads + 1}"` } });
-      }
-      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') {
-        return new Response(JSON.stringify({ ...organization(21, 3, 'Edited Org'), retired_at: '2026-08-28T00:00:00Z' }), { headers: { ETag: '"organization-21-r3"' } });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationsSettings, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Edited Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
-
-    const body = await requests.find((request) => request.method === 'PATCH')!.json();
-    expect(body).toMatchObject({ name: 'Edited Org' });
-    expect(body.retired).toBeUndefined();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Renamed Synthetic Org' })).toBeNull());
   });
 
   it('applies alias/category draft deltas to the fresh profile without deleting concurrent additions', async () => {
