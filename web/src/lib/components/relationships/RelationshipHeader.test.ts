@@ -1,9 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { PersonAttributeGroup } from '../../api/generated/models';
 import type { DomainSummary, PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
 import type { ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -100,13 +98,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onUnlinkParticipants: vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 3, cacheState: 'ready' })),
     ...overrides
   };
-}
-
-function attributeGroup(label: string, text: string): PersonAttributeGroup {
-  return {
-    definition: { universal_id: `u-${label}`, slug: label.toLowerCase(), label, is_sensitive: false, display_order: 0 },
-    current: [{ value: { type: 'text', text } }], history: []
-  } as unknown as PersonAttributeGroup;
 }
 
 /** Opens the "Same person…" dialog, searches for "Bob", selects the stubbed

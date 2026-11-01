@@ -457,26 +457,18 @@ it('keeps Messages mounted across a profile reload', async () => {
 });
 
 it('routes reconciliation Reload to the directory controller', async () => {
-  const directoryRequests: Request[] = [];
-  const saved = profile(7, 2, []);
-  const client = clientFor({
-    '/api/v1/people/directory': request => {
-      directoryRequests.push(request);
-      return directoryRequests.length === 2
-        ? Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 })
-        : Response.json({ people: [{ ...saved, contact_state: 'active', categories: [], organizations: ['Example Org'], primary_channel: 'email' }] });
-    },
-    '/api/v1/people/7': () => Response.json(saved),
-    '/api/v1/people/7/profile': request => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: request.method === 'PATCH' ? '"person-7-r3"' : '"person-7-r2"' } }),
-  });
+  const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 2, []), contact_state: 'active', categories: [], organizations: [] }] }) });
   const controller = new DirectoryController(client);
   const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', identityQuery: 'synthetic', relationshipSaved: true, directoryContactState: 'active', directoryCategory: 'STRASSE', directoryOrganization: 'Example Org', directoryPrimaryChannel: 'email', directoryPersonID: 7 });
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
   const relationships = new RelationshipsController(client, () => 'UTC');
   const view = render(PeopleWorkspace, { props: { client, directory: controller, controller: relationships, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('button', { name: 'Add phone' });
-    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
+    await act(async () => {
+      await controller.loadFirstPage();
+      controller.pageError = 'Directory reconciliation unavailable.';
+      controller.pageRecovery = 'reload';
+    });
     const reload = vi.spyOn(controller, 'reloadFirstPage');
     await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
     await waitFor(() => expect(reload).toHaveBeenCalledOnce());

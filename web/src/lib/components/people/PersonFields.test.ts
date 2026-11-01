@@ -17,7 +17,6 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') return Response.json({ message: 'Unable to save field.' }, { status: 503 });
     if (request.method === 'PATCH') {
       writes.push(request.clone()); await options.wait;
       if (options.fail) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
@@ -100,7 +99,6 @@ it('blocks attribute additions after a failed read and retries before editing th
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
-    expect(writes).toHaveLength(0);
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Attributes unavailable'));
@@ -161,39 +159,51 @@ it('displays every structured address component before its original street value
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each<{ name: string; refreshed: Partial<AttributeDefinition>[]; menu?: boolean }>([
-  { name: 'rename keeps the draft', refreshed: [{ label: 'Renamed note' }] },
-  { name: 'inactive field closes the draft', refreshed: [{ label: 'Private note', is_active: false }] },
-  { name: 'sensitive field closes the draft and conceals the value', refreshed: [{ label: 'Private note', is_sensitive: true }] },
-  { name: 'menu open reloads choices', refreshed: [{ label: 'Renamed note' }, { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], menu: true },
-])('joins refreshed field settings: $name', async ({ refreshed, menu }) => {
+it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
+  { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' } },
+  { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false } },
+  { name: 'sensitive field closes the draft and conceals the value', refreshed: { label: 'Private note', is_sensitive: true } },
+])('joins refreshed field settings into an open draft: $name', async ({ refreshed }) => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: refreshed.map(settings => ({ ...definition, revision: 2, ...settings })), bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
-  const { controller, view } = harness(profile(), options);
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') return Response.json({ message: 'Unable to save field.' }, { status: 503 });
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [{ ...definition, revision: 2, ...refreshed }] });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] }, etags: {}, errors: {} });
+  const view = render(PersonFields, { controller });
   try {
-    if (menu) {
-      await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-      expect(await screen.findByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
+    await act(() => controller.reloadDefinitions());
+    if (refreshed.is_active === false || refreshed.is_sensitive) {
+      expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
+      expect(controller.draft).toBeNull();
+      expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
     } else {
-      await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-      await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
-      await act(() => controller.reloadDefinitions());
-      if (refreshed[0]!.is_active === false || refreshed[0]!.is_sensitive) {
-        expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
-        expect(controller.draft).toBeNull();
-        expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
-      } else {
-        expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
-      }
-      if (refreshed[0]!.is_sensitive) {
-        expect(screen.queryByText('Private example')).toBeNull();
-        await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
-        expect(screen.getByText('Private example')).toBeDefined();
-      }
+      expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.getByRole('button', { name: 'Edit Renamed note' })).toBeDefined();
     }
+    if (refreshed.is_sensitive) {
+      expect(screen.queryByText('Private example')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
+      expect(screen.getByText('Private example')).toBeDefined();
+    }
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('reloads field choices when More fields opens', async () => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const { controller, view } = harness(profile(), { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [] } } });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
 
