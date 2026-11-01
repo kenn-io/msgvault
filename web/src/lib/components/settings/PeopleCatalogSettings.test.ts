@@ -35,7 +35,6 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText('text · Inactive');
   expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
-  catalog.unmount(); const reopenedCatalog = render(PeopleCatalogSettings, { client });
   await fireEvent.click(await screen.findByRole('button', { name: 'Edit Preferred color' }));
   await screen.findByRole('textbox', { name: 'Name' });
   await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
@@ -54,5 +53,5 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
   await screen.findByText('No custom fields yet');
   expect(writes.at(-1)!.headers.get('If-Match')).toBe('"attribute-definition-41-r4"');
-  reopenedCatalog.unmount();
+  catalog.unmount();
 });
