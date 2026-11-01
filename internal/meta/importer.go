@@ -110,9 +110,6 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
 		return nil, store.ErrSourceRetired
 	}
-	if source.SourceType != SourceType || source.Identifier != SourceIdentifier(app, page) {
-		return nil, errors.New("facebook source identity changed")
-	}
 	state, err := loadState(ctx, imp.store, source, opts.Full)
 	if err != nil {
 		return nil, err
