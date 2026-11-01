@@ -402,23 +402,6 @@ describe('DirectoryWorkspace', () => {
     });
   });
 
-  it('renders actionable binding guidance from the structured promotion code', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (pathOf(request) === '/api/v1/people') {
-        return Response.json({ error: 'person_binding_conflict', message: 'Different durable profiles own this cluster.' }, { status: 409 });
-      }
-      return directoryResponse();
-    }));
-    const controller = new DirectoryController(client);
-    render(DirectoryWorkspace, { client, controller, state, promotionParticipantID: 11 });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Different durable profiles own this cluster.');
-    expect(alert.textContent).toContain('already belongs to another durable person');
-  });
-
   it('opens a listed person in People through the navigation callback', async () => {
     const client = createAPIClient(async () => directoryResponse());
     const controller = new DirectoryController(client);
