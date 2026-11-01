@@ -730,6 +730,58 @@ func TestTelegramSystemAcceptancePreservesUnlinkAfterPairPrecheck(t *testing.T) 
 	assert.False(linkedPair(t, st, left, right), "system acceptance must preserve the unlink under the earlier key")
 }
 
+func TestTelegramAcceptedReplayPreservesRejectionUnderDifferentKey(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier("beeper", "telegram-replay-left", "Alice Example")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("telegram", "user482111", "Alice Example")
+	require.NoError(err)
+	previous, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchServiceScopeUsername, ServiceSlug: new("telegram"),
+		NormalizedValue: new("alice"), State: store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+	shared, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, ServiceSlug: new("telegram"),
+		NormalizedValue: new("provider:8:telegram:7:service:0::6:482111"),
+		State:           store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+
+	// Leave the link pending, then reject a different candidate for the same pair.
+	_, err = st.DecideIdentityMatchCandidateContext(ctx, shared.ID, store.IdentityMatchStateAccepted, "system", nil)
+	require.NoError(err)
+	require.False(linkedPair(t, st, left, right))
+	_, err = st.DecideIdentityMatchCandidateContext(ctx, previous.ID, store.IdentityMatchStateRejected, "user", nil)
+	require.NoError(err)
+	before, err := st.GetIdentityMatchReviewContext(ctx, shared.ID)
+	require.NoError(err)
+	require.Equal(store.IdentityMatchStateAccepted, before.State)
+	require.True(before.ApplicationPending)
+
+	applied, err := st.ApplyAcceptedIdentityMatchesContext(ctx, 10)
+	require.NoError(err)
+	assert.Zero(applied)
+	assert.False(linkedPair(t, st, left, right), "replay must preserve the user's rejection under the earlier key")
+	shared, err = st.GetIdentityMatchCandidateContext(ctx, shared.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateConflict, shared.State)
+	after, err := st.GetIdentityMatchReviewContext(ctx, shared.ID)
+	require.NoError(err)
+	assert.False(after.ApplicationPending, "a blocked acceptance must leave no pending recovery work")
+	previous, err = st.GetIdentityMatchCandidateContext(ctx, previous.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateRejected, previous.State)
+}
+
 func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
