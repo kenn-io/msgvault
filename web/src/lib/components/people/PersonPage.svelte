@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
+  import type { ExploreState } from '../../explore/state.svelte';
   import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
@@ -17,7 +18,7 @@
   let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, personFilePresentation = 'files', personFileDirections = ['from_person'],
-    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange,
+    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange, onMessagesStateChange,
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
@@ -29,6 +30,7 @@
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
       details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
       onFiltersChange: (filters: ExploreFilter[]) => void;
+      onMessagesStateChange?: (state: ExploreState | undefined) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
   const context = $derived(contextPredicate(predicate));
   const domain = $derived(target?.startsWith('domain:') ? target.slice(7) : undefined);
@@ -112,7 +114,7 @@
         {#if filesOpen}
           {@render files()}
         {:else}
-          <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
+          <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} {onMessagesStateChange} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
         {/if}
       {/key}
     {/if}

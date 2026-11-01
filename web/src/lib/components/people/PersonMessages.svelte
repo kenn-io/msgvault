@@ -19,14 +19,19 @@
   import { relationshipMeetingScope } from '../../meetings/scopes';
   import type { MeetingRef } from '../../api/generated/models';
 
-  let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange }:
+  let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange, onMessagesStateChange }:
     { client: APIClient; identityScope: TimelineScope; target: string; predicate: ExplorePredicate; period?: { after: string; before: string } | null;
       onOpenPerson?: (id: number) => void; onOpenMeeting?: (meeting: MeetingRef) => void;
+      onMessagesStateChange?: (state: ExploreState | undefined) => void;
       onOpenFiles: () => void; onFiltersChange: (filters: ExploreFilter[]) => void; onClearPeriod: () => void; onOpenSettings?: () => void } = $props();
   const scope: ExploreFilter = untrack(() => identityScope.kind === 'person'
     ? { dimension: 'participant', values: [String(identityScope.id)] }
     : { dimension: 'domain', values: [identityScope.domain] });
   const exploreState = new ExploreState(null);
+  $effect(() => {
+    onMessagesStateChange?.(exploreState);
+    return () => onMessagesStateChange?.(undefined);
+  });
   let restoredRow = $state<string | null>(null);
   let restoredBounds = $state<{ start: string; end: string }>();
   let hasPredicate = false;
