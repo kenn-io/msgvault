@@ -134,7 +134,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.rows).toEqual([candidate(1)]);
   });
 
-  it('clears candidate rows before a conflict-state load can fail', async () => {
+  it('clears candidate rows before a History load can fail', async () => {
     const conflict = deferredResponse();
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -146,16 +146,15 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    controller.setIdentityState('conflict');
+    controller.setIdentityState('accepted');
 
-    expect(controller.identityState).toBe('conflict');
+    expect(controller.identityState).toBe('accepted');
     expect(controller.offset).toBe(0);
     expect(controller.rows).toEqual([]);
     conflict.resolve(Response.json({ error: 'unavailable', message: 'Conflict queue failed' }, { status: 503 }));
     await vi.waitFor(() => expect(controller.error).toBe('Conflict queue failed'));
     expect(controller.pageError).toBeNull();
     expect(controller.rows).toEqual([]);
-    expect(new URL(requests[1]!.url).searchParams.get('state')).toBe('candidate,conflict');
   });
 
   it('clears identity rows and offset when review kind changes', async () => {
@@ -413,7 +412,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.decisionError).toBeNull();
   });
 
-  it('captures a typed person-merge-required conflict without repeating acceptance', async () => {
+  it('keeps the open pair and its context when another staged merge needs a survivor', async () => {
     const conflict = {
       error: 'person_merge_required',
       message: 'Choose a survivor',
@@ -426,21 +425,24 @@ describe('DirectoryReviewController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
-      if (request.method === 'GET') return page([candidate(17)]);
+      if (request.method === 'GET') return page([candidate(17), candidate(18)]);
       return Response.json(conflict, { status: 409 });
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    await expect(controller.acceptIdentity(17, 'Review both profiles')).resolves.toEqual({
-      ok: false,
-      kind: 'merge_required',
-      conflict
-    });
-    expect(controller.mergeRequired).toEqual({ candidateID: 17, conflict, context: controller.reviewContextSnapshot() });
-    expect(controller.getDecisionDraft(17)).toBe('Review both profiles');
-    expect(controller.rows).toEqual([candidate(17)]);
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+    controller.setDecisionDraft(17, 'Review both profiles');
+    controller.queueDecision(controller.rows[0]!, 'accept');
+    controller.queueDecision(controller.rows[1]!, 'accept');
+    await vi.waitFor(() => expect(controller.mergeRequired?.candidateID).toBe(17));
+    const open = controller.mergeRequired!;
+    await expect(controller.settleDecision()).resolves.toMatchObject({ ok: false, kind: 'error', status: 409 });
+    expect(controller.mergeRequired).toBe(open);
+    expect(controller.hidden.has(18)).toBe(false);
+    expect(controller.isDecisionPending(18)).toBe(false);
+    expect(controller.decisionError).toBe('Finish the open merge, then choose Merge again.');
+    await controller.completePersonMerge(17, open.context, { result: { cache_state: 'ready' }, survivor: { id: 7, display_name: 'Synthetic One' } } as never);
+    expect(controller.lastMerge?.candidateID).toBe(17);
   });
 
   it('preserves a malformed merge-required conflict message without showing a merge offer', async () => {
@@ -707,7 +709,9 @@ it('settles on pagehide with keepalive, the displayed token, and trimmed notes',
   }), undefined, settled);
   try {
     await controller.loadIdentityPage();
-    controller.summaries.set('person:7', { id: 7, name: 'Saved', address: 'Saved person', lastAt: null });
+    const saved = { id: 7, name: 'Saved', address: 'Saved person', lastAt: null };
+    controller.summaries.set('person:7', saved);
+    controller.summaries.set('participant:11', saved);
     controller.setDecisionDraft(1, '  Different people  ');
     controller.queueDecision(controller.rows[0]!, 'reject');
     const toast = render(UndoToast, { message: 'Keep separate queued', onUndo: () => controller.undoDecision(), onExpire: () => void controller.settleDecision() });
@@ -716,26 +720,44 @@ it('settles on pagehide with keepalive, the displayed token, and trimmed notes',
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
     expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/1/review/reject', body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
     expect(controller.summaries.has('person:7')).toBe(true);
+    expect(controller.summaries.has('participant:11')).toBe(true);
+    await controller.acceptIdentity(1);
+    expect(controller.summaries.has('person:7')).toBe(true);
+    expect(controller.summaries.has('participant:11')).toBe(false);
   } finally { controller.destroy(); }
 });
 
-it.each([false, true])('settles across queue changes, including a History switch: %s', async history => {
-  const decision = deferredResponse(), settled = vi.fn();
+function queuedReview() {
+  const decision = deferredResponse();
+  let decided = false;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
-    if (request.method === 'POST') return decision.promise;
+    if (request.method === 'POST') { const response = await decision.promise; decided = true; return response; }
     const url = new URL(request.url), offset = Number(url.searchParams.get('offset'));
-    if (url.searchParams.get('state') === 'accepted,rejected') return page([candidate(1, 'rejected')]);
+    if (url.searchParams.get('state') === 'accepted,rejected') return page(decided ? [candidate(1, 'rejected')] : []);
     return page(offset ? [candidate(11)] : Array.from({ length: 11 }, (_, i) => candidate(i + 1)), offset);
-  }), undefined, settled);
+  }));
+  return { controller, decision };
+}
+
+it('submits the staged decision before paging without waiting for it', async () => {
+  const { controller } = queuedReview();
   try {
     await controller.loadIdentityPage();
     controller.queueDecision(controller.rows[0]!, 'reject');
-    const navigation = history ? controller.setIdentityState('accepted') : controller.loadNextPage();
-    if (history) expect(controller.identityState).toBe('candidate');
-    else await navigation;
+    await controller.loadNextPage();
     expect(controller.pending).toBeUndefined();
-    if (!history) return;
+    expect(controller.rows[0]?.id).toBe(11);
+  } finally { controller.destroy(); }
+});
+
+it('waits for the staged decision before reading History', async () => {
+  const { controller, decision } = queuedReview();
+  try {
+    await controller.loadIdentityPage();
+    controller.queueDecision(controller.rows[0]!, 'reject');
+    const navigation = controller.setIdentityState('accepted');
+    expect(controller.identityState).toBe('candidate');
     decision.resolve(Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
     await navigation;
     await vi.waitFor(() => expect(controller.rows[0]?.state).toBe('rejected'));

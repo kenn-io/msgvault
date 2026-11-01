@@ -117,7 +117,7 @@
               />
             {/if}
           </div>
-          {#if !history && controller.lastMerge?.candidateID === candidate.id}<p role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
+          {#if !history && controller.lastMerge?.candidateID === candidate.id}<p class="status" role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
           <details><summary>Evidence and notes</summary>
             <IdentityCandidateCard {candidate} pending={controller.isDecisionPending(candidate.id)} onAccept={() => undefined} onReject={() => undefined} showActions={false} />
             {#if !history}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}

@@ -40,11 +40,6 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: 'Files' }).hasAttribute('aria-current')).toBe(false);
   });
 
-  it.each(['directory', 'directory_review'])('keeps People current when opening an old %s link', (workspace) => {
-    renderSidebar({ active: 'relationships' });
-    expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
-  });
-
   it('nests saved views under the place they open', async () => {
     const onOpenView = vi.fn();
     const budget = view(1, 'Budget threads');

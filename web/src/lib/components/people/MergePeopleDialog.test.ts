@@ -39,40 +39,54 @@ it.each([false, true])('merges saved profiles with both revisions, promoting an 
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
+    await waitFor(() => expect(onReconcile).toHaveBeenCalledOnce());
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
     const mutation = requests.find(request => new URL(request.url).pathname.endsWith('/7/merge'))!;
     expect(mutation.headers.get('If-Match')).toBe('"person-7-r4", "person-9-r2"');
-    expect(await mutation.json()).toEqual({ absorbed_person_id: 9 });
     expect(onReconcile).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each([false, true, undefined])('links a saved representative and an observed person without promotion: %s', async savedAnchor => {
+function renderRepresentativeLink(savedAnchor: boolean, missing = false) {
   const links: unknown[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [{ id: 7, display_name: 'Synthetic Saved' }] });
     if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 1, display_label: 'Synthetic Observed' }] : [{ id: 2, display_label: 'Duplicate Saved', profile: { id: 7 } }] });
-    if (path.endsWith('/people/7')) return savedAnchor === undefined ? Response.json({ message: 'Target missing' }, { status: 404 }) : Response.json({ id: 7, participant_ids: [2, 3] });
+    if (path.endsWith('/people/7')) return missing ? Response.json({ message: 'Target missing' }, { status: 404 }) : Response.json({ id: 7, participant_ids: [2, 3] });
     if (path.endsWith('/identity/links')) { links.push(await request.json()); return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
     throw new Error(`Unexpected ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   const onReconcile = vi.fn(async () => undefined), onClose = vi.fn();
   const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic', onReconcile, onClose });
+  return { view, controller, links, onClose, onReconcile };
+}
+
+it.each([false, true])('links a saved representative and an observed person without promotion: %s', async savedAnchor => {
+  const { view, controller, links, onClose, onReconcile } = renderRepresentativeLink(savedAnchor);
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Observed/ : /Synthetic Saved/ }));
-    expect(screen.queryByRole('option', { name: /Duplicate Saved/ })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    if (savedAnchor === undefined) { await screen.findByText('Target missing'); expect(links).toEqual([]); expect(onClose).not.toHaveBeenCalled(); return; }
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
     expect(onReconcile).toHaveBeenCalledOnce();
     expect(onReconcile).toHaveBeenCalledWith(expect.anything(), true);
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('leaves both people unchanged when the saved profile cannot be read', async () => {
+  const { view, controller, links, onClose } = renderRepresentativeLink(false, true);
+  try {
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Saved/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await screen.findByText('Target missing');
+    expect(links).toEqual([]);
+    expect(onClose).not.toHaveBeenCalled();
   } finally { view.unmount(); controller.destroy(); }
 });

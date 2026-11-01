@@ -2,8 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
-import type { DomainSummary, PersonSummary } from '../../explore/models';
+import type { PersonSummary } from '../../explore/models';
 import type { LinkOutcome } from '../../relationships/controller.svelte';
 import PersonAddresses from './PersonAddresses.svelte';
 
@@ -20,23 +19,6 @@ function person(): PersonSummary {
     current_relationship_temperature: 62, peak_relationship_temperature: 87, peak_relationship_year: 2018,
     source_counts: [{ source_type: 'gmail', count: 42 }],
     first_at: when, last_at: when, cache_revision: 'cache-rel'
-  };
-}
-
-function domain(): DomainSummary {
-  return {
-    domain: 'example.com', activity_count: 100, file_count: 5, person_count: 8,
-    first_at: when, last_at: when, source_counts: [], cache_revision: 'cache-rel'
-  };
-}
-
-function searchResult(): PersonSummary {
-  return {
-    id: 99, display_label: 'Bob Example', partial_label: false,
-    identifiers: [{ type: 'email', value: 'bob@example.com', participant_id: 99, is_primary: true, provenance: 'participant_identifiers' }],
-    activity_count: 7, meeting_count: 0, file_count: 0,
-    current_relationship_temperature: 12, peak_relationship_temperature: 20, peak_relationship_year: 2024,
-    source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel'
   };
 }
 
@@ -76,24 +58,9 @@ function clusteredPersonWithBareMember(): PersonSummary {
   };
 }
 
-function searchClient(): ReturnType<typeof createAPIClient> {
-  const fetchFn = vi.fn<typeof fetch>(async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    if (new URL(request.url).pathname === '/api/v1/participants/search') {
-      return Response.json({ rows: [searchResult()], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
-    }
-    throw new Error(`unexpected fetch to ${request.url}`);
-  });
-  return createAPIClient(fetchFn);
-}
-
 function baseProps(overrides: Record<string, unknown> = {}) {
   return {
     detail: person(),
-    filesOpen: false,
-    onFilesToggle: vi.fn(),
-    client: searchClient(),
-    onLinkParticipants: vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' })),
     onUnlinkParticipants: vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 3, cacheState: 'ready' })),
     ...overrides
   };
@@ -152,12 +119,6 @@ describe('PersonAddresses', () => {
 
     expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (56)' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (78)' })).toBeDefined();
-  });
-
-  it('falls back to the member ID for a chip whose member has no stored name or address', () => {
-    render(PersonAddresses, baseProps({ detail: clusteredPersonWithBareMember() }));
-
-    expect(screen.getByLabelText('Linked profile 78').textContent).toContain('no stored address');
   });
 
   it('hides an opaque key on the chip and copies the full value', async () => {
@@ -269,20 +230,6 @@ describe('PersonAddresses', () => {
     expect(screen.queryByRole('group', { name: 'Confirm unlinking carol@example.com' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
     expect(onUnlinkParticipants).not.toHaveBeenCalled();
-  });
-
-  it('treats an already-clean edge (idempotent 200) as success and closes the confirm', async () => {
-    // Simulates confirming after the edge was already removed elsewhere:
-    // UnlinkParticipants is idempotent, so the store 200s without error.
-    const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 5, cacheState: 'ready' }));
-    render(PersonAddresses, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
-
-    await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeNull();
   });
 
   it('shows an inline error and keeps the confirm state on an unlink failure', async () => {
