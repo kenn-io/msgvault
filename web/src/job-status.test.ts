@@ -1,10 +1,12 @@
-import { lanes } from './test/operations';
+import { lane, lanes } from './test/operations';
+import canonical from '../tests/e2e/fixtures/operations-public.json';
+import type { OperationRunsResponse } from './lib/api/generated/models';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
 
 import App from './App.svelte';
 import { createSessionController } from './lib/api/session.svelte';
-import { jobLane, sourceStatus } from './lib/jobs/fixtures.test-support';
+import { jobLane, sourceStatus, syncRunStatus } from './lib/jobs/fixtures.test-support';
 
 function sessionFor(handle: (request: Request, path: string) => Promise<Response | undefined> | Response | undefined) {
   return createSessionController(async input => {
@@ -41,9 +43,11 @@ it.each([
   };
   const session = sessionFor((request, path) => {
     if (path === '/api/v1/operations/status') {
-      return Response.json({ lanes: completed ? lanes(jobLane('message_embedding')) : lanes() });
+      return Response.json({ lanes: completed ? lanes(...(contacts ? [lane('carddav_sync', { latest: (canonical as OperationRunsResponse).runs.find(run => run.kind === 'carddav_sync') })] : build ? [jobLane('message_embedding')] : [])) : lanes() });
     }
-    if (path === '/api/v1/sources/status') return Response.json({ sources: [sourceStatus()] });
+    if (path === '/api/v1/sources/status') return Response.json({ sources: [sourceStatus(completed && workspace === 'Sources' ? {
+      latest_sync: syncRunStatus({ status: 'failed', error_message: 'Source sync failed' }),
+    } : {})] });
     if (path === '/api/v1/carddav/connections') return Response.json({ connections: [{ connection: 'default', status: cardDAVStatus }] });
     if (path === '/api/v1/carddav/status') return Response.json(cardDAVStatus);
     if (path === '/api/v1/carddav/books') return Response.json({ books: [] });
@@ -64,7 +68,7 @@ it.each([
     }
     if (request.method === 'POST' && path === '/api/v1/cli/run') {
       completed = true;
-      return new Response(workspace === 'Messages' ? '{"type":"complete","error":"Embedding endpoint failed"}\n' : '{"type":"complete"}\n');
+      return new Response('{"type":"complete","error":"Embedding endpoint failed"}\n');
     }
   });
   render(App, { session });
