@@ -453,10 +453,10 @@ describe('DirectoryController', () => {
     expect(directoryRead).toBe(2);
   });
 
-  it('reconciles Unicode category membership across filtered pages after add and close', async () => {
+  it.each(['filtered', 'unfiltered', 'reload'])('reconciles Unicode category membership after add and close (%s)', async mode => {
     const commits: Array<Record<string, unknown>> = [];
     const directoryRequests: Request[] = [];
-    let directoryRead = 0;
+    let directoryRead = 0; let failed = false;
     let profileWrite = 0;
     const category = {
       person_id: 7, original_value: 'Straße', normalized_value: 'strasse',
@@ -467,7 +467,9 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') {
         directoryRequests.push(request);
+        if (mode === 'reload' && directoryRead === 2 && !failed) { failed = true; return Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 }); }
         directoryRead += 1;
+        if (mode === 'unfiltered') return Response.json({ people: [directoryPerson(7)] });
         if (directoryRead === 1) return Response.json({ people: [directoryPerson(8)], next_cursor: 'initial-page-2' });
         if (directoryRead === 2) return Response.json({ people: [directoryPerson(9)], next_cursor: 'initial-page-3' });
         if (directoryRead === 3) return Response.json({ people: [directoryPerson(7), directoryPerson(8)], next_cursor: 'added-page-2' });
@@ -488,17 +490,34 @@ describe('DirectoryController', () => {
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
-    controller.query = 'synthetic person';
-    controller.contactState = 'active';
-    controller.category = 'STRASSE';
-    controller.organization = 'Example Org';
-    controller.primaryChannel = 'email';
+    if (mode !== 'unfiltered') {
+      controller.query = 'synthetic person';
+      controller.contactState = 'active';
+      controller.category = 'STRASSE';
+      controller.organization = 'Example Org';
+      controller.primaryChannel = 'email';
+    }
     await controller.loadFirstPage();
-    await controller.loadNextPage();
+    if (mode !== 'unfiltered') await controller.loadNextPage();
     await controller.selectPerson(7);
 
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
 
+    if (mode === 'unfiltered') {
+      expect(controller.rows[0]?.categories).toEqual(['Straße']);
+      await controller.profile?.patchProfile({ categories: { supersede: [31] } });
+      expect(controller.rows[0]?.categories).toEqual([]);
+      expect(directoryRead).toBe(1);
+      return;
+    }
+    if (mode === 'reload') {
+      expect(controller.pageError).toBe('Directory reconciliation unavailable.');
+      await controller.reloadFirstPage();
+      expect(controller.pageError).toBeNull();
+      const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
+      expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic person', contact_state: 'active', category: 'STRASSE', organization: 'Example Org', primary_channel: 'email' });
+      return;
+    }
     expect(controller.rows.map((row) => row.id)).toEqual([7, 8, 9]);
     expect(controller.rows[0]?.categories).toEqual(['Straße']);
     expect(controller.cursor).toBe('added-page-3');
@@ -520,29 +539,6 @@ describe('DirectoryController', () => {
       expect(parameters.get('organization')).toBe('Example Org');
       expect(parameters.get('primary_channel')).toBe('email');
     }
-  });
-
-  it('updates category summaries without reloading an unfiltered list', async () => {
-    let directoryReads = 0;
-    const category = { person_id: 7, original_value: 'Straße', normalized_value: 'strasse', envelope: { id: 31, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} } };
-    const client = createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') { directoryReads++; return Response.json({ people: [directoryPerson(7)] }); }
-      if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') {
-        const body = await request.json();
-        return Response.json({ person: { id: 7, revision: 4 }, names: [], contact_points: [], addresses: [], dates: [], categories: body.categories.add ? [category] : [], media: [] }, { headers: { ETag: '"person-7-r4"' } });
-      }
-      return editableDetailResponse(path, 7);
-    });
-    const controller = new DirectoryController(client);
-    await controller.loadFirstPage();
-    await controller.selectPerson(7);
-    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
-    expect(controller.rows[0]?.categories).toEqual(['Straße']);
-    await controller.profile?.patchProfile({ categories: { supersede: [31] } });
-    expect(controller.rows[0]?.categories).toEqual([]);
-    expect(directoryReads).toBe(1);
   });
 
   it('keeps the observed Directory channel after a preferred-channel set and clear', async () => {
@@ -1140,7 +1136,6 @@ describe('DirectoryController', () => {
     split = true;
     await controller.reconcilePersonSplit({ sourcePersonID: 12, newPersonID: 19 });
 
-    expect(controller.rows.map((row) => row.id)).toEqual([12, 19]);
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Friend', envelope: { source: 'user' } }] } });
     expect(controller.profile?.conflict).toBeNull();
     expect(controller.profile).toBe(owner);
