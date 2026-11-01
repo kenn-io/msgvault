@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { historyTime } from './history-format';
+  import { formatDateTime as historyTime } from '../../util/format';
   import { Button, Spinner, Table } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 

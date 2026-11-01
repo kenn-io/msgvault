@@ -137,7 +137,7 @@ export class DirectoryProfileController {
     ++this.generation;
     this.reloadAbort?.abort();
   }
-  async reload(): Promise<DirectoryProfileOperationResult> {
+  async reload(resolveDraft = true): Promise<DirectoryProfileOperationResult> {
     if (this.mutationPending) return { ok: false, code: 'mutation_in_progress' };
     if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
     this.reloadPending = true;
@@ -199,7 +199,7 @@ export class DirectoryProfileController {
         refreshed = true;
       } else errors.contactState = failureMessage(contactState.error, contactState.response?.status ?? 0);
       this.bundle = { ...this.bundle, errors };
-      this.resolveReloadDraft(
+      if (resolveDraft) this.resolveReloadDraft(
         { person, structuredProfile, attributes, definitions },
         { personReady, structuredProfileReady, attributesReady, definitionsReady },
       );
