@@ -74,6 +74,42 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
   expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
 });
 
+for (const width of [1280, 420]) {
+  test.describe(`saved queries at ${width}px`, () => {
+    test.use({ viewport: { width, height: 720 } });
+
+    test(`long saved queries keep row actions visible at ${width}px`, async ({ page }) => {
+      const query = 'project planning meeting notes and follow up tasks '.repeat(7).trim();
+      await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [{
+        id: 1, name: 'Long archive search', schema_version: 2, revision: 1,
+        canonical_state: { query, search_mode: 'full_text' },
+        created_at: row.occurred_at, updated_at: row.occurred_at
+      }] } }));
+      await page.reload();
+      const opener = page.getByRole('button', { name: 'Open navigation' });
+      if (await opener.isVisible()) await opener.click();
+      const view = page.locator('.saved-view').filter({ hasText: 'Long archive search' });
+      await expect(view).toBeVisible();
+      const open = view.getByRole('button', { name: 'Long archive search', exact: true });
+      await expect(open).toBeInViewport({ ratio: 1 });
+      await open.click({ trial: true });
+      await view.hover();
+      await view.getByRole('button', { name: 'Long archive search actions', exact: true }).click();
+      for (const name of ['Rename', 'Edit description…', 'Delete']) {
+        const action = page.getByRole('menuitem', { name, exact: true });
+        await expect(action).toBeInViewport({ ratio: 1 });
+        await action.click({ trial: true });
+      }
+      await page.keyboard.press('Escape');
+      if (await opener.isVisible()) await opener.click();
+      await open.click();
+      const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
+      await expect(label).toBeVisible();
+      expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
+    });
+  });
+}
+
 test('a long sidebar saved view list keeps every row at its full height and scrolls', async ({ page }) => {
   const description = 'Synthetic description that wraps across several lines of the saved view row. '.repeat(4).trim();
   await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 40 }, (_, index) => ({

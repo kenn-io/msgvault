@@ -155,6 +155,8 @@ func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 }
 
 func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.com")
 	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
@@ -165,17 +167,17 @@ func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
 	groups, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: messageTypeDimension, Page: PageSpec{Limit: 50},
 	})
-	require.NoError(t, err)
-	require.Len(t, groups.Rows, 1)
-	assert.Equal(t, "mms", groups.Rows[0].Key)
-	assert.Equal(t, int64(1), groups.Rows[0].Count)
+	require.NoError(err)
+	require.Len(groups.Rows, 1)
+	assert.Equal("mms", groups.Rows[0].Key)
+	assert.Equal(int64(1), groups.Rows[0].Count)
 
 	entries, err := engine.Explore(context.Background(), ExploreRequest{
 		Context: Context{MessageTypes: []string{"sms"}}, Page: PageSpec{Limit: 50},
 	})
-	require.NoError(t, err)
-	require.Len(t, entries.Rows, 1)
-	assert.Equal(t, "sms", entries.Rows[0].MessageType)
+	require.NoError(err)
+	require.Len(entries.Rows, 1)
+	assert.Equal("sms", entries.Rows[0].MessageType)
 }
 
 // TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank pins the

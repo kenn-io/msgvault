@@ -76,6 +76,35 @@ test('desktop saved-view deletion keeps keyboard focus through Undo', async ({ p
   await expect(row).toBeFocused();
 });
 
+test('renaming a saved view restores keyboard focus after alphabetical reordering', async ({ page }) => {
+  const views = ['Alpha', 'Bravo', 'Charlie'].map((name, index) => ({
+    id: index + 1, name, revision: 1, schema_version: 2,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [] }
+  }));
+  await page.route('**/api/v1/saved-views', route => route.fulfill({
+    json: { saved_views: [...views].sort((a, b) => a.name.localeCompare(b.name)) }
+  }));
+  await page.route('**/api/v1/saved-views/1', async route => {
+    expect(route.request().method()).toBe('PATCH');
+    expect(route.request().postDataJSON()).toEqual({ name: 'Zulu' });
+    views[0] = { ...views[0]!, name: 'Zulu', revision: 2 };
+    await route.fulfill({ json: views[0] });
+  });
+  await page.goto('/?workspace=everything');
+  const list = page.getByRole('list', { name: 'Messages saved views' });
+  await expect(list.locator('.saved-view__open')).toHaveText(['Alpha', 'Bravo', 'Charlie']);
+  await list.getByRole('button', { name: 'Alpha', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+  const input = page.getByRole('textbox', { name: 'Rename Alpha' });
+  await input.fill('Zulu');
+  await input.press('Enter');
+  await expect(list.locator('.saved-view__open')).toHaveText(['Bravo', 'Charlie', 'Zulu']);
+  await expect(list.getByRole('button', { name: 'Zulu', exact: true })).toBeFocused();
+});
+
 test('Settings Overview Details closes back to Overview with a status title', async ({ page }) => {
   await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [{
     kind: 'document_extraction', lane: 'documents', configured: true,

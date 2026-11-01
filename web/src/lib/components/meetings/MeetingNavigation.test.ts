@@ -121,7 +121,8 @@ describe('meeting archive reader navigation', () => {
         await fireEvent.click(await screen.findByRole('link', { name: 'Action provenance title' }));
       }
       await waitFor(() => expect(finish).toBeTypeOf('function'));
-      state.openOperationHistory({});
+      await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Idle' }));
+      await fireEvent.click(await screen.findByRole('menuitem', { name: /^Past runs/ }));
       const history = await screen.findByRole('dialog', { name: 'Past runs' });
       await chooseSelectOption(within(history).getByRole('combobox', { name: /^Kind/ }), 'Source sync');
       if (close) {
@@ -131,9 +132,14 @@ describe('meeting archive reader navigation', () => {
       expect(pendingRequest.signal.aborted).toBe(false);
       finish();
       await waitFor(() => expect(state.current.selectedRow).toBe('archive-meeting:42'));
-      const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
-      expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
-      if (!close) expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeDefined();
+      if (close) {
+        const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
+        expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
+      } else {
+        await waitFor(() => expect(screen.queryByText('Loading archived meeting…')).toBeNull());
+        await waitFor(() => expect(history.contains(document.activeElement)).toBe(true));
+        expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull();
+      }
       expect(requests.filter(request => new URL(request.url).pathname.endsWith('/messages/42'))).toHaveLength(1);
     } finally {
       finish?.();
