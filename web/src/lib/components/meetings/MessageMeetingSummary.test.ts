@@ -30,7 +30,7 @@ describe('Messages meeting summary', () => {
     expect(screen.getByRole('textbox', { name: 'Assignee' })).toHaveProperty('value', '');
   });
 
-  it.each([{ count: 1, label: '1 meeting' }, { count: 4, label: '4 meetings' }])('labels $count meetings and opens scoped source evidence', async ({ count, label }) => {
+  it.each([{ count: 1, label: '1 meeting' }, { count: 4, label: '4 meetings' }])('labels $count meetings and opens source evidence', async ({ count, label }) => {
     const onOpenMeeting = vi.fn();
     const client = createAPIClient(async (input) => {
       const request = input as Request;
