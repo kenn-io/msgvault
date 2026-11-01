@@ -3,13 +3,11 @@
 
   import type {
     AttributeChoice as GeneratedAttributeChoice,
-    AttributeDefinition as GeneratedAttributeDefinition,
     CreateAttributeDefinitionRequest as GeneratedCreateAttributeDefinitionRequest,
   } from '../../api/generated/models';
   import { trimAttributeText } from '../../directory/attribute-text';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 
-  type AttributeDefinition = GeneratedAttributeDefinition;
   type CreateAttributeDefinitionRequest = GeneratedCreateAttributeDefinitionRequest;
 
   interface Props {
@@ -27,7 +25,6 @@
   let pending = $state(false);
   let creating = $state(false);
   let error = $state<string>();
-  let created = $state<AttributeDefinition>();
   let validationActive = false;
 
   const hasChoices = $derived(choices.split(/\r?\n/).some((line) => trimAttributeText(line) !== ''));
@@ -55,20 +52,14 @@
     if (!body) return;
     pending = true;
     creating = true;
-    let completed: AttributeDefinition | undefined;
     try {
       await controller.createDefinition(body);
-      if (controller.createdDefinition && controller.conflict === null && controller.draft === null) {
-        completed = controller.createdDefinition;
-      } else {
+      if (!(controller.createdDefinition && controller.conflict === null && controller.draft === null)) {
         error = controller.conflict?.message ?? controller.definitionsError ?? 'Unable to create field.';
       }
     } finally {
       creating = false;
       pending = false;
-    }
-    if (completed) {
-      await showCreated(completed);
     }
   }
 
@@ -76,17 +67,14 @@
     if (pending) return;
     pending = true;
     error = undefined;
-    let completed: AttributeDefinition | undefined;
     try {
       await controller.retryDefinitionRefresh();
-      if (
+      if (!(
         controller.createdDefinition &&
         controller.definitionCreationCommit === null &&
         controller.conflict === null &&
         controller.draft === null
-      ) {
-        completed = controller.createdDefinition;
-      } else {
+      )) {
         error =
           controller.conflict?.message ??
           controller.definitionsError ??
@@ -95,7 +83,6 @@
     } finally {
       pending = false;
     }
-    if (completed) await showCreated(completed);
   }
 
   async function reloadFields(): Promise<void> {
@@ -111,10 +98,6 @@
     } finally {
       pending = false;
     }
-  }
-
-  async function showCreated(definition: AttributeDefinition): Promise<void> {
-    created = definition;
   }
 
   function focusResult(node: HTMLElement): void {
@@ -320,7 +303,7 @@
 
   function requestClose(): void {
     if (pending) return;
-    if (created) controller.acknowledgeDefinitionCreation();
+    if (controller.createdDefinition) controller.acknowledgeDefinitionCreation();
     onClose();
   }
 
@@ -337,7 +320,8 @@
   closeLabel="Close create attribute field"
   onclose={requestClose}
 >
-  {#if created}
+  {#if controller.createdDefinition}
+    {@const created = controller.createdDefinition}
     <div class="created" role="status" tabindex="-1" use:focusResult>
       <strong>Created {created.label}</strong>
       <span>Slug: {created.slug}</span>

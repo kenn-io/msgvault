@@ -53,8 +53,8 @@
 
 <RelationshipsTab {client} controller={entities} personID={0} catalogOnly />
 <section class="fields" aria-label="Fields">
-  <header><h3>Fields</h3><Button label="Add field" size="sm" disabled={pending || fields.definitionCreationCommit !== null} onclick={() => creating = true} /></header>
-  {#if fields.definitionCreationCommit}<Button label="Resume field creation" onclick={() => creating = true} />{/if}
+  <header><h3>Fields</h3><Button label="Add field" size="sm" disabled={pending || fields.definitionCreationCommit !== null || fields.createdDefinition !== null} onclick={() => creating = true} /></header>
+  {#if fields.definitionCreationCommit || fields.createdDefinition}<Button label="Resume field creation" onclick={() => creating = true} />{/if}
   {#if fields.definitionsError}<p role="alert">{fields.definitionsError}<Button label="Retry fields" onclick={() => void fields.reloadDefinitions()} /></p>{/if}
   {#if error && !editing}<p role="alert">{error}</p>{/if}
   {#each fields.definitions.filter((field) => field.ownership !== 'system') as field (field.id)}
