@@ -31,11 +31,11 @@ describe('SecretField', () => {
 
   it('takes a new key through the dialog and closes when it is accepted', async () => {
     const onreplace = vi.fn(() => true);
-    render(SecretField, { label: 'Task API key', applyNote: 'Applies right away.', onreplace });
+    render(SecretField, { label: 'Task API key', applyNote: 'The daemon uses it after a restart.', onreplace });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add task API key' }));
     const dialog = screen.getByRole('dialog', { name: 'Add task API key' });
-    expect(dialog.textContent).toContain('Applies right away.');
+    expect(dialog.textContent).toContain('The daemon uses it after a restart.');
     const save = screen.getByRole('button', { name: 'Save task API key' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     await fireEvent.input(screen.getByLabelText('New task API key'), { target: { value: 'sk-live-0123456789' } });
