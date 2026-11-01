@@ -154,6 +154,22 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
   } }));
 }
 
+test('Identities is visible only on Details across person tabs', async ({ page }) => {
+  await prepare(page);
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const identities = page.getByRole('heading', { name: 'Identities', exact: true });
+  await expect(page.getByRole('grid', { name: 'Messages results' })).toBeVisible();
+  await expect(identities).toBeHidden();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await expect(identities).toBeVisible();
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
+  await expect(page.getByText('notes.pdf', { exact: true })).toBeVisible();
+  await expect(identities).toBeHidden();
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+  await expect(identities).toBeHidden();
+});
+
 test('People facet and person Back restore the list and close the reader', async ({ page }) => {
   await prepare(page);
 
