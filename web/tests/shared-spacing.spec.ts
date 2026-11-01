@@ -66,6 +66,32 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
   expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
 });
 
+test('a long sidebar saved view list keeps every row at its full height and scrolls', async ({ page }) => {
+  const description = 'Synthetic description that wraps across several lines of the saved view row. '.repeat(4).trim();
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 40 }, (_, index) => ({
+    id: index + 1, name: `Saved view ${index + 1}`, description, schema_version: 1, revision: 1,
+    canonical_state: { filters: [{ field: 'source', operator: 'eq', values: ['1'] }], grouping: ['year'], presentation: index < 20 ? 'table' : 'files' },
+    created_at: row.occurred_at, updated_at: row.occurred_at
+  })) } }));
+  await page.reload();
+  const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+  const views = sidebar.locator('.saved-view');
+  await expect(views).toHaveCount(40);
+  const rows = await views.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
+  }));
+  for (const [index, current] of rows.entries()) {
+    expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
+    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(28);
+    if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
+  }
+  const last = sidebar.getByRole('button', { name: 'Saved view 40', exact: true });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport({ ratio: 1 });
+  expect(await sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+});
+
 test('save-view dialog shares header and field insets', async ({ page }) => {
   await selectWorkspace(page, 'Messages');
   await page.getByRole('button', { name: 'Save view…' }).click();

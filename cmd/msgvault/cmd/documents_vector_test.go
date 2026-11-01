@@ -741,3 +741,36 @@ func TestDocumentVectorConfirmationPrecedesStore(t *testing.T) {
 	assert.Equal(fmt.Sprintf("retired=true generation_id=%d; backend cleanup will resume when vector operations next run\n", generation.ID), output.String())
 	assert.Equal(1, openCalls)
 }
+
+func TestEmbeddingConsentDestinationMode(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		t.Run(strconv.FormatBool(local), func(t *testing.T) {
+			fixture, spec, ctx := documentVectorCommandFixture(t)
+			state := invocationFromContext(ctx)
+			state.cfg.Vector.People.RetentionPosture, state.cfg.Vector.People.TrainingPosture = setupPostureDeclared, setupPostureDeclared
+			state.cfg.Vector.Embeddings.LocalOnly = local
+			state.cfg.Vector.Embeddings.Model, state.cfg.Vector.Embeddings.Dimension = "nomic-embed-text", 768
+			state.cfg.Vector.Embeddings.Endpoint = "http://local-embeddings.invalid/v1"
+			var output bytes.Buffer
+			printDocumentVectorConsentDisclosure(&output, store.DocumentVectorConsentSpec{DocumentVectorGenerationSpec: spec}, state)
+			want := "http://local-embeddings.invalid/v1"
+			if local {
+				want = "shared local embedding server"
+			}
+			assert.Contains(t, output.String(), "Destination: "+want+"\n")
+			profile, err := state.cfg.Vector.SemanticPersonEmbeddingProfile()
+			require.NoError(t, err)
+			_, err = fixture.Store.EnsurePersonSemanticEmbeddingProfile(ctx, profile)
+			require.NoError(t, err)
+			profiles, err := fixture.Store.ListPersonSemanticEmbeddingProfiles(ctx)
+			require.NoError(t, err)
+			require.Len(t, profiles, 1)
+			output.Reset()
+			printPersonSemanticProviderDisclosure(&output, profiles[0])
+			if !local {
+				want += "/embeddings"
+			}
+			assert.Contains(t, output.String(), "Destination: "+want+"\n")
+		})
+	}
+}
