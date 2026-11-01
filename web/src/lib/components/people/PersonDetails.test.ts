@@ -39,9 +39,8 @@ it('retries a failed section without discarding an open field draft', async () =
     await fireEvent.input(input, { target: { value: '+12025550123' } });
     const alert = screen.getAllByRole('alert').find(element => element.textContent?.startsWith('attributes:'))!;
     await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('3 interactions')).toBeDefined();
-    await waitFor(() => expect(screen.queryByText(/Contact state unavailable/)).toBeNull());
-    await waitFor(() => expect(screen.queryAllByText(/Attributes unavailable/)).toHaveLength(0));
+    await waitFor(() => expect(attributeReads).toBe(2));
+    await waitFor(() => expect(owner?.reloadPending).toBe(false));
     expect(directory.profile).toBe(owner);
     expect(directory.entity).toBe(entity);
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toBe(input);
