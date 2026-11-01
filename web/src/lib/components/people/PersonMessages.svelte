@@ -103,9 +103,8 @@
   onDestroy(() => { loader.destroy(); exploreState.destroy(); });
 </script>
 
-<svelte:window onpopstate={() => restore(relationshipReaderHistory(popped, 'relationships', target))} />
-<!-- svelte-ignore a11y_no_static_element_interactions -- Escape closes the embedded reader. -->
-<div class="messages" bind:this={root} onkeydown={escape}>
+<svelte:window onpopstate={() => restore(relationshipReaderHistory(popped, 'relationships', target))} onkeydowncapture={escape} />
+<div class="messages" bind:this={root}>
   <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={conversationBounds?.start} conversationEnd={conversationBounds?.end} {exploreState} {loader} {session} {selection} enabled
     readingTargetKey={exploreState.current.selectedRow} conversationAnchorId={exploreState.current.conversationAnchor ? Number(exploreState.current.conversationAnchor) : undefined}
     sortNotice={notice} searchInput={undefined} selectionPreflight={undefined} meetingSelection={undefined}
