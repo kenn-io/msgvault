@@ -56,6 +56,13 @@ func (s *Store) BeginReadSnapshotContext(ctx context.Context) (context.Context, 
 	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx}), release, nil
 }
 
+// HasReadSnapshotContext reports whether readers share a snapshot transaction.
+// Reads using that transaction must run through completion without overlapping.
+func HasReadSnapshotContext(ctx context.Context) bool {
+	_, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	return ok
+}
+
 // WithoutReadSnapshotContext preserves request lifetime and values for physical reads.
 func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readSnapshotKey{}, struct{}{})
