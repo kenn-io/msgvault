@@ -1774,9 +1774,11 @@ func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint, model string
 		local, fail           bool
+		daemonStopped         bool
 		wantRecovery          bool
 	}{
 		{name: "Ollama switch", endpoint: "http://127.0.0.1:11434/v1", wantRecovery: true},
+		{name: "Ollama switch with stopped daemon", endpoint: "http://127.0.0.1:11434/v1", daemonStopped: true, wantRecovery: true},
 		{name: "different model", endpoint: "http://127.0.0.1:11434/v1", model: "other-model", wantRecovery: true},
 		{name: "same local identity", local: true},
 		{name: "configured local identity", endpoint: "http://local-embeddings.invalid/v1"},
@@ -1806,7 +1808,7 @@ enabled = true
 `, tc.endpoint, tc.local, tc.model)
 			fixture := newSetupProvidersFixture(t, content)
 			deps := fixture.deps(t)
-			deps.daemonAlive = func(context.Context, *config.Config) bool { return true }
+			deps.daemonAlive = func(context.Context, *config.Config) bool { return !tc.daemonStopped }
 			if tc.fail {
 				deps.localInstall = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 					return embedlocal.Installation{}, errors.New("installation failed")

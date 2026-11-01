@@ -614,7 +614,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			before, beforeErr := vectordocument.Fingerprint("", loaded.Vector)
 			after, afterErr := vectordocument.Fingerprint("", desired)
 			if beforeErr == nil && afterErr == nil && before != after {
-				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault documents vectors build"}
+				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault daemon restart", "msgvault documents vectors build"}
 			}
 		}
 		lane.edits = append([]config.TableEdit{vectorEdit, {Path: []string{tomlTableVector, "embeddings"}, Values: values}}, setupScheduleEdits(detection.configKeys, "embed")...)
