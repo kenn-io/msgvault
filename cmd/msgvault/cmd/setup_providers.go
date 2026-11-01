@@ -614,7 +614,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			before, beforeErr := vectordocument.Fingerprint("", loaded.Vector)
 			after, afterErr := vectordocument.Fingerprint("", desired)
 			if beforeErr == nil && afterErr == nil && before != after {
-				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault daemon restart", "msgvault documents vectors status --json", "If status.building exists and its fingerprint differs from status.configured_spec.fingerprint, run msgvault documents vectors retire --generation-id <status.building.id> --yes", "msgvault documents vectors build"}
+				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault daemon restart", "msgvault documents vectors status --json", "If status.building exists and its fingerprint differs from status.configured_spec.fingerprint, run msgvault documents vectors retire --generation-id <status.building.id> --yes", "Repeat msgvault documents vectors build until its JSON output reports converged=true"}
 			}
 		}
 		lane.edits = append([]config.TableEdit{vectorEdit, {Path: []string{tomlTableVector, "embeddings"}, Values: values}}, setupScheduleEdits(detection.configKeys, "embed")...)
@@ -773,7 +773,8 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 		lane.next = []string{
 			"msgvault documents vectors consent --yes",
 			"msgvault documents vectors consent --purpose queries --yes",
-			"msgvault documents vectors build",
+			"msgvault daemon restart",
+			"Repeat msgvault documents vectors build until its JSON output reports converged=true",
 		}
 	}
 	return lane

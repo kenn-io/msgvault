@@ -1775,6 +1775,7 @@ func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
 		name, endpoint, model string
 		local, fail           bool
 		daemonStopped         bool
+		vectorsDisabled       bool
 		building              bool
 		wantRecovery          bool
 	}{
@@ -1782,6 +1783,8 @@ func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
 		{name: "Ollama switch with stopped daemon", endpoint: "http://127.0.0.1:11434/v1", daemonStopped: true, wantRecovery: true},
 		{name: "Ollama switch with building document generation", endpoint: "http://127.0.0.1:11434/v1", building: true, wantRecovery: true},
 		{name: "different model", endpoint: "http://127.0.0.1:11434/v1", model: "other-model", wantRecovery: true},
+		{name: "custom provider with disabled document vectors", endpoint: "https://embeddings.example.com/v1", model: "other-model", vectorsDisabled: true, wantRecovery: true},
+		{name: "custom provider with disabled document vectors and stopped daemon", endpoint: "https://embeddings.example.com/v1", model: "other-model", vectorsDisabled: true, daemonStopped: true, wantRecovery: true},
 		{name: "same local identity", local: true},
 		{name: "configured local identity", endpoint: "http://local-embeddings.invalid/v1"},
 		{name: "failed switch", endpoint: "http://127.0.0.1:11434/v1", fail: true},
@@ -1808,9 +1811,11 @@ retention_posture = "declared"
 training_posture = "declared"
 [attachments.documents]
 enabled = true
+retention_posture = "zdr"
+training_posture = "opted-out"
 [attachments.documents.index.embeddings]
-enabled = true
-`, tc.endpoint, tc.local, tc.model)
+enabled = %t
+`, tc.endpoint, tc.local, tc.model, !tc.vectorsDisabled)
 			fixture := newSetupProvidersFixture(t, content)
 			if tc.building {
 				documents := documentindex.DefaultDocumentsConfig()
@@ -1844,6 +1849,9 @@ enabled = true
 			require.NoError(command.ExecuteContext(t.Context()), output.String())
 			var result setupProvidersOutput
 			require.NoError(json.Unmarshal(output.Bytes(), &result))
+			if tc.vectorsDisabled {
+				assert.True(fixture.load(t).Attachments.Documents.Index.Embeddings.Enabled)
+			}
 			if tc.building {
 				loaded := fixture.load(t)
 				assert.Empty(loaded.Vector.Embed.Schedule.Cron)
@@ -1857,14 +1865,14 @@ enabled = true
 				for _, step := range []string{
 					"msgvault documents vectors status --json",
 					"If status.building exists and its fingerprint differs from status.configured_spec.fingerprint, run msgvault documents vectors retire --generation-id <status.building.id> --yes",
-					"msgvault documents vectors build",
+					"Repeat msgvault documents vectors build until its JSON output reports converged=true",
 				} {
 					index := slices.Index(result.FollowUps, step)
 					require.Greater(index, previous, "recovery must inspect and retire an incompatible building generation before building: %v", result.FollowUps)
 					previous = index
 				}
 			}
-			for _, step := range []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault documents vectors build"} {
+			for _, step := range []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "Repeat msgvault documents vectors build until its JSON output reports converged=true"} {
 				if tc.wantRecovery {
 					assert.Contains(result.FollowUps, step)
 				} else {
@@ -1879,7 +1887,7 @@ enabled = true
 					"msgvault documents vectors consent --yes",
 					"msgvault documents vectors consent --purpose queries --yes",
 					"msgvault daemon restart",
-					"msgvault documents vectors build",
+					"Repeat msgvault documents vectors build until its JSON output reports converged=true",
 				} {
 					index := slices.Index(result.FollowUps, step)
 					require.Greater(index, previous, "%s must follow consent and precede builds: %v", step, result.FollowUps)
