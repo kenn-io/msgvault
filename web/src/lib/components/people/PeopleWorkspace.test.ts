@@ -369,6 +369,37 @@ it.each([false, undefined])('forwards sweep configuration and settings navigatio
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
 
+it('keeps Files and its filters when a saved person finishes initial hydration', async () => {
+  let releaseProfile!: (response: Response) => void;
+  const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
+  const saved = profile(7, 1, [1]);
+  const client = clientFor({
+    '/api/v1/people/7': () => pendingProfile,
+    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }),
+    '/api/v1/people/7/attributes': () => Response.json({ person_id: 7, attributes: [] }),
+    '/api/v1/people/7/files/search': () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
+    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+  });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
+  const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget, filesOpen: state.current.relationshipFiles });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(),
+    onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false); },
+    onFilesToggle: value => { state.commitNavigation({ relationshipFiles: value }); void sync(); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('radio', { name: /^Files$/ }));
+    await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'report' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
+    await act(() => releaseProfile(Response.json(saved)));
+    await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:1'));
+    expect(state.current.relationshipFiles).toBe(true);
+    await waitFor(() => expect(within(screen.getByRole('radiogroup', { name: 'Person tabs' })).getByRole('radio', { name: /^Files$/ }).getAttribute('aria-checked')).toBe('true'));
+    expect(screen.getByRole('searchbox', { name: 'Filter filename' })).toHaveProperty('value', 'report');
+    expect(screen.getByRole('checkbox', { name: 'PDFs' })).toHaveProperty('checked', false);
+  } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('keeps Messages mounted across a profile reload', async () => {
   let releaseProfile!: (value: Response) => void; let personReads = 0;
   const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
