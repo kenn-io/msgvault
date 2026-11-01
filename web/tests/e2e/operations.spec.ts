@@ -69,6 +69,38 @@ test('Past runs keeps focus through detail and history, then restores workspace 
   await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
 });
 
+test('Past runs Back and Forward preserve Messages and dialog focus', async ({ page }) => {
+  await installOperations(page);
+  let exploreRequests = 0;
+  await page.route('**/api/v1/explore', route => {
+    exploreRequests += 1;
+    return route.fulfill({ json: {
+      rows: [1, 2].map(index => ({
+        key: `message:${index}`, kind: 'message', message_type: 'email', conversation_type: 'email',
+        title: `Synthetic subject ${index}`, preview: `Synthetic excerpt ${index}`,
+        occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_identifier: 'archive@example.com',
+        source_type: 'synthetic', participant_labels: ['Example Person'], participant_ids: [1],
+        attachment_count: 0, attachment_size: 0, has_attachments: false, deleted_from_source: false,
+        message_count: 1, match: {}
+      })), total_count: 2, cache_revision: 'operations-messages', search_provenance: {}
+    } });
+  });
+  await openHistory(page);
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
+  await expect(grid.getByText('Synthetic subject 2')).toBeVisible();
+  expect(exploreRequests).toBe(1);
+  const row = page.getByRole('button', { name: 'Open Document extraction run' });
+  await row.click();
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await page.goBack();
+  await expect(row).toBeFocused();
+  expect(exploreRequests).toBe(1);
+  await page.goForward();
+  await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  expect(exploreRequests).toBe(1);
+});
+
 test('unconfigured visual status opens Search & AI settings', async ({ page }) => {
   const fixture = await installOperations(page);
   fixture.setOperationConfigured('visual_embedding', false);
