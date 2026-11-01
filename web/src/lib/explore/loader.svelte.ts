@@ -68,6 +68,9 @@ function samePageAuthority(
  * to `workspace === 'everything'`), so this class is shared by both call
  * sites rather than owned exclusively by EverythingWorkspace.
  */
+// A message table the shell's reader and Display commands act on.
+export type MessagesTable = { state: ExploreState; loader: ExploreLoader; openRow: (row: EntryRow) => void };
+
 export class ExploreLoader {
   rows = $state<EntryRow[]>([]);
   groupRows = $state<ExploreGroupRow[]>([]);
