@@ -13,7 +13,6 @@
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
   import PageHeader from '../shell/PageHeader.svelte';
-  import PersonDetail from './PersonDetail.svelte';
 
   interface Props {
     client: APIClient;
@@ -27,6 +26,7 @@
     onConfigureVisualSearch?: () => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onOpenRelationship?: (participantID: number) => void;
+    onOpenPerson?: (id: number) => void;
     onReviewFacts?: (personID: number) => void;
   }
 
@@ -41,7 +41,8 @@
     onConfigureVisualSearch = undefined,
     onOpenMeeting = undefined,
     onOpenRelationship = undefined,
-    onReviewFacts = undefined
+    onReviewFacts = undefined,
+    onOpenPerson = undefined
   }: Props = $props();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
@@ -323,7 +324,7 @@
       {#if controller.promotionResult.code === 'person_binding_conflict'} This participant already belongs to another durable person; resolve that binding before promoting it.{/if}
     </div>
   {/if}
-  <div class="directory-content" class:has-detail={controller.selectedPersonID !== null && !narrow}>
+  <div class="directory-content">
     <DirectoryList
       rows={controller.rows}
       loading={controller.loading}
@@ -338,22 +339,12 @@
       {bulkMessage}
       {bulkError}
       {bulkFailures}
-      onSelect={(personID) => void controller.selectPerson(personID)}
+      onSelect={(personID) => onOpenPerson?.(personID)}
       onBulkDelete={beginBulkDelete}
       onLoadMore={() => void controller.loadNextPage()}
       onReload={() => void controller.reloadFirstPage()}
     />
-    {#if controller.selectedPersonID !== null && !narrow}
-      <aside class="detail-pane" aria-label="Person detail">
-        {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} {onOpenRelationship} {onReviewFacts} {onConfigureVisualSearch} />{/if}
-      </aside>
-    {/if}
   </div>
-  {#if controller.selectedPersonID !== null && narrow}
-    <DetailDrawer title="Person detail" ariaLabel="Person detail" onclose={() => void closeDetail()}>
-      {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} {onOpenRelationship} {onReviewFacts} {onConfigureVisualSearch} />{/if}
-    </DetailDrawer>
-  {/if}
 </main>
 
 {#if confirmBulkDelete}
@@ -391,7 +382,5 @@
   .filter-chips :global(.chip) { border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
-  .directory-content.has-detail { grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr); gap: var(--space-4); }
-  .detail-pane { border-left: 1px solid var(--border-default); min-width: 0; min-height: 0; overflow: auto; }
   .promotion-error { padding: var(--space-3); background: var(--bg-inset); color: var(--text-secondary); }
 </style>

@@ -19,7 +19,6 @@
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import { relationshipMeetingScope } from '../../meetings/scopes';
   import type { APIClient } from '../../api/client';
-  import { listPersonAttributes } from '../../api/generated/api/api';
   import type { ExplorePredicate, FileMIMEFamily, FileSearchSort, PersonFileDirection } from '../../explore/models';
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import type { RelationshipsController } from '../../relationships/controller.svelte';
@@ -577,7 +576,6 @@
                   {client}
                   {onOpenDirectory}
                   {onOpenDirectoryPerson}
-                  loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, { ...client })).data?.attributes ?? []}
                   {onAnnounce}
                   capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
                   onReconcilePersonMerge={(context) => controller.reconcilePersonMerge(context)}
