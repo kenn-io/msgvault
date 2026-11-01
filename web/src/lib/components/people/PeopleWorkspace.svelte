@@ -21,8 +21,8 @@
   import type { ComponentProps } from 'svelte';
 
   type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChanged' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
-  let { reviews, onDuplicatesChanged, directory, urlState, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
-    PageProps & { reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
+  let { reviews, onDuplicatesChanged, directory, urlState, restorationEpoch = 0, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
+    PageProps & { reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; restorationEpoch?: number; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
   const query = $derived(urlState.identityQuery ?? '');
   const controller = $derived(page.controller);
@@ -59,6 +59,7 @@
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
   const soloPerson = $derived(urlState.directoryPersonID);
   const predicateKey = $derived(JSON.stringify(page.predicate));
+  let appliedRestorationEpoch = untrack(() => restorationEpoch);
   $effect(() => {
     controller.facet = facet; controller.showAll = showAll; controller.query = query;
     controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'last_contact_asc' ? { field: 'latest_at', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
@@ -68,7 +69,7 @@
   $effect(() => {
     if (!directoryMode || urlState.peopleDuplicates) return;
     const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'last_contact_asc' ? 'last_contact_asc' : sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
-    untrack(() => directory.applyURLState(filters, false, false));
+    untrack(() => directory.applyURLState(filters, appliedRestorationEpoch !== (appliedRestorationEpoch = restorationEpoch), false));
   });
   $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
   onMount(() => {

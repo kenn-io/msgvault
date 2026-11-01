@@ -2989,3 +2989,31 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
     expect(writes).toHaveLength(0);
   } finally { rendered.unmount(); state.destroy(); }
 });
+
+it('refreshes Saved rows when browser Back restores unchanged filters', async () => {
+  let synced = false;
+  const saved = () => ({ ...person(7, 1, []), display_name: synced ? 'After sync' : 'Before sync', organizations: [], categories: [], contact_state: 'active' });
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/people/directory')) return Response.json({ people: [saved()] });
+    if (path.endsWith('/people/7')) return Response.json(saved(), { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  window.history.replaceState(null, '', '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true })));
+  const state = new ExploreState(window);
+  const view = render(AppShell, { client, state });
+  try {
+    const grid = await screen.findByRole('grid', { name: 'People results' });
+    await fireEvent.click(await within(grid).findByText('Before sync'));
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
+    synced = true;
+    const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await restored;
+    await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
+    expect(await within(grid).findByText('After sync')).toBeDefined();
+    expect(within(grid).queryByText('Before sync')).toBeNull();
+  } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
+});

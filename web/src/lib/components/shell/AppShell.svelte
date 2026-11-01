@@ -1273,6 +1273,7 @@
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
           urlState={exploreState.current}
+          restorationEpoch={exploreState.restorationEpoch}
           onNavigate={commitNavigation}
           onReplaceNavigation={replaceCommittedNavigation}
           onDraftNavigation={replaceCommittedDraft}
