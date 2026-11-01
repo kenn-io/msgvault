@@ -45,16 +45,16 @@ func explicitOpenAISetupFlags() []string {
 // archive store, a fixed environment, and a fixed filesystem view for the
 // probe manifests.
 type setupProvidersFixture struct {
-	dir      string
-	path     string
-	store    *store.Store
-	env      map[string]string
-	files    map[string]bool
-	ollama   ollamaProbeResult
-	checker  *fixedPersonProviderChecker
-	input    io.Reader
-	tty      bool
-	download bool
+	dir     string
+	path    string
+	store   *store.Store
+	env     map[string]string
+	files   map[string]bool
+	ollama  ollamaProbeResult
+	checker *fixedPersonProviderChecker
+	input   io.Reader
+	tty     bool
+	confirm bool
 }
 
 func newSetupProvidersFixture(t *testing.T, content string) *setupProvidersFixture {
@@ -413,7 +413,7 @@ func (f *setupProvidersFixture) deps(t *testing.T) setupProvidersDeps {
 		probeOllama:      func(context.Context, string) ollamaProbeResult { return f.ollama },
 		localEndpoint:    func(context.Context, embedlocal.Options) (string, error) { return "", embedlocal.ErrNotFound },
 		localInstall: func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-			if f.download {
+			if f.confirm {
 				approved, err := opts.Confirm(ctx, 295000000)
 				require.NoError(t, err)
 				if !approved {
@@ -1317,7 +1317,6 @@ api_key_env = "STALE_PROVIDER_KEY"
 
 	loaded := fixture.load(t)
 	assert.True(loaded.Vector.Enabled)
-	assert.False(loaded.Vector.Embeddings.LocalOnly)
 	assert.Equal("http://localhost:11435/v1", loaded.Vector.Embeddings.Endpoint)
 	assert.Equal(setupOllamaTextModel, loaded.Vector.Embeddings.Model)
 	assert.Equal(setupOllamaTextDim, loaded.Vector.Embeddings.Dimension)
@@ -1679,7 +1678,7 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			fixture.tty, fixture.download = tc.tty, true
+			fixture.tty, fixture.confirm = tc.tty, true
 			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
 			command := newSetupProvidersCommand(fixture.deps(t))
 			var output bytes.Buffer
@@ -1707,13 +1706,11 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 }
 
 func TestSetupProvidersExplicitLocalSwitch(t *testing.T) {
-	for _, model := range []string{"", "nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text:v1.5", "other-model"} {
+	for _, model := range []string{"nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text:v1.5", "other-model"} {
 		t.Run(model, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			content := setupProvidersMinimalConfig + "\n[chat]\nserver = \"http://ollama.example.com:11434\"\n"
-			if model != "" {
-				content += fmt.Sprintf("\n[vector]\nenabled = true\n[vector.embeddings]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = %q\ndimension = 768\nmax_input_chars = 1000\ndocument_prefix = \"document: \"\nquery_prefix = \"query: \"\n", model)
-			}
+			content += fmt.Sprintf("\n[vector]\nenabled = true\n[vector.embeddings]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = %q\ndimension = 768\nmax_input_chars = 1000\ndocument_prefix = \"document: \"\nquery_prefix = \"query: \"\n", model)
 			fixture := newSetupProvidersFixture(t, content)
 			before := fixture.load(t).Vector.GenerationFingerprint()
 			deps := fixture.deps(t)

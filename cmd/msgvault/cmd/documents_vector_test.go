@@ -744,7 +744,7 @@ func TestDocumentVectorConfirmationPrecedesStore(t *testing.T) {
 
 func TestEmbeddingConsentDestinationMode(t *testing.T) {
 	for _, local := range []bool{false, true} {
-		t.Run(fmt.Sprint(local), func(t *testing.T) {
+		t.Run(strconv.FormatBool(local), func(t *testing.T) {
 			fixture, spec, ctx := documentVectorCommandFixture(t)
 			state := invocationFromContext(ctx)
 			state.cfg.Vector.People.RetentionPosture, state.cfg.Vector.People.TrainingPosture = setupPostureDeclared, setupPostureDeclared
