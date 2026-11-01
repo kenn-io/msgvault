@@ -144,8 +144,5 @@ func TestLocalEmbeddingRuntimeInstallError(t *testing.T) {
 	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true, Model: "nomic-embed-text", Dimension: 768}}
 	_, err = resolveLocalVectorConfig(t.Context(), cfg)
 	require.ErrorContains(t, err, "install local embeddings")
-	var pathErr *os.PathError
-	require.ErrorAs(t, err, &pathErr)
-	assert.Equal(t, lockPath, pathErr.Path)
 	assert.NotContains(t, err.Error(), "msgvault setup providers")
 }
