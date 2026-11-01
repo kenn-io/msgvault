@@ -124,9 +124,9 @@ describe('meeting archive reader navigation', () => {
       expect(pendingRequest.signal.aborted).toBe(false);
       finish();
       await waitFor(() => expect(state.current.selectedRow).toBe('archive-meeting:42'));
-      if (!close) state.closeOperationHistory();
       const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
       expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
+      if (!close) expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeDefined();
       expect(requests.filter(request => new URL(request.url).pathname.endsWith('/messages/42'))).toHaveLength(1);
     } finally {
       finish?.();
