@@ -3620,6 +3620,8 @@ Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets a
 
 All filters intersect. `%`, `_`, and backslash in `--address` are ordinary characters. Address lookup includes archived aliases on currently bound participants and current curated contact points, excluding superseded values and unpromoted participants. Postal addresses are excluded. Curated display names stay unchanged, including cleared names. An older daemon that cannot apply the address filter reports an upgrade error.
 
+Sparse or no-match address-only lookups can scan the full saved directory. Remote PostgreSQL connections can add network latency to these database round trips. Combine `--query` with `--address` when you know a name or organization to narrow the candidates first.
+
 Human output shows `ID`, `DISPLAY NAME`, and `LAST CONTACT` in daemon order. Timestamps use UTC RFC3339 at seconds precision; JSON preserves fractional seconds. Missing display names and timestamps show `-`. A page with more results prints `Next cursor`. Pass that value unchanged to `--cursor` and repeat the same query, address, bounds, and sort to continue.
 
 JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, revision, `vcard_uid`, and `carddav_bindings`. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.

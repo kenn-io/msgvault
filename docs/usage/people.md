@@ -185,6 +185,8 @@ msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 
 
 Combine flags to narrow results, for example `person directory --query Alex --address example.test`. Address filtering requires an up-to-date daemon; the CLI reports an upgrade error if the selected daemon cannot apply it. Lookup does not create profiles or change identity links.
 
+Address-only lookups can scan all saved people when matches are sparse or absent. A remote PostgreSQL database can make these database round trips slower. Combine `--query` with `--address` when you know a name or organization to narrow the candidates first.
+
 `--last-contact-after` and `--last-contact-before` are inclusive. Both accept `YYYY-MM-DD` or RFC3339 timestamps with offsets and fractional seconds. A date alone means midnight UTC, so an upper bound of `2026-07-01` includes the start of that day. The default sort is `last_contact_desc`. Use `last_contact_asc` for oldest contact first or `name` for name order.
 
 Drafts and unsent messages don't set last contact or cadence.

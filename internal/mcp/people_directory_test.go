@@ -55,14 +55,16 @@ func TestMCPListDirectoryPeopleForwardsQueryAndReturnsRows(t *testing.T) {
 	}}
 	result := rawCallTool(t, directoryToolOptions(backend), ToolListDirectoryPeople, map[string]any{
 		"query": "Alice", "cursor": "opaque/cursor+bytes", "limit": 7,
-		"sort": "last_contact_asc", "last_contact_after": after.Format(time.RFC3339Nano),
+		"address": `ÉCOLE+%_\@example.test`,
+		"sort":    "last_contact_asc", "last_contact_after": after.Format(time.RFC3339Nano),
 		"last_contact_before": before.Format(time.RFC3339Nano), "contact_state": "active",
 		"category": "friend", "organization": "Example Org", "primary_channel": "chat",
 	})
 	assert.NotEqual(true, result["isError"], "result: %#v", result)
 	assert.Equal(store.DirectoryPeopleQuery{
 		Query: "Alice", Cursor: "opaque/cursor+bytes", Limit: 7,
-		Sort: store.DirectoryPeopleSortLastContactAsc, LastContactAfter: &after,
+		Address: `ÉCOLE+%_\@example.test`,
+		Sort:    store.DirectoryPeopleSortLastContactAsc, LastContactAfter: &after,
 		LastContactBefore: &before, ContactState: "active", Category: "friend",
 		Organization: "Example Org", PrimaryChannel: "chat",
 	}, backend.query)

@@ -25,6 +25,7 @@ func listDirectoryPeopleDefinition(_ *handlers) toolDefinition {
 		"List durable people from the Directory, ordered by name or last contact. Search observed contacts separately with search_people.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:          stringSchema("Optional lexical query over durable person fields"),
+			"address":             stringSchema("Optional literal case-insensitive address or identifier substring"),
 			toolArgCursor:         stringSchema("Opaque cursor from the previous list_directory_people response"),
 			toolArgLimit:          nonNegativeIntegerSchema("Maximum rows to return (default 50, max 100)", store.DefaultDirectoryPeopleLimit),
 			"sort":                sort,
@@ -64,6 +65,7 @@ func (h *handlers) listDirectoryPeople(ctx context.Context, req toolRequest) (*t
 
 	query := store.DirectoryPeopleQuery{
 		Query:             stringArgument(args, toolArgQuery),
+		Address:           stringArgument(args, "address"),
 		Cursor:            stringArgument(args, toolArgCursor),
 		Limit:             limitArg(args, toolArgLimit, store.DefaultDirectoryPeopleLimit),
 		Sort:              stringArgument(args, "sort"),
