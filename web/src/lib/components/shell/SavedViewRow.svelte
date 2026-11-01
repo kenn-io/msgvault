@@ -80,6 +80,7 @@
 
   async function commitRename(): Promise<void> {
     if (!renaming || renameBusy) return;
+    const restoreFocus = document.activeElement === input;
     renameBusy = true;
     const failure = await onRename(renameView, draft);
     renameBusy = false;
@@ -87,9 +88,8 @@
       error = failure;
       return;
     }
-    const restoreFocus = document.activeElement === input;
     renaming = false;
-    if (restoreFocus) await focusOpen();
+    if (restoreFocus && (document.activeElement === input || document.activeElement === document.body)) await focusOpen();
   }
 
   async function cancelRename(): Promise<void> {
