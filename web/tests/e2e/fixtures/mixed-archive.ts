@@ -468,6 +468,9 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
             label: 'works with',
           },
           {
+            id: 'relationship:32', kind: 'relationship', source_node_id: 'person:42', target_node_id: 'person:43', relationship_type_slug: 'mentor', label: 'mentors',
+          },
+          {
             id: 'employment:41',
             kind: 'employment',
             source_node_id: 'person:43',

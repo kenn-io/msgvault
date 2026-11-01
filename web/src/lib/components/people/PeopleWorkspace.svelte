@@ -203,8 +203,6 @@
 {#snippet person()}
   {#if selectedProfileID !== null && directory.selectedPersonID !== selectedProfileID}
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
-  {:else if selectedProfileID !== null && !directory.profile?.person && directory.detail?.errors.person}
-    <section class="solo"><p role="alert">{directory.detail.errors.person}</p><Button label="Retry" onclick={() => void directory.loadSelection(selectedProfileID)} /><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={() => { close(); void controller.loadList(page.predicate); }}
@@ -214,7 +212,7 @@
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
-  <div class="heading"><PageHeader title="People">{#snippet actions()}<Button label="Directory" onclick={() => onNavigate({ workspace: 'directory' })} /><Button label="Reviews" onclick={() => onNavigate({ workspace: 'directory_review' })} />{/snippet}</PageHeader></div>
+  <div class="heading"><PageHeader title="People">{#snippet actions()}<Button label="Directory" onclick={() => onNavigate({ workspace: 'directory', directoryPersonID: null, relationshipTarget: null })} /><Button label="Reviews" onclick={() => onNavigate({ workspace: 'directory_review' })} />{/snippet}</PageHeader></div>
   <div class="body">
     {#if narrow}{#if hasPerson}<div class="solo-page" tabindex="-1">{@render person()}</div>{:else}{@render list()}{/if}
     {:else}<SplitPane ariaLabel="Resize people list" storageKey="msgvault.people.list-pane.size" initialSize={380} minPrimary={300} maxPrimary={480}>
