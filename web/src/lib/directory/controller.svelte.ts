@@ -4,10 +4,8 @@ import {
   getPersonProfile as generatedGetPersonProfile,
   getPersonStructuredProfile as generatedGetPersonStructuredProfile,
   listDirectoryPeople as generatedListDirectoryPeople,
-  listPersonActivityDays as generatedListPersonActivityDays,
   listPersonAttributes as generatedListPersonAttributes,
 } from '../api/generated/api/api';
-import { searchPersonFiles as generatedSearchPersonFiles } from '../api/generated/exploration/exploration';
 import type { APIClient } from '../api/client';
 import type {
   DirectoryPerson,
@@ -360,7 +358,7 @@ export class DirectoryController {
     if (shouldCommit) this.commit({ directoryPersonID: personID }, 'push');
     const requestOptions = { ...this.client, signal: controller.signal };
     try {
-      const [person, structuredProfile, attributes, contactState, activity, files] = await Promise.all([
+      const [person, structuredProfile, attributes, contactState] = await Promise.all([
         settleSection(generatedGetPersonProfile({ id: personID }, requestOptions)),
         settleSection(generatedGetPersonStructuredProfile({ id: personID }, requestOptions)),
         settleSection(
@@ -373,34 +371,6 @@ export class DirectoryController {
           ),
         ),
         settleSection(generatedGetPersonContactState({ id: personID }, requestOptions)),
-        settleSection(
-          generatedListPersonActivityDays(
-            { id: personID },
-            { limit: 1 },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
-        settleSection(
-          generatedSearchPersonFiles(
-            { id: personID },
-            {
-              predicate: {
-                filters: [],
-                grouping: [],
-                presentation: 'files',
-                sort: [{ field: 'occurred_at', direction: 'desc' }],
-                limit: 1,
-              },
-              sort: { field: 'occurred_at', direction: 'desc' },
-              limit: 1,
-            },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
       ]);
       if (controller.signal.aborted || generation !== this.detailGeneration) return;
       if (!person.data && person.response?.status === 404) {
@@ -416,8 +386,6 @@ export class DirectoryController {
       applySection(bundle, 'structuredProfile', structuredProfile);
       applySection(bundle, 'attributes', attributes);
       applySection(bundle, 'contactState', contactState);
-      applySection(bundle, 'activity', activity);
-      applySection(bundle, 'files', files);
       this.detail = bundle;
       let profileController: DirectoryProfileController;
       profileController = new DirectoryProfileController(this.client, personID, bundle, {
