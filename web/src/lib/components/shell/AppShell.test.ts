@@ -1352,15 +1352,13 @@ describe('AppShell', () => {
         id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active',
         categories: [], organizations: []
       }] });
-      if (path === '/api/v1/people/7') return Response.json({
-        id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [42, 19], vcard_uid: '',
-        created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-      });
+      const one = { id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [42, 19], vcard_uid: '', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+      if (path === '/api/v1/people/7') return Response.json(one);
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
-        person_id: 7, cadence_status: 'current', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
+        person_id: 7, cadence_status: 'ok', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
       });
-      if (/\/api\/v1\/participants\/(42|19)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic Person', profile: { id: 7 }, identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: '2026-08-01T00:00:00Z', last_at: '2026-08-01T00:00:00Z' });
+      if (/\/api\/v1\/participants\/(42|19)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic Person', profile: one, identifiers: [], activity_count: 0, file_count: 0, source_counts: [], first_at: '2026-08-01T00:00:00Z', last_at: '2026-08-01T00:00:00Z' });
       if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
       if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
       return Response.json(exploreResponse());
@@ -1514,7 +1512,7 @@ describe('AppShell', () => {
       const person = { id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
       if (path === '/api/v1/people/7') return Response.json(person);
       if (path === '/api/v1/people/7/profile') return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
-      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'ok', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false });
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
