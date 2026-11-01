@@ -37,7 +37,7 @@
   // Each history entry keeps its own day: Back restores that entry's day, even for the same target.
   $effect(() => { void page.target; untrack(() => selectedDate = relationshipDayHistory(window.history.state, 'relationships', page.target)); });
   $effect(() => { const target = untrack(() => page.target); window.history.replaceState({ ...window.history.state, [RELATIONSHIP_DAY_HISTORY_KEY]: selectedDate && target ? { target, date: selectedDate } : undefined }, ''); });
-  $effect(() => { void target; untrack(() => { domainYear = null; details = soloPerson !== null && !page.filesOpen; filenameQuery = ''; mimeFamilies = []; }); });
+  $effect(() => { void (soloPerson ?? target); untrack(() => { domainYear = null; details = soloPerson !== null && !page.filesOpen; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
@@ -102,7 +102,7 @@
     if (id === null || directory.selectedPersonID !== id || !person) return;
     const targets = person.participant_ids.map((participant) => `cluster:${participant}`);
     const next = targets.includes(page.target ?? '') ? page.target : targets[0] ?? null;
-    if (next !== page.target && !controller.detailMissing) onReplaceNavigation({ relationshipTarget: next, relationshipFiles: false });
+    if (next !== page.target && !controller.detailMissing) onReplaceNavigation({ relationshipTarget: next });
   });
   async function open(key: string): Promise<void> {
     onNavigate({ directoryPersonID: key.startsWith('person:') ? Number(key.slice(7)) : null, relationshipTarget: key.startsWith('person:') ? null : key, relationshipFiles: false });

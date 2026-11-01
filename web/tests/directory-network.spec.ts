@@ -49,6 +49,7 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await expect(peer).toBeVisible();
   await expect(graph).not.toContainText('Message-only Contact');
 
+  await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   await page.getByRole('button', { name: 'Open organization Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Edit Shared Organization' });
   await expect(organizationEditor).toBeVisible();
