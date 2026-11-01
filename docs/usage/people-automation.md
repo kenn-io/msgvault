@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-10-29"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -19,10 +19,11 @@ Two other features have separate controls:
 ## Choose people to maintain
 
 Create a [saved profile](/docs/usage/people/#promote-a-durable-person), then turn
-tracking on for that person:
+tracking on for that person. Both commands accept several person IDs:
 
 ```bash
 msgvault person track 7
+msgvault person track 7 12 31
 msgvault person untrack 7
 ```
 
@@ -48,13 +49,18 @@ may be out of date. While it rebuilds after a change to `[activity] timezone` or
 `max_direct_counterparts`, both ask you to retry once it finishes. Change the
 windows and thresholds in [`[people.tiers]`](/docs/configuration/#people-tiers).
 
-Preview changes nothing. `preview --json` lists the person IDs, and you track
-the ones you choose with `person track`:
+Preview changes nothing. Track the people you choose by passing their IDs to
+`person track`. To track everyone in tier 1 who is not tracked yet:
 
 ```bash
-msgvault person tiers preview --json | jq -r '.people[] | select(.tier == 1 and (.tracked | not)) | .person_id'
-msgvault person track 7
+msgvault person tiers preview --json \
+  | jq -r '.people[] | select(.tier == 1 and (.tracked | not)) | .person_id' \
+  | xargs msgvault person track
 ```
+
+`person track` checks every ID before it changes anything, then tracks each
+person in order. It stops at the first person the daemon rejects, such as a
+deleted profile; the people before it stay tracked.
 
 msgvault keeps no record of `person untrack`, so someone you untracked earlier
 shows as untracked here. Read the list and pick the IDs yourself.
