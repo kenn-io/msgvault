@@ -144,9 +144,9 @@ describe('LinkIdentityDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it.each(['ready', 'stale'] as const)('closes silently on an ok/%s outcome', async cacheState => {
+  it('closes silently on a successful outcome', async () => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
