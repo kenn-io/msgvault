@@ -197,7 +197,7 @@ describe('TaskLinks', () => {
   });
 
   it.each(['stale', 'unavailable', 'incompatible', 'disabled', 'not_found', 'wrong_project', 'authentication_required'])(
-    'keeps mutations disabled when the index state is %s even with a ready integration',
+    'keeps cached tasks visible but disables mutations when the index state is %s even with a ready integration',
     async (state) => {
       const view = render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
@@ -206,7 +206,9 @@ describe('TaskLinks', () => {
           : Response.json({ state, complete: false, reason: state, tasks: state === 'authentication_required' ? [] : [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
       })), mode: 'list', messageId: 42, title: 'Synthetic' });
 
-      await screen.findByRole('alert');
+      const alert = await screen.findByRole('alert');
+      if (state === 'unavailable') expect(alert.textContent).toContain('The task service is unavailable; safe cached links may be shown.');
+      expect(screen.queryByText('Cached task') !== null).toBe(state !== 'authentication_required');
       await view.rerender({ mode: 'add' });
       expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
       expect(screen.queryByRole('radio', { name: 'Existing' })).toBeNull();
