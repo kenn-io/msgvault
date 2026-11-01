@@ -36,6 +36,48 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   return { controller, writes, view };
 }
 
+it('blocks attribute additions after a failed read and retries before editing the unseen value', async () => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
+  let reads = 0;
+  const writes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') {
+      writes.push(request.clone());
+      return Response.json({ value: { ...current, id: 42, value: { type: 'text', text: 'Updated note' } }, superseded: { ...current, superseded_at: when } });
+    }
+    if (path.endsWith('/attributes')) {
+      reads += 1;
+      return reads === 1 ? Response.json({ message: 'Attributes unavailable' }, { status: 503 }) : Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
+    }
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
+    if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r1"' } });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
+    if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: { attributes: 'Attributes unavailable' } });
+  const view = render(PersonFields, { controller });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
+    expect(writes).toHaveLength(0);
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Attributes unavailable'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
+    expect(await screen.findByText('Existing note')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Updated note' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    expect(await screen.findByText('Updated note')).toBeDefined();
+    await expect(writes[0]!.json()).resolves.toMatchObject({ expected_value_id: 41, value: { type: 'text', text: 'Updated note' } });
+  } finally { view.unmount(); controller.destroy(); }
+});
+
 it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];

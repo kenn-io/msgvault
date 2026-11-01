@@ -85,7 +85,7 @@ export function supportedAttribute(definition: AttributeDefinition): boolean {
 export function canAddAttribute(field: JoinedAttribute, controller: DirectoryProfileController, revealed: Record<string, boolean>): boolean {
     const definition = field.definition;
     return (
-      definition.is_active &&
+      controller.attributes !== undefined && controller.attributesError === null && definition.is_active &&
       definition.api_mutable &&
       definition.ui_creatable &&
       supportedAttribute(definition) &&
