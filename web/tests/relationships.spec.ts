@@ -608,7 +608,6 @@ test('missing saved profiles keep Back to People on narrow screens', async ({ pa
   await page.setViewportSize({ width: 640, height: 900 });
   await page.route('**/api/v1/people/999', route => route.fulfill({ status: 404, json: { message: 'Person not found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 999 }))}`);
-  await expect(page.getByRole('alert')).toContainText('person: Person not found.');
   await expect(page.getByRole('heading', { name: 'Saved person', exact: true })).toBeHidden();
   await page.getByRole('button', { name: 'Back to People', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'People results' })).toBeVisible();

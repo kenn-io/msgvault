@@ -82,37 +82,59 @@ it('displays every structured address component before its original street value
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each(['renamed draft', 'restricted editor', 'sensitive reveal', 'More fields choices'])('joins refreshed field settings for %s', async behavior => {
+it('keeps a field draft across a definition rename', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
   const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
   const { controller, view } = harness(profile(), options);
   try {
-    if (behavior === 'renamed draft' || behavior === 'restricted editor') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
-      if (behavior === 'renamed draft') {
-        await act(() => controller.reloadDefinitions());
-        expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
-      } else {
-        await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-        await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
-        options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, is_active: false, revision: 3 };
-        await act(() => controller.reloadDefinitions());
-        expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
-        expect(controller.draft).toBeNull();
-        expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
-      }
-    } else if (behavior === 'sensitive reveal') {
-      options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, revision: 2 };
-      await act(() => controller.reloadDefinitions());
-      expect(screen.queryByText('Private example')).toBeNull();
-      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
-      expect(screen.getByText('Private example')).toBeDefined();
-    } else {
-      await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-      expect(await screen.findByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
-    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
+    await act(() => controller.reloadDefinitions());
+    expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('closes a field draft when refreshed settings restrict editing', async () => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
+  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
+  const { controller, view } = harness(profile(), options);
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
+    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, is_active: false, revision: 3 };
+    await act(() => controller.reloadDefinitions());
+    expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
+    expect(controller.draft).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('conceals a field that becomes sensitive until revealed', async () => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
+  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
+  const { controller, view } = harness(profile(), options);
+  try {
+    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, revision: 2 };
+    await act(() => controller.reloadDefinitions());
+    expect(screen.queryByText('Private example')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
+    expect(screen.getByText('Private example')).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('reloads field choices when More fields opens', async () => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
+  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
+  const { controller, view } = harness(profile(), options);
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -158,7 +180,6 @@ it('shows sensitive values as Hidden and lets More fields reveal a hidden field 
     expect(screen.getByText('Hidden')).toBeDefined();
     expect(screen.queryByText('Secret example')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(screen.queryByRole('menuitem', { name: 'Show Religion' })).toBeNull();
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
     expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }

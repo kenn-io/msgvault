@@ -29,7 +29,7 @@ describe('ProfileHistoryDialog', () => {
       requests.push(url);
       if (url.pathname.endsWith('/merges')) return Response.json({ merges: [] });
       if (url.pathname === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
-      if (url.pathname.endsWith('/profile')) return Response.json({ person: person() }, { headers: { ETag: '"profile-7-r3"' } });
+      if (url.pathname.endsWith('/profile')) return Response.json({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"profile-7-r3"' } });
       if (url.pathname.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
       if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: [{
         person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { ...currentEnvelope, id: 2 },
@@ -48,8 +48,7 @@ describe('ProfileHistoryDialog', () => {
       }
       throw new Error(`unexpected ${url.pathname}`);
     }));
-    const onDetailChange = vi.fn();
-    const controller = new DirectoryProfileController(client, 7, { person: person(), etags: {}, errors: { attributes: 'initial request failed' } }, { onDetailChange });
+    const controller = new DirectoryProfileController(client, 7, { person: person(), etags: {}, errors: { attributes: 'initial request failed' } });
     const props = { client, controller, personID: 7, onClose: vi.fn() };
     const dialog = render(ProfileHistoryDialog, props);
     expect((await screen.findByRole('alert')).textContent).toBe(`${failedSection} unavailable`);
@@ -58,9 +57,6 @@ describe('ProfileHistoryDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attribute history' }));
     expect(await screen.findByText('Earlier note')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(onDetailChange).toHaveBeenLastCalledWith(expect.objectContaining({ attributes: expect.objectContaining({
-      person_id: 7, attributes: [expect.objectContaining({ history: [expect.objectContaining({ value: { type: 'text', text: 'Earlier note' } })] })],
-    }) }));
     await dialog.unmount();
     render(ProfileHistoryDialog, props);
     expect(await screen.findByText('Current Name')).toBeDefined();

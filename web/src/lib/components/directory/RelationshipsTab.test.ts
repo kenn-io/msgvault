@@ -90,33 +90,14 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('button', { name: 'Delete custom relationship type' })).toBeDefined();
   });
 
-  it('preserves the include-ended choice across explicit refreshes', async () => {
-    const includeEnded: string[] = [];
-    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/people/7/relationships') {
-        includeEnded.push(new URL(request.url).searchParams.get('include_ended') ?? '');
-        return includeEnded.length === 1
-          ? Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 })
-          : Response.json({ relationships: [] });
-      }
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }));
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
-    await waitFor(() => expect(includeEnded).toEqual(['true']));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Refresh relationships' }));
-
-    await waitFor(() => expect(includeEnded).toEqual(['true', 'true']));
-  });
-
   it('renders relationship loading, failure with retry, and empty states from real collection requests', async () => {
     let resolveFirst!: (response: Response) => void;
     let reads = 0;
+    const includeEnded: string[] = [];
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) !== '/api/v1/people/7/relationships') throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+      includeEnded.push(new URL(request.url).searchParams.get('include_ended') ?? '');
       reads += 1;
       if (reads === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
       return Response.json({ relationships: [] });
@@ -124,7 +105,8 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     expect(screen.queryByRole('button', { name: 'Refresh relationships' })).toBeNull();
-    void controller.refreshRelationships();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
+    expect(includeEnded).toEqual(['true']);
     expect((await screen.findByRole('status')).textContent).toContain('Loading relationships');
     resolveFirst(Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 }));
 
