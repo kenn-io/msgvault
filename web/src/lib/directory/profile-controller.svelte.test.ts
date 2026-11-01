@@ -57,17 +57,23 @@ describe('DirectoryProfileController', () => {
   });
 
   it('preserves structured drafts and a typed conflict until an explicit reload', async () => {
+    let attributesUnavailable = true;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'changed elsewhere' }, { status: 409 });
       if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"profile-7-r4"' } });
-      if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
+      if (pathOf(request).endsWith('/attributes')) return attributesUnavailable
+        ? Response.json({ message: 'attributes unavailable' }, { status: 503 })
+        : Response.json(attributes());
       if (pathOf(request) === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
       if (pathOf(request) === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: '2026-08-20T00:00:00Z', stale: false });
       throw new Error(`unexpected ${request.url}`);
     });
-    const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
+    const onDetailChange = vi.fn();
+    const initial = bundle();
+    initial.errors.contactState = 'initial contact state read failed';
+    const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, initial, { onDetailChange });
     const patch = { names: { add: [], supersede: [] } };
 
     await controller.patchProfile(patch);
@@ -78,11 +84,20 @@ describe('DirectoryProfileController', () => {
     expect(requests(fetchFn)).toHaveLength(1);
 
     await controller.reload();
-    expect(requests(fetchFn)).toHaveLength(6);
+    expect(controller.attributesError).toBe('attributes unavailable');
+    expect(onDetailChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      contactState: { person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: '2026-08-20T00:00:00Z', stale: false },
+      errors: {},
+    }));
     expect(controller.draft).toBeNull();
     expect(controller.conflict).toBeNull();
     expect(controller.structuredProfileETag).toBe('"profile-7-r4"');
     expect(controller.canWriteProfile).toBe(true);
+
+    attributesUnavailable = false;
+    await controller.reload();
+    expect(controller.attributesError).toBeNull();
+    expect(onDetailChange).toHaveBeenLastCalledWith(expect.objectContaining({ attributes: attributes() }));
   });
 
   it('retains the exact display-name draft on a missing precondition until reload', async () => {

@@ -310,10 +310,9 @@ for (const completionTarget of [
   await completionAction.focus();
   await expect(completionAction).toBeFocused();
   await page.keyboard.press('Enter');
-  // The source is already fresh; the controller split case also verifies its next field write.
-  if (completionTarget.id !== 7) await expect.poll(() => fixture.requests.filter((request) =>
+  await expect.poll(() => fixture.requests.filter((request) =>
     request.method === 'GET' && request.path === `/api/v1/people/${completionTarget.id}`).length)
-    .toBe(personGETsBefore + 1);
+    .toBe(personGETsBefore + (completionTarget.id === 7 ? 0 : 1));
   await expect(page.getByRole('dialog', { name: 'Profile history', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: completionTarget.heading })).toBeVisible();
 
