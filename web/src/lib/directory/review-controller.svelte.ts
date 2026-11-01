@@ -145,10 +145,10 @@ export class DirectoryReviewController {
   }
   async setIdentityState(identityState: IdentityReviewState): Promise<void> {
     if (this.identityState === identityState && this.initialized) return;
+    const generation = this.reviewContextGeneration;
     if (this.pending) await this.settleDecision();
-    this.identityState = identityState;
+    if (generation !== this.reviewContextGeneration) return;
     this.commit({ identityState });
-    this.initialized = true;
     this.resetIdentityContext(identityState);
     void this.loadIdentityPage(0, identityState);
   }

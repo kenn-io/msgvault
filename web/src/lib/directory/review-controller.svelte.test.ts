@@ -601,7 +601,7 @@ function queuedReview() {
     if (request.method === 'POST') { const response = await decision.promise; decided = true; return response; }
     const url = new URL(request.url);
     if (url.searchParams.get('state') === 'accepted,rejected') return page(decided ? [candidate(1, 'rejected')] : []);
-    return page([candidate(1)]);
+    return page([candidate(decided ? 2 : 1)]);
   }));
   return { controller, decision };
 }
@@ -616,6 +616,26 @@ it('waits for the staged decision before reading History', async () => {
     decision.resolve(Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
     await navigation;
     await vi.waitFor(() => expect(controller.rows[0]?.state).toBe('rejected'));
+  } finally { controller.destroy(); }
+});
+
+it('keeps restored To review after an older History choice finishes settling', async () => {
+  const { controller, decision } = queuedReview();
+  try {
+    await controller.loadIdentityPage();
+    await controller.queueDecision(controller.rows[0]!, 'reject');
+    const navigation = controller.setIdentityState('accepted');
+    await vi.waitFor(() => expect(controller.isDecisionPending(1)).toBe(true));
+
+    controller.applyURLState({ identityState: 'candidate' }, true);
+    await vi.waitFor(() => expect(controller.loading).toBe(false));
+    decision.resolve(Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
+    await navigation;
+    await vi.waitFor(() => expect(controller.loading).toBe(false));
+
+    expect(controller.identityState).toBe('candidate');
+    expect(controller.offset).toBe(0);
+    expect(controller.rows).toEqual([candidate(2)]);
   } finally { controller.destroy(); }
 });
 
