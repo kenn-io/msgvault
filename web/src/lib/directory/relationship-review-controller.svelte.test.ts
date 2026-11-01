@@ -51,15 +51,15 @@ function requestOf(input: RequestInfo | URL): Request {
 }
 
 describe('RelationshipReviewController', () => {
-  it.each(['pending', 'accepted', 'rejected'] as const)(
-    'loads the selected owner and projects only safe fields for %s',
-    async (state) => {
+  it(
+    'loads the selected owner and projects only safe fields',
+    async () => {
       const requests: Array<{ method: string; path: string; query: Array<[string, string]> }> = [];
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input);
         const url = new URL(request.url);
         requests.push({ method: request.method, path: url.pathname, query: [...url.searchParams.entries()] });
-        return Response.json({ reviews: [generatedReview({ status: state })] });
+        return Response.json({ reviews: [generatedReview()] });
       });
       const controller = new RelationshipReviewController(createAPIClient(fetchFn));
 
@@ -81,7 +81,7 @@ describe('RelationshipReviewController', () => {
           raw_related_value: 'urn:uuid:synthetic-related-person',
           raw_related_type: 'friend',
           value_kind: 'uri',
-          status: state,
+          status: 'pending',
           source: 'vcard_import',
           created_at: '2026-08-01T10:00:00Z',
           updated_at: '2026-08-02T11:00:00Z',

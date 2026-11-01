@@ -70,7 +70,6 @@
       {/if}
     </section>
 
-
   </article>
 </Card>
 

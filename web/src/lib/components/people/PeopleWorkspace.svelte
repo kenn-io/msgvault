@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, Modal, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
-  import { deletePerson, getPersonProfile } from '../../api/generated/api/api';
+  import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
@@ -98,8 +98,7 @@
   $effect(() => {
     if (narrow && activeKey) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
   });
-  const observed = $derived(controller.target === target ? controller.detail : null);
-  const selectedProfileID = $derived(soloPerson ?? (observed && 'identifiers' in observed ? (observed as PersonSummary).profile?.id ?? null : null));
+  const selectedProfileID = $derived(soloPerson ?? (controller.target === target && controller.detail && 'identifiers' in controller.detail ? (controller.detail as PersonSummary).profile?.id ?? null : null));
   $effect(() => {
     const id = selectedProfileID;
     if (id === null) void target;
@@ -142,13 +141,11 @@
   function loadMore(): void { if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
   async function deleteSelected(): Promise<void> {
     if (bulkPending) return;
-    const ids = [...selectedSaved];
     bulkPending = true;
     const deleted: number[] = [], failures: string[] = [];
-    for (const id of ids) {
+    for (const profile of directory.rows.filter(row => selectedSaved.includes(row.id))) {
+      const id = profile.id;
       try {
-        const profile = directory.rows.find(row => row.id === id) ?? (await getPersonProfile({ id }, page.client)).data;
-        if (!profile) { failures.push(`Person ${id}: Could not read current profile.`); continue; }
         const result = await deletePerson({ id }, { ...page.client, headers: { 'If-Match': `"person-${id}-r${profile.revision}"` } });
         if (result.response.status === 204) { deleted.push(id); selection.explicitKeys.delete(`person:${id}`); }
         else failures.push(`${profile.display_name || `Person ${id}`}: ${result.error?.message ?? 'Could not delete.'}`);

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { SavedView } from '../../api/generated/models';
-import { view } from './fixtures.test-support';
+import { pair, view } from './fixtures.test-support';
 import { ShellData } from './shell-data.svelte';
 
 interface Answers {
@@ -228,7 +228,7 @@ it('counts one waiting page and retains its badge after an offline read', async 
     const request = input instanceof Request ? input : new Request(input);
     queries.push(new URL(request.url).search);
     if (queries.length > 1) return Response.json({ error: 'unavailable' }, { status: 503 });
-    return Response.json({ candidates: Array.from({ length: count }, (_, id) => ({ id })) });
+    return Response.json({ candidates: Array.from({ length: count }, (_, id) => ({ ...pair, id })) });
   }));
   try {
     await data.refreshDuplicates();
@@ -247,7 +247,7 @@ it('keeps the post-decision badge when an earlier read completes late', async ()
     await vi.waitFor(() => expect(reads).toBe(1));
     await data.refreshDuplicates();
     expect(data.duplicateCount).toBe(0);
-    finish(Response.json({ candidates: [{ id: 17 }] }));
+    finish(Response.json({ candidates: [pair] }));
     await initial;
     expect(data.duplicateCount).toBe(0);
   } finally { data.stop(); }
