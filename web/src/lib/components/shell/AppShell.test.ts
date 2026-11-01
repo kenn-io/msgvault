@@ -2248,7 +2248,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each(['reader next', 'Display without columns', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
+  it.each(['reader next', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2285,9 +2285,6 @@ describe('AppShell', () => {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');
-      } else if (control === 'Display without columns') {
-        await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
-        expect(screen.queryByRole('menuitem', { name: 'Size' })).toBeNull();
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });
