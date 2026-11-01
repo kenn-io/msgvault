@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { tick } from 'svelte';
-import { tick } from 'svelte';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import KataEvidenceDialog from './KataEvidenceDialog.svelte';
