@@ -619,7 +619,10 @@
             {settings}
             {cardDAVRequest}
             {onCardDAVRequestConsumed}
-            onSettingsRefresh={() => loadSettings(true)}
+            onSettingsRefresh={async () => {
+              await loadSettings(true);
+              onStatusChange();
+            }}
           />
         {:else}
           {@render blocks(layout.blocks)}

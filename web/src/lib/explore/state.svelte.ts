@@ -145,6 +145,10 @@ const OPERATION_FILTER_FIELDS = [
   'operationStartedBefore'
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 
+const OPERATION_HISTORY_FIELDS: ReadonlySet<keyof ExploreURLState> = new Set([
+  ...OPERATION_FILTER_FIELDS, 'operationRunID', 'operationStatus'
+]);
+
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
   workspace: 'everything',
@@ -649,7 +653,7 @@ export class ExploreState {
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
     if (this.current.operationHistory && next.operationHistory &&
       (Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
-        [...OPERATION_FILTER_FIELDS, 'operationRunID', 'operationStatus'].includes(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
+        OPERATION_HISTORY_FIELDS.has(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
       this.current.operationLane = next.operationLane;
       this.current.operationKind = next.operationKind;
       this.current.operationState = next.operationState;
