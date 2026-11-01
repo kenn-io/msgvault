@@ -224,7 +224,7 @@ func TestMCPPeopleCapabilityAndWritePolicy(t *testing.T) {
 		assert.Contains(writable, name)
 	}
 	assert.Equal([]string{"cursor", "limit", "query"}, toolPropertyNames(t, writable[ToolSearchPeople]))
-	assert.Equal([]string{"category", "contact_state", "cursor", "last_contact_after", "last_contact_before", "limit", "organization", "primary_channel", "query", "sort"}, toolPropertyNames(t, writable[ToolListDirectoryPeople]))
+	assert.Equal([]string{"address", "category", "contact_state", "cursor", "last_contact_after", "last_contact_before", "limit", "organization", "primary_channel", "query", "sort"}, toolPropertyNames(t, writable[ToolListDirectoryPeople]))
 	assert.Equal([]any{"name", "last_contact_desc", "last_contact_asc"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "sort")["enum"])
 	assert.Equal([]any{"active", "inactive"}, toolInputProperty(t, writable[ToolListDirectoryPeople], "contact_state")["enum"])
 	assert.InDelta(float64(store.DefaultDirectoryPeopleLimit), toolInputProperty(t, writable[ToolListDirectoryPeople], "limit")["default"], 0)

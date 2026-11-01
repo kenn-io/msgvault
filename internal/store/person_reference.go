@@ -21,7 +21,8 @@ type PersonCandidate struct {
 // activityParticipantMatchSQL mirrors the projector's sender, explicit-envelope
 // and recipient-less room fallback population. Expressions are trusted SQL.
 func activityParticipantMatchSQL(m, participant string) string {
-	return `(` + m + `.sender_id=` + participant + ` OR EXISTS(SELECT 1 FROM message_recipients subject_mr WHERE subject_mr.message_id=` + m + `.id AND subject_mr.participant_id=` + participant + `) OR (
+	return `((` + m + `.sender_id=` + participant + ` AND NOT EXISTS(
+ SELECT 1 FROM message_recipients subject_from WHERE subject_from.message_id=` + m + `.id AND subject_from.recipient_type='from')) OR EXISTS(SELECT 1 FROM message_recipients subject_mr WHERE subject_mr.message_id=` + m + `.id AND subject_mr.participant_id=` + participant + `) OR (
  NOT EXISTS(SELECT 1 FROM message_recipients subject_explicit WHERE subject_explicit.message_id=` + m + `.id AND subject_explicit.recipient_type IN ('to','cc','bcc'))
  AND EXISTS(SELECT 1 FROM conversation_participants subject_cp WHERE subject_cp.conversation_id=` + m + `.conversation_id AND subject_cp.participant_id=` + participant + `)))`
 }

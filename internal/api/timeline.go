@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type timelineSourceProvider interface {
 // TimelineAmbiguityResponse lets a caller choose a person without guessing.
 type TimelineAmbiguityResponse struct {
 	ErrorResponse
+
 	Candidates []timeline.Candidate `json:"candidates"`
 }
 
@@ -97,7 +99,7 @@ func parseTimelineRequest(rawQuery string) (timeline.Request, error) {
 		}
 	}
 	if q.Has("tiers") {
-		for _, value := range strings.Split(q.Get("tiers"), ",") {
+		for value := range strings.SplitSeq(q.Get("tiers"), ",") {
 			tier, err := strconv.Atoi(value)
 			if err != nil {
 				return req, timeline.ErrInvalidRequest
@@ -172,18 +174,17 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
+	// #nosec G705 -- Encoded JSON or Markdown is served as non-HTML with nosniff.
 	_, _ = w.Write(data)
 }
 
 func timelineOpenTools(grant agentgrant.Grant) []string {
 	tools := []string{}
 	for _, name := range []string{"get_message", "list_messages", "get_calendar_event", "get_meeting_context"} {
-		for _, permission := range agentgrant.ReadToolPermissions(name) {
-			if grant.HasPermission(permission) {
-				tools = append(tools, name)
-				break
-			}
+		if slices.ContainsFunc(agentgrant.ReadToolPermissions(name), grant.HasPermission) {
+			tools = append(tools, name)
 		}
 	}
 	return tools
@@ -193,7 +194,8 @@ func (s *Server) writeTimelineError(w http.ResponseWriter, err error) {
 	var ambiguous *timeline.ErrAmbiguousReference
 	switch {
 	case errors.As(err, &ambiguous):
-		writeJSON(w, http.StatusConflict, TimelineAmbiguityResponse{ErrorResponse: ErrorResponse{Error: "ambiguous_reference", Message: "Choose a person from candidates"}, Candidates: ambiguous.Candidates})
+		detail := ErrorResponse{Error: "ambiguous_reference", Message: "Choose a person from candidates"}
+		writeJSON(w, http.StatusConflict, TimelineAmbiguityResponse{ErrorResponse: detail, Candidates: ambiguous.Candidates})
 	case errors.Is(err, timeline.ErrCursorExpired):
 		writeError(w, http.StatusBadRequest, "cursor_expired", "Timeline continuation expired; retry the original request")
 	case errors.Is(err, timeline.ErrInvalidRequest), errors.Is(err, timeline.ErrWindowTooLarge), errors.Is(err, timeline.ErrBudgetTooSmall), errors.Is(err, timeline.ErrUnknownReference), errors.Is(err, timeline.ErrUndatedAnchor):

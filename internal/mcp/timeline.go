@@ -10,7 +10,7 @@ import (
 )
 
 type TimelineBackend interface {
-	Timeline(context.Context, timeline.Request) (*timeline.Timeline, string, error)
+	Timeline(ctx context.Context, req timeline.Request) (*timeline.Timeline, string, error)
 }
 
 const timelineConventions = "\n\n## msgvault conventions\n" +
@@ -76,16 +76,15 @@ func (h *handlers) timeline(ctx context.Context, request toolRequest) (*toolResu
 	if tiers, ok := args["tiers"]; ok {
 		data, err := json.Marshal(tiers)
 		if err != nil {
-			return toolErrorResult("tiers must be an array of integers"), nil
+			return toolErrorResult("tiers must be an array of integers"), nil //nolint:nilerr // MCP validation failures are tool results.
 		}
 		if err := json.Unmarshal(data, &req.Tiers); err != nil {
-			return toolErrorResult("tiers must be an array of integers"), nil
+			return toolErrorResult("tiers must be an array of integers"), nil //nolint:nilerr // MCP validation failures are tool results.
 		}
 	}
 	result, markdown, err := h.timelineBackend.Timeline(ctx, req)
 	if err != nil {
-		var ambiguous *timeline.ErrAmbiguousReference
-		if errors.As(err, &ambiguous) {
+		if ambiguous, ok := errors.AsType[*timeline.ErrAmbiguousReference](err); ok {
 			response, marshalErr := jsonResult(struct {
 				Error      string               `json:"error"`
 				Candidates []timeline.Candidate `json:"candidates"`

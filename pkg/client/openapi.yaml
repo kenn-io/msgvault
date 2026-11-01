@@ -16564,6 +16564,7 @@ components:
           format: double
           nullable: true
           type: number
+          x-go-type: "*float64"
         outcome:
           type: string
         people:
@@ -17107,6 +17108,7 @@ components:
           format: int64
           nullable: true
           type: integer
+          x-go-type: "*int64"
         status:
           type: string
         sync_command:
@@ -28134,6 +28136,11 @@ paths:
         - description: Lexical query over person names, contact points, and organizations
           in: query
           name: q
+          schema:
+            type: string
+        - description: Literal case-insensitive substring of current bound participant identities or curated contact points
+          in: query
+          name: address
           schema:
             type: string
         - description: Opaque cursor returned by the previous Directory page
