@@ -16456,7 +16456,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.28.0
+  version: 3.29.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -26570,6 +26570,11 @@ paths:
         - description: Lexical query over person names, contact points, and organizations
           in: query
           name: q
+          schema:
+            type: string
+        - description: Literal case-insensitive substring of current bound participant identities or curated contact points
+          in: query
+          name: address
           schema:
             type: string
         - description: Opaque cursor returned by the previous Directory page

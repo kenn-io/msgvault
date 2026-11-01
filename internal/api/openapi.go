@@ -380,7 +380,8 @@ import (
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
 // 3.28.0 adds the typed calendar projection to calendar event message details.
-const APISchemaVersion = "3.28.0"
+// 3.29.0 adds literal address filtering to the durable people Directory.
+const APISchemaVersion = "3.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

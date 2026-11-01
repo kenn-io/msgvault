@@ -9,6 +9,10 @@ export type ListDirectoryPeopleParams = {
    */
   q?: string;
   /**
+   * Literal case-insensitive substring of current bound participant identities or curated contact points
+   */
+  address?: string;
+  /**
    * Opaque cursor returned by the previous Directory page
    */
   cursor?: string;

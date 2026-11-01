@@ -34,9 +34,11 @@ const (
 )
 
 // DirectoryPeopleQuery selects durable people for the Directory read surface.
-// All text fields are case- and whitespace-normalized before matching.
+// Address preserves internal whitespace and matches literal substrings;
+// other text fields use the Directory's lexical normalization.
 type DirectoryPeopleQuery struct {
 	Query             string     `json:"query,omitempty"`
+	Address           string     `json:"address,omitempty"`
 	Cursor            string     `json:"cursor,omitempty"`
 	Limit             int        `json:"limit,omitzero"`
 	ContactState      string     `json:"contact_state,omitempty"`
@@ -72,6 +74,7 @@ type DirectoryPeoplePage struct {
 
 type normalizedDirectoryPeopleQuery struct {
 	query             string
+	address           string
 	terms             []string
 	cursor            string
 	limit             int
@@ -126,6 +129,7 @@ func (s *Store) DirectoryPeoplePageContext(
 func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirectoryPeopleQuery, error) {
 	normalized := normalizedDirectoryPeopleQuery{
 		query:          normalizeDirectoryText(query.Query),
+		address:        strings.ToLower(strings.TrimSpace(query.Address)),
 		cursor:         strings.TrimSpace(query.Cursor),
 		contactState:   normalizeDirectoryText(query.ContactState),
 		category:       normalizeDirectoryText(query.Category),
@@ -165,6 +169,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 	}
 	encoded, err := json.Marshal(struct {
 		Query             string `json:"query"`
+		Address           string `json:"address,omitempty"`
 		ContactState      string `json:"contact_state"`
 		Category          string `json:"category"`
 		Organization      string `json:"organization"`
@@ -173,7 +178,7 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 		LastContactBefore string `json:"last_contact_before"`
 		Sort              string `json:"sort"`
 	}{
-		Query: normalized.query, ContactState: normalized.contactState,
+		Query: normalized.query, Address: normalized.address, ContactState: normalized.contactState,
 		Category: normalized.category, Organization: normalized.organization,
 		PrimaryChannel:   normalized.primaryChannel,
 		LastContactAfter: normalized.lastContactAfter, LastContactBefore: normalized.lastContactBefore,
@@ -248,7 +253,7 @@ func (s *Store) directoryPeoplePageContext(
 // requested verified page plus its cursor row. Hydration stays separate so
 // current categories and employments are never read outside that window.
 func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query normalizedDirectoryPeopleQuery, after *directoryPeopleCursor) ([]directoryPersonCandidate, error) {
-	querySQL, args := directoryCandidateProjectionSQL(query)
+	querySQL, args := s.directoryCandidateProjectionSQL(query)
 	var rawAfter *directoryRawCandidateCursor
 	if after != nil {
 		rawAfter = &directoryRawCandidateCursor{quality: after.Quality, sortKey: after.SortKey, orderName: after.OrderKey, personID: after.PersonID}
@@ -286,8 +291,23 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 	return verified, nil
 }
 
-func directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (string, []any) {
+func (s *Store) directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (string, []any) {
 	where, filterArgs := []string{}, []any{}
+	if query.address != "" {
+		like := func(column string) string {
+			return s.dialect.UnicodeLowerExpression(column) + ` LIKE ` + s.dialect.UnicodeLowerExpression("?") + ` ESCAPE '\'`
+		}
+		where = append(where, `(EXISTS (SELECT 1 FROM person_contact_points cp
+			WHERE cp.person_id = dp.person_id AND cp.active_until IS NULL AND cp.superseded_at IS NULL
+			  AND (`+like("cp.original_value")+` OR `+like("cp.normalized_value")+`))
+			OR EXISTS (SELECT 1 FROM person_participants pp
+			JOIN participants participant ON participant.id = pp.participant_id
+			WHERE pp.person_id = dp.person_id AND (`+like("COALESCE(participant.email_address, '')")+` OR `+like("COALESCE(participant.phone_number, '')")+`
+			  OR EXISTS (SELECT 1 FROM participant_identifiers identifier
+				WHERE identifier.participant_id = participant.id AND `+like("identifier.identifier_value")+`))))`)
+		pattern := "%" + escapeLike(query.address) + "%"
+		filterArgs = append(filterArgs, pattern, pattern, pattern, pattern, pattern)
+	}
 	if query.contactState != "" {
 		where, filterArgs = append(where, "dp.contact_state = ?"), append(filterArgs, query.contactState)
 	}
@@ -336,7 +356,7 @@ func (s *Store) directoryCursorAnchorTx(
 	query normalizedDirectoryPeopleQuery,
 	personID int64,
 ) (directoryPersonCandidate, error) {
-	querySQL, args := directoryCandidateProjectionSQL(query)
+	querySQL, args := s.directoryCandidateProjectionSQL(query)
 	querySQL = `SELECT person_id, match_quality, sort_key, order_key FROM (` + querySQL + `) candidate WHERE person_id = ?`
 	args = append(args, personID)
 	candidates, err := s.selectDirectoryRawCandidateChunkTx(ctx, tx, querySQL, args, nil, 1, query.sort)
