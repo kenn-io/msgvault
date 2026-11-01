@@ -113,6 +113,28 @@ func TestExploreGroupsAndFilesUseCompleteDuckDBFacts(t *testing.T) {
 	assertions.Equal("older.txt", fileBody.Files[1].Filename)
 }
 
+func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
+	t.Parallel()
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, `(1::BIGINT, 1::BIGINT, 'sms1', 101::BIGINT, 'Older SMS', 'older text', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'sms', NULL::VARCHAR, false, 2026, 7),
+		(2::BIGINT, 1::BIGINT, 'mms1', 101::BIGINT, 'Newer MMS', 'newer picture', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'mms', NULL::VARCHAR, false, 2026, 7)`, 2)
+	srv := newTestServerWithEngine(t, engine)
+
+	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["message_type"],"limit":50}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body ExploreGroupsHTTPResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1)
+	assert.Equal(t, "mms", body.Rows[0].Key)
+	assert.Equal(t, int64(1), body.Rows[0].Count)
+
+	response = postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"message_type","values":["sms"]}]}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var entries ExploreHTTPResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &entries))
+	require.Len(t, entries.Rows, 1)
+	assert.Equal(t, "sms", entries.Rows[0].MessageType)
+}
+
 func TestExploreParticipantGroupsResolveDurableLabelsEndToEnd(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
