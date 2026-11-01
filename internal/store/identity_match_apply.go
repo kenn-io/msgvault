@@ -244,8 +244,29 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 					refreshed = loaded
 					return errIdentityMatchSnapshotStale
 				}
-				if err := s.checkAcceptedApplicationTxContext(ctx, tx, loaded); err != nil {
-					return err
+				var reviewedFingerprint string
+				fingerprintErr := tx.QueryRowContext(ctx,
+					`SELECT evidence_fingerprint FROM identity_match_review_decisions WHERE candidate_id = ?`,
+					loaded.ID).Scan(&reviewedFingerprint)
+				if fingerprintErr != nil && !errors.Is(fingerprintErr, sql.ErrNoRows) {
+					return fmt.Errorf("read identity match review fingerprint: %w", fingerprintErr)
+				}
+				if fingerprintErr == nil {
+					actual, hashErr := identityMatchFingerprintContext(ctx, tx, loaded, false)
+					if hashErr != nil {
+						return hashErr
+					}
+					if actual != reviewedFingerprint {
+						edges, edgeErr := s.loadLinkEdgesTxContext(ctx, tx)
+						if edgeErr != nil {
+							return edgeErr
+						}
+						if _, connected := componentOf(loaded.LeftID, edges)[loaded.RightID]; !connected {
+							return ErrIdentityMatchReviewStale
+						}
+						// Another operation already satisfied the assertion. Complete
+						// its pending work without applying the changed evidence.
+					}
 				}
 				loaded.Evidence = current.Evidence
 				current = *loaded
@@ -288,9 +309,8 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 	}
 	switch {
 	case err == nil:
-	case errors.Is(err, ErrIdentityMatchReviewStale), errors.Is(err, ErrIdentityMatchRejected),
-		errors.Is(err, ErrPersonBindingConflict):
-		note := identityMatchApplicationConflictNote(err)
+	case errors.Is(err, ErrIdentityMatchReviewStale):
+		note := "reviewed identity evidence changed before application; review again"
 		if _, decideErr := s.DecideIdentityMatchCandidateContext(
 			ctx, current.ID, IdentityMatchStateConflict, decidedBy, &note); decideErr != nil {
 			return nil, 0, false, errors.Join(err, decideErr)
@@ -312,6 +332,14 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 		if err != nil {
 			return nil, 0, false, err
 		}
+	case errors.Is(err, ErrPersonBindingConflict):
+		conflictNote := "accepted match spans two durable person profiles; not applied"
+		if _, decideErr := s.DecideIdentityMatchCandidateContext(
+			ctx, current.ID, IdentityMatchStateConflict, decidedBy, &conflictNote,
+		); decideErr != nil {
+			return nil, 0, false, errors.Join(err, decideErr)
+		}
+		return nil, 0, false, err
 	default:
 		return nil, 0, false, err
 	}
@@ -321,57 +349,6 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 	// legitimately contract and delete the candidate immediately after the link
 	// transaction releases the lock.
 	return &current, revision, linked, nil
-}
-
-// checkAcceptedApplicationTxContext guards the link half of an accepted
-// candidate under the identity-mutation lock. An automated acceptance yields
-// to a later Telegram pair rejection, and a reviewed acceptance yields to
-// changed evidence unless another operation already connected the pair.
-func (s *Store) checkAcceptedApplicationTxContext(
-	ctx context.Context, tx *loggedTx, loaded *IdentityMatchCandidate,
-) error {
-	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if _, connected := componentOf(loaded.LeftID, edges)[loaded.RightID]; connected {
-		return nil
-	}
-	if loaded.DecidedBy == nil || *loaded.DecidedBy != string(ProvenanceUser) {
-		if err := checkTelegramPairRejectionTxContext(ctx, tx, loaded); err != nil {
-			return err
-		}
-	}
-	var reviewedFingerprint string
-	fingerprintErr := tx.QueryRowContext(ctx,
-		`SELECT evidence_fingerprint FROM identity_match_review_decisions WHERE candidate_id = ?`,
-		loaded.ID).Scan(&reviewedFingerprint)
-	if fingerprintErr != nil && !errors.Is(fingerprintErr, sql.ErrNoRows) {
-		return fmt.Errorf("read identity match review fingerprint: %w", fingerprintErr)
-	}
-	if fingerprintErr == nil {
-		actual, hashErr := identityMatchFingerprintContext(ctx, tx, loaded, false)
-		if hashErr != nil {
-			return hashErr
-		}
-		if actual != reviewedFingerprint {
-			return ErrIdentityMatchReviewStale
-		}
-	}
-	return nil
-}
-
-// identityMatchApplicationConflictNote explains why an accepted candidate was
-// settled as a conflict instead of linked.
-func identityMatchApplicationConflictNote(err error) string {
-	switch {
-	case errors.Is(err, ErrIdentityMatchRejected):
-		return "the user rejected this Telegram pair under another key; not applied"
-	case errors.Is(err, ErrPersonBindingConflict):
-		return "accepted match spans two durable person profiles; not applied"
-	default:
-		return "reviewed identity evidence changed before application; review again"
-	}
 }
 
 // ApplyAcceptedIdentityMatchesContext links accepted participant candidates
@@ -404,7 +381,7 @@ func (s *Store) ApplyAcceptedIdentityMatchesContext(ctx context.Context, limit i
 			case errors.Is(err, ErrIdentityMatchNotAccepted):
 				continue
 			case errors.Is(err, ErrPersonBindingConflict),
-				errors.Is(err, ErrIdentityMatchReviewStale), errors.Is(err, ErrIdentityMatchRejected):
+				errors.Is(err, ErrIdentityMatchReviewStale):
 				slog.Warn("accepted identity match could not be applied",
 					"candidate_id", candidate.ID, "error", err)
 				continue

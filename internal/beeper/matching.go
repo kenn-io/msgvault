@@ -385,11 +385,13 @@ func (m *identityMatcher) matchStableProviderID(
 		}
 		seen[other] = struct{}{}
 
-		memoKey, done, err := m.stableProviderMemo(ctx, participantID, other, observation)
-		if err != nil {
-			return err
-		}
-		if done {
+		pair := newParticipantPair(participantID, other)
+		memoKey := newIdentityMatchMemoKey(
+			pair, store.IdentityMatchStableProviderID,
+			observation.ServiceSlug, observation.ScopeKind, observation.ScopeValue,
+			observation.ProviderUserID,
+		)
+		if _, done := m.resolved[memoKey]; done {
 			continue
 		}
 
@@ -475,27 +477,6 @@ func (m *identityMatcher) matchStableProviderID(
 		}
 	}
 	return nil
-}
-
-// stableProviderMemo reports whether a stable-ID pair is already settled. A
-// Telegram pair the user rejected under any key stays apart when the provider
-// changes how it encodes the stable key.
-func (m *identityMatcher) stableProviderMemo(
-	ctx context.Context, participantID, other int64, observation *store.ParticipantContactObservation,
-) (identityMatchMemoKey, bool, error) {
-	memoKey := newIdentityMatchMemoKey(
-		newParticipantPair(participantID, other), store.IdentityMatchStableProviderID,
-		observation.ServiceSlug, observation.ScopeKind, observation.ScopeValue,
-		observation.ProviderUserID,
-	)
-	if _, done := m.resolved[memoKey]; done || derefString(observation.ServiceSlug) != "telegram" {
-		return memoKey, done, nil
-	}
-	rejected, err := m.store.HasRejectedParticipantPairContext(ctx, participantID, other, "telegram")
-	if rejected {
-		m.resolved[memoKey] = struct{}{}
-	}
-	return memoKey, rejected, err
 }
 
 // handleStaleAcceptedMatch converts a concurrent review or participant merge
