@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
-  import type { MessagesTable } from '../../explore/loader.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import PersonDetails from './PersonDetails.svelte';
   import PersonRecordActions from '../directory/PersonRecordActions.svelte';
+  import type { MessagesTable } from '../../explore/loader.svelte';
   import type { MeetingRef } from '../../api/generated/models';
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
@@ -32,7 +32,6 @@
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
       details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
       onFiltersChange: (filters: ExploreFilter[]) => void;
-      onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
   const context = $derived(contextPredicate(predicate));

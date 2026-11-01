@@ -249,7 +249,7 @@ it("passes the saved person's durable ID to Files when the first binding is draf
     if (path === '/api/v1/participants/1') return Response.json({ error: 'not_found' }, { status: 404 });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
     if (path === '/api/v1/participants/1/files/search') return Response.json({ files: [first], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
-    if (path === '/api/v1/people/91/files/search') return Response.json({ files: draftOnly ? [second] : [first, second], total_count: draftOnly ? 1 : 2, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/people/91/files/search') return Response.json({ files: [second], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
