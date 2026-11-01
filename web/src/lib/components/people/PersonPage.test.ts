@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
+import { DirectoryController } from '../../directory/controller.svelte';
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
 import type { RelationshipCalendar } from '../../relationships/models';
@@ -21,7 +22,7 @@ it('forwards visual search setup from files for a person', async () => {
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
   const onConfigureVisualSearch = vi.fn();
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: true, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onConfigureVisualSearch } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: true, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onConfigureVisualSearch } });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Set up' }));
     expect(onConfigureVisualSearch).toHaveBeenCalledTimes(1);
@@ -39,7 +40,7 @@ it('refreshes the open person after linking and profile reconciliation', async (
   const client = createAPIClient(async input => { const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname; return routes[path]?.(request) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] }); });
   const controller = new RelationshipsController(client, () => 'UTC'); const predicate = { filters: [], presentation: 'table' as const };
   await controller.openTarget('cluster:1', predicate, false);
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByText('Original message');
     await controller.linkParticipants(1, 2);
@@ -74,7 +75,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const props = { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  const props = { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   const view = render(PersonPage, { props });
   try {
     await fireEvent.click((await screen.findAllByRole('button', { name: '1 message on Jul 18, 2026' }))[0]);
@@ -97,6 +98,37 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
+it.each(['domain', 'person'] as const)('shows the %s Details content across person tabs', async kind => {
+  vi.stubEnv('TZ', 'UTC');
+  const summary = { ...(kind === 'domain' ? { domain: 'example.com', person_count: 3 } : { id: 1, display_label: 'Alice Example', identifiers: [] }), activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
+  const target = kind === 'domain' ? 'domain:example.com' : 'cluster:1';
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/domains/example.com' || path === '/api/v1/participants/1') return Response.json(summary);
+    if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
+    return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const directory = new DirectoryController(client);
+  await controller.openTarget(target, {}, false);
+  const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  try {
+    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    if (kind === 'domain') {
+      expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+      expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
+    } else expect(screen.getByRole('heading', { name: 'Identities' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
+    await view.rerender({ filesOpen: true });
+    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+    await view.rerender({ filesOpen: false });
+    expect(screen.queryByRole('heading', { name: 'Identities' })).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
+});
+
 it('reports a filtered summary failure while retaining the loaded person', async () => {
   const predicate = { filters: [{ dimension: 'source' as const, values: ['2'] }] };
   const client = createAPIClient(async input => {
@@ -108,7 +140,7 @@ it('reports a filtered summary failure while retaining the loaded person', async
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', predicate, false);
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByRole('heading', { name: 'Alice Example' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
@@ -129,7 +161,7 @@ it('keeps a stale identity mutation retry across Details and Messages', async ()
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
@@ -150,9 +182,39 @@ it('keeps Back to People available after an observed person fails to load', asyn
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
   const onBack = vi.fn();
-  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context), onBack } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context), onBack } });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Back to People' }));
     expect(onBack).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); }
+});
+
+it('keeps an open field draft when the saved person activity finishes loading', async () => {
+  const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: [1], vcard_uid: 'saved-7', created_at: when, updated_at: when };
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => release = resolve);
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+    if (path === '/api/v1/participants/1') return pending;
+    if (path === '/api/v1/people/7') return Response.json(person);
+    if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0 });
+    if (path.endsWith('/employments')) return Response.json({ employments: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
+    if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
+    if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
+  await directory.loadSelection(7);
+  const opening = controller.openTarget('cluster:1', {}, false);
+  const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target: 'cluster:1', details: true, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add phone' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+1 202 555 0199' } });
+    await act(async () => { release(Response.json({ id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })); await opening; });
+    expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });

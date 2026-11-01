@@ -110,7 +110,8 @@
       () => void,
       (authority: RelatedOperationStatus) => void,
       () => void,
-      OperationsController
+      OperationsController,
+      () => Promise<void>
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -239,12 +240,12 @@
     beforeCommit();
     directoryController.resetForPromotion();
     directoryPromotionParticipantID = participantID;
-    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: null });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: null, relationshipTarget: `cluster:${participantID}`, relationshipFiles: false });
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
     directoryPromotionParticipantID = undefined;
-    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
@@ -367,6 +368,7 @@
   const directoryController = new DirectoryController(
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
+    () => { void relationshipsController.loadList(exploreState.predicate()); },
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
@@ -559,6 +561,8 @@
     const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
     appliedDirectoryRestorationEpoch = restorationEpoch;
     if (exploreState.current.workspace !== 'directory') return;
+    const personID = exploreState.current.directoryPersonID;
+    if (personID !== null) { untrack(() => replaceCommittedNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false })); return; }
     const directoryState = {
       directoryQuery: exploreState.current.directoryQuery,
       directoryContactState: exploreState.current.directoryContactState,
@@ -1301,7 +1305,8 @@
           () => commitNavigation({ workspace: 'sources' }),
           openOperationAuthority,
           () => void shellData.jobs.refresh(true),
-          operationsController
+          operationsController,
+          () => directoryController.reloadFirstPage()
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
@@ -1311,7 +1316,10 @@
         <PeopleWorkspace
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
+          sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
           directory={directoryController}
+          onOpenCardDAVConflict={openCardDAVConflict}
+          onOpenCardDAVSettings={openCardDAVSettings}
           urlState={exploreState.current}
           onNavigate={commitNavigation}
           onReplaceNavigation={replaceCommittedNavigation}
@@ -1341,7 +1349,7 @@
               scrollAnchor: null,
             })}
           onOpenPerson={openRelationship}
-          onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+          onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
@@ -1356,6 +1364,7 @@
           controller={directoryController}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           promotionParticipantID={directoryPromotionParticipantID}
+          onOpenPerson={openDirectoryPerson}
           state={{
             directoryQuery: exploreState.current.directoryQuery,
             directoryContactState: exploreState.current.directoryContactState,

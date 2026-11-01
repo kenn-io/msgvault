@@ -5,13 +5,11 @@
   import { Button, IconButton, SegmentedControl, copyToClipboard } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
-  import type { PersonAttributeGroup } from '../../api/generated/models';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { LinkOutcome, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import { identityChipText } from '../../relationships/identity-chip';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
-  import AttributeSummary from '../directory/AttributeSummary.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
@@ -24,6 +22,8 @@
     filesOpen: boolean;
     showTabs?: boolean;
     showIdentity?: boolean;
+    /** Heading for the identities block when the page header already shows the person. */
+    title?: string;
     missing?: boolean;
     onFilesToggle: (value: boolean) => void;
     client: APIClient;
@@ -33,7 +33,6 @@
     capturePersonMergeContext?: () => RelationshipsMergeContext;
     onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
     onOpenDirectoryPerson?: (personID: number) => void;
-    loadAttributes?: (personID: number) => Promise<PersonAttributeGroup[]>;
     onAnnounce?: (message: string) => void;
   }
 
@@ -43,6 +42,7 @@
     filesOpen,
     showTabs = true,
     showIdentity = true,
+    title = undefined,
     missing = false,
     onFilesToggle,
     client,
@@ -52,7 +52,6 @@
     capturePersonMergeContext = undefined,
     onReconcilePersonMerge = undefined,
     onOpenDirectoryPerson = undefined,
-    loadAttributes = undefined,
     onAnnounce = undefined
   }: Props = $props();
 
@@ -69,7 +68,6 @@
   let unlinking = $state(false);
   let unlinkError = $state<string | null>(null);
   let identitiesOpen = $state(false);
-  let attributeGroups = $state<PersonAttributeGroup[]>([]);
 
   function isPersonDetail(value: PersonSummary | DomainSummary): value is PersonSummary {
     return 'identifiers' in value;
@@ -177,19 +175,6 @@
     unlinkError = null;
     activeDialog = undefined;
     identitiesOpen = false;
-  });
-
-  $effect(() => {
-    const id = profileID;
-    attributeGroups = [];
-    if (!id) return;
-    let cancelled = false;
-    void untrack(() => loadAttributes?.(id))
-      ?.then((groups) => { if (!cancelled) attributeGroups = groups; })
-      .catch(() => {
-        // This summary is best-effort; failed requests leave it empty.
-      });
-    return () => { cancelled = true; };
   });
 
   // ok/ready clears any earlier stale banner; ok/stale (re)raises it and
@@ -306,7 +291,7 @@
   }
 </script>
 
-<header class="relationship-header" class:has-detail={Boolean(detail)} aria-label="Relationship detail">
+<header class="relationship-header" class:has-detail={Boolean(detail) && !title} aria-label="Relationship detail">
   {#if !detail}
     <p class="header-empty" role="status">
       {loading ? 'Loading relationship…' : missing ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
@@ -319,10 +304,10 @@
         shape={isPersonDetail(detail) ? 'person' : 'domain'}
         size={36}
       />
-      <h2>{displayLabel(detail)}</h2>{/if}
+      <h2>{displayLabel(detail)}</h2>{:else if title}<h3>{title}</h3>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
-          {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}
+          {#if showIdentity && (onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson))}
             <Button
               label="Open in Directory"
               surface="outline"
@@ -357,7 +342,7 @@
         onchange={(value) => onFilesToggle(value === 'files')}
       />
     </div>{/if}
-    <p class="counts">
+    {#if !title}<p class="counts">
       {detail.activity_count.toLocaleString()} items
       {#if detail.activity_count > 0}
         · {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
@@ -365,13 +350,7 @@
       {#if !isPersonDetail(detail)}
         · {detail.person_count.toLocaleString()} people
       {/if}
-    </p>
-    {#if isPersonDetail(detail) && detail.profile?.id}
-      <AttributeSummary
-        groups={attributeGroups}
-        onEdit={onOpenDirectoryPerson ? () => onOpenDirectoryPerson(detail.profile!.id) : undefined}
-      />
-    {/if}
+    </p>{/if}
     {#if isPersonDetail(detail) && showIdentities}
       {#key detail.id}
       <details class="identities" open={identitiesOpen || forceIdentitiesOpen} ontoggle={handleIdentitiesToggle}>
@@ -553,6 +532,12 @@
 
   .view-row {
     display: flex;
+  }
+
+  .title-row h3 {
+    flex: 1;
+    margin: 0;
+    font-size: var(--font-size-md);
   }
 
   .counts {

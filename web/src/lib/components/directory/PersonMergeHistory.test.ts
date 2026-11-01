@@ -115,8 +115,11 @@ describe('PersonMergeHistory', () => {
   it('renders semantic safe history/detail tables without eagerly fetching or exposing provenance internals', async () => {
     const { requests } = renderHistory();
 
-    const history = await screen.findByRole('table', { name: 'Person merge history' });
-    expect(within(history).getByRole('columnheader', { name: 'Merge' })).toBeDefined();
+    const history = await screen.findByRole('list', { name: 'Person merge history' });
+    expect(within(history).getByText(/Person 9 merged into person 7/)).toBeDefined();
+    expect(within(history).getByText(/2 addresses · split 1×/)).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Merges' })).toBeDefined();
+    expect(screen.queryByLabelText('Merge history pagination')).toBeNull();
     await fireEvent.click(within(history).getByRole('button', { name: 'Inspect merge 41' }));
 
     const participants = await screen.findByRole('table', { name: 'Merge participants' });
