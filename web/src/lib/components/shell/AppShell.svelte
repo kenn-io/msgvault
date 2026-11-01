@@ -1309,7 +1309,6 @@
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           directory={directoryController}
-          operationLanes={operationsController.snapshot.statusLanes}
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
           urlState={exploreState.current}

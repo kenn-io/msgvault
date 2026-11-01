@@ -45,9 +45,9 @@ function relationshipType(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function controllerWith(fetchFn: typeof fetch): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
+function controllerWith(fetchFn: typeof fetch, catalogOnly = false): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
   const client = createAPIClient(fetchFn);
-  return { client, controller: new DirectoryEntityController(client, 7) };
+  return { client, controller: new DirectoryEntityController(client, catalogOnly ? 0 : 7, { catalogOnly }) };
 }
 
 describe('RelationshipsTab', () => {
@@ -607,7 +607,7 @@ describe('RelationshipsTab', () => {
     expect(reads).toBe(1);
   });
 
-  it('edits a user type with a fresh ETag, refreshes directional labels, and never patches symmetry', async () => {
+  it('edits a catalog type with a fresh ETag without reading a person or patching symmetry', async () => {
     const requests: Request[] = [];
     const current = relationshipType();
     const updated = relationshipType({ revision: 2, forward_label: 'guides' });
@@ -621,12 +621,10 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/relationship-types/31' && request.method === 'PATCH') {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });
       }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'guides', 'Synthetic Learner')] });
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    }), true);
     controller.relationshipTypes = [current];
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner')];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit mentor relationship type' }));
     expect(await screen.findByText('Symmetry cannot be changed after creation.')).toBeDefined();
@@ -639,8 +637,8 @@ describe('RelationshipsTab', () => {
     expect(patch.headers.get('If-Match')).toBe('"relationship-type-31-r1"');
     const body = await patch.clone().json();
     expect(body).toEqual({ forward_label: 'guides' });
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    expect(screen.getByText('guides · Synthetic Learner')).toBeDefined();
+    expect(screen.getByText(/guides \/ is mentored by/)).toBeDefined();
+    expect(requests.map((request) => [request.method, pathOf(request)])).toEqual([['GET', '/api/v1/relationship-types/31'], ['PATCH', '/api/v1/relationship-types/31']]);
   });
 
   it('clears one optional relationship-type field without resending unchanged metadata', async () => {

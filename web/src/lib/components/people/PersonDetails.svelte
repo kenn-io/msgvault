@@ -3,7 +3,6 @@
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
-  import type { OperationStatusLane } from '../../operations/models';
   import { getSettingsPeopleInference } from '../../api/generated/api/api';
   import { formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
@@ -13,9 +12,9 @@
   import PersonNetwork from '../directory/PersonNetwork.svelte';
   import PersonAgenda from '../directory/PersonAgenda.svelte';
   import PersonBriefCard from '../directory/PersonBriefCard.svelte';
-  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, operationLanes = [] }:
+  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings }:
     { client: APIClient; directory: DirectoryController; personID: number; onOpenPerson?: (id: number) => void;
-      onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void; operationLanes?: readonly OperationStatusLane[] } = $props();
+      onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void } = $props();
   let organizationRequest = $state<{ id: number; key: number }>();
   let requestKey = 0;
   const profile = $derived(directory.selectedPersonID === personID ? directory.profile : null);

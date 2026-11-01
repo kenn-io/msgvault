@@ -66,7 +66,8 @@
 
   let nameKind = $state(currentName?.name_kind ?? untrack(() => presetNameKind) ?? 'formatted');
   let formattedName = $state(currentName?.formatted ?? initialCurrent?.original_value ?? '');
-  let givenName = $state(currentName?.given_name ?? '');
+  const formattedPronunciation = currentName?.name_kind === 'phonetic' && !currentName.given_name && !currentName.family_name ? currentName.formatted ?? currentName.original_value : '';
+  let givenName = $state(currentName?.given_name || formattedPronunciation || '');
   let familyName = $state(currentName?.family_name ?? '');
   let contactKind = $state(currentContact?.address_kind ?? untrack(() => presetContactKind) ?? 'email');
   let contactValue = $state(initialSection === 'contact_points' ? (initialCurrent?.original_value ?? '') : '');
