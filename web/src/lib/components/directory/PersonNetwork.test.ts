@@ -46,10 +46,14 @@ function depthThree(): PersonNetworkProjection {
     truncated: false,
     nodes: [
       { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
+      { id: 'person:8', kind: 'person', entity_id: 8, label: 'First Hop Person', hop: 1 },
+      { id: 'person:9', kind: 'person', entity_id: 9, label: 'Second Hop Person', hop: 2 },
       { id: 'person:10', kind: 'person', entity_id: 10, label: 'Depth Three Person', hop: 3 }
     ],
     edges: [
-      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:10', relationship_type_slug: 'knows', label: 'knows' }
+      { id: 'relationship:31', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'knows', label: 'knows' },
+      { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'knows', label: 'knows' },
+      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', relationship_type_slug: 'knows', label: 'knows' }
     ]
   };
 }
