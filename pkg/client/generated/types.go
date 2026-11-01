@@ -16709,7 +16709,7 @@ func (t TimelineBurstEntry) Validate() error {
 }
 
 type TimelineCallEntry struct {
-	DurationSeconds float64          `json:"duration_seconds"`
+	DurationSeconds *float64         `json:"duration_seconds"`
 	Outcome         string           `json:"outcome" validate:"required"`
 	People          []TimelinePerson `json:"people" validate:"required"`
 	PeopleCount     int64            `json:"people_count"`
@@ -16718,6 +16718,11 @@ type TimelineCallEntry struct {
 
 func (t TimelineCallEntry) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(t.DurationSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DurationSeconds", err)
+		}
+	}
 	if err := typesValidator.Var(t.Outcome, "required"); err != nil {
 		errors = errors.Append("Outcome", err)
 	}
@@ -17385,14 +17390,41 @@ type TimelineSourceFreshness struct {
 	LastRun     string   `json:"last_run" validate:"required"`
 	Scheduling  string   `json:"scheduling" validate:"required"`
 	Source      string   `json:"source" validate:"required"`
-	SourceID    int64    `json:"source_id"`
+	SourceID    *int64   `json:"source_id"`
 	Status      string   `json:"status" validate:"required"`
 	SyncCommand string   `json:"sync_command" validate:"required"`
 	Warnings    []string `json:"warnings" validate:"required"`
 }
 
 func (t TimelineSourceFreshness) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.LastRun, "required"); err != nil {
+		errors = errors.Append("LastRun", err)
+	}
+	if err := typesValidator.Var(t.Scheduling, "required"); err != nil {
+		errors = errors.Append("Scheduling", err)
+	}
+	if err := typesValidator.Var(t.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if v, ok := any(t.SourceID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SourceID", err)
+		}
+	}
+	if err := typesValidator.Var(t.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(t.SyncCommand, "required"); err != nil {
+		errors = errors.Append("SyncCommand", err)
+	}
+	if err := typesValidator.Var(t.Warnings, "required"); err != nil {
+		errors = errors.Append("Warnings", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type TimelineUntrustedText struct {

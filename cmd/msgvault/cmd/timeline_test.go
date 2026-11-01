@@ -184,13 +184,17 @@ func TestTimelineRealTransportBudgetAndIntegerOpeners(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(st.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
 	now := time.Date(2027, 3, 1, 12, 0, 0, 0, time.UTC)
+	identityOverride := ""
+	if st.IsPostgreSQL() {
+		identityOverride = " OVERRIDING SYSTEM VALUE"
+	}
 	var ids []int64
 	for i := range 24 {
 		conv, err := st.EnsureConversation(src.ID, strconv.Itoa(i), "Synthetic")
 		requirements.NoError(err)
 		// Explicit synthetic IDs exercise the real wire above JavaScript's exact integer range.
 		largeID := int64(9007199254740993 + i)
-		_, err = st.DB().Exec(st.Rebind("INSERT INTO messages(id,source_id,conversation_id,source_message_id,message_type,sender_id,sent_at,snippet) VALUES(?,?,?,?,?,?,?,?)"), largeID, src.ID, conv, strconv.Itoa(i), "email", peer, now.Add(-time.Duration(i)*time.Second), strings.Repeat("\"\\ <é🙂>", 12))
+		_, err = st.DB().Exec(st.Rebind("INSERT INTO messages(id,source_id,conversation_id,source_message_id,message_type,sender_id,sent_at,snippet)"+identityOverride+" VALUES(?,?,?,?,?,?,?,?)"), largeID, src.ID, conv, strconv.Itoa(i), "email", peer, now.Add(-time.Duration(i)*time.Second), strings.Repeat("\"\\ <é🙂>", 12))
 		requirements.NoError(err)
 		requirements.NoError(st.ReplaceMessageRecipients(largeID, "from", []int64{peer}, nil))
 		requirements.NoError(st.ReplaceMessageRecipients(largeID, "to", []int64{owner}, nil))
@@ -301,4 +305,58 @@ func TestTimelineCommandExplicitZeros(t *testing.T) {
 	assertions.Equal(5, fake.req.After)
 	assertions.False(fake.req.BeforeSet)
 	assertions.False(fake.req.AfterSet)
+}
+
+func TestTimelineRealTransportAmbiguityPrintsUsableReferences(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Server.APIKey = "synthetic-owner"
+	const name = "Alex\x1b[31m"
+	savedParticipant, err := st.EnsureParticipant("saved@example.com", name, "example.com")
+	requirements.NoError(err)
+	unsavedParticipant, err := st.EnsureParticipant("unsaved@example.com", name, "example.com")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(savedParticipant)
+	requirements.NoError(err)
+	adapter := &storeAPIAdapter{store: st, config: cfg}
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() { requirements.NoError(server.Shutdown(context.Background())) })
+	srv := httptest.NewServer(server.Router())
+	t.Cleanup(srv.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true})
+	requirements.NoError(err)
+	old := timelineOpen
+	t.Cleanup(func() { timelineOpen = old })
+	timelineOpen = func(context.Context) (timelineClient, func(), error) { return client, func() {}, nil }
+	var candidates, output bytes.Buffer
+	command := newTimelineCommand()
+	command.SilenceErrors = true
+	command.SilenceUsage = true
+	command.SetErr(&candidates)
+	command.SetOut(&output)
+	command.SetArgs([]string{"--with", "name:" + name, "--json"})
+	var ambiguous *timeline.ErrAmbiguousReference
+	requirements.ErrorAs(command.Execute(), &ambiguous)
+	requirements.Len(ambiguous.Candidates, 2)
+	assertions.NotContains(candidates.String(), "\x1b")
+	assertions.NotContains(candidates.String(), "person:0")
+	lines := strings.Split(strings.TrimSpace(candidates.String()), "\n")
+	requirements.Len(lines, 2)
+	refs := []string{}
+	for _, line := range lines {
+		refs = append(refs, strings.Split(line, "\t")[0])
+	}
+	assertions.ElementsMatch([]string{fmt.Sprintf("person:%d", person.ID), fmt.Sprintf("participant:%d", unsavedParticipant)}, refs)
+	for _, ref := range refs {
+		var selected bytes.Buffer
+		command := newTimelineCommand()
+		command.SetOut(&selected)
+		command.SetArgs([]string{"--with", ref, "--json"})
+		requirements.NoError(command.Execute(), ref)
+		var result timeline.Timeline
+		requirements.NoError(json.Unmarshal(selected.Bytes(), &result))
+		assertions.Equal(timeline.ModeRelationship, result.Mode)
+	}
 }
