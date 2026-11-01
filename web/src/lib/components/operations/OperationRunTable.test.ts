@@ -1,10 +1,11 @@
 import { render, screen } from '@testing-library/svelte';
 import { expect, it } from 'vitest';
+import type { OperationRunSummary } from '../../api/generated/models';
 import { jobRun } from '../../jobs/fixtures.test-support';
 import OperationRunTable from './OperationRunTable.svelte';
 
 it('keeps cancelled run metadata with and without an error', () => {
-  const run = {
+  const run: OperationRunSummary = {
     ...jobRun('document_extraction'), state: 'cancelled' as const,
     started_at: '2026-10-12T12:00:00Z', finished_at: '2026-10-12T12:01:00Z',
     counters: [{ name: 'processed', value: 4, unit: 'documents' }],
