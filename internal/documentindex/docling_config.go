@@ -90,6 +90,9 @@ func (c *DocumentsConfig) validateDocling() error {
 	if c.MaxPollAttempts <= 0 || c.MaxPollAttempts > 10_000 {
 		return errors.New("attachments.documents.max_poll_attempts: must be between 1 and 10000")
 	}
+	if c.MaxConcurrentJobs <= 0 || c.MaxConcurrentJobs > hardMaxConcurrentJobs {
+		return fmt.Errorf("attachments.documents.max_concurrent_jobs: must be between 1 and %d", hardMaxConcurrentJobs)
+	}
 	if c.Conversion.CSV.Enabled {
 		return errors.New("attachments.documents.conversion.csv: Docling accepts native CSV; PDF conversion is Mistral-only")
 	}
@@ -131,6 +134,9 @@ func (c *DocumentsConfig) doclingInputPolicy() (ResolvedInputPolicy, error) {
 
 // doclingPolicyJSON returns the exact non-secret processing and disclosure
 // identity. Disk-spool settings and Mistral retry policy do not apply to Docling.
+// max_concurrent_jobs is excluded: it changes how many jobs run at once, not
+// what is uploaded, where, or what is stored, and a new identity would make
+// every document a candidate for extraction again.
 func (c *DocumentsConfig) doclingPolicyJSON(allowedMediaTypes []string) ([]byte, error) {
 	if c.Provider != ProviderDocling {
 		return nil, errors.New("docling policy requires provider=docling")

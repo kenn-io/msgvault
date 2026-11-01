@@ -220,6 +220,7 @@ func TestLoadDoclingConfigPreservesExplicitProviderValues(t *testing.T) {
 		{"zero timeout", `total_timeout = "0s"`, "total_timeout"},
 		{"zero polling", `poll_interval = "0s"`, "poll_interval"},
 		{"zero attempts", `max_poll_attempts = 0`, "max_poll_attempts"},
+		{"zero concurrent jobs", `max_concurrent_jobs = 0`, "max_concurrent_jobs"},
 		{"no endpoint", `endpoint = ""`, "endpoint"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
