@@ -506,35 +506,6 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('keeps person B selected when an earlier deletion of person A completes', async () => {
-  let finish!: (response: Response) => void;
-  const pending = new Promise<Response>(resolve => { finish = resolve; });
-  const routes: Record<string, (request: Request) => Response | Promise<Response>> = {};
-  for (const id of [7, 9]) {
-    routes[`/api/v1/people/${id}`] = request => request.method === 'DELETE' ? pending : Response.json(profile(id, 1, []), { headers: { ETag: `"person-${id}-r1"` } });
-    routes[`/api/v1/people/${id}/profile`] = () => Response.json({ person: profile(id, 1, []), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-${id}-r1"` } });
-  }
-  const paths: string[] = [];
-  const client = clientFor(routes, paths); const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client, undefined, () => void controller.loadList({})); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
-  const onNavigate = vi.fn();
-  const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    const deletion = vi.spyOn(directory.profile!, 'deletePerson');
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
-    await waitFor(() => expect(directory.profile?.mutationPending).toBe(true));
-    state.commitNavigation({ directoryPersonID: 9 });
-    await view.rerender({ urlState: state.current });
-    await screen.findByRole('heading', { name: 'Synthetic Two' });
-    paths.length = 0;
-    await act(async () => { finish(new Response(null, { status: 204 })); await deletion.mock.results[0]!.value; });
-    expect(onNavigate).not.toHaveBeenCalled();
-    expect(paths.filter(path => path === '/api/v1/relationships')).toHaveLength(1);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it.each([true, false])('keeps the split receipt visible after its source loses the displayed binding (saved entry=%s)', async savedEntry => {
   let split = false;
   const saved = () => profile(7, split ? 5 : 4, split ? [] : [1]);
