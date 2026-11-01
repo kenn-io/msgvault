@@ -107,6 +107,8 @@ export class DirectoryEntityController {
   private relationshipGeneration = 0;
   private relationshipTypeGeneration = 0;
   private networkGeneration = 0;
+  private networkDepth = 1;
+  private networkIncludeEnded = false;
   private disposed = false;
   constructor(
     client: APIClient,
@@ -165,10 +167,7 @@ export class DirectoryEntityController {
   private async loadEmployments(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('employments');
     try {
-      const response = await generatedListPersonEmployments({ id: this.personID }, undefined, {
-        ...this.client,
-        signal: abort.signal,
-      });
+      const response = await this.readEmployments(abort.signal);
       if (!this.owns('employments', abort, generation)) return false;
       if (response.data) {
         this.employments = response.data.employments ?? [];
@@ -186,6 +185,12 @@ export class DirectoryEntityController {
     } finally {
       if (generation === this.employmentGeneration) this.loading.employments = false;
     }
+  }
+  private async readEmployments(signal: AbortSignal) {
+    const response = await generatedListPersonEmployments({ id: this.personID }, undefined, { ...this.client, signal });
+    const ids = new Set((response.data?.employments ?? []).map(item => item.organization_id));
+    await Promise.allSettled([...ids].map(id => this.prepareOrganizationMutation(id)));
+    return response;
   }
   async refreshRelationships(includeEnded = this.relationshipsIncludeEnded): Promise<void> {
     this.relationshipsIncludeEnded = includeEnded;
@@ -241,6 +246,8 @@ export class DirectoryEntityController {
     }
   }
   async loadNetwork(depth = 1, includeEnded = false): Promise<void> {
+    this.networkDepth = depth;
+    this.networkIncludeEnded = includeEnded;
     const { abort, generation } = this.beginCollection('network');
     try {
       const response = await generatedGetPersonNetwork(
@@ -481,7 +488,7 @@ export class DirectoryEntityController {
         this.captureETag(this.relationshipETags, entity.id, response);
       },
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async updateRelationship(
@@ -504,7 +511,7 @@ export class DirectoryEntityController {
         this.captureETag(this.relationshipETags, id, response);
       },
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async deleteRelationship(id: number): Promise<DirectoryEntityMutationResult<never, PersonRelationship>> {
@@ -525,7 +532,7 @@ export class DirectoryEntityController {
         this.relationshipETags.delete(id);
       },
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async createRelationshipType(
@@ -573,7 +580,6 @@ export class DirectoryEntityController {
       },
       prepared,
     );
-    if (result.ok) await this.loadRelationships(false);
     return result;
   }
   async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, RelationshipType>> {
@@ -642,10 +648,13 @@ export class DirectoryEntityController {
     if (result.ok) await this.loadEmployments(false);
     return this.afterDirectoryMutation(result);
   }
+  async refreshNetwork(): Promise<void> {
+    if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth, this.networkIncludeEnded);
+  }
   private async afterDirectoryMutation<T, C>(
     result: DirectoryEntityMutationResult<T, C>,
   ): Promise<DirectoryEntityMutationResult<T, C>> {
-    if (result.ok) await this.options.onDirectoryChange?.();
+    if (result.ok) await Promise.all([this.options.onDirectoryChange?.(), this.refreshNetwork()]);
     return result;
   }
   private applyEmploymentEntity(entity: Employment, response: Response): void {
