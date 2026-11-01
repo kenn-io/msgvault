@@ -141,7 +141,15 @@ describe('meeting archive reader navigation', () => {
   });
 
   it('opens Tasks settings from email evidence in a meeting conversation', async () => {
-    const { client } = handler(undefined, true);
+    const { client: baseClient } = handler();
+    const client = createAPIClient(async (input, init) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
+      if (path.endsWith('/conversations/8')) return Response.json({ id: 8, messages: [detail,
+        { ...detail, id: 43, message_type: 'email', subject: 'Email evidence', body: 'Follow-up email' }
+      ], anchor_id: 42, total: 2, has_before: false, has_after: false });
+      return baseClient.fetch(input, init);
+    });
     const state = stateWithMeetingFilter('archive-meeting:42');
     const view = render(AppShell, { client, state });
     try {
