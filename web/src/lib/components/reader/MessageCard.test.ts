@@ -181,7 +181,7 @@ describe('MessageCard', () => {
 
     expect(container.querySelector('pre')?.textContent).toBe('Plain text fallback.');
     expect(container.querySelector('iframe')).toBeNull();
-    expect(screen.queryByText('⋯')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   });
 
   it('passes its message scope to meeting export', async () => {
@@ -235,7 +235,7 @@ describe('MessageCard', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/could not render HTML/i);
     expect(container.querySelector('pre')).not.toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
-    expect(screen.queryByText('⋯')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
   });
 
   it('requests recordings once for an expanded card with attachments', async () => {
