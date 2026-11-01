@@ -1712,9 +1712,11 @@ schedule = "*/30 * * * *"
 | `enabled` | `false` | Enable scheduled sync; manual commands remain available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
 
-Duplicate app/Page pairs, malformed identifiers, invalid environment variable
-names, unknown profile keys, and invalid schedules are rejected. The source
-identifier is `app:<app_id>:page:<page_id>`; scheduled jobs use
+`identifier` is trimmed and must be nonempty and unique ignoring case.
+`app_id` and `page_id` must be positive decimal IDs without leading zeros.
+Duplicate app/Page pairs, invalid environment variable names, unknown profile
+keys, and invalid schedules are rejected. The source identifier is
+`app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
 ### `[[chatwoot]]` {#chatwoot}
