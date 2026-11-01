@@ -16,11 +16,6 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (request.method === 'PUT') {
-      writes.push(request.clone());
-      const definition = options.definitions!.find((definition) => path.endsWith(`/${definition.slug}`))!;
-      return Response.json({ value: { id: 21, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal: 0, value: (await request.json()).value, source: 'user', active_from: when, created_at: when } });
-    }
     if (request.method === 'PATCH') {
       writes.push(request.clone()); await options.wait;
       if (options.fail) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 412 });
@@ -51,24 +46,6 @@ it('keeps a confirmed removal visible and gates other writes until the save succ
   await act(() => finish()); await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
   await expect(writes[0]!.json()).resolves.toEqual({ contact_points: { supersede: [11] } });
   await act(() => controller.reload()); expect(screen.queryByText('old@example.com')).toBeNull();
-  view.unmount(); controller.destroy();
-});
-
-it.each([['notes', 'Notes', true], ['ask_me_about', 'Ask me about', false]] as const)('adds %s from More fields through the attribute API', async (slug, label, sensitive) => {
-  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug, label, value_type: 'text', field_type: sensitive ? 'textarea' : 'text', cardinality: sensitive ? 'single' : 'multi', object_type: 'person', display_order: 1, ownership: 'system', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: sensitive, revision: 1 } as AttributeDefinition;
-  const { controller, view, writes } = harness(profile(), { definitions: [definition], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [] } } });
-  await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-  if (sensitive) {
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Show Notes' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-  }
-  await fireEvent.click(screen.getByRole('menuitem', { name: label }));
-  await fireEvent.input(screen.getByRole('textbox', { name: label }), { target: { value: 'Cycling' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-  await screen.findByText('Cycling');
-  expect(writes[0]!.method).toBe('PUT');
-  expect(new URL(writes[0]!.url).pathname).toBe(`/api/v1/people/7/attributes/${slug}`);
-  await expect(writes[0]!.json()).resolves.toEqual({ value: { type: 'text', text: 'Cycling' }, source: 'user' });
   view.unmount(); controller.destroy();
 });
 

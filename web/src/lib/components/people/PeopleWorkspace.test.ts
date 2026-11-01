@@ -9,10 +9,11 @@ import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
 
 const when = '2026-07-19T10:00:00Z';
-function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>) {
+function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    requests?.push(path);
     return routes[path]?.(request) ?? (path.endsWith('/settings/people-inference') ? Response.json({ running_enabled: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
@@ -239,20 +240,22 @@ it.each([false, true])('keeps files from every bound cluster when the first save
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('refreshes the Saved list after merging profiles from Details', async () => {
+it('loads optional sections only in Details and refreshes the selected survivor and Saved list after merging', async () => {
   let merged = false;
+  const paths: string[] = [];
   const one = { ...profile(7, 4, [1]), organizations: [], categories: [], contact_state: 'active' };
   const two = { ...profile(9, 2, [2]), organizations: [], categories: [], contact_state: 'active' };
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: merged ? [one] : [one, two] }),
     '/api/v1/people/7': () => Response.json(one),
+    '/api/v1/people/7/profile': () => Response.json({ person: one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: { id: 7 }, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/identity/links': () => merged ? Response.json({ identity_revision: 8, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 }),
     '/api/v1/people/7/merge': () => { merged = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: { ...one, revision: 5, participant_ids: [1, 2] }, merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } }); },
-  });
+  }, paths);
   const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7, relationshipTarget: 'cluster:1' });
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
   const directory = new DirectoryController(client);
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
@@ -261,6 +264,8 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
   let view = render(PeopleWorkspace, { props });
   try {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
+    await waitFor(() => expect(directory.detailLoading).toBe(false));
+    expect(paths.filter(path => /people-inference|attribute-definitions|kata|agenda|brief/.test(path))).toEqual([]);
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     const input = await openTypeahead('Search people to link');
@@ -274,6 +279,7 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
     await waitFor(() => expect(merged).toBe(true));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
     expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
+    await screen.findByText('absorbed@example.com');
     view.unmount();
     // Back returns to People with the same saved-list URL and shell-owned controllers.
     view = render(PeopleWorkspace, { props });

@@ -10,7 +10,7 @@
   import AttributeDefinitionDialog from '../directory/AttributeDefinitionDialog.svelte';
   import OrganizationsSettings from './OrganizationsSettings.svelte';
   let { client }: { client: APIClient } = $props();
-  const entities = new DirectoryEntityController(untrack(() => client), 0, { catalogOnly: true });
+  const entities = new DirectoryEntityController(untrack(() => client), 0);
   const fields = new DirectoryProfileController(untrack(() => client), 0, { etags: {}, errors: {} });
   let creating = $state(false);
   let editing = $state<AttributeDefinition>();

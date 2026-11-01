@@ -113,7 +113,7 @@
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
       <div class="details" hidden={!details}>
-        {#if profileID !== null}{#key profileID}<PersonDetails {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}{/if}
+        {#if details && profileID !== null}{#key profileID}<PersonDetails {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}{/if}
         <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
           capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
           onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />

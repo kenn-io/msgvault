@@ -45,9 +45,9 @@ function relationshipType(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function controllerWith(fetchFn: typeof fetch, catalogOnly = false): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
+function controllerWith(fetchFn: typeof fetch): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
   const client = createAPIClient(fetchFn);
-  return { client, controller: new DirectoryEntityController(client, catalogOnly ? 0 : 7, { catalogOnly }) };
+  return { client, controller: new DirectoryEntityController(client, 7) };
 }
 
 describe('RelationshipsTab', () => {
@@ -622,9 +622,9 @@ describe('RelationshipsTab', () => {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
-    }), true);
+    }));
     controller.relationshipTypes = [current];
-    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit mentor relationship type' }));
     expect(await screen.findByText('Symmetry cannot be changed after creation.')).toBeDefined();
