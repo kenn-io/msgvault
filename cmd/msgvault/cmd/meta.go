@@ -66,18 +66,12 @@ func runConfiguredFacebookCommentsSync(ctx context.Context, st *store.Store, sou
 	if sum == nil {
 		return err
 	}
-	job, ok := api.SchedulerJobNameForSource(meta.SourceType, meta.SourceIdentifier(source.AppID, source.PageID))
-	if !ok {
-		return errors.Join(err, errors.New("invalid Facebook scheduler identity"))
-	}
+	job, _ := api.SchedulerJobNameForSource(meta.SourceType, meta.SourceIdentifier(source.AppID, source.PageID))
 	return errors.Join(err, rebuildFacebookCommentsCacheAfterScheduledSync(context.WithoutCancel(ctx), job))
 }
 
 func registerScheduledFacebookCommentsJob(sched *scheduler.Scheduler, source config.FacebookCommentsSource, maintenance *attachmentMaintenance, run func(context.Context) error) error {
-	job, ok := api.SchedulerJobNameForSource(meta.SourceType, meta.SourceIdentifier(source.AppID, source.PageID))
-	if !ok {
-		return errors.New("invalid Facebook scheduler identity")
-	}
+	job, _ := api.SchedulerJobNameForSource(meta.SourceType, meta.SourceIdentifier(source.AppID, source.PageID))
 	return sched.AddJob(scheduler.Job{Name: job, Schedule: source.Schedule, Run: func(ctx context.Context) error {
 		return runScheduledSource(ctx, maintenance, false, run)
 	}})
