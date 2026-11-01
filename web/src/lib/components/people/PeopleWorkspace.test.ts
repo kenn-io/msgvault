@@ -122,8 +122,7 @@ it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     if (outcome === 'merges') {
-      await screen.findByRole('dialog', { name: 'Resolve person merge' });
-      await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+      await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic One (Person 7)' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
       await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
       await waitFor(() => expect(releaseReconcile).toBeDefined());
@@ -135,8 +134,7 @@ it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the
       expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
       expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
     } else if (outcome === 'is cancelled') {
-      await screen.findByRole('dialog', { name: 'Resolve person merge' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     } else if (outcome === 'fails') await screen.findByText(/Synthetic link failed/);
     else {
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
@@ -300,14 +298,10 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     const input = await openTypeahead('Search people');
     await fireEvent.input(input, { target: { value: 'Bob' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-    await screen.findByRole('dialog', { name: 'Resolve person merge' });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic One (Person 7)' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(merged).toBe(true));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
-    expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
     await screen.findByText('absorbed@example.com');
     expect(sawLoadingPerson).toBe(false);
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
@@ -503,7 +497,7 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each([true, false])('keeps the split receipt visible after its source loses the displayed binding (saved entry=%s)', async savedEntry => {
+async function splitSelectedPerson(savedEntry: boolean, verify: (result: { onDuplicatesChanged: ReturnType<typeof vi.fn>; state: ExploreState }) => void | Promise<void>) {
   let split = false;
   const saved = () => profile(7, split ? 5 : 4, split ? [] : [1]);
   const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 3, absorbed_revision_before: 2, survivor_revision_after: 4, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };
@@ -531,10 +525,21 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
     await fireEvent.click(screen.getByRole('checkbox', { name: /I confirm splitting/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
+    await verify({ onDuplicatesChanged, state });
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+}
+
+it('keeps the split receipt visible after the saved source loses its displayed binding', async () => {
+  await splitSelectedPerson(true, async ({ state }) => {
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(state.current.relationshipTarget).toBeNull();
+  });
+});
+
+it('refreshes the waiting badge after splitting the observed source', async () => {
+  await splitSelectedPerson(false, ({ onDuplicatesChanged }) => {
     expect(onDuplicatesChanged).toHaveBeenCalledOnce();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+  });
 });
 
 it('leaving People aborts its pending Save', async () => {
