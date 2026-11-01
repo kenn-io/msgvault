@@ -337,19 +337,12 @@ export class DirectoryController {
     });
   }
   async loadSelection(personID: number | null, shouldCommit = false): Promise<void> {
+    this.resetForPromotion();
     if (personID === null) {
-      this.resetForPromotion();
       if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
       return;
     }
-    this.promotionAbort?.abort();
-    ++this.promotionGeneration;
-    this.detailAbort?.abort();
-    ++this.detailGeneration;
     const controller = new AbortController();
-    this.profile?.destroy();
-    this.profile = null;
-    this.entity?.destroy();
     // Employments, relationships and the network belong to the entity
     // controller; the read bundle never duplicates those requests.
     this.entity = new DirectoryEntityController(this.client, personID, {

@@ -1147,6 +1147,24 @@ describe('DirectoryController', () => {
     expect(controller.selectedPersonID).toBeNull();
   });
 
+  it('clears failed promotion feedback when selecting a saved person', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST' && pathOf(request) === '/api/v1/people') return Response.json({ message: 'Save unavailable' }, { status: 503 });
+      return detailResponse(pathOf(request));
+    }));
+    const controller = new DirectoryController(client);
+    try {
+      await expect(controller.promote(11)).resolves.toMatchObject({ ok: false });
+      expect(controller.promotionError).toBe('Save unavailable');
+      expect(controller.promotionResult).toMatchObject({ ok: false });
+      await controller.selectPerson(7);
+      expect(controller.selectedPersonID).toBe(7);
+      expect(controller.promotionError).toBeNull();
+      expect(controller.promotionResult).toBeNull();
+    } finally { controller.destroy(); }
+  });
+
   it('keeps the selected split source and permits its next field write', async () => {
     let reads = 0; let split = false;
     const person = () => ({ id: 12, revision: split ? 4 : 3, display_name: 'Synthetic Source', participant_ids: split ? [701] : [701, 702], vcard_uid: 'synthetic-12', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
