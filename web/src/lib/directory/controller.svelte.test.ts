@@ -330,6 +330,7 @@ describe('DirectoryController', () => {
   it('reloads Directory ordering and cursor membership after a person rename', async () => {
     const requests: Request[] = [];
     let directoryRead = 0;
+    let renamed = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
@@ -343,7 +344,9 @@ describe('DirectoryController', () => {
       if (path === '/api/v1/people/7' && request.method === 'GET') {
         return new Response(JSON.stringify({ id: 7, revision: 3, display_name: 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r3"' } });
       }
+      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: renamed ? 'Zed Example' : 'Person 7', hop: 0 }], edges: [] });
       if (path === '/api/v1/people/7' && request.method === 'PATCH') {
+        renamed = true;
         return new Response(JSON.stringify({ id: 7, revision: 4, display_name: 'Zed Example', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r4"' } });
       }
       if (path === '/api/v1/people/7/profile') {
@@ -357,7 +360,9 @@ describe('DirectoryController', () => {
 
     await controller.loadFirstPage();
     await controller.selectPerson(7);
+    await controller.entity?.loadNetwork();
     await controller.profile?.rename('Zed Example');
+    expect(controller.entity?.network?.nodes[0]?.label).toBe('Zed Example');
 
     expect(controller.rows).toEqual([directoryPerson(8), { ...directoryPerson(7), revision: 5, display_name: 'Concurrent Name' }]);
     expect(controller.detail?.person?.display_name).toBe('Zed Example');

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
@@ -42,8 +42,6 @@
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
-  let opening = $state(false);
-  let openingError = $state('');
   let bulkPending = $state(false);
   let bulkMessage = $state<string | null>(null);
   let bulkConflict = $state<ValidatedPersonMergeRequired>();
@@ -93,10 +91,6 @@
   $effect(() => {
     if (narrow && activeKey) void tick().then(() => root?.querySelector<HTMLElement>('.body > .solo-page')?.focus());
   });
-  let openGeneration = 0;
-  const navigationKey = $derived(JSON.stringify(urlState));
-  $effect(() => { void navigationKey; untrack(() => { openGeneration += 1; opening = false; }); });
-  onDestroy(() => { openGeneration += 1; });
   const selectedProfileID = $derived(soloPerson ?? (controller.target === target && controller.detail && 'identifiers' in controller.detail ? (controller.detail as PersonSummary).profile?.id ?? null : null));
   $effect(() => {
     const id = selectedProfileID;
@@ -110,7 +104,6 @@
     if (targets.length && !targets.includes(page.target ?? '') && !controller.detailMissing) onReplaceNavigation({ relationshipTarget: targets[0] ?? null, relationshipFiles: false });
   });
   async function open(key: string): Promise<void> {
-    openingError = '';
     onNavigate({ directoryPersonID: key.startsWith('person:') ? Number(key.slice(7)) : null, relationshipTarget: key.startsWith('person:') ? null : key, relationshipFiles: false });
   }
   function escape(event: KeyboardEvent): void {
@@ -121,7 +114,7 @@
     event.stopPropagation();
   }
   function close(): void {
-    openGeneration += 1; opening = false; onNavigate({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false });
+    onNavigate({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false });
     void tick().then(() => root?.querySelector<HTMLElement>('[aria-label="People results"]')?.focus());
   }
   function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
@@ -162,6 +155,7 @@
   }
   async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
     await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
+    await directory.loadSelection(selectedProfileID);
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
     bulkPending = true;
@@ -222,7 +216,6 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
   <div class="heading"><PageHeader title="People">{#snippet actions()}<Button label="Directory" onclick={() => onNavigate({ workspace: 'directory' })} /><Button label="Reviews" onclick={() => onNavigate({ workspace: 'directory_review' })} />{/snippet}</PageHeader></div>
-  {#if openingError}<p role="alert">{openingError}</p>{/if}
   <div class="body">
     {#if narrow}{#if hasPerson}<div class="solo-page" tabindex="-1">{@render person()}</div>{:else}{@render list()}{/if}
     {:else}<SplitPane ariaLabel="Resize people list" storageKey="msgvault.people.list-pane.size" initialSize={380} minPrimary={300} maxPrimary={480}>

@@ -464,6 +464,7 @@ export class DirectoryController {
     refreshDirectory = false,
   ): Promise<void> {
     this.onWrite();
+    if (overlay.displayName !== undefined && this.entity?.personID === personID) await this.entity.refreshNetwork();
     const { update } = overlay;
     const filteredCategoryChanged = update?.categories !== undefined && this.category.trim() !== '';
     if (refreshDirectory || filteredCategoryChanged) {
