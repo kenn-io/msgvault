@@ -54,9 +54,9 @@
     } catch { return { ok: false, code: 'error', message: 'Could not read the selected person.' }; }
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
-    await onReconcile(context);
     onClose();
     onOpenPerson?.(success.survivor.id);
+    await onReconcile(context);
   }
 </script>
 {#if conflict}
