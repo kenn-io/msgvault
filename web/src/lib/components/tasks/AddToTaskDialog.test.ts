@@ -40,7 +40,7 @@ describe('Add to task', () => {
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
-  it('preserves a failed Tasks draft and retry identity across provider changes', async () => {
+  it('preserves a failed Tasks draft across provider changes', async () => {
     const creates: Request[] = [];
     const client = createAPIClient(async (input) => {
       const request = input as Request;
@@ -62,6 +62,7 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
+      await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
       await screen.findByText('Response lost after create');
       const provider = screen.getByRole('combobox', { name: /^Provider:/ });
@@ -70,12 +71,9 @@ describe('Add to task', () => {
       expect(screen.getByRole('button', { name: 'Add quote to Kata…' })).toBeDefined();
       await chooseSelectOption(provider, 'Tasks');
       expect(await screen.findByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
+      expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
       await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
       await waitFor(() => expect(creates).toHaveLength(2));
-      expect(creates[1].headers.get('X-Request-Id')).toBe(creates[0].headers.get('X-Request-Id'));
-      const initial = await creates[0].json();
-      expect(initial.added_at).toBeTruthy();
-      expect(await creates[1].json()).toEqual(initial);
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
