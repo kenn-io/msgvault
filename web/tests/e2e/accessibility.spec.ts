@@ -168,17 +168,17 @@ for (const theme of ['light', 'dark'] as const) {
 
       await selectWorkspace(page, 'People');
       // Walk each pane so every layout gets its own axe pass.
-      const hub = page.getByRole('main', { name: 'Relationships' });
+      const hub = page.getByRole('main', { name: 'People' });
       await expect(hub).toBeVisible();
-      const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
+      const relationshipList = page.getByRole('grid', { name: 'People results' });
       await expect(relationshipList.getByText('Archive Person')).toBeVisible();
       await assertNoViolations(page, `Relationships list ${theme}/${density}`);
       await relationshipList.getByText('Archive Person').click();
       await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-      const relationshipTimeline = page.getByRole('grid', { name: 'Relationship activity' });
+      const relationshipTimeline = page.getByRole('grid', { name: 'Messages results' });
       await expect(relationshipTimeline.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Relationships timeline ${theme}/${density}`);
-      await page.getByRole('radio', { name: 'Files 1' }).click();
+      await page.getByRole('radio', { name: 'Files', exact: true }).click();
       await expect(page.getByRole('grid', { name: 'Files results' }).getByText('archive-notes.pdf')).toBeVisible();
       await assertNoViolations(page, `Person files ${theme}/${density}`);
       await page.getByRole('radio', { name: 'Media' }).click();

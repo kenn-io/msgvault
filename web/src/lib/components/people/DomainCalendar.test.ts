@@ -1,0 +1,29 @@
+import { tick } from 'svelte';
+import { render, screen } from '@testing-library/svelte';
+import { expect, it, vi } from 'vitest';
+import { createAPIClient } from '../../api/client';
+import DomainCalendarHost from './DomainCalendar.test-support.svelte';
+
+it.each([
+  { name: 'last activity', year: 2025, lastAt: '2025-07-18T12:00:00Z' },
+  { name: 'future activity', year: 2026, lastAt: '2027-07-18T12:00:00Z' },
+])('requests initial local year $year once for $name', async ({ year, lastAt }) => {
+  vi.stubEnv('TZ', 'America/New_York');
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
+  const bodies: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    bodies.push(await request.json());
+    return Response.json({ rows: [1, 2, 3, 4].map(count => ({ key: `${year}-07-${17 + count}`, label: `${year}-07-${17 + count}`, count, estimated_bytes: 0, level: ['FIRST_QUARTILE', 'SECOND_QUARTILE', 'THIRD_QUARTILE', 'FOURTH_QUARTILE'][count - 1] })), total_count: 4, cache_revision: 'cache-domain', search_provenance: {} });
+  });
+  const view = render(DomainCalendarHost, { props: { client, domain: 'example.com', firstAt: '2022-01-01T12:00:00Z', lastAt, selectedDate: null, onDateChange: vi.fn() } });
+  try {
+    const cells = await screen.findAllByRole('button', { name: `1 message on Jul 18, ${year}` });
+    expect(cells[0].classList.contains('level-first-quartile')).toBe(true);
+    await tick();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ grouping: ['day'], timezone: 'America/New_York', sent_only: true, limit: 366,
+      filters: [{ dimension: 'domain', values: ['example.com'] }, { dimension: 'after', values: [`${year}-01-01T05:00:00.000Z`] }, { dimension: 'before', values: [`${year + 1}-01-01T05:00:00.000Z`] }] });
+  } finally { view.unmount(); vi.useRealTimers(); vi.unstubAllEnvs(); }
+});

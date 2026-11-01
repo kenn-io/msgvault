@@ -3,12 +3,15 @@ package query
 import (
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
 
 // ExploreRequest is the canonical modality-neutral analytical request. The
 // API layer validates the finite grouping/sort catalog before constructing it.
 type ExploreRequest struct {
+	// PersonInteractionsOnly excludes owner-absent events and meetings from person timelines.
+	PersonInteractionsOnly bool `json:"-"`
 	// SentOnly excludes unsent messages before grouping for contact activity timelines.
 	SentOnly     bool         `json:"-"`
 	Context      Context      `json:"context"`
@@ -229,6 +232,7 @@ type ExploreCoverageResult struct {
 }
 
 type ExploreGroupRequest struct {
+	Timezone  string         `json:"timezone,omitempty"`
 	Explore   ExploreRequest `json:"explore"`
 	Dimension string         `json:"dimension"`
 	// GroupKey, when non-empty, restricts the response to the single group
@@ -248,6 +252,8 @@ type ExploreGroupRow struct {
 	Count          int64     `json:"count"`
 	EstimatedBytes int64     `json:"estimated_bytes"`
 	LatestAt       time.Time `json:"latest_at"`
+	// Level ranks a day row among the returned day rows; other dimensions omit it.
+	Level identityindex.HeatLevel `json:"level,omitempty" enum:"NONE,FIRST_QUARTILE,SECOND_QUARTILE,THIRD_QUARTILE,FOURTH_QUARTILE"`
 }
 
 type ExploreGroupResponse struct {
