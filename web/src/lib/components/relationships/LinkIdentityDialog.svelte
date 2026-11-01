@@ -80,28 +80,27 @@
     searching = true;
     searchError = null;
     try {
-      const saved = onConfirmPerson ? await listDirectoryPeople({ q: trimmed, limit: SEARCH_LIMIT }, { ...client, signal: controller.signal }) : undefined;
-      const { data, error, response } = await generatedSearchParticipants(
-        {
-          predicate: {},
-          identity_query: trimmed,
-          sort: { field: 'activity_count', direction: 'desc' },
-          limit: SEARCH_LIMIT,
-        },
-        {
-          ...client,
-          signal: controller.signal,
-        },
-      );
+      const [saved, observed] = await Promise.all([
+        onConfirmPerson ? listDirectoryPeople({ q: trimmed, limit: SEARCH_LIMIT }, { ...client, signal: controller.signal }) : undefined,
+        generatedSearchParticipants(
+          {
+            predicate: {},
+            identity_query: trimmed,
+            sort: { field: 'activity_count', direction: 'desc' },
+            limit: SEARCH_LIMIT,
+          },
+          {
+            ...client,
+            signal: controller.signal,
+          },
+        ),
+      ]);
       if (generation !== searchGeneration || controller.signal.aborted) return;
-      if (data) {
-        if (saved && !saved.data) { searchError = messageFor(saved.error, saved.response.status); return; }
-        savedResults = (saved?.data?.people ?? []).filter(row => row.id !== excludePersonID);
-        const seen = new Set(savedResults.map(row => row.id));
-        results = (data.rows ?? []).filter(row => row.id !== excludeID && (excludePersonID === undefined || row.profile?.id !== excludePersonID) && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
-        return;
-      }
-      searchError = messageFor(error, response.status);
+      savedResults = (saved?.data?.people ?? []).filter(row => row.id !== excludePersonID);
+      const seen = new Set(savedResults.map(row => row.id));
+      results = (observed.data?.rows ?? []).filter(row => row.id !== excludeID && (excludePersonID === undefined || row.profile?.id !== excludePersonID) && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
+      const failed = saved && !saved.data ? saved : observed.data ? undefined : observed;
+      if (failed) searchError = messageFor(failed.error, failed.response.status);
     } catch (cause: unknown) {
       if (generation === searchGeneration && !controller.signal.aborted) searchError = messageFor(cause, 0);
     } finally {

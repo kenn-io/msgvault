@@ -237,7 +237,7 @@ export class DirectoryReviewController {
   ): Promise<void> {
     if (this.disposed) return;
     this.lastMerge = { candidateID, ...success };
-    this.invalidateSummaries(this.mergeRequired?.candidate ?? this.rows.find(row => row.id === candidateID));
+    this.invalidateSummaries();
     if (this.mergeRequired?.candidateID === candidateID) this.mergeRequired = null;
     const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
     this.status = `Profiles merged into ${name}. Review the refreshed pair to finish. Identity cache ${success.result.cache_state}.`;
@@ -264,17 +264,15 @@ export class DirectoryReviewController {
     return this.settlement;
   }
   async invalidate(active: boolean): Promise<void> {
-    this.summaries.clear();
-    this.lookupAbort.abort();
+    this.invalidateSummaries();
     this.resetIdentityContext(this.identityState);
     this.initialized = false;
     if (active) await this.loadIdentityPage(0);
   }
 
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }
-  private invalidateSummaries(candidate: IdentityMatchCandidate | undefined): void {
-    if (candidate) for (const side of ['left', 'right'] as const) this.summaries.delete(endpointKey(candidate, side));
-  }
+  /** Summaries describe whole clusters, so any identity change outdates them all. */
+  private invalidateSummaries(): void { this.summaries.clear(); this.lookupAbort.abort(); }
   /** Queues the lookups for the cards on the current page. */
   requestSummaries(): void {
     this.lookupQueue = [];
@@ -401,7 +399,7 @@ export class DirectoryReviewController {
       }
       if (response.data) {
         const decidedCandidate = response.data.candidate;
-        if (decision === 'accept') this.invalidateSummaries(decidedCandidate);
+        if (decision === 'accept') this.invalidateSummaries();
         this.decisionDrafts.delete(candidateID);
         if (this.ownsDecisionContext(context)) {
           this.rows = this.rows.map(row => row.id === candidateID ? decidedCandidate : row);

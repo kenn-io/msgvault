@@ -638,7 +638,7 @@ it.each(['accept', 'reject'] as const)('settles %s with keepalive, the displayed
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
     expect(writes).toEqual([{ path: `/api/v1/identity/match-candidates/1/review/${decision}`, body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
     expect(controller.rows.map(row => row.id)).toEqual([2]);
-    expect(controller.summaries.has('beeper_user:20')).toBe(true);
+    expect(controller.summaries.has('beeper_user:20')).toBe(decision === 'reject');
     expect(controller.summaries.has('participant:11')).toBe(decision === 'reject');
   } finally { controller.destroy(); }
 });
