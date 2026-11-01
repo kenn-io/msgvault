@@ -231,15 +231,19 @@
 <div class="fields">
   {#if !controller.structuredProfileETag}<p role="status">Profile revision unavailable<Button label="Reload profile" disabled={!controller.canReload} onclick={() => void controller.reload()} /></p>{/if}
   {#if controller.definitionsError}<p role="alert">{controller.definitionsError}<Button label="Retry fields" onclick={() => void controller.reloadDefinitions()} /></p>{/if}
+  {#snippet editor()}
+    {#key editorKey(editing)}
+      {#if editing?.kind === 'profile'}
+        <StructuredProfileEditor {controller} section={editing.section} current={editing.current} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
+      {:else if editing?.kind === 'attribute' && activeEditor}
+        <AttributeEditor {controller} definition={activeEditor!.definition} current={editing.current} sensitiveRevealed onDone={close} onCancel={close} />
+      {/if}
+    {/key}
+  {/snippet}
   {#each rows as row (row.id)}
+    <!-- An edited value's row gives way to the editor below the list, which outlives the row when Reload replaces or removes it. -->
     {#if editingRow(row)}
-      {#key editorKey(editing)}
-        {#if editing?.kind === 'profile'}
-          <StructuredProfileEditor {controller} section={editing.section} current={editing.current} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
-        {:else if editing?.kind === 'attribute' && activeEditor}
-          <AttributeEditor {controller} definition={activeEditor!.definition} current={editing.current} sensitiveRevealed onDone={close} onCancel={close} />
-        {/if}
-      {/key}
+      {#if row.kind === 'add'}{@render editor()}{/if}
     {:else if row.kind === 'add'}
       <!-- kit-ui-check-ignore: an add row in the field list, styled like a contact card's add rows. -->
       <button type="button" class="add-row" disabled={!controller.canWriteProfile} onclick={() => startAdd(row.target, row.id)}>
@@ -281,15 +285,7 @@
     {/if}
   {/each}
 
-  {#if editing && !editing.current && addingAt === 'more'}
-    {#key editorKey(editing)}
-      {#if editing.kind === 'profile'}
-        <StructuredProfileEditor {controller} section={editing.section} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
-      {:else if activeEditor}
-        <AttributeEditor {controller} definition={activeEditor!.definition} sensitiveRevealed onDone={close} onCancel={close} />
-      {/if}
-    {/key}
-  {/if}
+  {#if editing?.current || (editing && addingAt === 'more')}{@render editor()}{/if}
 
   <div class="add">
     <Menu onopenchange={(open) => { if (open) void controller.reloadDefinitions(); }}>
