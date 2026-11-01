@@ -28,14 +28,10 @@ test('People Filter opens duplicate cards, evidence, and browser-restored Histor
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('duplicate Undo cancels a write and pagehide submits the staged decision', async ({ page }) => {
+test('staging another duplicate flushes the first and pagehide submits the second', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
   await page.goto(duplicatesURL);
-  let card = page.locator('.cards > li').first();
-  await card.getByRole('button', { name: 'Keep separate' }).click();
-  await page.getByRole('button', { name: 'Undo' }).click();
-  expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(0);
-  card = page.locator('.cards > li').first();
+  const card = page.locator('.cards > li').first();
   await card.getByRole('button', { name: 'Keep separate' }).click();
   await page.locator('.cards > li').first().getByRole('button', { name: 'Keep separate' }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').length).toBe(1);

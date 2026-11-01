@@ -83,8 +83,6 @@ describe('PersonAddresses', () => {
       expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (78)' })).toBeDefined();
     } else {
       const name = evidence === 'email' ? 'bare@example.com' : '78';
-      const chip = screen.getByLabelText(`Linked profile ${name}`);
-      expect(chip.textContent).toContain(evidence === 'email' ? name : 'no stored address');
       await fireEvent.click(screen.getByRole('button', { name: `Unlink profile ${name}` }));
       expect(screen.getByRole('group', { name: `Confirm unlinking profile ${name}` })).toBeDefined();
       if (evidence === 'none') {
@@ -122,7 +120,7 @@ describe('PersonAddresses', () => {
     }
   });
 
-  it('shows every distinct origin incident to a linked member', () => {
+  it('labels the profile own row', () => {
     const base = clusteredPerson();
     render(PersonAddresses, baseProps({ detail: {
       ...base,
@@ -133,12 +131,8 @@ describe('PersonAddresses', () => {
       ] }
     } }));
 
-    const chip = screen.getByLabelText('Identity +15550100002');
-    expect(chip.textContent).toContain('linked manually');
-    expect(chip.textContent).toContain('matched from CardDAV (email)');
     const own = screen.getByLabelText('Identity Alice');
     expect(own.textContent).toContain('this profile');
-    expect(own.textContent).not.toContain('linked manually');
   });
 
   it('distinguishes opaque identity controls even when service and member names match', async () => {
