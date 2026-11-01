@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	archiveUIDKey     = "archive_uid"
-	archiveRevisionV1 = "1"
+	archiveUIDKey = "archive_uid"
+	// ArchiveRevisionV1 is the fixed archive identity contract revision.
+	ArchiveRevisionV1 = "1"
 )
 
 // ErrArchiveIdentityCorrupt means the one-time identity migration was
@@ -36,14 +37,14 @@ func (s *Store) ArchiveUIDContext(ctx context.Context) (string, error) {
 	return uid, nil
 }
 
-// ArchiveRevision identifies the archive identity contract stored in
-// archive_metadata. It is intentionally independent from both the UID and any
+// ArchiveRevision identifies the archive identity contract.
+// It is intentionally independent from both the UID and any
 // external project revision so caches can compare all three values explicitly.
 func (s *Store) ArchiveRevision() (string, error) {
 	if _, err := s.ArchiveUID(); err != nil {
 		return "", err
 	}
-	return archiveRevisionV1, nil
+	return ArchiveRevisionV1, nil
 }
 
 func (s *Store) ensureArchiveUID() error {

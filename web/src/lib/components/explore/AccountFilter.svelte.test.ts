@@ -41,13 +41,17 @@ describe('AccountFilter', () => {
     expect(onChange).toHaveBeenCalledWith([...filters, { dimension: 'account', values: ['identity:7:d29ya0BleGFtcGxlLm9yZw'] }]);
   });
 
-  it('stays hidden when the inbox is the only account and nothing is unattributed', async () => {
+  it.each([{ showSingleMailbox: false, count: 0 }, { showSingleMailbox: true, count: 1 }])('offers $count sole mailbox pickers when showSingleMailbox=$showSingleMailbox', async ({ showSingleMailbox, count }) => {
     const fetchFn = accountsResponse([
       { key: 'identity:7:aW5ib3hAZXhhbXBsZS5uZXQ', source_id: 7, account_address: 'inbox@example.net', message_count: 3, source_deleted_count: 0 },
     ]);
-    render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
-    await waitFor(() => expect(fetchFn).toHaveBeenCalled());
-    expect(screen.queryByRole('combobox', { name: /^Account:/ })).toBeNull();
+    const onChange = vi.fn();
+    const filters = [{ dimension: 'account' as const, values: ['identity:7:aW5ib3hAZXhhbXBsZS5uZXQ'] }];
+    const view = render(AccountFilter, { client: createAPIClient(fetchFn), filters, onChange, showSingleMailbox });
+    const select = await screen.findByRole('combobox', { name: /^Account:/ });
+    await waitFor(() => expect(select).toHaveProperty('disabled', false));
+    await view.rerender({ filters: [] });
+    expect(screen.queryAllByRole('combobox', { name: /^Account:/ })).toHaveLength(count);
   });
 
   it('retries an unavailable catalog until the receiving addresses arrive', async () => {

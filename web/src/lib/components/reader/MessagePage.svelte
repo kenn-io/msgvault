@@ -6,9 +6,15 @@
   import ConversationView from './ConversationView.svelte';
   import { reportError } from '../../telemetry/actions';
 
-  let { client, messageID }: { client: APIClient; messageID: number } = $props();
+  let { client, messageID, onOpenPerson, onOpenSettings }: { client: APIClient; messageID: number; onOpenPerson?: (participantID: number) => void; onOpenSettings?: () => void } = $props();
   const loader = new ArchiveMessageLoader();
+  const restoredReader = window.history.state?.messageReader as { messageID: number; anchor: number } | undefined;
   let retry = $state(0);
+
+  function rememberAnchor(anchor: number): void {
+    window.history.replaceState({ ...window.history.state, messageReader: { messageID, anchor } }, '');
+  }
+
   $effect(() => { if (loader.error) return reportError(() => client, () => 'message'); });
 
   $effect(() => {
@@ -27,7 +33,7 @@
     <p role="alert">{loader.error}</p>
     <Button onclick={() => retry += 1}>Retry</Button>
   {:else if loader.detail}
-    <ConversationView {client} conversationId={loader.detail.conversation_id!} anchorId={loader.detail.id!} />
+    <ConversationView {client} {onOpenPerson} {onOpenSettings} conversationId={loader.detail.conversation_id!} anchorId={restoredReader?.messageID === messageID ? restoredReader.anchor : loader.detail.id!} onAnchorChange={rememberAnchor} />
   {:else}
     <p role="status">Loading message…</p>
   {/if}
