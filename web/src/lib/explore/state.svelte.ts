@@ -875,7 +875,6 @@ export class ExploreState {
     if (replaceURL) {
       // Closing the overlay preserves the Settings leave choice already being held.
       this.pendingSearchPriorFocus = undefined;
-      this.pendingRestorationEpoch = undefined;
       const search = serializeExploreURLState(this.current, this.browser.location.search);
       const { pathname, hash } = this.browser.location;
       this.browser.history.replaceState(historyEntry(search, this.current, this.historyIndex), '', `${pathname}${search}${hash}`);
