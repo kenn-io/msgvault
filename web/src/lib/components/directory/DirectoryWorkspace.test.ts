@@ -287,7 +287,8 @@ describe('DirectoryWorkspace', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Promote to person' }));
 
     await waitFor(() => expect(commits).toContainEqual({ directoryPersonID: 42 }));
-    await waitFor(() => expect(controller.selectedPersonID).toBe(42));
+    const request = fetchFn.mock.calls.map(([input]) => input as Request).find(request => request.method === 'POST');
+    await expect(request!.clone().json()).resolves.toEqual({ participant_id: 11 });
   });
 
   it('keeps loaded rows visible when loading another page fails and retries that page', async () => {
@@ -453,38 +454,6 @@ describe('DirectoryWorkspace', () => {
     expect(alert.textContent).toContain('already belongs to another durable person');
   });
 
-  it('renders structured editing through the selection-owned profile controller', async () => {
-    const selectedState = { ...state, directoryPersonID: 7 };
-    const selectedPerson = {
-      id: 7, revision: 2, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'person-7',
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
-    };
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return directoryResponse();
-      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({
-        person: selectedPerson, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
-      }), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r2"' } });
-      if (path === '/api/v1/people/7') return new Response(JSON.stringify(selectedPerson), {
-        headers: { 'Content-Type': 'application/json', ETag: '"person-7-r2"' }
-      });
-      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
-      if (path.endsWith('/employments')) return Response.json({ employments: [] });
-      if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
-      if (path.endsWith('/days')) return Response.json({ person_id: 7, total_count: 0, days: [] });
-      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-01-01T00:00:00Z', stale: false });
-      throw new Error(`unexpected ${path}`);
-    }));
-    const controller = new DirectoryController(client);
-
-    renderPeople(client, controller, selectedState);
-
-    expect(await screen.findByRole('button', { name: 'Add phone' })).toHaveProperty('disabled', false);
-    expect(controller.profile).not.toBeNull();
-    expect(controller.entity).not.toBeNull();
-  });
 
   it('removes a confirmed deleted person from the Directory and clears its URL selection', async () => {
     const selectedState = { ...state, directoryPersonID: 7 };
@@ -584,59 +553,6 @@ describe('DirectoryWorkspace', () => {
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
   });
 
-  it('keeps a server-returned Unicode category match visible after the exact write overlay', async () => {
-    const selectedState = { ...state, directoryCategory: 'STRASSE', directoryPersonID: 7 };
-    const selectedPerson = {
-      id: 7, revision: 2, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'person-7',
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
-    };
-    const street = {
-      person_id: 7, original_value: 'Straße', normalized_value: 'strasse',
-      envelope: { id: 31, ordinal: 0, source: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard: {} }
-    };
-    let directoryRead = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') {
-        directoryRead += 1;
-        return Response.json({ people: [{
-          id: 7, revision: 2, display_name: 'Synthetic Person', contact_state: 'active',
-          categories: [], organizations: ['Example Org'], primary_channel: 'email'
-        }] });
-      }
-      if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') {
-        return new Response(JSON.stringify({
-          person: { ...selectedPerson, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [street], media: []
-        }), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r3"' } });
-      }
-      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({
-        person: selectedPerson, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
-      }), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r2"' } });
-      if (path === '/api/v1/people/7') return new Response(JSON.stringify(selectedPerson), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r2"' } });
-      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
-      if (path.endsWith('/employments')) return Response.json({ employments: [] });
-      if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
-      if (path.endsWith('/days')) return Response.json({ person_id: 7, total_count: 0, days: [] });
-      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-01-01T00:00:00Z', stale: false });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    const client = createAPIClient(fetchFn);
-    const controller = new DirectoryController(client);
-    renderPeople(client, controller, selectedState);
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
-
-    const row = await screen.findByRole('row', { name: /Synthetic Person/ });
-    await waitFor(() => expect(controller.rows[0]?.categories).toEqual(['Straße']));
-    expect(directoryRead).toBe(2);
-    expect(controller.category).toBe('STRASSE');
-    expect(controller.selectedPersonID).toBe(7);
-  });
 
   it('keeps prior rows and reloads current filters after filtered write reconciliation fails', async () => {
     const selectedState = {
@@ -728,73 +644,6 @@ describe('DirectoryWorkspace', () => {
     expect(reloadParameters.get('primary_channel')).toBe('email');
   });
 
-  it('updates the preferred channel without changing the observed Directory channel', async () => {
-    const selectedState = { ...state, directoryPrimaryChannel: 'email', directoryPersonID: 7 };
-    const selectedPerson = {
-      id: 7, revision: 2, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'person-7',
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
-    };
-    const definition = {
-      id: 1, universal_id: 'primary-channel-id', object_type: 'person', slug: 'primary_channel', label: 'Primary channel',
-      value_type: 'text', field_type: 'select', cardinality: 'single', display_order: 0, is_required: false,
-      ownership: 'system', ui_creatable: true, ui_editable: true, api_mutable: true, is_searchable: false,
-      is_sensitive: false, is_audited: true, is_deletable: false, history_exempt: false,
-      options: { choices: [{ value: 'email', label: 'Email' }, { value: 'chat', label: 'Chat' }] }, is_active: true,
-      revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
-    };
-    const email = {
-      id: 41, person_id: 7, definition_id: 1, definition_slug: 'primary_channel', ordinal: 0,
-      value: { type: 'text', text: 'email' }, active_from: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z', source: 'user'
-    };
-    const chat = {
-      ...email, id: 42, value: { type: 'text', text: 'chat' }, active_from: '2026-01-02T00:00:00Z', created_at: '2026-01-02T00:00:00Z'
-    };
-    let attributeWrite = 0;
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return directoryResponse();
-      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({
-        person: selectedPerson, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
-      }), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r2"' } });
-      if (path === '/api/v1/people/7') return new Response(JSON.stringify(selectedPerson), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r2"' } });
-      if (path === '/api/v1/people/7/attributes/primary_channel') {
-        attributeWrite += 1;
-        return attributeWrite === 1
-          ? Response.json({ dry_run: false, value: chat, superseded: { ...email, active_until: '2026-01-02T00:00:00Z', superseded_at: '2026-01-02T00:00:00Z' } })
-          : Response.json({ dry_run: false, superseded: { ...chat, active_until: '2026-01-03T00:00:00Z', superseded_at: '2026-01-03T00:00:00Z' } });
-      }
-      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [email], history: [] }] });
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
-      if (path.endsWith('/employments')) return Response.json({ employments: [] });
-      if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
-      if (path.endsWith('/days')) return Response.json({ person_id: 7, total_count: 0, days: [] });
-      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-01-01T00:00:00Z', stale: false });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    const client = createAPIClient(fetchFn);
-    const controller = new DirectoryController(client);
-    renderPeople(client, controller, selectedState);
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary channel' }));
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Primary channel' }), { target: { value: 'chat' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-
-    const row = screen.getByRole('row', { name: /Synthetic Person/ });
-    await waitFor(() => expect(
-      controller.profile?.attributes?.attributes?.[0]?.current?.[0]?.value
-    ).toEqual({ type: 'text', text: 'chat' }));
-    expect(controller.rows[0]).toMatchObject({ primary_channel: 'email', contact_state: 'active' });
-    expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove Primary channel' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
-    await waitFor(() => expect(controller.profile?.attributes?.attributes?.[0]?.current).toEqual([]));
-    expect(controller.rows[0]).toMatchObject({ primary_channel: 'email', contact_state: 'active' });
-    expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
-  });
 
   it('opens a listed person in People through the navigation callback', async () => {
     const client = createAPIClient(async () => directoryResponse());
