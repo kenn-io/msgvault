@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { MessageDetail } from '../../api/generated/models';
+import { lanes } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
@@ -23,6 +24,9 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
     const path = new URL(request.url).pathname;
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (path.endsWith('/meetings/metrics')) return metricsResponse(request);
     if (path.endsWith('/meetings/actions')) return Response.json(meetingActions({ rows: [action], total_count: 1 }));
     if (path.endsWith('/messages/42')) return detailResponse();
@@ -49,6 +53,9 @@ function groupNavigationClient() {
   return createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url);
+    if (url.pathname.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
+    if (url.pathname.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (url.pathname.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (url.pathname.endsWith('/meetings/metrics')) return metricsResponse(request);
     if (url.pathname.endsWith('/meetings/actions')) {
       const body = await request.json();

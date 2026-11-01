@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
+import { lanes } from '../../../test/operations';
 import { createAPIClient } from '../../api/client';
 import type { MeetingMetricsRequest } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
@@ -13,6 +14,9 @@ import AppShell from '../shell/AppShell.svelte';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [3, 7], vcard_uid: 'person-7', created_at: '', updated_at: '' };
 const at = '2026-01-01T00:00:00Z';
 function ancillary(path: string): Response {
+  if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
+  if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+  if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
   if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });
   if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
   if (path.endsWith('/merges')) return Response.json({ merges: [], limit: 100, offset: 0 });
@@ -99,7 +103,7 @@ describe('meeting panel surfaces', () => {
     await screen.findByText('4 meetings');
     expect(metrics[0]).toMatchObject({ explore: { cache_revision: 'detail-cache', search_provenance: { lexical_index_revision: 'detail-lex', vector_generation: 2 }, candidate_snapshot_id: 'detail-candidate',
       predicate: { query: 'planning', search_mode: 'hybrid', filters: [...filters, { dimension: 'domain', values: ['exact.example'] }] } } });
-    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Settings' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
     await screen.findByText('4 meetings');
@@ -115,7 +119,8 @@ describe('meeting panel surfaces', () => {
       const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
       if (path.endsWith('/meetings/metrics')) { metrics.push(await request.clone().json()); return Response.json(meetingMetrics()); }
       if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
-      return Response.json({ rows: [], total_count: 0, cache_revision: 'everything-cache', search_provenance: { lexical_index_revision: 'lexical-1' } });
+      if (path.endsWith('/explore') || path.endsWith('/explore/groups')) return Response.json({ rows: [], total_count: 0, cache_revision: 'everything-cache', search_provenance: { lexical_index_revision: 'lexical-1' } });
+      return ancillary(path);
     });
     const state = new ExploreState(window);
     const filters = [{ dimension: 'message_type' as const, values: ['meeting_transcript'] }, { dimension: 'source' as const, values: ['3'] }, { dimension: 'domain' as const, values: ['exact.example'] }];

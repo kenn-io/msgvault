@@ -1,99 +1,145 @@
 <script lang="ts">
-  import { KbdBadge, StatusDot, Tooltip } from '@kenn-io/kit-ui';
-  import Keyboard from '@lucide/svelte/icons/keyboard';
+  import { KbdBadge, Tooltip } from '@kenn-io/kit-ui';
+  import CircleHelp from '@lucide/svelte/icons/circle-help';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
 
+  import type { SavedView } from '../../api/generated/models';
   import type { ExploreWorkspace } from '../../explore/models';
-  import { NAVIGATION_GROUPS } from './navigation';
+  import SavedViewRow from './SavedViewRow.svelte';
+  import type { JobsStore } from '../../jobs/jobs.svelte';
+  import type { JobTarget } from '../../jobs/jobs';
+  import { supportsSavedViewSchema, type CanonicalState } from '../../saved-views/canonical';
+  import SyncStatusMenu from './SyncStatusMenu.svelte';
+  import { NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
 
   interface Props {
+    onPastRuns: () => void;
     active: ExploreWorkspace;
     collapsed: boolean;
     showCollapseToggle: boolean;
-    status: { tone: 'working' | 'idle' | 'unclean'; label: string; text: string };
+    jobs: JobsStore;
+    onOpenJob: (target: JobTarget) => void;
+    views?: SavedView[];
+    viewsError?: string;
+    onRetryViews?: () => void;
     onNavigate: (id: ExploreWorkspace) => void;
     onToggleCollapsed: () => void;
-    onOpenShortcuts: () => void;
+    onOpenHelp: () => void;
+    onOpenView?: (view: SavedView) => void;
+    onRenameView?: (view: SavedView, name: string) => Promise<string | undefined>;
+    onDescribeView?: (view: SavedView, description: string) => Promise<string | undefined>;
+    onDeleteView?: (view: SavedView) => void;
   }
 
   let {
+    onPastRuns,
     active,
     collapsed,
     showCollapseToggle,
-    status,
+    jobs,
+    onOpenJob,
+    views = [],
+    viewsError = undefined,
+    onRetryViews = undefined,
     onNavigate,
     onToggleCollapsed,
-    onOpenShortcuts
+    onOpenHelp,
+    onOpenView = () => undefined,
+    onRenameView = async () => undefined,
+    onDescribeView = undefined,
+    onDeleteView = () => undefined,
   }: Props = $props();
 
-  const uid = $props.id();
-  const groupId = `nav-group-${uid}`;
+  const SettingsIcon = SETTINGS_ITEM.icon;
+  const items = NAVIGATION_ITEMS;
+  const groupedViews = $derived.by(() => {
+    const messages: SavedView[] = [];
+    const files: SavedView[] = [];
+    for (const view of views) {
+      const target = supportsSavedViewSchema(view.schema_version) &&
+        (view.canonical_state as CanonicalState)?.presentation === 'files' ? files : messages;
+      target.push(view);
+    }
+    return { messages, files };
+  });
+
+  function nestedViews(item: NavigationItem): SavedView[] {
+    if (item.id === 'everything') return groupedViews.messages;
+    if (item.id === 'files') return groupedViews.files;
+    return [];
+  }
 </script>
 
 <aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar">
   <div class="sidebar__brand">msgvault</div>
   <nav aria-label="Primary">
-    {#each NAVIGATION_GROUPS as group, index (group.label)}
-      {#if collapsed}
-        {#if index > 0}<hr class="sidebar__divider" />{/if}
-      {:else}
-        <p class="sidebar__group" id="{groupId}-{index}">{group.label}</p>
-      {/if}
-      <ul
-        aria-label={collapsed ? group.label : undefined}
-        aria-labelledby={collapsed ? undefined : `${groupId}-${index}`}
-      >
-        {#each group.items as item (item.id)}
-          {@const Icon = item.icon}
-          <li>
-            <Tooltip text={item.label} side={collapsed ? 'right' : 'bottom'}>
-              <button
-                type="button"
-                class="sidebar__item"
-                aria-label={item.label}
-                aria-current={item.id === active ? 'page' : undefined}
-                onclick={() => onNavigate(item.id)}
-              >
-                <Icon size={18} aria-hidden="true" />
-                {#if !collapsed}<span>{item.label}</span>{/if}
-              </button>
-            </Tooltip>
-          </li>
-        {/each}
-      </ul>
-    {/each}
+    <ul>
+      {#each items as item (item.id)}
+        {@const Icon = item.icon}
+        {@const nested = collapsed ? [] : nestedViews(item)}
+        <li>
+          <Tooltip text={item.label} side={collapsed ? 'right' : 'bottom'}>
+            <button
+              type="button"
+              class="sidebar__item"
+              aria-label={item.label}
+              aria-current={(item.id === active || item.id === 'relationships' && (active === 'directory' || active === 'directory_review')) ? 'page' : undefined}
+              onclick={() => onNavigate(item.id)}
+            >
+              <Icon size={18} aria-hidden="true" />
+              {#if !collapsed}<span class="sidebar__label">{item.label}</span>{/if}
+            </button>
+          </Tooltip>
+          {#if item.id === 'everything' && !collapsed && viewsError}
+            <div class="sidebar__views-error" role="alert">
+              <span>Couldn't load saved views.</span>
+              <button type="button" onclick={onRetryViews}>Retry</button>
+            </div>
+          {/if}
+          {#if nested.length > 0}
+            <ul class="sidebar__views" aria-label={`${item.label} saved views`}>
+              {#each nested as view (view.id)}
+                <li><SavedViewRow {view} onOpen={onOpenView} onRename={onRenameView} onDescribe={onDescribeView} onDelete={onDeleteView} /></li>
+              {/each}
+            </ul>
+          {/if}
+        </li>
+      {/each}
+    </ul>
   </nav>
   <div class="sidebar__footer">
-    <Tooltip text={status.label} focusable={collapsed} side={collapsed ? 'right' : 'bottom'}>
-      <span class="sidebar__status">
-        <span aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
-        <span class:kit-sr-only={collapsed}>{collapsed ? status.label : status.text}</span>
-      </span>
-    </Tooltip>
-    <Tooltip text="Keyboard shortcuts" side={collapsed ? 'right' : 'bottom'}>
+    <Tooltip text={SETTINGS_ITEM.label} side={collapsed ? 'right' : 'bottom'}>
       <button
         type="button"
-        class="sidebar__item"
-        aria-label="Keyboard shortcuts"
-        onclick={onOpenShortcuts}
+        class="sidebar__item sidebar__item--footer"
+        aria-label={SETTINGS_ITEM.label}
+        aria-current={active === 'settings' ? 'page' : undefined}
+        onclick={() => onNavigate('settings')}
       >
-        <Keyboard size={18} aria-hidden="true" />
-        {#if !collapsed}<span>Keyboard shortcuts</span><KbdBadge keys={['?']} />{/if}
+        <SettingsIcon size={18} aria-hidden="true" />
+        {#if !collapsed}<span class="sidebar__label">{SETTINGS_ITEM.label}</span>{/if}
       </button>
     </Tooltip>
+    <Tooltip text="Help" side={collapsed ? 'right' : 'bottom'}>
+      <button type="button" class="sidebar__item sidebar__item--footer" aria-label="Help" onclick={onOpenHelp}>
+        <CircleHelp size={18} aria-hidden="true" />
+        {#if !collapsed}<span class="sidebar__label">Help</span><KbdBadge keys={['?']} />{/if}
+      </button>
+    </Tooltip>
+    <SyncStatusMenu {onPastRuns} store={jobs} {collapsed} onOpen={onOpenJob} />
     {#if showCollapseToggle}
       <Tooltip text={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side={collapsed ? 'right' : 'bottom'}>
         <button
           type="button"
-          class="sidebar__item"
+          class="sidebar__item sidebar__item--footer"
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           onclick={onToggleCollapsed}
         >
           {#if collapsed}
             <PanelLeftOpen size={18} aria-hidden="true" />
           {:else}
-            <PanelLeftClose size={18} aria-hidden="true" /><span>Collapse</span>
+            <PanelLeftClose size={18} aria-hidden="true" /><span class="sidebar__label">Collapse</span>
           {/if}
         </button>
       </Tooltip>
@@ -108,7 +154,7 @@
     height: 100%;
     flex-direction: column;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-2);
+    padding: var(--space-3) var(--space-3);
     overflow-y: auto;
     background: var(--bg-surface);
     border-right: 1px solid var(--border-default);
@@ -117,6 +163,7 @@
   .sidebar--rail {
     width: var(--nav-rail-width);
     align-items: center;
+    padding-inline: var(--space-3);
   }
 
   /* The same buttons serve both modes so focus survives a toggle; labels show as tooltips only in the rail. */
@@ -129,12 +176,12 @@
     width: auto;
   }
 
-  .sidebar:not(.sidebar--rail) :global(.kit-tooltip) {
+  .sidebar:not(.sidebar--rail) :global(.kit-tooltip:not(.saved-view-reason)) {
     display: none;
   }
 
   .sidebar__brand {
-    padding: var(--space-1) var(--space-3);
+    padding: var(--space-2) var(--pane-pad-x);
     color: var(--text-primary);
     font-size: var(--font-size-md);
     font-weight: 650;
@@ -145,43 +192,47 @@
   }
 
   nav {
-    display: flex;
     flex: 1;
-    flex-direction: column;
-    gap: var(--space-1);
+    padding-top: var(--space-3);
   }
 
   ul {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space-1);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
-  .sidebar__group {
-    margin: var(--space-3) 0 var(--space-1);
-    padding: 0 var(--space-3);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: 600;
+  .sidebar__views {
+    margin: var(--space-1) 0 var(--space-3) calc(var(--pane-pad-x) + var(--space-4));
+    border-left: 1px solid var(--border-muted);
   }
 
-  .sidebar__divider {
-    width: 24px;
-    margin: var(--space-2) auto;
+  .sidebar__views-error {
+    margin-left: calc(var(--pane-pad-x) + var(--space-4));
+    padding: var(--space-2) var(--pane-pad-x);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .sidebar__views-error button {
+    padding: 0;
     border: 0;
-    border-top: 1px solid var(--border-default);
+    background: transparent;
+    color: var(--text-secondary);
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   .sidebar__item {
     display: flex;
     width: 100%;
-    min-height: 32px;
+    min-height: var(--control-h-lg);
     align-items: center;
-    gap: var(--space-3);
-    padding: 0 var(--space-3);
+    gap: var(--control-gap);
+    padding: 0 var(--pane-pad-x);
     border: 0;
     border-radius: var(--radius-md);
     background: transparent;
@@ -191,10 +242,23 @@
     cursor: pointer;
   }
 
+  .sidebar__item--footer {
+    min-height: var(--control-h);
+    font-size: var(--font-size-sm);
+  }
+
   .sidebar--rail .sidebar__item {
-    width: 36px;
+    width: var(--control-h-lg);
+    min-height: var(--control-h-lg);
     justify-content: center;
     padding: 0;
+  }
+
+  .sidebar__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sidebar__item:hover {
@@ -212,28 +276,15 @@
     margin-left: auto;
   }
 
+  .sidebar--rail li {
+    position: relative;
+  }
+
   .sidebar__footer {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding-top: var(--space-2);
+    gap: var(--space-1);
+    padding-top: var(--space-3);
     border-top: 1px solid var(--border-muted);
-  }
-
-  .sidebar__status {
-    display: flex;
-    min-height: 28px;
-    align-items: center;
-    gap: var(--space-2);
-    padding: 0 var(--space-3);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .sidebar--rail .sidebar__status {
-    width: 36px;
-    min-height: 32px;
-    justify-content: center;
-    padding: 0;
   }
 </style>
