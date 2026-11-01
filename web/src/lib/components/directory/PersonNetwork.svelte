@@ -81,14 +81,14 @@
 
   const hasLinks = $derived((network?.edges.length ?? 0) > 0);
 
-  // How a node relates to the node one step closer, such as "Designer" or "guides".
-  // A link between two nodes the same distance away shows under its target, with the source's name.
+  // How a node relates to nodes no farther away. A relationship names both ends in reading order,
+  // such as "Ann mentors" under Bob or "mentors Ann" under Ann's mentor; a job shows its title.
   function relation(node: NetworkNode): string {
     const find = (id: string) => network?.nodes.find((each) => each.id === id);
     const hop = (id: string) => find(id)?.hop ?? 0;
     return (network?.edges ?? [])
       .filter((edge) => (edge.target_node_id === node.id && hop(edge.source_node_id) <= node.hop) || (edge.source_node_id === node.id && hop(edge.target_node_id) < node.hop))
-      .map((edge) => edge.target_node_id === node.id && hop(edge.source_node_id) === node.hop ? `${find(edge.source_node_id)?.label} ${edge.label}` : edge.label)
+      .map((edge) => edge.kind !== 'relationship' ? edge.label : edge.target_node_id === node.id ? `${find(edge.source_node_id)?.label} ${edge.label}` : `${edge.label} ${find(edge.target_node_id)?.label}`)
       .filter((label, index, all) => label && all.indexOf(label) === index)
       .join(', ');
   }
