@@ -207,10 +207,9 @@ describe('PersonDetail', () => {
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'invoice' } });
     await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'invoice' }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Type' }));
     // A person Files view starts with every file type included; unchecking PDFs leaves the rest.
     const others = ['audio', 'text', 'document', 'archive', 'other'];
-    await fireEvent.click(screen.getByRole('button', { name: 'PDFs' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
     await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'invoice', mime_families: others }));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Sort by size' }));
