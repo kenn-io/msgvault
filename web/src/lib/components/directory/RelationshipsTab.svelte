@@ -23,7 +23,7 @@
 
   let { client, controller, personID, catalogOnly = false, onOpenPerson }: Props = $props();
   const imports = new RelationshipReviewController(untrack(() => client));
-  $effect(() => { if (!catalogOnly) imports.applyPerson(personID); });
+  $effect(() => { const id = personID; if (!catalogOnly && controller.relationships) untrack(() => imports.personID === id ? void imports.load() : imports.applyPerson(id)); });
   onDestroy(() => imports.destroy());
   let relationshipEditor = $state<PersonRelationshipView | null | undefined>(undefined);
   let relationshipTypeEditor = $state<RelationshipType | null | undefined>(undefined);
