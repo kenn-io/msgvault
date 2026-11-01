@@ -389,3 +389,15 @@ func SetPersonTierRowPage(n int) func() {
 	personTierRowPage = n
 	return func() { personTierRowPage = old }
 }
+
+// SetRebindHookForTest calls fn with each SQL statement before it runs, so a
+// test can commit from another connection between a transaction's reads and
+// its first write. Transactions begun before the call keep the old behavior.
+func (s *Store) SetRebindHookForTest(fn func(query string)) func() {
+	rebind := s.db.rebind
+	s.db.rebind = func(query string) string {
+		fn(query)
+		return rebind(query)
+	}
+	return func() { s.db.rebind = rebind }
+}
