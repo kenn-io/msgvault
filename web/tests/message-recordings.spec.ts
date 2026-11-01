@@ -1,5 +1,12 @@
+import { stubOperationStatus } from './kit-ui';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
 
 import { expect, test } from '@playwright/test';
 
@@ -97,7 +104,7 @@ for (const theme of screenshotDir ? ['light', 'dark'] as const : ['light'] as co
 
       const explore = encodeURIComponent(JSON.stringify({ workspace: 'everything' }));
       await page.goto(`/?explore=${explore}`);
-      const grid = page.getByRole('grid', { name: 'Everything results' });
+      const grid = page.getByRole('grid', { name: 'Messages results' });
       await expect(grid.getByText(row.title)).toBeVisible();
       await grid.focus();
       await page.keyboard.press('Enter');
