@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { exploreHistoryState } from './explore-state';
 
@@ -55,6 +56,9 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'session', https: false, plain_http_warning: false }
   }));
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/files/search', (route) => route.fulfill({ json: {
     files: [row], total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   } }));

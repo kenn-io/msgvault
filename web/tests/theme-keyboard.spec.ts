@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { selectWorkspace, setKitTheme, setTemporaryDensity } from './kit-ui';
 
@@ -15,7 +16,7 @@ test('compact workspace links preserve browser navigation and reopen the selecte
   await expect(page).toHaveURL(/\?workspace=files&mode=full_text$/);
   const filesURL = page.url();
 
-  await selectWorkspace(page, 'Everything');
+  await selectWorkspace(page, 'Messages');
   await expect(page.getByText('Synthetic archive subject', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\?workspace=everything&mode=full_text$/);
   await page.goBack();
@@ -47,7 +48,7 @@ test('query failures explain recovery in Everything and Files', async ({ page })
 });
 
 test('one registry drives selection, searchable help, palette, and editable suspension', async ({ page }) => {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   const renderedRow = page.locator('[data-row-key="message:1"]');
   await grid.focus();
   await expect(grid).toBeFocused();
@@ -73,7 +74,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-  const palette = page.getByRole('dialog', { name: 'Everything commands' });
+  const palette = page.getByRole('dialog', { name: 'Messages commands' });
   await expect(palette).toBeVisible();
   await palette.getByRole('combobox').fill('clear selection');
   const clearSelection = palette.getByRole('option', { name: /Clear selection/ });
@@ -83,7 +84,7 @@ test('one registry drives selection, searchable help, palette, and editable susp
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
   await expect(grid).toBeFocused();
 
-  const search = page.getByRole('searchbox', { name: 'Search everything' });
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
   await search.focus();
   await page.keyboard.press('Shift+A');
   await expect(renderedRow).toHaveAttribute('aria-selected', 'false');
@@ -108,17 +109,17 @@ test('one registry drives selection, searchable help, palette, and editable susp
 });
 
 test('keyboard palette grouping focuses the replacement grid', async ({ page }) => {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-  const palette = page.getByRole('dialog', { name: 'Everything commands' });
+  const palette = page.getByRole('dialog', { name: 'Messages commands' });
   await palette.getByRole('combobox').fill('group by source');
   const command = palette.getByRole('option', { name: 'Group by Source' });
   await expect(command).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('Enter');
 
-  const grouped = page.getByRole('grid', { name: 'Everything grouped by source' });
+  const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(palette).toHaveCount(0);
   await expect(grouped).toBeVisible();
   await expect(grouped).toBeFocused();
@@ -140,7 +141,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(searchButton).toHaveClass(/kit-button--neutral/);
     await expectRenderedContrast(searchButton, 4.5);
 
-    const grid = page.getByRole('grid', { name: 'Everything results' });
+    const grid = page.getByRole('grid', { name: 'Messages results' });
     await grid.focus();
     await page.keyboard.press('Shift+A');
     const selectedRow = page.locator('[data-row-key="message:1"]');
@@ -148,7 +149,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(selectedRow).toHaveCSS('box-shadow', /2px 0px 0px 0px inset/);
 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-    const palette = page.getByRole('dialog', { name: 'Everything commands' });
+    const palette = page.getByRole('dialog', { name: 'Messages commands' });
     const activeOption = palette.getByRole('option', { selected: true }).first();
     await expect(activeOption).toBeVisible();
     await expectRenderedContrast(activeOption, 4.5);
@@ -172,6 +173,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('ArrowDown');
     await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
+    await stubOperationStatus(page);
     await selectWorkspace(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();
@@ -244,7 +246,7 @@ test('Deletions keeps the global search shortcut available', async ({ page }) =>
   await selectWorkspace(page, 'Deletions');
   await expect(page.getByRole('heading', { name: 'Deletions', exact: true })).toBeVisible();
   await page.keyboard.press('/');
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toBeFocused();
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toBeFocused();
 });
 
 test('truncated people and filenames disclose full labels on hover', async ({ page }) => {
@@ -271,7 +273,7 @@ test('clicking a people label preserves Everything keyboard navigation and one g
     total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
   } }));
   await page.reload();
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.locator('.people-label').first().click();
   await expect(grid).toBeFocused();
   await page.keyboard.press('j');
@@ -288,7 +290,7 @@ test('clicking a people label preserves Everything keyboard navigation and one g
 });
 
 test('clicking an Everything row checkbox keeps keyboard selection in the grid', async ({ page }) => {
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   const renderedRow = page.locator('[data-row-key="message:1"]');
   await renderedRow.hover();
   await renderedRow.getByRole('checkbox', { name: /^Select / }).click();
