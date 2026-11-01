@@ -352,3 +352,195 @@ func TestFullRescanRecoversExpiredCursor(t *testing.T) {
 	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
 	assert.Equal(t, 5, count)
 }
+
+func TestImportWritesMetadataFormatVersion(t *testing.T) {
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "versioned comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(t, err)
+	for _, nativeID := range []string{"100_200", "100_201"} {
+		row := message(t, st, src.ID, nativeID)
+		saved, err := st.GetMessageMetadata(row.ID)
+		require.NoError(t, err)
+		var metadata struct {
+			Version int `json:"version"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(saved.String), &metadata))
+		assert.Equal(t, 1, metadata.Version, "persisted object %s must declare its metadata format", nativeID)
+	}
+}
+
+func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
+	for _, target := range []string{"100_200", "100_201"} {
+		for _, version := range []string{"missing", "future"} {
+			t.Run(target+"/"+version, func(t *testing.T) {
+				st, f, imp, src := setupImport(t)
+				f.comments["100_200"] = []Object{*comment("100_201", "100_200", "original comment")}
+				_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+				require.NoError(t, err)
+				row := message(t, st, src.ID, target)
+				originalBody, err := st.GetMessageBodyText(row.ID)
+				require.NoError(t, err)
+				saved, err := st.GetMessageMetadata(row.ID)
+				require.NoError(t, err)
+				var metadata map[string]any
+				require.NoError(t, json.Unmarshal([]byte(saved.String), &metadata))
+				if version == "future" {
+					metadata["version"] = 99
+				} else {
+					delete(metadata, "version")
+				}
+				encoded, err := json.Marshal(metadata)
+				require.NoError(t, err)
+				require.NoError(t, st.SetMessageMetadata(row.ID, sql.NullString{String: string(encoded), Valid: true}))
+				f.posts[0].Message = "replacement post must not overwrite an unknown format"
+				f.comments["100_200"][0].Message = "replacement comment must not overwrite an unknown format"
+				sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
+				assert.Error(t, err)
+				if sum != nil {
+					assert.True(t, sum.Partial)
+				}
+				body, readErr := st.GetMessageBodyText(row.ID)
+				require.NoError(t, readErr)
+				assert.Equal(t, originalBody, body, "unknown metadata must be refused before changing that object")
+				after, readErr := st.GetMessageMetadata(row.ID)
+				require.NoError(t, readErr)
+				assert.JSONEq(t, string(encoded), after.String, "refusal must preserve the stored metadata")
+			})
+		}
+	}
+}
+
+// These are synthetic capability fixtures, not observed Meta response shapes.
+// The provider-declared parent may differ from the edge being traversed only
+// when its archived source, root, and actual conversation are safe to use.
+func TestImportDeclaredParentSelection(t *testing.T) {
+	for _, declared := range []bool{true, false} {
+		name := "provider absent uses traversal frame"
+		if declared {
+			name = "provider selects already archived parent"
+		}
+		t.Run(name, func(t *testing.T) {
+			st, f, imp, src := setupImport(t)
+			parent := *comment("100_201", "100_200", "synthetic parent")
+			child := *comment("100_202", "100_201", "synthetic child")
+			f.comments["100_200"] = []Object{parent}
+			if declared {
+				// The first object is archived before the next object is handled.
+				// Both arrive on the root edge, but the child declares 100_201.
+				f.comments["100_200"] = append(f.comments["100_200"], child)
+			} else {
+				child.Parent = nil
+				f.comments["100_201"] = []Object{child}
+			}
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(t, err)
+			rootRow := message(t, st, src.ID, "100_200")
+			parentRow := message(t, st, src.ID, "100_201")
+			childRow := message(t, st, src.ID, "100_202")
+			assert.Equal(t, parentRow.ID, childRow.ReplyToMessageID.Int64)
+			assert.Equal(t, rootRow.ConversationID, childRow.ConversationID)
+			metadata, err := st.GetMessageMetadata(childRow.ID)
+			require.NoError(t, err)
+			var context struct {
+				Root   string `json:"post_id"`
+				Parent string `json:"parent_id"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(metadata.String), &context))
+			assert.Equal(t, "100_200", context.Root)
+			assert.Equal(t, "100_201", context.Parent)
+			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, childRow.ID, message(t, st, src.ID, "100_202").ID, "same declared parent replays without a duplicate")
+		})
+	}
+}
+
+func TestImportDeclaredParentRefusesUnsafeTargets(t *testing.T) {
+	for _, tt := range []struct {
+		name                   string
+		parentID               string
+		seed                   bool
+		foreignSource          bool
+		otherConversation      bool
+		metadataNamesOtherRoot bool
+	}{
+		{name: "missing", parentID: "100_999"},
+		{name: "foreign source", parentID: "100_999", seed: true, foreignSource: true},
+		{name: "other root despite same conversation", parentID: "100_999", seed: true, metadataNamesOtherRoot: true},
+		{name: "other conversation despite matching metadata root", parentID: "100_999", seed: true, otherConversation: true},
+		{name: "self parent", parentID: "100_202"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st, f, imp, src := setupImport(t)
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(t, err)
+			root := message(t, st, src.ID, "100_200")
+			if tt.seed {
+				// Seed real Store rows to distinguish source scoping, metadata
+				// claims, and actual conversation ownership for a NEW child.
+				sourceID, conversationID, app := src.ID, root.ConversationID, "9"
+				if tt.foreignSource {
+					other, err := st.GetOrCreateSource(SourceType, "app:99:page:100")
+					require.NoError(t, err)
+					sourceID, app = other.ID, "99"
+				}
+				if tt.foreignSource || tt.otherConversation {
+					conversationID, err = st.EnsureConversationWithTypeContext(t.Context(), sourceID, "100_900", "public_comments", "synthetic other conversation")
+					require.NoError(t, err)
+				}
+				metadataRoot := "100_200"
+				if tt.metadataNamesOtherRoot {
+					metadataRoot = "100_900"
+				}
+				metadata := sql.NullString{Valid: true, String: fmt.Sprintf(`{"version":1,"app_id":%q,"page_id":"100","post_id":%q,"parent_id":"100_200"}`, app, metadataRoot)}
+				_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+					Message:  &store.Message{SourceID: sourceID, ConversationID: conversationID, SourceMessageID: tt.parentID, MessageType: SourceType},
+					Metadata: &metadata, BodyText: sql.NullString{String: "synthetic parent boundary", Valid: true},
+				})
+				require.NoError(t, err)
+			}
+			f.comments["100_200"] = []Object{*comment("100_202", tt.parentID, "must not link outside the selected root")}
+			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			assert.Error(t, err)
+			ids, readErr := st.MessageExistsBatch(src.ID, []string{"100_202"})
+			require.NoError(t, readErr)
+			assert.Zero(t, ids["100_202"], "unsafe declared parent must be rejected before persisting the new child")
+		})
+	}
+}
+
+func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
+	for _, target := range []string{"existing comment", "root post"} {
+		t.Run(target, func(t *testing.T) {
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{
+				*comment("100_201", "100_200", "first parent"),
+				*comment("100_203", "100_200", "another archived parent"),
+			}
+			f.comments["100_201"] = []Object{*comment("100_202", "100_201", "original child")}
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(t, err)
+			id := "100_202"
+			if target == "root post" {
+				id = "100_200"
+				f.posts[0].Parent = &Actor{ID: "100_203"}
+				f.posts[0].Message = "must not reparent root"
+			} else {
+				f.comments["100_201"][0].Parent.ID = "100_203"
+				f.comments["100_201"][0].Message = "must not reparent existing child"
+			}
+			before := message(t, st, src.ID, id)
+			body, err := st.GetMessageBodyText(before.ID)
+			require.NoError(t, err)
+			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			assert.Error(t, err)
+			after := message(t, st, src.ID, id)
+			assert.Equal(t, before.ReplyToMessageID, after.ReplyToMessageID)
+			assert.Equal(t, before.ConversationID, after.ConversationID)
+			afterBody, err := st.GetMessageBodyText(before.ID)
+			require.NoError(t, err)
+			assert.Equal(t, body, afterBody)
+		})
+	}
+}

@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/meta"
@@ -139,4 +141,37 @@ func TestFacebookSchedulerUsesExactConfiguredJob(t *testing.T) {
 	require.NoError(t, sched.TriggerJob(name))
 	assert.Equal(t, 1, calls)
 	assert.Error(t, sched.TriggerJob("facebook_comments:example-page"))
+}
+
+func TestFacebookScheduledTextSyncDoesNotWaitForAttachmentMaintenance(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// Real coordinator and job registration: a text-only job must run
+		// while blob maintenance owns its exclusive lease. No archive or blob
+		// directory is needed to exercise this scheduler boundary.
+		maintenance := &attachmentMaintenance{coordinator: packstore.NewCoordinator()}
+		lease, err := maintenance.coordinator.AcquireMaintenance(t.Context())
+		require.NoError(t, err)
+		sched := scheduler.New(func(context.Context, string) error {
+			return fmt.Errorf("unexpected account dispatch")
+		})
+		defer func() { <-sched.Stop().Done() }()
+		entered := make(chan struct{})
+		done := make(chan error, 1)
+		require.NoError(t, registerScheduledFacebookCommentsJob(sched, facebookProfile(), maintenance, func(context.Context) error {
+			close(entered)
+			return nil
+		}))
+		go func() { done <- sched.TriggerJob("facebook_comments:app:9:page:100") }()
+		synctest.Wait()
+		ranBeforeRelease := false
+		select {
+		case <-entered:
+			ranBeforeRelease = true
+		default:
+		}
+		// Release and join even in RED, so the regression cannot strand a job.
+		require.NoError(t, lease.Release())
+		require.NoError(t, <-done)
+		assert.True(t, ranBeforeRelease, "text-only scheduled sync waited for an unrelated attachment lease")
+	})
 }

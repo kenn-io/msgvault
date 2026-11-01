@@ -79,7 +79,7 @@ func registerScheduledFacebookCommentsJob(sched *scheduler.Scheduler, source con
 		return errors.New("invalid Facebook scheduler identity")
 	}
 	return sched.AddJob(scheduler.Job{Name: job, Schedule: source.Schedule, Run: func(ctx context.Context) error {
-		return runScheduledSource(ctx, maintenance, true, run)
+		return runScheduledSource(ctx, maintenance, false, run)
 	}})
 }
 
