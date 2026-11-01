@@ -328,7 +328,7 @@
   {#if loading}<p role="status">Loading source status…</p>
   {:else if sources.length === 0}{#if !statusError}<p class="notice" role="status">No archived sources are available.</p>{/if}
   {:else}
-    <Table ariaLabel="Source status" zebra={false} class="source-table">
+    <Table ariaLabel="Source status" zebra={false} class="source-table" unsorted>
       {#snippet header()}
         <TableHeaderCell label="Source" />
         <TableHeaderCell label="Schedule" />
@@ -513,7 +513,7 @@
     gap: var(--space-1);
   }
   .details {
-    padding: var(--space-2) var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
   }
   .details p,
   .details ul {
@@ -537,7 +537,7 @@
     font-size: var(--font-size-sm);
   }
   .notice {
-    padding: var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);

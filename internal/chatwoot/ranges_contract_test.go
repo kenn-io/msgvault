@@ -76,6 +76,7 @@ func contractMessageIDs(t *testing.T, st *store.Store) []int64 {
 // Replacing range traversal with a min/max cursor or treating a short page as
 // complete must lose records in at least one of these independent fixtures.
 func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		pageCap, limit int
@@ -84,6 +85,7 @@ func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
 		{"cap_1", 1, 0, false}, {"cap_1000", 1000, 0, false}, {"capped", 3, 2, false}, {"full", 20, 2, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			checks, must := assert.New(t), require.New(t)
 			want := []int64{1, 2, 7, 9, 15, 33, 41, 70, 111, 901, 904, 1301, 2100, math.MaxInt32}
 			if tc.limit > 0 {
@@ -124,8 +126,10 @@ func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
 }
 
 func TestImportContractMaximumIDMediaAndCall(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"initial", "limited", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			media := newMediaRefreshServer(t)
 			router := newChatwootMediaRouter(t, media.server)
@@ -193,6 +197,7 @@ func TestImportContractMaximumIDMediaAndCall(t *testing.T) {
 }
 
 func TestImportContractRejectsIgnoredRangeBoundsWithoutPoisoningResume(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 20, []map[string]any{chatwootapi.Message(101, 1767225600, nil), chatwootapi.Message(102, 1767225601, nil)})
@@ -215,8 +220,10 @@ func TestImportContractRejectsIgnoredRangeBoundsWithoutPoisoningResume(t *testin
 }
 
 func TestOversizedResponsesSplitAndResume(t *testing.T) {
+	t.Parallel()
 	for _, artifact := range []bool{false, true} {
 		t.Run(strconv.FormatBool(artifact), func(t *testing.T) {
+			t.Parallel()
 			assert, require := assert.New(t), require.New(t)
 			api := newContractAPI(t, 1000, nil)
 			for id := int64(100); id < 360; id++ {
@@ -276,6 +283,7 @@ func TestOversizedResponsesSplitAndResume(t *testing.T) {
 }
 
 func TestOversizedSingleMessageFailsClearly(t *testing.T) {
+	t.Parallel()
 	api := newContractAPI(t, 1000, nil)
 	api.AddMessage(1, 101, now())
 	api.Conversations[1][0]["content"] = strings.Repeat("x", maxAPIBytes)
@@ -287,6 +295,7 @@ func TestOversizedSingleMessageFailsClearly(t *testing.T) {
 }
 
 func TestRegisterToleratesDisplayNameAliasConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

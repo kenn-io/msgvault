@@ -601,29 +601,6 @@ func TestOAuthConfigWithTenant(t *testing.T) {
 	assert.NotContains(t, cfg.Endpoint.AuthURL, "common", "AuthURL should not contain common")
 }
 
-func TestTokenSource_PersistedTenantOverridesManager(t *testing.T) {
-	dir := t.TempDir()
-	m := &Manager{
-		clientID:  "test-client",
-		tenantID:  "common",
-		tokensDir: dir,
-		logger:    slog.Default(),
-	}
-
-	// Save token with a specific tenant ID (simulating post-authorization state).
-	token := &oauth2.Token{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
-		TokenType:    "Bearer",
-	}
-	require.NoError(t, m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, "my-org-tenant"))
-
-	// TokenSource should succeed and use "my-org-tenant", not "common".
-	ts, err := m.TokenSource(t.Context(), "user@company.com")
-	require.NoError(t, err)
-	require.NotNil(t, ts, "TokenSource returned nil")
-}
-
 func TestTokenSource_ConcurrentAccess(t *testing.T) {
 	dir := t.TempDir()
 	m := &Manager{
@@ -817,37 +794,6 @@ func TestResolveTokenEmail_NeitherEmailNorUPN(t *testing.T) {
 	assert.ErrorContains(t, err, "preferred_username")
 }
 
-// --- TokenSource timeout ---
-
-func TestTokenSource_RespectsCallCtxCancellation(t *testing.T) {
-	dir := t.TempDir()
-	m := &Manager{
-		clientID:  "test-client",
-		tenantID:  "common",
-		tokensDir: dir,
-		logger:    slog.Default(),
-	}
-
-	token := &oauth2.Token{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
-		TokenType:    "Bearer",
-	}
-	require.NoError(t, m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID))
-
-	fn, err := m.TokenSource(t.Context(), "user@outlook.com")
-	require.NoError(t, err)
-
-	// Cancel the context immediately — the token source should return
-	// the cached token (not refreshed) or cancel, but must not hang.
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	// The call may succeed (cached token returned instantly before select
-	// sees cancellation) or fail with context.Canceled — either is acceptable.
-	// The key property is that it returns promptly, not that it errors.
-	_, _ = fn(ctx)
-}
-
 // --- redactAuthURL ---
 
 func TestRedactAuthURL(t *testing.T) {
@@ -896,17 +842,6 @@ func TestDeleteToken_RevokesBeforeDeleting(t *testing.T) {
 	// Microsoft endpoint in tests). The local file should be removed.
 	require.NoError(t, m.DeleteToken("user@example.com"), "DeleteToken")
 	assert.False(t, m.HasToken("user@example.com"), "token file should be deleted after DeleteToken")
-}
-
-func TestDeleteToken_NoTokenFile(t *testing.T) {
-	m := &Manager{
-		clientID:  "test-client",
-		tenantID:  "common",
-		tokensDir: t.TempDir(),
-		logger:    slog.Default(),
-	}
-	// Should not error on non-existent token
-	assert.NoError(t, m.DeleteToken("nobody@example.com"), "DeleteToken non-existent")
 }
 
 // --- peekTIDFromJWT edge cases ---

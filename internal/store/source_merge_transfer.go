@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
+	if err := preserveMergedIMAPDrafts(ctx, tx, from, into); err != nil {
+		return fmt.Errorf("preserve merged IMAP draft evidence: %w", err)
+	}
 	conversations := map[int64]int64{}
 	for _, c := range plan.conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
@@ -233,6 +236,45 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		return err
 	}
 	return s.bumpDerivedDataRevision(tx)
+}
+
+func preserveMergedIMAPDrafts(ctx context.Context, tx *loggedTx, from, into int64) error {
+	const selection = `SELECT m.id FROM messages m JOIN sources src ON src.id = m.source_id
+ WHERE m.source_id = ?
+ AND EXISTS (SELECT 1 FROM imap_message_memberships imm
+ WHERE imm.message_id = m.id AND imm.source_id = m.source_id
+ AND LOWER(CAST(imm.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!')
+ AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+ WHERE ml.message_id = m.id AND l.source_id = m.source_id
+ AND (l.system_role = 'drafts' OR (src.source_type = 'gmail' AND l.source_label_id = 'DRAFT')))`
+	var needed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (`+selection+`)`, from).Scan(&needed); err != nil {
+		return err
+	}
+	if !needed {
+		return nil
+	}
+	name := fmt.Sprintf("msgvault-archive:%d:imap-draft", from)
+	for {
+		var used bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM labels WHERE source_id = ? AND name = ?)`, into, name).Scan(&used); err != nil {
+			return err
+		}
+		if !used {
+			break
+		}
+		name += ":archive"
+	}
+	var labelID int64
+	if err := tx.QueryRowContext(ctx, `INSERT INTO labels(source_id, name, system_role)
+ VALUES (?, ?, 'drafts') RETURNING id`, into, name).Scan(&labelID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_preserved_labels(label_id) VALUES (?)`, labelID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO message_labels(message_id, label_id) SELECT id, ? FROM (`+selection+`) drafts`, labelID, from)
+	return err
 }
 
 // Copy only occurrences not already represented on the survivor. Compare

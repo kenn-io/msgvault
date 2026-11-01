@@ -22,12 +22,14 @@ export class SessionController {
   loading = $state(false);
   error = $state<string>();
   readonly client: APIClient;
+  readonly telemetryClient: APIClient;
   constructor(fetchFn: typeof fetch = fetch) {
     this.client = createSessionAwareAPIClient(
       fetchFn,
       () => this.csrfToken,
       () => this.requireLogin(),
     );
+    this.telemetryClient = createSessionAwareAPIClient(fetchFn, () => this.csrfToken);
   }
   get authMode(): SessionStatus['auth_mode'] | undefined {
     return this.status?.auth_mode;

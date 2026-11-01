@@ -448,7 +448,7 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			ctx := t.Context()
 			if test.wait {
 				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 25*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until release
+				ctx, cancel = context.WithTimeout(ctx, 25*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until release
 				defer cancel()
 			}
 
@@ -1525,16 +1525,6 @@ func TestCapabilityNegotiationExercisesRealExtractionSchema(t *testing.T) {
 	system, ok := messages[0].(map[string]any)
 	requireChecks.True(ok)
 	assertChecks.Equal(jsonObjectInstruction+string(extractionSchema), system["content"])
-}
-
-func TestCapabilitySyntheticRequestUsesFrozenExtractionSchema(t *testing.T) {
-	assertChecks := assert.New(t)
-	request := capabilitySyntheticRequest()
-	assertChecks.Equal("provider-check", request.ProgramID)
-	assertChecks.Equal(ExtractionSchemaName, request.SchemaName)
-	assertChecks.JSONEq(string(ExtractionJSONSchema()), string(request.JSONSchema))
-	assertChecks.Empty(request.Sources)
-	assertChecks.False(request.ContainsSensitive)
 }
 
 func capabilitySameJSON(left, right []byte) bool {

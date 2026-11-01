@@ -237,6 +237,11 @@ func TestExportMessagesCommandOmitsCompletionAfterStreamFailure(t *testing.T) {
 	require.NotContains(writer.output.String(), `"record_type":"complete"`)
 }
 
+// exportCompleteEvents is the daemon CLI stream of an export that wrote one
+// complete record.
+const exportCompleteEvents = "{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n" +
+	"{\"type\":\"complete\"}"
+
 func TestExportMessagesCommandRoutesThroughDaemon(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -251,8 +256,7 @@ func TestExportMessagesCommandRoutesThroughDaemon(t *testing.T) {
 				"--start=2026-07-20T00:00:00Z",
 			}, req.Args)
 		},
-		"{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n"+
-			"{\"type\":\"complete\"}\n",
+		exportCompleteEvents,
 	)
 	testCtx := configureRemoteDaemonForTest(t, server.URL)
 	_ = testCtx

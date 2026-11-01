@@ -17,18 +17,24 @@ import (
 func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name   string
-		args   []string
-		status int
-		want   string
+		name             string
+		args             []string
+		status           int
+		want             []string
+		absent           []string
+		recordingsError  string
+		attachmentsError string
+		terminal         bool
 	}{
-		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "Coverage complete"},
-		{"terminal", []string{"search", "quarterly numbers"}, 200, "Coverage complete"},
-		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":11`},
-		{"mode delegated", []string{"search", "words", "--mode", "hybrid"}, 503, "media_search_mode_unavailable"},
-		{"upper limit delegated", []string{"search", "words", "--limit", "101"}, 400, "invalid_limit"},
-		{"person relation delegated", []string{"search", "words", "--direction", "from_person"}, 400, "invalid_person"},
-		{"direction delegated", []string{"search", "words", "--person", "7", "--direction", "invalid"}, 400, "invalid_direction"},
+		{name: "table", args: []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, status: 200, want: []string{"Coverage complete", "generated", "quarterly numbers", "report.pdf", "More may match"}},
+		{name: "recordings unavailable", args: []string{"search", "quartz"}, status: 200, recordingsError: "media_search_unavailable", want: []string{"partial true", "Docbank transcript search is unavailable", "Attachments truncated true", "report.pdf", "More may match"}, absent: []string{"quarterly numbers", "generated"}},
+		{name: "attachments unavailable", args: []string{"search", "quarterly numbers"}, status: 200, attachmentsError: "transport", want: []string{"Coverage complete", "generated", "quarterly numbers", "Attachments truncated false", "Attachment search is unavailable."}, absent: []string{"report.pdf", "More may match"}},
+		{name: "terminal", args: []string{"search", "quarterly numbers"}, status: 200, terminal: true},
+		{name: "json", args: []string{"search", "quarterly numbers", "--json"}, status: 200, want: []string{`"message_id":11`, "generated", "quarterly numbers", "report.pdf"}},
+		{name: "mode delegated", args: []string{"search", "words", "--mode", "hybrid"}, status: 503, want: []string{"media_search_mode_unavailable"}},
+		{name: "upper limit delegated", args: []string{"search", "words", "--limit", "101"}, status: 400, want: []string{"invalid_limit"}},
+		{name: "person relation delegated", args: []string{"search", "words", "--direction", "from_person"}, status: 400, want: []string{"invalid_person"}},
+		{name: "direction delegated", args: []string{"search", "words", "--person", "7", "--direction", "invalid"}, status: 400, want: []string{"invalid_direction"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -54,16 +60,34 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(test.status)
 				if test.status != 200 {
-					_ = json.NewEncoder(w).Encode(map[string]string{"error": test.want, "message": test.want})
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": test.want[0], "message": test.want[0]})
 					return
 				}
-				state := "complete"
-				excerpt := "quarterly numbers"
-				if test.name == "terminal" {
-					state = "\x1b[31mcomplete\x1b[0m\a"
-					excerpt = "quarterly\x1b[31m numbers\x1b[0m\a"
+				state, excerpt := "complete", "quarterly numbers"
+				if test.terminal {
+					state, excerpt = "\x1b[31mcomplete\x1b[0m\a", "quarterly\x1b[31m numbers\x1b[0m\a"
 				}
-				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}}})
+				response := generated.MediaSearchResponse{
+					Coverage:    generated.SearchCoverage{State: state},
+					Results:     []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
+					Attachments: &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
+				}
+				if test.terminal {
+					response.Attachments.Results[0].Filename = "report\x1b[31m.pdf\x1b[0m\a"
+					response.Attachments.Results[0].Excerpt = "quartz\x1b[31m match\x1b[0m\a"
+					response.Attachments.ErrorData = &generated.ErrorResponse{ErrorData: "transport", Message: new("Attachment\x1b[31m search unavailable\x1b[0m\a")}
+					response.RecordingsError = &generated.ErrorResponse{ErrorData: "transport", Message: new("Recording\x1b[31m search unavailable\x1b[0m\a")}
+				}
+				if test.recordingsError != "" {
+					response.Coverage.State = "unknown"
+					response.Results = []generated.MediaSearchResult{}
+					response.Partial = true
+					response.RecordingsError = &generated.ErrorResponse{ErrorData: test.recordingsError, Message: new("Docbank transcript search is unavailable")}
+				}
+				if test.attachmentsError != "" {
+					response.Attachments = &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{}, ErrorData: &generated.ErrorResponse{ErrorData: test.attachmentsError, Message: new("Attachment search is unavailable.")}}
+				}
+				_ = json.NewEncoder(w).Encode(response)
 			}))
 			t.Cleanup(daemon.Close)
 			command := newMediaCmd(func(context.Context) (*daemonclient.Client, func(), error) {
@@ -79,15 +103,20 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			command.SetArgs(test.args)
 			err := command.ExecuteContext(t.Context())
 			if test.status != 200 {
-				require.ErrorContains(err, test.want)
+				require.ErrorContains(err, test.want[0])
 				return
 			}
 			require.NoError(err)
-			assert.Contains(output.String(), test.want)
-			assert.Contains(output.String(), "quarterly numbers")
-			assert.Contains(output.String(), "generated")
-			assert.NotContains(output.String(), "\x1b")
-			assert.NotContains(output.String(), "\a")
+			for _, want := range test.want {
+				assert.Contains(output.String(), want)
+			}
+			for _, absent := range test.absent {
+				assert.NotContains(output.String(), absent)
+			}
+			if test.terminal {
+				assert.NotContains(output.String(), "\x1b")
+				assert.NotContains(output.String(), "\a")
+			}
 		})
 	}
 }

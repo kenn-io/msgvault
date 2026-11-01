@@ -189,7 +189,6 @@
     aria-label="Relationship activity"
     aria-busy={loading || loadingMore}
     tabindex="0"
-    data-scroll
     bind:this={gridElement}
     onkeydown={handleKeydown}
     onscroll={handleScroll}
@@ -376,10 +375,14 @@
   }
 
   .timeline-row.active {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .timeline-row.selected {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }

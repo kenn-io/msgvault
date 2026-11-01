@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -60,11 +60,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 	assert := assert.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("test", "test@example.com")
 	require.NoError(err, "get/create source")
@@ -135,10 +131,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStore(t)
 
 	src, err := st.GetOrCreateSource("test", "owner@example.test")
 	require.NoError(err, "get/create source")
@@ -193,11 +186,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 	assert := assert.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("test", "test@example.com")
 	require.NoError(err, "get/create source")
@@ -264,10 +253,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStore(t)
 
 	src, err := st.GetOrCreateSource("test", "owner@example.com")
 	require.NoError(err, "get/create source")
@@ -302,10 +288,7 @@ func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T)
 func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStore(t)
 
 	src, err := st.GetOrCreateSource("test", "owner@example.com")
 	require.NoError(err, "get/create source")

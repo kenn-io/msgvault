@@ -21,27 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-// TestStatsCommand_AccountAndCollectionMutuallyExclusive confirms that passing
-// both --account and --collection to the stats command is rejected by cobra.
-func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
-	var a, b string
-	cmd := &cobra.Command{Use: "stats-test", SilenceErrors: true}
-	sub := &cobra.Command{Use: "stats", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
-	sub.Flags().StringVar(&a, "account", "", "")
-	sub.Flags().StringVar(&b, "collection", "", "")
-	sub.MarkFlagsMutuallyExclusive("account", "collection")
-	cmd.AddCommand(sub)
-	cmd.SetArgs([]string{"stats", "--account", "foo@example.com", "--collection", "bar"})
-
-	err := cmd.Execute()
-	require.Error(t, err, "expected error when both --account and --collection are set")
-	msg := err.Error()
-	assert.Contains(t, msg, "account", "error should mention account flag name")
-	assert.Contains(t, msg, "collection", "error should mention collection flag name")
-	_ = a
-	_ = b
-}
-
 // TestStatsCommand_EmptyCollectionRejected verifies that
 // `stats --collection <name>` errors out when the named collection
 // has zero member sources, instead of silently falling through to

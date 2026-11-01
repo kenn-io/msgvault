@@ -162,7 +162,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		internalDate = sql.NullTime{Time: fallbackDate.UTC(), Valid: true}
 	}
 
-	snippet := snippetFromBody(bodyText)
+	snippet := textutil.SnippetFromBody(bodyText)
 	hasAttachments := len(parsed.Attachments) > 0
 	attachmentCount := len(parsed.Attachments)
 
@@ -301,15 +301,6 @@ func threadKey(parsed *mime.Message, rawHash string) string {
 		return mid
 	}
 	return rawHash
-}
-
-func snippetFromBody(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return ""
-	}
-	line := textutil.FirstLine(body)
-	return textutil.TruncateRunes(line, 200)
 }
 
 func joinEmails(addrs []mime.Address) string {

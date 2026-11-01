@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+// serial: SecretStoreFixture calls t.Setenv.
 func TestGoogleCommandTokenNamespacesAndFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

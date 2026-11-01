@@ -15,10 +15,9 @@ import (
 
 const sourceTypeSlack = "slack"
 
-// checkpointMinInterval throttles checkpoint flushes: the state blob is
-// O(conversations + tracked threads) JSON. A variable so tests can disable
-// the throttle.
-var checkpointMinInterval = 15 * time.Second
+// defaultCheckpointMinInterval throttles checkpoint flushes: the state blob is
+// O(conversations + tracked threads) JSON.
+const defaultCheckpointMinInterval = 15 * time.Second
 
 const (
 	// checkpointPageInterval flushes the sync checkpoint every N pages inside
@@ -108,6 +107,8 @@ type Importer struct {
 	client         *Client
 	res            *participantResolver
 	lastCheckpoint time.Time
+	// checkpointMinInterval throttles checkpoint flushes; tests set it to 0 to disable the throttle.
+	checkpointMinInterval time.Duration
 	// now is a clock hook for tests.
 	now func() time.Time
 	// resumeLoaded is a test hook run after resume state loads and before
@@ -124,7 +125,7 @@ type Importer struct {
 
 // NewImporter creates an Importer backed by the given store and Slack client.
 func NewImporter(s *store.Store, c *Client, teamID string) *Importer {
-	return &Importer{store: s, client: c, res: newParticipantResolver(s, teamID), now: time.Now}
+	return &Importer{store: s, client: c, res: newParticipantResolver(s, teamID), now: time.Now, checkpointMinInterval: defaultCheckpointMinInterval}
 }
 
 func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
@@ -1393,7 +1394,7 @@ func (imp *Importer) persistReactions(ctx context.Context, messageID int64, m *M
 // checkpoint persists the sync state mid-run so an interrupted run resumes.
 // Flushes are throttled (see checkpointMinInterval).
 func (imp *Importer) checkpoint(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {
-	if time.Since(imp.lastCheckpoint) < checkpointMinInterval {
+	if time.Since(imp.lastCheckpoint) < imp.checkpointMinInterval {
 		return nil
 	}
 	return imp.checkpointNow(ctx, syncID, state, sum)

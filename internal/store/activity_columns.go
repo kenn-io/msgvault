@@ -36,6 +36,7 @@ var MessagesActivityColumns = []string{
 	"deleted_from_source_at", // retraction
 	"metadata",               // meeting all_day/status inputs
 	"source_is_from_me",      // source-native ownership
+	"is_sent",                // unsent messages retract activity
 }
 
 // activityTriggerColumnList renders MessagesActivityColumns for a

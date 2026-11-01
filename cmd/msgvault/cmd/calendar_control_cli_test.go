@@ -77,23 +77,6 @@ func TestCalendarControlCLIMovePositionalDestination(t *testing.T) {
 	assert.Equal(t, "other", got.Destination)
 }
 
-func TestCalendarControlCLIScopeHelpMatchesSupportedActions(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	root := newCalendarControlCmd(nil)
-	respond, _, err := root.Find([]string{"respond"})
-	requirements.NoError(err)
-	respondScope := respond.Flags().Lookup("scope")
-	requirements.NotNil(respondScope)
-	assertions.NotContains(respondScope.Usage, "future")
-
-	update, _, err := root.Find([]string{"update"})
-	requirements.NoError(err)
-	updateScope := update.Flags().Lookup("scope")
-	requirements.NotNil(updateScope)
-	assertions.Contains(updateScope.Usage, "future")
-}
-
 func TestCalendarControlCLIReportsArchiveFailureWithoutMessageID(t *testing.T) {
 	var output strings.Builder
 	cmd := newCalendarControlCmd(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) {

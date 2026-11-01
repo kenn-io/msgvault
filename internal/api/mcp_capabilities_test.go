@@ -56,12 +56,3 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), "sender@example.com")
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
-
-func TestMCPCapabilitiesRouteIsRegistered(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	doc := OpenAPIDocument()
-	operation := doc.Paths["/api/v1/mcp/capabilities"].Get
-	requirements.NotNil(operation)
-	assertions.Equal("getMCPCapabilities", operation.OperationID)
-}

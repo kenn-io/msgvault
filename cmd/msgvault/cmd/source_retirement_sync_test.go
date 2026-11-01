@@ -148,10 +148,7 @@ func TestScheduledCalendarFiltersRetiredSelections(t *testing.T) {
 			assert := assert.New(t)
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Analytics.AutoBuildCache = true
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			t.Cleanup(func() { assert.NoError(st.Close()) })
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			var sources []*store.Source
 			for _, id := range []string{"old", "active"} {
 				source, err := st.GetOrCreateSource(sourceTypeCalendar, "user@example.com/"+id)
@@ -159,7 +156,7 @@ func TestScheduledCalendarFiltersRetiredSelections(t *testing.T) {
 				require.NoError(st.UpdateSourceSyncConfig(source.ID, fmt.Sprintf(`{"account_email":"user@example.com","calendar_id":%q,"access_role":"owner"}`, id)))
 				sources = append(sources, source)
 			}
-			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: sources[0].ID, IntoSourceID: sources[1].ID})
+			_, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: sources[0].ID, IntoSourceID: sources[1].ID})
 			require.NoError(err)
 			client := gcal.NewMockAPI()
 			client.Calendars = []gcal.Calendar{{ID: "old", AccessRole: "owner"}, {ID: "active", AccessRole: "owner"}}

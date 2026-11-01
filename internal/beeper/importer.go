@@ -529,9 +529,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			sum.Stopped = true
 		}
 	}
+	// Roster repairs back off per room, so a chat whose messages failed to
+	// fetch must not hold up membership repair for every quiet room.
+	optionalWorkStopped := false
+	if !sum.Stopped {
+		optionalWorkStopped, err = imp.repairQuietRosters(ctx, syncID, src.ID, opts, state, chats, sum)
+		if err != nil {
+			return sum, err
+		}
+	}
 
 	finalizeCtx := ctx
-	if sum.Stopped {
+	if sum.Stopped || optionalWorkStopped {
 		var cancel context.CancelFunc
 		finalizeCtx, cancel = opts.finalizeContext(ctx)
 		defer cancel()
@@ -714,6 +723,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 				return nil, fmt.Errorf("invalidate route evidence for deferred Beeper chat %q: %w", chatID, err)
 			}
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusSkipped, "beeper_probe_deferred", nil)
+			sum.failChat(chatID, false, errors.New("probe deferred after an earlier timeout"))
 			sum.FetchErrors++
 			sum.Errors++
 			continue
@@ -759,6 +769,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 				return nil, fmt.Errorf("invalidate route evidence for failed Beeper chat %q: %w", chatID, err)
 			}
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+			sum.failChat(chatID, false, gerr)
 			sum.FetchErrors++
 			sum.Errors++
 			continue
@@ -808,6 +819,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		statsCtx, cancel := opts.conversationStatsContext(ctx)
 		defer cancel()
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, convID)
+		statsRefreshed := statsErr == nil
 		statsErr = opts.budgetError(ctx, statsErr)
 		if opts.stopRequested() {
 			sum.Stopped = true
@@ -818,9 +830,25 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = nil
 			}
 		}
+		if statsRefreshed && ctx.Err() == nil {
+			pendingCtx := ctx
+			var cancelPending context.CancelFunc
+			if opts.stopRequested() {
+				pendingCtx, cancelPending = opts.finalizeContext(ctx)
+			}
+			if cancelPending != nil {
+				defer cancelPending()
+			}
+			if clearErr := imp.store.SetConversationRosterRepairPendingContext(pendingCtx, convID, false); clearErr != nil {
+				statsErr = fmt.Errorf("clear roster repair pending marker after active sync: %w", clearErr)
+			}
+		}
 		err = errors.Join(err, statsErr)
 	}()
 	cs := state.EnsureChat(ch.ID)
+	if membership.known {
+		cs.RosterRetryAfter = ""
+	}
 	cc := &chatScope{
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, membershipComplete: membershipComplete,
@@ -939,6 +967,7 @@ func (imp *Importer) ensureConversation(
 				return 0, false, chatMembership{}, ctx.Err()
 			}
 			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+			sum.failChat(ch.ID, false, gerr)
 			sum.FetchErrors++
 			sum.Errors++
 		} else {
@@ -1069,6 +1098,7 @@ func (imp *Importer) recordChatFetchError(ctx context.Context, cc *chatScope, su
 		}
 	}
 	imp.recordItem(cc.syncID, cc.chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", err)
+	sum.failChat(cc.chatID, false, err)
 	sum.FetchErrors++
 	sum.Errors++
 	return nil
@@ -1559,6 +1589,7 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 			return ctx.Err()
 		}
 		imp.recordItem(cc.syncID, m.ID, "reaction", store.SyncRunItemStatusError, "beeper_fetch_error", err)
+		sum.failChat(cc.chatID, false, err)
 		sum.FetchErrors++
 		sum.Errors++
 		return errRetryPage
@@ -1631,7 +1662,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 
 	if len(m.Attachments) > 0 || (!cc.opts.NoMedia && cc.opts.AttachmentsDir != "") {
 		requestCtx, cancel := cc.opts.requestContext(ctx)
-		imp.persistAttachments(requestCtx, cc.syncID, messageID, m, cc.opts, sum)
+		imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
 		cancel()
 		if cc.opts.budgetExpired() {
 			sum.Stopped = true
@@ -1749,7 +1780,7 @@ func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, sta
 		PageToken:         blob,
 		MessagesProcessed: sum.MessagesProcessed,
 		MessagesAdded:     sum.MessagesAdded,
-		ErrorsCount:       sum.Errors,
+		ErrorsCount:       sum.Errors + sum.RosterRepairErrors,
 	})
 	if err == nil {
 		imp.lastCheckpoint = time.Now()

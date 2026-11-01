@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
@@ -22,9 +23,7 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
@@ -76,10 +75,7 @@ func TestBuildCache_FromRecipientChangeRefreshesOwner(t *testing.T) {
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := st.GetOrCreateSource("slack", "synthetic-owner")
 	require.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "thread", "direct_chat", "Synthetic")
@@ -134,9 +130,7 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
@@ -275,9 +269,7 @@ func TestBuildCache_OwnerParticipantsMatchesNonEmailIdentifiersVerbatim(t *testi
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("imessage", "+15550100001")
 	require.NoError(err)
@@ -371,9 +363,7 @@ func TestBuildCache_AccountIdentityDriftForcesFullRebuildAndRederivesIsFromMe(t 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
@@ -448,9 +438,7 @@ func TestBuildCache_IdentityDriftOnlyRefreshesWithoutMessageRebuild(t *testing.T
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
@@ -533,9 +521,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
@@ -842,10 +828,7 @@ func TestSourceAttributionChangeRebuildsCachedOwner(t *testing.T) {
 			assert := assert.New(t)
 			dbPath := filepath.Join(t.TempDir(), "msgvault.db")
 			analyticsDir := filepath.Join(t.TempDir(), "analytics")
-			st, err := store.OpenForTest(dbPath)
-			require.NoError(err)
-			t.Cleanup(func() { _ = st.Close() })
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 			src, err := st.GetOrCreateSource("test", "synthetic@example.test")
 			require.NoError(err)
 			conv, err := st.EnsureConversationWithType(src.ID, "thread", "email_thread", "Synthetic")

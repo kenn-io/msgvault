@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func saveImportPstState(t *testing.T) func() {
@@ -42,12 +43,7 @@ func TestImportPstRunsPostSourceMigrationForEligibleSourceTypes(t *testing.T) {
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
 	testCtx := withStoreResolverConfig(t, testCfg)
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(
-		err, "open seed store")
-
-	require.NoError(
-		st.InitSchema(), "init seed schema")
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 
 	emailSource, err := st.GetOrCreateSource("gmail", "mailbox@example.com")
 	require.NoError(
@@ -118,13 +114,7 @@ func TestRunPstPostImportMigrationsConfirmsDefaultIdentityBeforeHardErrorMigrati
 	testCtx := withStoreResolverConfig(t, testCfg)
 	_ = testCtx
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(
-		err, "open store")
-
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(
-		st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 
 	src, err := st.GetOrCreateSource("mbox", "archive@example.com")
 	require.NoError(

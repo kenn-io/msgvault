@@ -736,6 +736,43 @@ func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *te
 	})
 }
 
+func TestGeneratedChatDiscoveryRequiresPresenceButAcceptsEmptyMetadata(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	const payload = `{"conversation_id":1,"message_id":7,"source_id":1,"source_type":"beeper","conversation_type":"direct_chat","network":"unknown","match_kind":"partial","matched_tokens":["peer"],"matched_names":["Peer"],"evidence_truncated":false,"title":"","source_display_name":"","source_conversation_id":"","source_identifier":""}`
+	var present generated.ChatDiscoveryResult
+	requirements.NoError(json.Unmarshal([]byte(payload), &present))
+	assertions.Equal(int64(7), present.MessageID)
+	requirements.NoError(present.Validate())
+	requirements.NoError((generated.ChatDiscoveryPage{Results: []generated.ChatDiscoveryResult{present}, HasMore: false}).Validate())
+	for _, field := range []string{"title", "source_display_name", "source_conversation_id", "source_identifier"} {
+		t.Run(field, func(t *testing.T) {
+			requirements := require.New(t)
+			var missing map[string]any
+			requirements.NoError(json.Unmarshal([]byte(payload), &missing))
+			delete(missing, field)
+			encoded, err := json.Marshal(missing)
+			requirements.NoError(err)
+			var result generated.ChatDiscoveryResult
+			requirements.NoError(json.Unmarshal(encoded, &result))
+			requirements.Error(result.Validate(), "missing required %s", field)
+			requirements.Error((generated.ChatDiscoveryPage{Results: []generated.ChatDiscoveryResult{result}, HasMore: false}).Validate())
+		})
+	}
+}
+
+func TestGeneratedMediaSearchAcceptsEmptyAttachmentMetadata(t *testing.T) {
+	requirements := require.New(t)
+	var response generated.MediaSearchResponse
+	requirements.NoError(json.Unmarshal([]byte(`{
+		"results":[],"coverage":{"state":"complete","binding_required":false,"complete_documents":1,"scoped_documents":1},"partial":false,"truncated":false,
+		"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,
+		"attachments":{"results":[{"attachment_id":1,"message_id":2,"conversation_id":3,
+			"filename":"","containing_title":"","excerpt":"matching text"}],"truncated":false}
+	}`), &response))
+	requirements.NoError(response.Validate())
+}
+
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

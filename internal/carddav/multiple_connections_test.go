@@ -14,6 +14,7 @@ import (
 )
 
 func TestMultipleConnectionsSyncUsesOwningCredentials(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 
@@ -129,6 +130,7 @@ func TestMultipleConnectionsSyncUsesOwningCredentials(t *testing.T) {
 }
 
 func TestMultipleConnectionsRejectForeignConflictBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 

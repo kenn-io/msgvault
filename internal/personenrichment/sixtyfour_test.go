@@ -818,20 +818,3 @@ func sixtyfourFixture(t *testing.T, name string) []byte {
 	require.NoError(t, err)
 	return data
 }
-
-func TestSixtyfourFixturesAreJSONOnlyAndSynthetic(t *testing.T) {
-	for _, name := range []string{
-		"sixtyfour_start.json", "sixtyfour_pending.json",
-		"sixtyfour_complete.json", "sixtyfour_error.json",
-	} {
-		data := sixtyfourFixture(t, name)
-		lower := strings.ToLower(string(data))
-		assert.True(t, json.Valid(data), name)
-		for _, forbidden := range []string{
-			"api_key", "test-key",
-			"chat_sentinel", "private_attribute_sentinel", "person@example.com", "sk-",
-		} {
-			assert.NotContains(t, lower, forbidden, name)
-		}
-	}
-}

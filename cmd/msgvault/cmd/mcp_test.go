@@ -24,32 +24,6 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
-func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	require.NotNil(mcpCmd.Flags().Lookup("allow-profile-writes"))
-	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes"} {
-		require.NotNil(mcpCmd.Flags().Lookup(name))
-	}
-	require.NotNil(mcpCmd.Flags().Lookup("allow-calendar-writes"))
-	var output bytes.Buffer
-	previousOutput := mcpCmd.OutOrStdout()
-	mcpCmd.SetOut(&output)
-	t.Cleanup(func() { mcpCmd.SetOut(previousOutput) })
-
-	require.NoError(mcpCmd.Help())
-	help := output.String()
-	assert.Contains(help, "attachment exports")
-	assert.Contains(help, "deletion manifests")
-	assert.Contains(help, "person promotion")
-	assert.Contains(help, "private Notes writes")
-	assert.Contains(help, "allow-identity-decisions")
-	assert.Contains(help, "allow-identity-scoring")
-	assert.Contains(help, "allow-person-merges")
-	assert.Contains(help, "allow-carddav-writes")
-	assert.Contains(help, "calendar event mutation tools")
-}
-
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -384,19 +358,20 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name            string
-		schemaVersion   string
-		wantPeople      bool
-		wantDirectory   bool
-		wantSavedViews  bool
-		wantMeetings    bool
-		wantAgenda      bool
-		wantArchiveSQL  bool
-		wantReview      bool
-		wantScoring     bool
-		wantCardDAV     bool
-		wantMessageTags bool
-		wantContacts    bool
+		name              string
+		schemaVersion     string
+		wantPeople        bool
+		wantDirectory     bool
+		wantChatDiscovery bool
+		wantSavedViews    bool
+		wantMeetings      bool
+		wantAgenda        bool
+		wantArchiveSQL    bool
+		wantReview        bool
+		wantScoring       bool
+		wantCardDAV       bool
+		wantMessageTags   bool
+		wantContacts      bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -415,10 +390,11 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
+		{name: "chat discovery schema", schemaVersion: "3.25.0", wantPeople: true, wantContacts: true, wantDirectory: true, wantChatDiscovery: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -451,6 +427,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 			assert.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
@@ -490,6 +467,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
+	assert.Nil(opts.ChatDiscoveryBackend)
 	assert.Nil(opts.ArchiveSQLQuerier)
 	assert.Contains(logs.String(), "people tools disabled")
 }

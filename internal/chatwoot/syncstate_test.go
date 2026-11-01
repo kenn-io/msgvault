@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseSyncStateRejectsInvalidCheckpoints(t *testing.T) {
+	t.Parallel()
 	for name, blob := range map[string]string{
 		"malformed":               `{`,
 		"version":                 `{"version":2,"conversations":{}}`,
@@ -23,6 +24,7 @@ func TestParseSyncStateRejectsInvalidCheckpoints(t *testing.T) {
 		"overlapping_ranges":      `{"version":1,"conversations":{"1":{"pending":[{"after":5,"before":20},{"after":1,"before":10}]}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			_, err := parseSyncState(blob)
 			assert.Error(t, err)
 		})
@@ -30,6 +32,7 @@ func TestParseSyncStateRejectsInvalidCheckpoints(t *testing.T) {
 }
 
 func TestParseSyncStateKeepsPendingRangeOrder(t *testing.T) {
+	t.Parallel()
 	state, err := parseSyncState(`{"version":1,"conversations":{"1":{"pending":[{"after":5,"before":10},{"after":1,"before":5}]}}}`)
 	require.NoError(t, err)
 	assert.Equal(t, []idRange{{5, 10}, {1, 5}}, state.Conversations["1"].Pending)

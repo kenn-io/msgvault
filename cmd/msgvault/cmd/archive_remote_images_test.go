@@ -86,9 +86,7 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	testCtx := withStoreResolverConfig(t, configuration)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 
-	st, err := store.Open(configuration.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, configuration.DatabaseDSN())
 	src, err := st.GetOrCreateSource("eml", "user@example.com")
 	require.NoError(err)
 	conv, err := st.EnsureConversation(src.ID, "remote-images", "Images")

@@ -34,7 +34,7 @@ func newMCPStatusCommand() *cobra.Command {
 			if inv == nil {
 				return errors.New("missing invocation state")
 			}
-			cfg, err := config.Load(inv.options.cfgFile, inv.options.homeDir)
+			cfg, err := config.LoadClientWithOverrides(inv.options.cfgFile, inv.options.homeDir, config.RuntimeOverrides{})
 			if err != nil {
 				return err
 			}

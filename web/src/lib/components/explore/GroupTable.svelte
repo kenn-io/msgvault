@@ -280,7 +280,6 @@
     class="group-grid"
     bind:this={gridElement}
     role="grid"
-    data-scroll
     aria-label={`${workspaceLabel} grouped by ${dimension}`}
     aria-rowcount={accessibilityRowCount}
     aria-colcount="5"
@@ -484,10 +483,14 @@
   }
 
   .group-row--active {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .group-row--inspected {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }

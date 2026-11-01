@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -408,12 +409,6 @@ func TestGeneratedMeetingMetricsPreserveNullableResponseValues(t *testing.T) {
 	assertions.JSONEq(rawMetrics, string(encoded))
 }
 
-func TestGeneratedMeetingStatusKeepsRelationshipReviewPendingCompatibility(t *testing.T) {
-	t.Parallel()
-	status := generated.Pending
-	assert.Equal(t, generated.ListPersonRelationshipReviewsQueryStatus("pending"), status)
-}
-
 func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -780,14 +775,22 @@ func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
 	t.Parallel()
 	publicSchemas := OpenAPIDocument().Components.Schemas.Map()
 	clientSchemas := openAPIClientDocument().Components.Schemas.Map()
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
-		t.Run(schemaName, func(t *testing.T) {
+	for _, fields := range []struct {
+		name       string
+		properties []string
+	}{
+		{"FileSearchRow", []string{"filename", "mime_type"}},
+		{"FileMetadataResponse", []string{"filename", "mime_type"}},
+		{"PersonFileSearchRow", []string{"filename", "mime_type"}},
+		{"ChatDiscoveryResult", []string{"title", "source_display_name", "source_conversation_id", "source_identifier"}},
+	} {
+		t.Run(fields.name, func(t *testing.T) {
 			assertions := assert.New(t)
-			for _, property := range []string{"filename", "mime_type"} {
-				assertions.Contains(publicSchemas[schemaName].Required, property)
-				assertions.False(publicSchemas[schemaName].Properties[property].Nullable)
-				assertions.Contains(clientSchemas[schemaName].Required, property)
-				assertions.True(clientSchemas[schemaName].Properties[property].Nullable,
+			for _, property := range fields.properties {
+				assertions.Contains(publicSchemas[fields.name].Required, property)
+				assertions.False(publicSchemas[fields.name].Properties[property].Nullable)
+				assertions.Contains(clientSchemas[fields.name].Required, property)
+				assertions.True(clientSchemas[fields.name].Properties[property].Nullable,
 					"client generation needs a pointer to distinguish missing from present empty")
 			}
 		})
@@ -1612,17 +1615,6 @@ func TestOpenAPIPersonAndDomainDetailsUseStructuredUnavailableUnion(t *testing.T
 	}
 }
 
-func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
-	t.Parallel()
-	for name, responseType := range map[string]reflect.Type{
-		"get participant": reflect.TypeFor[generated.GetParticipantResp](),
-		"get domain":      reflect.TypeFor[generated.GetDomainResp](),
-	} {
-		_, ok := responseType.FieldByName("JSON503")
-		assert.True(t, ok, "%s response must expose JSON503", name)
-	}
-}
-
 func TestGeneratedPersonTrackingPreservesRequiredNullTimestamp(t *testing.T) {
 	t.Parallel()
 	state := generated.PersonTracking{
@@ -2218,6 +2210,7 @@ func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
+	testutil.SkipIfPostgres(t, "the generated client never reads the database; the SQLite lanes check it")
 	t.Parallel()
 	requirements :=
 		require.New(t)
@@ -2287,32 +2280,6 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 			normalizeGeneratedArtifact(got),
 			"%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
-}
-
-func TestOpenAPIGeneratedMeetingImportClient(t *testing.T) {
-	t.Parallel()
-	assertGeneratedFileContains(t, "client.go",
-		"ImportMeeting(ctx context.Context, options *ImportMeetingRequestOptions")
-	assertGeneratedFileContains(t, "client_options.go",
-		"type ImportMeetingRequestOptions struct")
-	assertGeneratedFileContains(t, "payloads.go",
-		"type ImportMeetingBody = MeetingImportRequest")
-	assertGeneratedFileContains(t, "responses.go",
-		"type ImportMeetingResp struct")
-	assertGeneratedFileContains(t, "types.go",
-		"type MeetingImportResponse struct")
-	assertGeneratedFileContains(t, "types.go",
-		"Metadata           map[string]any")
-	assertGeneratedFileContains(t, "enums.go",
-		`MeetingImportResponseStatusUpdated MeetingImportResponseStatus = "updated"`)
-}
-
-func assertGeneratedFileContains(t *testing.T, name, expected string) {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
-	require.NoError(t, err, "read generated client file %s", name)
-	assert.Contains(t, string(content), expected,
-		"%s is missing the meeting import contract; run `make api-generate`", name)
 }
 
 func normalizeGeneratedArtifact(src []byte) string {

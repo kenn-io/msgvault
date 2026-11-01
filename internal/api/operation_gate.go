@@ -613,6 +613,9 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"embeddings list":   true,
 	"embeddings status": true,
 	"documents search":  true,
+	// Tier previews only read.
+	"person tiers preview": true,
+	"person tiers explain": true,
 }
 
 // cliRunSelfGatedCommands are proxied CLI commands that acquire the
@@ -620,8 +623,17 @@ var cliRunReadOnlyCommands = map[string]bool{
 // create" brackets its own work with the backup freeze begin/end endpoints
 // (see handleBackupFreezeBegin), so the middleware must skip it exactly like
 // a read-only command or the two acquisitions would deadlock each other.
+// Embeddings optimize coordinates its own gate leases between copy batches.
 var cliRunSelfGatedCommands = map[string]bool{
 	"backup create": true,
+}
+
+// IsCLIRunEmbeddingsOptimize identifies the optimize command path using the
+// same flag handling as gate inspection. The daemon must handle every matched
+// invocation locally, including invalid arguments, rather than launching an
+// ungated generic CLI subprocess.
+func IsCLIRunEmbeddingsOptimize(args []string) bool {
+	return len(args) > 0 && cliRunCommandWords(args) == "embeddings optimize"
 }
 
 func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label string, skip bool, err error) {
@@ -649,7 +661,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 			return "", true, nil
 		}
 		command := cliRunCommandWords(req.Args)
-		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] {
+		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) {
 			return "", true, nil
 		}
 		if command != "" {
@@ -677,6 +689,9 @@ func cliRunCommandWords(args []string) string {
 	if strings.HasPrefix(first, "-") {
 		return ""
 	}
+	if first == cliRunPersonCommand && len(args) > 2 && args[1] == "tiers" {
+		return first + " tiers " + args[2]
+	}
 	if !cliRunCommandGroups[first] {
 		return first
 	}
@@ -693,6 +708,10 @@ func cliRunCommandWords(args []string) string {
 				i++
 			}
 		default:
+			// Cobra accepts repeated boolean shorthand, such as -vv.
+			if strings.HasPrefix(name, "-v") && strings.Trim(name[1:], "v") == "" {
+				continue
+			}
 			// Unknown flags stay gated because their next argument may be a value.
 			return first
 		}

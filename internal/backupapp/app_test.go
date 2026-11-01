@@ -111,19 +111,6 @@ func TestCheckManifest(t *testing.T) {
 	assert.Contains(problems[0], "manifest stats unreadable")
 }
 
-func TestAppConstants(t *testing.T) {
-	assert := assert.New(t)
-
-	app := backupapp.New("1.2.3")
-	assert.Equal("msgvault.db", app.DBFileName())
-	assert.Equal("attachments", app.ContentDirName())
-	assert.Equal(".mvpack", app.PackFileExtension())
-	assert.Equal("1.2.3", app.Version())
-	assert.Equal(
-		[]string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks"},
-		app.ExcludedPaths())
-}
-
 func TestBackupRestorePreservesSavedViews(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

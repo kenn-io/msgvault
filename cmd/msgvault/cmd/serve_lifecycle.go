@@ -60,6 +60,9 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		Hidden: hidden,
 		Args:   cobra.NoArgs,
 	}
+	if name == "start" || name == "restart" {
+		markStrictConfig(cmd)
+	}
 	switch name {
 	case "start":
 		cmd.Short = "Start msgvault daemon in the background"
@@ -355,8 +358,10 @@ func prepareBackgroundDaemonStart(
 	return backgroundDaemonStartPreparation{}, nil
 }
 
+var errIncompatibleDaemon = errors.New("incompatible daemon is already running")
+
 func incompatibleDaemonError(err error, guidance string) error {
-	return fmt.Errorf("incompatible daemon is already running: %w; %s", err, guidance)
+	return fmt.Errorf("%w: %w; %s", errIncompatibleDaemon, err, guidance)
 }
 
 func runServeStart(cmd *cobra.Command, c *config.Config) error {

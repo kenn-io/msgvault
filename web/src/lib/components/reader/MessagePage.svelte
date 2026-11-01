@@ -34,7 +34,7 @@
 </main>
 
 <style>
-  .message-page { display: flex; flex-direction: column; height: 100dvh; padding: 1rem; }
-  header { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
-  h1 { min-width: 0; overflow-wrap: anywhere; font-size: 1rem; font-weight: 600; }
+  .message-page { display: flex; flex-direction: column; height: 100dvh; padding: var(--space-5) var(--page-gutter) var(--field-gap); }
+  header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--field-gap); margin-bottom: var(--field-gap); }
+  h1 { min-width: 0; overflow-wrap: anywhere; font-size: var(--font-size-xl); font-weight: 600; }
 </style>

@@ -3,10 +3,15 @@ package slack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,7 +20,117 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestSlackMediaFailureDetails(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		transport      *recordingTransport
+		reason         string
+		storageFailure bool
+		skip           bool
+		retry          bool
+	}{
+		{name: "server error", transport: &recordingTransport{status: http.StatusServiceUnavailable}, reason: "slack file GET: status 503", skip: true},
+		{name: "successful retry", transport: &recordingTransport{status: http.StatusServiceUnavailable}, reason: "slack file GET: status 503", retry: true},
+		{name: "download URL stripped", transport: &recordingTransport{err: errors.New("dial tcp: i/o timeout")}, reason: "dial tcp: i/o timeout"},
+		{name: "long reason", transport: &recordingTransport{err: errors.New(strings.Repeat("界", 250))}, reason: strings.Repeat("界", 250)},
+		{name: "invalid UTF-8 storage path", transport: &recordingTransport{body: "pdf bytes"}, storageFailure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.storageFailure && runtime.GOOS != "linux" {
+				t.Skip("requires a filesystem that accepts invalid UTF-8 filenames")
+			}
+			require := require.New(t)
+			assert := assert.New(t)
+			f := testWorkspace(t)
+			fileURL := "https://files.slack.com/files-pri/T01-F_FAILURE/" + strings.Repeat("x", 400)
+			f.conv("C01").Msgs[6].Files = []map[string]any{{
+				"id": "F_FAILURE", "name": "report.pdf", "mimetype": "application/pdf", "size": 5,
+				"url_private": fileURL, "permalink": "https://testers.slack.com/files/F_FAILURE",
+			}}
+			srv := f.serve()
+			defer srv.Close()
+			client := NewClient(srv.URL, "xoxp-test")
+			client.disableRateLimits()
+			client.mediaTransport = tc.transport
+			st := testutil.NewTestStore(t)
+			imp := NewImporter(st, client, "T01")
+			dir := t.TempDir()
+			if tc.storageFailure {
+				blocker := filepath.Join(dir, string([]byte{0xff}))
+				require.NoError(os.WriteFile(blocker, []byte("block"), 0600))
+				dir = filepath.Join(blocker, "attachments")
+			}
+			opts := ImportOptions{TeamID: "T01", UserID: "UME", AttachmentsDir: dir}
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Equal(1, sum.Errors)
+			assert.Equal([]string{fileURL}, tc.transport.requests)
+			var state, reason, metadata string
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
+				FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
+			assert.Equal("failed", state)
+			assert.Equal("fetch_failure", reason)
+			var detail map[string]string
+			require.NoError(json.Unmarshal([]byte(metadata), &detail))
+			var itemError string
+			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
+			if tc.storageFailure {
+				assert.Contains(detail["fetch_error"], "\ufffd")
+				assert.True(utf8.ValidString(itemError))
+				assert.True(utf8.ValidString(sum.FirstMediaError))
+				assert.Equal("F_FAILURE: "+detail["fetch_error"], itemError)
+			} else {
+				assert.Equal(tc.reason, detail["fetch_error"])
+				assert.Equal("F_FAILURE: "+tc.reason, itemError)
+				if tc.name == "long reason" {
+					assert.Equal("F_FAILURE: "+strings.Repeat("界", 186)+"...", sum.FirstMediaError)
+				} else {
+					assert.Equal("F_FAILURE: "+tc.reason, sum.FirstMediaError)
+				}
+			}
+			if tc.retry {
+				client.mediaTransport = &recordingTransport{body: "pdf bytes"}
+				backfill, err := imp.BackfillMedia(t.Context(), opts)
+				require.NoError(err)
+				assert.Equal(1, backfill.AttachmentsDownloaded)
+				require.NoError(st.DB().QueryRow(st.Rebind(`
+					SELECT attachment_state, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
+					FROM attachments WHERE source_attachment_id = ?
+				`), "slack:F_FAILURE").Scan(&state, &metadata))
+				assert.Equal("stored", state)
+				assert.NotContains(metadata, "fetch_error")
+			}
+			if !tc.skip {
+				return
+			}
+
+			opts.NoMedia, opts.Full = true, true
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT CAST(attachment_metadata AS TEXT) FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&metadata))
+			assert.Contains(metadata, tc.reason, "deferring media keeps the last fetch reason")
+			opts.NoMedia, opts.Full = false, false
+			opts.MaxMediaBytes = 2
+			_, err = imp.BackfillMedia(t.Context(), opts)
+			require.NoError(err)
+			require.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
+				FROM attachments WHERE source_attachment_id = ?
+			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
+			assert.Equal("skipped", state)
+			assert.Equal("size_cap", reason)
+			assert.NotContains(metadata, "fetch_error")
+		})
+	}
+}
+
 func TestFetchableURLHostRestriction(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		url  string
@@ -44,6 +159,7 @@ func TestFetchableURLHostRestriction(t *testing.T) {
 // recordingTransport serves canned bodies for files.slack.com and records
 // every request it sees (it must never see an off-host one).
 type recordingTransport struct {
+	err      error
 	requests []string
 	body     string
 	// bodyByPath overrides body per URL path (distinct content hashes:
@@ -55,6 +171,9 @@ type recordingTransport struct {
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rt.requests = append(rt.requests, req.URL.String())
+	if rt.err != nil {
+		return nil, rt.err
+	}
 	if rt.redirect != "" {
 		return &http.Response{
 			StatusCode: http.StatusFound,
@@ -80,6 +199,7 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 }
 
 func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	rt := &recordingTransport{body: "bytes"}
@@ -98,10 +218,12 @@ func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
 	require.Len(rt.requests, 1)
 
 	// A redirect — even one a compromised response injects — is refused.
-	rt.redirect = "https://attacker.example/steal"
-	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
-	require.ErrorIs(err, errOffHost)
-	assert.Len(rt.requests, 2, "the redirect target must not be followed")
+	for i, host := range []string{"attacker.example", "files.slack.com"} {
+		rt.redirect = "https://" + host + "/redirect"
+		_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
+		require.ErrorContains(err, "slack file GET: refusing redirect to "+host)
+		assert.Len(rt.requests, i+2, "the redirect target must not be followed")
+	}
 }
 
 func TestDownloadFileSizeCap(t *testing.T) {
@@ -109,10 +231,15 @@ func TestDownloadFileSizeCap(t *testing.T) {
 	c := NewClient("", "xoxp-test")
 	c.mediaTransport = rt
 	_, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
-	assert.ErrorIs(t, err, ErrAssetTooLarge)
+	require.ErrorIs(t, err, ErrAssetTooLarge)
+
+	rt.body = ""
+	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
+	assert.ErrorContains(t, err, "empty response body")
 }
 
 func TestImportWithoutFileScopeDefersDownloads(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	f := testWorkspace(t)
 	f.convs = f.convs[:1]
@@ -135,6 +262,7 @@ func TestImportWithoutFileScopeDefersDownloads(t *testing.T) {
 }
 
 func TestPersistFilesRecordsStreamedOversizeForRetryPolicy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -171,6 +299,7 @@ func TestPersistFilesRecordsStreamedOversizeForRetryPolicy(t *testing.T) {
 }
 
 func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -187,15 +316,13 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 			"permalink":   "https://testers.slack.com/files/F_BIG"},
 	}
 
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 	client.mediaTransport = &recordingTransport{body: "png01"}
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	opts := ImportOptions{
 		TeamID: "T01", UserID: "UME",
@@ -250,6 +377,7 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 }
 
 func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			require := require.New(t)
@@ -261,15 +389,13 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 					"permalink":   "https://testers.slack.com/files/F_GONE"},
 			}
 
-			prevInterval := checkpointMinInterval
-			checkpointMinInterval = 0
-			t.Cleanup(func() { checkpointMinInterval = prevInterval })
 			srv := f.serve()
 			client := NewClient(srv.URL, "xoxp-test")
 			client.disableRateLimits()
 			client.mediaTransport = &recordingTransport{status: status}
 			st := testutil.NewTestStore(t)
 			imp := NewImporter(st, client, "T01")
+			imp.checkpointMinInterval = 0
 
 			opts := ImportOptions{
 				TeamID: "T01", UserID: "UME",
@@ -317,6 +443,7 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 }
 
 func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -335,9 +462,6 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 			"permalink":   "https://testers.slack.com/files/F_LINK"},
 	}
 
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
@@ -346,6 +470,7 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 	}}
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	opts := ImportOptions{
 		TeamID: "T01", UserID: "UME",
@@ -392,6 +517,7 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 }
 
 func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -407,9 +533,6 @@ func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
 			"permalink":   "https://testers.slack.com/files/F_DUP2"},
 	}
 
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
@@ -417,6 +540,7 @@ func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
 	client.mediaTransport = rt
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	opts := ImportOptions{
 		TeamID: "T01", UserID: "UME",
@@ -455,6 +579,7 @@ func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
 }
 
 func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -464,15 +589,13 @@ func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 			"permalink":   "https://testers.slack.com/files/F_DEFER"},
 	}
 
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 	client.mediaTransport = &recordingTransport{body: "png02"}
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 
 	// Sync with media disabled: the hosted file must become a PENDING
 	// marker — a link row would hide it from backfill forever.
@@ -505,6 +628,7 @@ func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 }
 
 func TestMediaPolicySkipsChannelWithoutDownload(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -545,6 +669,7 @@ func TestMediaPolicySkipsChannelWithoutDownload(t *testing.T) {
 // inside the backfill would make backfill-slack-media a no-op for exactly the
 // configuration that depends on it.
 func TestBackfillMediaOverridesProviderMediaToggle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		disabled      attachmentpolicy.SkipReason
@@ -571,9 +696,6 @@ func TestBackfillMediaOverridesProviderMediaToggle(t *testing.T) {
 				"permalink":   "https://testers.slack.com/files/F_TOGGLE",
 			}}
 
-			prevInterval := checkpointMinInterval
-			checkpointMinInterval = 0
-			t.Cleanup(func() { checkpointMinInterval = prevInterval })
 			srv := f.serve()
 			defer srv.Close()
 			client := NewClient(srv.URL, "xoxp-test")
@@ -582,6 +704,7 @@ func TestBackfillMediaOverridesProviderMediaToggle(t *testing.T) {
 			client.mediaTransport = transport
 			st := testutil.NewTestStore(t)
 			imp := NewImporter(st, client, "T01")
+			imp.checkpointMinInterval = 0
 
 			opts := ImportOptions{
 				TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir(),
@@ -640,6 +763,7 @@ func membershipRecord(t *testing.T, st *store.Store) (count int, unknown bool) {
 // reference, but the roster is unresolved: a backfill must not trust the stale
 // count to release a deferred download until a sync reads the roster again.
 func TestMediaPolicyFailsClosedOnLaterMembershipOutage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -649,9 +773,6 @@ func TestMediaPolicyFailsClosedOnLaterMembershipOutage(t *testing.T) {
 		"permalink":   "https://testers.slack.com/files/F_LATER",
 	}}
 
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	defer srv.Close()
 	client := NewClient(srv.URL, "xoxp-test")
@@ -660,6 +781,7 @@ func TestMediaPolicyFailsClosedOnLaterMembershipOutage(t *testing.T) {
 	client.mediaTransport = transport
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 	opts := ImportOptions{
 		TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir(),
 		MediaPolicy: attachmentpolicy.Policy{
@@ -722,6 +844,7 @@ func TestMediaPolicyFailsClosedOnLaterMembershipOutage(t *testing.T) {
 // the outage must be archived, because the backfill evaluates the archive
 // rather than the run that wrote it.
 func TestMediaPolicyFailsClosedOnUnreadableMembership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -732,9 +855,6 @@ func TestMediaPolicyFailsClosedOnUnreadableMembership(t *testing.T) {
 		"permalink":   "https://testers.slack.com/files/F_ROSTER",
 	}}
 
-	prevInterval := checkpointMinInterval
-	checkpointMinInterval = 0
-	t.Cleanup(func() { checkpointMinInterval = prevInterval })
 	srv := f.serve()
 	defer srv.Close()
 	client := NewClient(srv.URL, "xoxp-test")
@@ -743,6 +863,7 @@ func TestMediaPolicyFailsClosedOnUnreadableMembership(t *testing.T) {
 	client.mediaTransport = transport
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
+	imp.checkpointMinInterval = 0
 	opts := ImportOptions{
 		TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir(),
 		MediaPolicy: attachmentpolicy.Policy{

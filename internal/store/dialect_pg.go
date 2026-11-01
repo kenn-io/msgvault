@@ -523,18 +523,13 @@ func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) 
 // Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
 // so messages without a body row are still indexed (subject + participants).
 func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
+	envelope := storedFTSEnvelopeSQL("STRING_AGG")
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `UPDATE messages m SET search_fts =
-		setweight(to_tsvector('simple', LEFT(COALESCE(m.subject, ''), ` + charCap + `)), 'A') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE(
-			CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
-			END,
-			(SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
-			''
-		), ` + charCap + `)), 'B') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.subject + `, ` + charCap + `)), 'A') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.fromAddr + `, ` + charCap + `)), 'B') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.toAddrs + `, ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(` + envelope.ccAddrs + `, ` + charCap + `)), 'C') ||
 		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
 		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
 	FROM (
@@ -544,6 +539,13 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 		WHERE m2.id >= $1 AND m2.id < $2
 	) src
 	WHERE m.id = src.id`
+}
+
+func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql.DB) (string, error) {
+	return d.FTSBackfillBatchSQL() + fmt.Sprintf(
+		" AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM %d)",
+		CurrentFTSIndexingVersion,
+	), nil
 }
 
 // FTSAvailable reports whether tsvector search is available.
@@ -602,11 +604,6 @@ func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.D
 	return exists
 }
 
-// FTSClearSQL returns the SQL to clear all tsvector data.
-func (d *PostgreSQLDialect) FTSClearSQL() string {
-	return "UPDATE messages SET search_fts = NULL"
-}
-
 // SchemaFTS returns "" for PostgreSQL — the tsvector column is part of the
 // main schema_pg.sql, not a separate file.
 func (d *PostgreSQLDialect) SchemaFTS() string {
@@ -620,9 +617,8 @@ func (d *PostgreSQLDialect) SchemaFTS() string {
 // as the SQLite path covers a malformed shadow table.
 //
 // Runs on the querier so RebuildFTS can route it through the maintenance
-// transaction: the full-table `UPDATE messages SET search_fts = NULL` here
-// has the same cost as FTSClearSQL (which is already hatched), and the GIN
-// rebuild over a populated table can likewise exceed the pool-wide 30s
+// transaction: the full-table `UPDATE messages SET search_fts = NULL` and
+// GIN rebuild over a populated table can exceed the pool-wide 30s
 // statement_timeout on a large archive (finding S1).
 func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) error {
 	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
@@ -2372,7 +2368,7 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
+	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
@@ -2389,6 +2385,9 @@ var exclusiveLockTables = []string{
 	// mutation, so it belongs to the same exclusive write set.
 	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue",
+	// The chat member queue is trigger-written by message and recipient
+	// mutations; the projection cascades with conversations and participants.
+	"chat_members", "chat_members_dirty", "chat_anchors",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	"sync_operations",

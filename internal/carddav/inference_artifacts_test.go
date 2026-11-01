@@ -12,9 +12,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 func TestLegacyPendingCreateRequiresExactApproval(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{putFailures: 1}
@@ -31,6 +33,7 @@ func TestLegacyPendingCreateRequiresExactApproval(t *testing.T) {
 }
 
 func TestUnpublishCancelsAbsentPendingCreate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{putFailures: 1}
@@ -44,8 +47,10 @@ func TestUnpublishCancelsAbsentPendingCreate(t *testing.T) {
 }
 
 func TestPendingPreviewApprovesImmutableBytesLeavingNewInference(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"captured", "legacy"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture := &mutationFixture{putFailures: 2}
@@ -101,6 +106,7 @@ func TestPendingPreviewApprovesImmutableBytesLeavingNewInference(t *testing.T) {
 }
 
 func TestKeepLocalRequiresInferenceArtifactApproval(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	fixture := &conflictMutationServer{}
 	server := httptest.NewServer(fixture.handler(t))
@@ -123,6 +129,7 @@ func TestKeepLocalRequiresInferenceArtifactApproval(t *testing.T) {
 }
 
 func TestConflictPublicationPreviewRefreshesWithoutResolving(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &conflictMutationServer{}
@@ -158,10 +165,12 @@ func TestConflictPublicationPreviewRefreshesWithoutResolving(t *testing.T) {
 }
 
 func TestLegacyPendingCanonicalSuccessDoesNotApproveNewInference(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, _ := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET approved_body_sha256=NULL, approved_inference_revision=NULL, approved_mutation_revision=NULL WHERE person_id=?`), personID)
 	require.NoError(err)
@@ -177,6 +186,7 @@ func TestLegacyPendingCanonicalSuccessDoesNotApproveNewInference(t *testing.T) {
 }
 
 func TestLegacyPendingReviewFlagAndBothRecoveryLoops(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{putFailures: 1}
@@ -199,6 +209,7 @@ func TestLegacyPendingReviewFlagAndBothRecoveryLoops(t *testing.T) {
 }
 
 func TestPendingRecoveryAndCancellationShareHTTPBarrierAcrossServices(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewTestServer(t, nil)
 	// The in-memory transport accepts any address; use a literal to avoid DNS.
 	server.URL = "http://127.0.0.1"
@@ -255,6 +266,7 @@ func TestPendingRecoveryAndCancellationShareHTTPBarrierAcrossServices(t *testing
 }
 
 func TestConflictReviewSupportsTwoSubscribedNonWriteBooks(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixtures := map[string]*mutationFixture{
@@ -339,6 +351,7 @@ func TestConflictReviewSupportsTwoSubscribedNonWriteBooks(t *testing.T) {
 }
 
 func TestPendingCreateCollisionWithNewInferenceRemainsReviewable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{putFailures: 1}
@@ -358,6 +371,7 @@ func TestPendingCreateCollisionWithNewInferenceRemainsReviewable(t *testing.T) {
 }
 
 func TestPendingApprovalUsesCanonicalGETBeforeStaleToken(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{putFailures: 1}
@@ -373,6 +387,7 @@ func TestPendingApprovalUsesCanonicalGETBeforeStaleToken(t *testing.T) {
 }
 
 func TestConflictKeepRemoteDoesNotGrantArtifactInferenceApproval(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &conflictMutationServer{}
@@ -407,10 +422,12 @@ func TestConflictKeepRemoteDoesNotGrantArtifactInferenceApproval(t *testing.T) {
 }
 
 func TestCancelAbsentPendingCreateAfterPullMaterializedMapping(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{timeout: true}
 	service, st, personID, book := seededMutationService(t, fixture)
+	service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 	require.Error(service.PublishPerson(t.Context(), personID))
 	pending, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(err)
@@ -435,6 +452,7 @@ func TestCancelAbsentPendingCreateAfterPullMaterializedMapping(t *testing.T) {
 }
 
 func TestApprovedConflictRemoteChangeRequiresRefreshBeforeResolution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &conflictMutationServer{}
@@ -477,6 +495,7 @@ func TestApprovedConflictRemoteChangeRequiresRefreshBeforeResolution(t *testing.
 }
 
 func TestConflictUnpublishClearsInferenceApprovalScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &conflictMutationServer{}
@@ -504,6 +523,7 @@ func TestConflictUnpublishClearsInferenceApprovalScope(t *testing.T) {
 }
 
 func TestPublicationReviewStaysStaleWhenTargetIsRemoved(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	fixture := &mutationFixture{}
 	service, st, personID, book := seededMutationService(t, fixture)

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Calendar, Checkbox, TextInput, todayStr } from '@kenn-io/kit-ui';
+  import { Button, Calendar, Checkbox, NumberInput, TextInput, todayStr } from '@kenn-io/kit-ui';
   import { onMount, tick, untrack } from 'svelte';
 
   import type {
@@ -104,6 +104,12 @@
     if (value.value_type === 'record_reference' && value.record_target === 'person') return 'person';
     if (value.value_type === 'text') return 'text';
     return 'unsupported';
+  }
+
+  function numericDraft(text: string): number | null {
+    if (text.trim() === '') return null;
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   function defaultDraft(value: AttributeDefinition): string {
@@ -361,30 +367,32 @@
     {:else if kind === 'number'}
       <label for={inputID}>{initialDefinition.label}</label>
       <div class="number-control">
-        <input
+        <NumberInput
           id={inputID}
-          type="number"
-          step={initialDefinition.value_type === 'integer' ? '1' : 'any'}
-          value={draft}
-          oninput={(event) => {
-            draft = event.currentTarget.value;
+          value={numericDraft(draft)}
+          step={initialDefinition.value_type === 'integer' ? 1 : 0.01}
+          oninput={(value) => {
+            draft = value === null ? '' : String(value);
           }}
           disabled={!definitionAllowsSet}
+          block
+          size="lg"
         />
         {#if initialDefinition.options?.unit}<span>{initialDefinition.options.unit}</span>{/if}
       </div>
     {:else if kind === 'person'}
       <label for={inputID}>{initialDefinition.label}</label>
-      <input
+      <NumberInput
         id={inputID}
-        type="number"
-        min="1"
-        step="1"
-        value={draft}
-        oninput={(event) => {
-          draft = event.currentTarget.value;
+        min={1}
+        step={1}
+        value={numericDraft(draft)}
+        oninput={(value) => {
+          draft = value === null ? '' : String(value);
         }}
         disabled={!definitionAllowsSet}
+        block
+        size="lg"
       />
     {:else if initialDefinition.field_type === 'textarea'}
       <label for={inputID}>{initialDefinition.label}</label>
@@ -466,7 +474,6 @@
     font-size: var(--font-size-sm);
   }
   select,
-  input,
   textarea {
     box-sizing: border-box;
     width: 100%;
@@ -483,7 +490,6 @@
     resize: vertical;
   }
   select:focus-visible,
-  input:focus-visible,
   textarea:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
@@ -504,6 +510,10 @@
     gap: var(--space-2);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+  .number-control :global(.kit-number-input) {
+    flex: 1;
+    min-width: 0;
   }
   .editor-actions {
     display: flex;

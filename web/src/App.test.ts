@@ -51,6 +51,24 @@ describe('application foundation', () => {
     render(App, { session });
     expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
   });
+  it('keeps the archive mounted after telemetry expires', async () => {
+    const telemetryRequests: Request[] = [];
+    const session = createSessionController(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false, csrf_token: 'csrf-token' });
+      if (path === '/api/v1/telemetry/events') telemetryRequests.push(input as Request);
+      if (path === '/api/v1/telemetry/events' || path === '/api/v1/expired') return Response.json({ error: 'unauthorized' }, { status: 401 });
+      if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+      return Response.json({}, { status: 404 });
+    });
+    const transport = vi.spyOn(session.telemetryClient, 'fetch');
+    render(App, { session });
+    await waitFor(() => expect(transport).toHaveBeenCalled());
+    await Promise.all(transport.mock.results.map((result) => result.value));
+    expect(telemetryRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
+    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
+  });
   it('shows a quiet connecting state until bootstrap resolves, then login when required', async () => {
     const session = createSessionController(async () =>
       Response.json({ auth_mode: 'required', https: false, plain_http_warning: true }),
@@ -248,13 +266,10 @@ describe('application foundation', () => {
     await new Promise((resolve) => setTimeout(resolve));
     expect(settingsRequests).toBe(1);
   });
-  it('reports app_opened once after interactive login and never from the login screen', async () => {
+  it('forwards sign-in changes across reauthentication', async () => {
     const startReporting = vi.spyOn(sessionReporting, 'startSessionReporting');
     window.history.replaceState(null, '', '/');
-    let now = 0;
-    vi.spyOn(performance, 'now').mockImplementation(() => now);
     const telemetryRequests: Request[] = [];
-    const sessionRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
@@ -272,11 +287,7 @@ describe('application foundation', () => {
       if (path === '/api/v1/telemetry/events') {
         const event = (await request.clone().json()).event;
         if (event === 'app_opened') telemetryRequests.push(request);
-        if (event === 'session_ended') {
-          sessionRequests.push(request);
-          return Response.json({ error: 'unauthorized' }, { status: 401 });
-        }
-        return Response.json({ status: 'disabled' }, { status: 202 });
+        return Response.json({ status: 'queued' }, { status: 202 });
       }
       if (path === '/api/v1/expired') return Response.json({ error: 'unauthorized' }, { status: 401 });
       if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
@@ -289,8 +300,6 @@ describe('application foundation', () => {
     const session = createSessionController(fetchFn);
     render(App, { session });
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
-    window.dispatchEvent(new PageTransitionEvent('pagehide'));
-    expect(sessionRequests).toHaveLength(0);
     expect(startReporting).not.toHaveBeenCalled();
     expect(telemetryRequests).toHaveLength(0);
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
@@ -299,21 +308,15 @@ describe('application foundation', () => {
     await waitFor(() => expect(telemetryRequests).toHaveLength(1));
     expect(startReporting).toHaveBeenCalledTimes(1);
     expect(telemetryRequests[0].method).toBe('POST');
-    expect(telemetryRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
-    now = 40_000;
+    const signedIn = vi.spyOn(startReporting.mock.results[0].value, 'signedIn');
     await session.client.fetch('/api/v1/expired');
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
-    expect(sessionRequests).toHaveLength(0);
-    now = 100_000;
+    expect(signedIn).toHaveBeenLastCalledWith(false);
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
     expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
-    now = 110_000;
-    window.dispatchEvent(new PageTransitionEvent('pagehide'));
-    await waitFor(() => expect(sessionRequests).toHaveLength(1));
+    expect(signedIn).toHaveBeenLastCalledWith(true);
     expect(startReporting).toHaveBeenCalledTimes(1);
-    expect((await sessionRequests[0].clone().json()).properties.duration_bucket).toBe('under_1m');
-    expect(sessionRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
     await new Promise((resolve) => setTimeout(resolve));
     expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
     expect(screen.getByRole('main', { name: 'Relationships' })).toBeDefined();

@@ -948,6 +948,7 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 // ListMessages retrieves messages matching the filter.
 func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 
 	// Build ORDER BY with validation. Every structured filter in
 	// buildFilterJoinsAndConditions resolves through an EXISTS / NOT EXISTS
@@ -1296,11 +1297,13 @@ func (e *SQLiteEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]sto
 
 // ListAccounts returns all source accounts.
 func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) {
+	conditions, args := appendIDFilter([]string{"TRUE"}, nil, "id", nil, sourcescope.IDs(ctx))
+	where := strings.Join(conditions, " AND ")
 	rows, err := e.queryContext(ctx, `
 		SELECT id, source_type, identifier, COALESCE(display_name, ''), last_sync_at
-		FROM sources
+		FROM sources WHERE `+where+`
 		ORDER BY identifier
-	`)
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
@@ -1361,6 +1364,7 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 			conditions = append(conditions, e.dialect.BoolTrueExpr("m.has_attachments"))
 		}
 	}
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	// Merge search conditions
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
@@ -1447,29 +1451,16 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		return nil, fmt.Errorf("attachment stats: %w", err)
 	}
 
-	// Label count - filter by source when sourceID is provided
-	var labelQuery string
-	if opts.SourceID != nil {
-		labelQuery = "SELECT COUNT(*) FROM labels WHERE source_id = ?"
-		if err := e.queryRowContext(ctx, labelQuery, *opts.SourceID).Scan(&stats.LabelCount); err != nil {
-			return nil, fmt.Errorf("label count: %w", err)
-		}
-	} else {
-		labelQuery = "SELECT COUNT(*) FROM labels"
-		if err := e.queryRowContext(ctx, labelQuery).Scan(&stats.LabelCount); err != nil {
-			return nil, fmt.Errorf("label count: %w", err)
-		}
+	// Inventory counts include permitted accounts and labels with no messages.
+	labelConditions, labelArgs := appendSourceFilter([]string{"TRUE"}, nil, "", opts.SourceID, nil)
+	labelConditions, labelArgs = appendSourceFilter(labelConditions, labelArgs, "", nil, sourcescope.IDs(ctx))
+	if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM labels WHERE "+strings.Join(labelConditions, " AND "), labelArgs...).Scan(&stats.LabelCount); err != nil {
+		return nil, fmt.Errorf("label count: %w", err)
 	}
-
-	// Account count - verify source exists when filtering by sourceID
-	if opts.SourceID != nil {
-		if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources WHERE id = ?", *opts.SourceID).Scan(&stats.AccountCount); err != nil {
-			return nil, fmt.Errorf("account count: %w", err)
-		}
-	} else {
-		if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources").Scan(&stats.AccountCount); err != nil {
-			return nil, fmt.Errorf("account count: %w", err)
-		}
+	accountConditions, accountArgs := appendIDFilter([]string{"TRUE"}, nil, "id", opts.SourceID, nil)
+	accountConditions, accountArgs = appendIDFilter(accountConditions, accountArgs, "id", nil, sourcescope.IDs(ctx))
+	if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources WHERE "+strings.Join(accountConditions, " AND "), accountArgs...).Scan(&stats.AccountCount); err != nil {
+		return nil, fmt.Errorf("account count: %w", err)
 	}
 
 	return stats, nil
@@ -1764,6 +1755,28 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	return collectDeletionTargets(rows)
 }
 
+// GetDeletionTargetsBySearchBounded preserves the search backend's result
+// semantics while resolving a capped set of exact, eligible deletion targets.
+// Search results are hydrated by message ID using the executable source types.
+func (e *SQLiteEngine) GetDeletionTargetsBySearchBounded(
+	ctx context.Context,
+	searchQuery *search.Query,
+	filter MessageFilter,
+	mode DeletionSearchMode,
+	maxResults int,
+) ([]DeletionTarget, int, error) {
+	return resolveBoundedDeletionTargets(
+		ctx, searchQuery, filter, mode, maxResults,
+		e.SearchFast, e.SearchDeep, e,
+	)
+}
+
+func (e *SQLiteEngine) executableDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
+	return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+		return e.deletionTargetsForMessageIDChunk(ctx, ids, executableDeletionSourceTypesSQL)
+	})
+}
+
 // GetDeletionTargetsByAggregateSearch resolves the message set that produced
 // one aggregate row, including the aggregate view's own search semantics.
 func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
@@ -1838,10 +1851,12 @@ func (e *SQLiteEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids [
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	return deletionTargetsByMessageIDsChunked(ctx, ids, e.deletionTargetsForMessageIDChunk)
+	return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+		return e.deletionTargetsForMessageIDChunk(ctx, ids, deletableSourceTypesSQL)
+	})
 }
 
-func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64, sourceTypesSQL string) ([]deletionTargetRow, error) {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -1852,7 +1867,7 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id, m.sent_at
 		FROM messages m
-		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+deletableSourceTypesSQL+`
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+sourceTypesSQL+`
 			WHERE %s AND %s AND `+archiveOnlyDeletionTargetGuard+` AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
 	`, store.LiveMessagesWhere("m", true), emailOnlyFilterM, strings.Join(placeholders, ","))
 	rows, err := e.queryContext(ctx, q, args...)
@@ -1862,10 +1877,10 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 	return collectDeletionTargetRows(rows)
 }
 
-// inListChunkSize bounds the IN-list size per deletion-staging lookup.
-// Explicit selections can exceed the SQLite bind-parameter limit
-// (SQLITE_MAX_VARIABLE_NUMBER, 32766 by default). 500 stays well under
-// every backend's limit.
+// inListChunkSize bounds message-ID queries used by deletion staging and
+// search-result enrichment. Explicit selections can exceed SQLite's
+// bind-parameter limit (32766 by default); 500 stays under every backend's
+// limit.
 const inListChunkSize = 500
 
 // SearchByDomains returns messages where any participant (from, to, cc, or bcc)
@@ -2144,6 +2159,7 @@ func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 	structured := *q
 	structured.TextTerms = nil
 	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, &structured)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	expr, arg := e.dialect.BuildFTSBodyTerm(q.TextTerms)
 	conditions = append(conditions, expr)
 	if arg != "" {
@@ -2307,6 +2323,7 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 // the query (drill-down filters, hide-deleted, etc.).
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2594,6 +2611,7 @@ func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 // Uses the same query logic as SearchFast to ensure consistent counts.
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
 }
 
@@ -2693,6 +2711,7 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		return nil, err
 	}
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	var results []MessageSummary
 	if limit != 0 {
 		var err error

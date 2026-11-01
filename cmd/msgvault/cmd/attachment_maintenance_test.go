@@ -679,7 +679,7 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 	select {
 	case <-ingestStarted:
 		assert.Fail(t, "ingest started while maintenance held the exclusive lease")
-	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: the held maintenance lease keeps ingest from starting
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held maintenance lease keeps ingest from starting
 	}
 	require.NoError(maintenanceLease.Release())
 	select {
@@ -714,10 +714,35 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	assert.Equal(t, existing+1, stats.BlobsRestored, "manual unpack must see the full catalog")
 }
 
+func TestFinalVerificationBatchClearsBothPendingFlags(t *testing.T) {
+	for _, daily := range []bool{false, true} {
+		t.Run(fmt.Sprintf("daily=%v", daily), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			for i := range 140 {
+				f.addLoose([]byte(fmt.Sprintf("live packed content %d", i)))
+			}
+			_, err := f.maintenance.pack(t.Context(), 0)
+			require.NoError(err)
+			require.NoError(f.maintenance.runScheduledPack(t.Context(), true))
+			require.True(f.maintenance.verifyPending.Load(), "the first batch leaves verification pending")
+			f.maintenance.markPackPending()
+
+			if daily {
+				err = f.maintenance.daily(t.Context())
+			} else {
+				err = f.maintenance.runPendingPack(t.Context())
+			}
+			assert.NoError(err, "the final batch must finish without rescheduling")
+		})
+	}
+}
+
 func TestCompletedPackVerificationRecordsNoProgress(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	ctx := jobctx.WithProgress(t.Context())
-	require.NoError(t, f.maintenance.runScheduledPack(ctx))
+	require.NoError(t, f.maintenance.runScheduledPack(ctx, true))
 	assert.False(t, jobctx.HasProgress(ctx), "an empty completed scan provides no resume point for a cancelled repack")
 }
 
@@ -767,4 +792,38 @@ func TestRemovingRedundantOrphanPackCountsAsProgress(t *testing.T) {
 	require.NoError(f.maintenance.runAutomaticPack(ctx, nil))
 	assert.NoFileExists(t, orphan)
 	assert.True(t, jobctx.HasProgress(ctx), "a removed pack is committed progress a timed-out pass can resume after")
+}
+
+// TestVerificationFollowupSkipsLooseEnumeration pins the behaviour that makes
+// the follow-up loop affordable: a pass queued only to walk the next
+// verification slice must not re-enumerate loose candidates, while the next
+// pass that a sync requests still packs them.
+func TestVerificationFollowupSkipsLooseEnumeration(t *testing.T) {
+	for _, daily := range []bool{false, true} {
+		t.Run(fmt.Sprintf("daily=%v", daily), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			for i := range 140 {
+				f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
+			}
+			_, err := f.maintenance.pack(t.Context(), 0)
+			require.NoError(err)
+			hash := f.addLoose([]byte("loose blob must wait for an enumerating pass"))
+			require.NoError(f.maintenance.runScheduledPack(t.Context(), false))
+
+			if daily {
+				err = f.maintenance.daily(t.Context())
+			} else {
+				err = f.maintenance.runPendingPack(t.Context())
+			}
+			require.NoError(err)
+			assert.Nil(f.packedEntry(hash), "a verification follow-up packs no loose blob")
+
+			// A sync that wrote loose blobs requests a full pass, which packs it.
+			f.maintenance.markPackPending()
+			require.ErrorIs(f.maintenance.runPendingPack(t.Context()), scheduler.ErrReschedule)
+			assert.NotNil(f.packedEntry(hash), "the next requested pass packs the deferred blob")
+		})
+	}
 }

@@ -15,6 +15,7 @@ import (
 )
 
 func TestGoogleAuthorizationReusesOnlyMatchingCredentials(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, mailClient, mailEmail string
 		dedicatedClient             string
@@ -31,6 +32,7 @@ func TestGoogleAuthorizationReusesOnlyMatchingCredentials(t *testing.T) {
 		{name: "rotated separate client can reauthorize", mailClient: "contacts-client", mailEmail: "person@example.com", dedicatedClient: "previous-client", wantScope: oauth.ScopeCalendarReadonly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assertions := assert.New(t)
 			required := require.New(t)
 			dir := t.TempDir()

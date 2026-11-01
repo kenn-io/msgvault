@@ -110,7 +110,7 @@ func TestCLIRunEnvAllowedPermitsConfiguredPeopleProviderKeyOnly(t *testing.T) {
 	checks.False(codex.cliRunEnvAllowed("MSGVAULT_PEOPLE_PROVIDER_KEY"))
 }
 
-func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
+func TestCLIAllowlistPermitsExactPersonSweepAndTiersCommands(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		args []string
@@ -122,6 +122,10 @@ func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
 		{args: []string{"person", "sweep"}},
 		{args: []string{"person", "sweep", "delete"}},
 		{args: []string{"person", "sweep", "run-everything"}},
+		{args: []string{"person", "tiers", "preview"}, want: true},
+		{args: []string{"person", "tiers", "explain", "7", "--json"}, want: true},
+		{args: []string{"person", "tiers"}},
+		{args: []string{"person", "tiers", "apply"}},
 	}
 	for _, test := range tests {
 		assert.Equal(t, test.want, cliRunCommandAllowed(test.args), test.args)
@@ -273,4 +277,21 @@ func TestCLIAllowlistPersonEnrichmentForwardsOnlyCommandCredentials(t *testing.T
 		"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli"}
 	checks.False(srv.cliRunEnvAllowedForCommand(digestSuppression, "ENRICHMENT_SUPPRESSION_KEY"))
 	checks.False(srv.cliRunEnvAllowedForCommand([]string{"person", "enrichment", "status"}, "EXA_PRIMARY_KEY"))
+}
+
+func TestCLIAllowlistPersonSweepForwardsCredentialDespiteInvalidDaemonSetting(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.People.Sweep.Enabled = true
+	configureAPIProvider(cfg, completeAPIProvider("PEOPLE_SWEEP_KEY", "active-model"))
+	require.NoError(cfg.Save())
+	latest, err := config.Load(cfg.ConfigFilePath(), "")
+	require.NoError(err)
+	latest.Integrations.Kata.Endpoint = "://invalid"
+	require.NoError(latest.Save())
+
+	srv := &Server{cfg: cfg}
+	require.True(srv.cliRunEnvAllowedForCommand([]string{"person", "sweep", "run"}, "PEOPLE_SWEEP_KEY"))
 }

@@ -44,6 +44,7 @@ type ActivityCandidate struct {
 	LastModified     time.Time
 	DateOnly         bool
 	Eligible         bool
+	Unsent           bool
 	// SourceIsFromMe is the message's source-native ownership flag. It is
 	// authoritative for outbound classification: a source that knows the
 	// archive owner sent a message outranks counterpart resolution, which can
@@ -110,15 +111,35 @@ const activityCandidateStateCTE = `
 		)
 	)`
 
-const activityCandidateColumns = `
+// activityUnsentSQL keeps sent copies eligible even when dedup retained draft
+// evidence. Saved IMAP Sent origin survives moves out of Sent.
+func (s *Store) activityUnsentSQL() string {
+	return activityUnsentInSchemaSQL(s.dialect, "")
+}
+
+func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
+	origin := `m.metadata ->> 'imap_content_origin'`
+	if dialect.DriverName() != postgresDriverName {
+		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
+	}
+	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
+		AND COALESCE(` + origin + `, '') <> 'sent'
+		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
+		WHERE ml.message_id = m.id AND l.source_id = m.source_id
+		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
+}
+
+func (s *Store) activityCandidateColumns() string {
+	return `
 	m.id, m.source_id, m.conversation_id,
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
-	COALESCE(m.source_is_from_me, FALSE),
+	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `,
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
 	r.direct_limit_active, r.direct_limit_target, r.direct_limit_generation`
+}
 
 // LoadQueuedActivityCandidatesContext loads the next pending queue batch in
 // stable message order. Ineligible rows stay in the result as retractions.
@@ -131,10 +152,11 @@ func (s *Store) LoadQueuedActivityCandidatesContext(
 	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(
 		activityCandidateStateCTE+`
-		SELECT `+activityCandidateColumns+`,
+		SELECT `+s.activityCandidateColumns()+`,
 		       1 AS queue_exists, q.revision, q.processed_revision
 		FROM activity_projection_queue q
 		JOIN messages m ON m.id = q.message_id
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		CROSS JOIN activity_current_state r
 		WHERE q.revision > q.processed_revision
@@ -165,10 +187,11 @@ func (s *Store) ScanForActivityProjectionContext(
 	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(
 		activityCandidateStateCTE+`
-		SELECT `+activityCandidateColumns+`,
+		SELECT `+s.activityCandidateColumns()+`,
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
 		FROM messages m
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_events ae ON ae.message_id = m.id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
@@ -211,10 +234,11 @@ func (s *Store) ScanAllActivityCandidatesContext(
 	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(
 		activityCandidateStateCTE+`
-		SELECT `+activityCandidateColumns+`,
+		SELECT `+s.activityCandidateColumns()+`,
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
 		FROM messages m
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
@@ -243,6 +267,18 @@ func (s *Store) LoadActivityCandidatesByIDContext(
 }
 
 func (s *Store) loadActivityCandidatesByIDQueryerContext(
+	ctx context.Context,
+	queryer contextRowsQuerier,
+	messageIDs []int64,
+) ([]ActivityCandidate, error) {
+	candidates, err := s.loadActivityCandidateRowsByIDQueryerContext(ctx, queryer, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachActivityCounterpartsQueryerContext(ctx, queryer, candidates)
+}
+
+func (s *Store) loadActivityCandidateRowsByIDQueryerContext(
 	ctx context.Context,
 	queryer contextRowsQuerier,
 	messageIDs []int64,
@@ -276,10 +312,11 @@ func (s *Store) loadActivityCandidatesByIDQueryerContext(
 		}
 		rows, err := queryer.QueryContext(ctx, s.dialect.Rebind(
 			activityCandidateStateCTE+`
-		SELECT `+activityCandidateColumns+`,
+		SELECT `+s.activityCandidateColumns()+`,
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
 		FROM messages m
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
@@ -295,7 +332,7 @@ func (s *Store) loadActivityCandidatesByIDQueryerContext(
 		}
 		candidates = append(candidates, loaded...)
 	}
-	return s.attachActivityCounterpartsQueryerContext(ctx, queryer, candidates)
+	return candidates, nil
 }
 
 func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
@@ -319,6 +356,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&row.deletedFromSourceAt,
 			&row.metadata,
 			&row.candidate.SourceIsFromMe,
+			&row.candidate.Unsent,
 			&row.candidate.IdentityRevision,
 			&row.candidate.AccountIdentityRevision,
 			&timezoneActive,
@@ -373,7 +411,7 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&
-		!cancelled
+		!cancelled && !row.candidate.Unsent
 }
 
 func activityUsableTime(value *time.Time) bool {

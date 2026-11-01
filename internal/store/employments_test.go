@@ -131,7 +131,7 @@ func TestConcurrentPrimaryRotationDoesNotLeakDatabaseConflicts(t *testing.T) {
 	select {
 	case early := <-results:
 		require.FailNow("promotion bypassed held target row", "error: %v", early)
-	case <-time.After(200 * time.Millisecond): //nolint:kennlint // absence check: the held row locks keep both promotions waiting
+	case <-time.After(200 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held row locks keep both promotions waiting
 	}
 	require.NoError(firstLock.Commit())
 	require.NoError(secondLock.Commit())
@@ -420,7 +420,7 @@ func TestEmploymentWaitingBehindMergeCannotTargetRedirect(t *testing.T) {
 		})
 		writeDone <- writeErr
 	}()
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // lets the write queue on a PostgreSQL row lock
+	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: lets the write queue on a PostgreSQL row lock
 	require.NoError(blocker.Commit())
 
 	select {

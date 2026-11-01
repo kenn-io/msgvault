@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestCacheExportParityFullVersusDerived pins the shared export SQL: a derived
@@ -22,9 +23,7 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	derivedDir := filepath.Join(tmp, "analytics-derived")
 	fullDir := filepath.Join(tmp, "analytics-full")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "alice@example.com", "manual"))

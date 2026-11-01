@@ -184,7 +184,11 @@ Examples:
 			importErr = importAutoAccounts(ctx, cmd, st, mailDir, attachmentsDir)
 		}
 
-		return errors.Join(importErr, rebuildCacheAfterWrite(dbPath, state))
+		cacheErr := rebuildCacheAfterWrite(dbPath, state)
+		if importErr == nil && cacheErr != nil {
+			return fmt.Errorf("import completed successfully; %w", cacheErr)
+		}
+		return errors.Join(importErr, cacheErr)
 	},
 }
 

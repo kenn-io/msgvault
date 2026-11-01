@@ -160,9 +160,6 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		"identity_match_evidence must be locked for candidate cascade cleanup")
 }
 
-// TestMaintenanceTimeoutResetSQL pins the exact statement the PG dialect uses
-// to lift the per-statement timeout — the mechanism finding S1's hatch relies
-// on. SQLite returns "" so runMaintenance issues no reset.
 // TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge pins the lock
 // ordering documented on BeginExclusive: MergeParticipants writes person
 // tables BEFORE participants/messages, the opposite of exclusiveLockTables'
@@ -391,11 +388,6 @@ func TestMergeSourcesDoesNotDeadlockWithSerializedSourceRemoval(t *testing.T) {
 	require.NoError(removeErr, "unrelated serialized source removal must succeed")
 }
 
-func TestMaintenanceTimeoutResetSQL(t *testing.T) {
-	assert.Equal(t, "SET LOCAL statement_timeout = 0", (&PostgreSQLDialect{}).MaintenanceTimeoutResetSQL())
-	assert.Empty(t, (&SQLiteDialect{}).MaintenanceTimeoutResetSQL())
-}
-
 // is57014 reports whether err is the PostgreSQL query_canceled SQLSTATE raised
 // when statement_timeout fires.
 func is57014(err error) bool { return isPgError(err, "57014") }
@@ -552,4 +544,23 @@ func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 	deleted, err := st.DeleteEmptyPackRecord(ctx, packID)
 	require.NoError(err, "slow cleanup must run with maintenance timeout disabled")
 	assert.True(deleted)
+}
+
+// TestConversationPolicyMaintenanceLock checks the real maintenance transaction,
+// including this table's indirect cascade through conversations.
+func TestConversationPolicyMaintenanceLock(t *testing.T) {
+	requirements := require.New(t)
+	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	conn, err := st.DB().Conn(t.Context())
+	requirements.NoError(err)
+	defer func() { _ = conn.Close() }()
+	requirements.NoError(st.dialect.BeginExclusive(t.Context(), conn))
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK") }()
+	var locked bool
+	requirements.NoError(conn.QueryRowContext(t.Context(), `
+ SELECT EXISTS (SELECT 1 FROM pg_locks
+ WHERE pid=pg_backend_pid() AND relation='conversation_policy'::regclass
+ AND mode='ExclusiveLock' AND granted)
+ `).Scan(&locked))
+	assert.True(t, locked, "account removal must fence conversation policy writers")
 }

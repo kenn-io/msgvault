@@ -41,7 +41,7 @@ func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, pro
 	inv.sends.Go(func() {
 		ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		defer cancel()
-		_ = sendActionTelemetry(ctx, client, "cli", event, property, value)
+		_, _ = sendActionTelemetry(ctx, client, "cli", event, property, value)
 	})
 }
 
@@ -67,17 +67,16 @@ func reportSuccessfulCLIAction(cmd *cobra.Command, client *daemonclient.Client, 
 	}
 }
 
-func sendActionTelemetry(ctx context.Context, client *daemonclient.Client, surface, event, property, value string) error {
+func sendActionTelemetry(ctx context.Context, client *daemonclient.Client, surface, event, property, value string) (*apiclient.CaptureTelemetryEventResponse, error) {
 	generated, err := client.GeneratedClient()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	properties := map[string]any{"surface": surface}
 	if property != "" {
 		properties[property] = value
 	}
-	_, err = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
+	return generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
 		Body: &apiclient.CaptureTelemetryEventBody{Event: event, Properties: properties},
 	})
-	return err
 }

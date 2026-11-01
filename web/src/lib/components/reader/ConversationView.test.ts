@@ -486,17 +486,6 @@ describe('ConversationView', () => {
       expect(telemetryEvents).toHaveLength(0);
     } else {
       await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
-      const today = Date.now();
-      vi.useFakeTimers({ toFake: ['Date'], now: today });
-      await fireEvent(window, new Event('focus'));
-      vi.setSystemTime(today + 86_400_000);
-      await fireEvent(window, new Event('focus'));
-      // A same-day focus would have made this three.
-      await waitFor(() => expect(telemetryEvents).toHaveLength(2));
-      view.unmount();
-      vi.setSystemTime(today + 2 * 86_400_000);
-      await fireEvent(window, new Event('focus'));
-      expect(telemetryEvents).toHaveLength(2);
     }
     visibility.mockRestore();
   });

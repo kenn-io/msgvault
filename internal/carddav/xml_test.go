@@ -9,6 +9,7 @@ import (
 )
 
 func TestParseMultiStatusRejectsDoctypeAndDepthOverflow(t *testing.T) {
+	t.Parallel()
 	_, err := ParseMultiStatus([]byte(`<!DOCTYPE x><multistatus/>`), DefaultXMLLimits())
 	require.ErrorIs(t, err, ErrUnsafeXML)
 	deep := strings.Repeat("<x>", 65) + strings.Repeat("</x>", 65)
@@ -17,6 +18,7 @@ func TestParseMultiStatusRejectsDoctypeAndDepthOverflow(t *testing.T) {
 }
 
 func TestParseMultiStatusKeepsResponseAndPropstatStatus(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -31,6 +33,7 @@ func TestParseMultiStatusKeepsResponseAndPropstatStatus(t *testing.T) {
 }
 
 func TestParseMultiStatusPreservesAddressDataAndRejectsWrongNamespaces(t *testing.T) {
+	t.Parallel()
 	const exactAddressData = "  BEGIN:VCARD\nVERSION:4.0\nEND:VCARD  "
 	body := []byte(`<D:multistatus xmlns:D="DAV:" xmlns:CR="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/alice.vcf</D:href><D:propstat><D:prop><CR:address-data>` + exactAddressData + `</CR:address-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
 	multi, err := ParseMultiStatus(body, DefaultXMLLimits())
@@ -48,6 +51,7 @@ func TestParseMultiStatusPreservesAddressDataAndRejectsWrongNamespaces(t *testin
 }
 
 func TestParseMultiStatusAddressDataPreservesLinesAndDecodesXMLEntities(t *testing.T) {
+	t.Parallel()
 	const encoded = "BEGIN:VCARD\r\nNOTE:&amp;&lt;&gt;&apos;&quot;&#35;&#x40;\rEND:VCARD\r\n"
 	const expected = "BEGIN:VCARD\r\nNOTE:&<>'\"#@\rEND:VCARD\r\n"
 	body := []byte(`<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/alice.vcf</D:href><D:propstat><D:prop><C:address-data>` + encoded + `</C:address-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
@@ -57,6 +61,7 @@ func TestParseMultiStatusAddressDataPreservesLinesAndDecodesXMLEntities(t *testi
 }
 
 func TestParseMultiStatusAddressDataPreservesCDATABytes(t *testing.T) {
+	t.Parallel()
 	const encoded = "BEGIN:VCARD\r\nNOTE:ordinary&amp;<![CDATA[<literal>&amp;\r\n]]><![CDATA[more\r]]>END:VCARD\r\n"
 	const expected = "BEGIN:VCARD\r\nNOTE:ordinary&<literal>&amp;\r\nmore\rEND:VCARD\r\n"
 	body := []byte(`<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/alice.vcf</D:href><D:propstat><D:prop><C:address-data>` + encoded + `</C:address-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
@@ -66,6 +71,7 @@ func TestParseMultiStatusAddressDataPreservesCDATABytes(t *testing.T) {
 }
 
 func TestParseMultiStatusRejectsMarkupInsideAddressData(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name    string
 		content string
@@ -76,6 +82,7 @@ func TestParseMultiStatusRejectsMarkupInsideAddressData(t *testing.T) {
 		{name: "declaration", content: `BEGIN:VCARD<!DOCTYPE hidden>END:VCARD`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			body := []byte(`<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/alice.vcf</D:href><D:propstat><D:prop><C:address-data>` + test.content + `</C:address-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
 			_, err := ParseMultiStatus(body, DefaultXMLLimits())
 			require.ErrorIs(t, err, ErrUnsafeXML)
@@ -88,11 +95,13 @@ func TestParseMultiStatusRejectsMarkupInsideAddressData(t *testing.T) {
 }
 
 func TestParseMultiStatusRejectsByteLimit(t *testing.T) {
+	t.Parallel()
 	_, err := ParseMultiStatus([]byte(`<D:multistatus xmlns:D="DAV:"/>`), XMLLimits{MaxBytes: 8, MaxDepth: 64})
 	require.ErrorIs(t, err, ErrXMLLimit)
 }
 
 func TestParseMultiStatusRejectsStructuralAmplificationBeforeUnmarshal(t *testing.T) {
+	t.Parallel()
 	response := `<D:response><D:href>/a.vcf</D:href></D:response>`
 	body := []byte(`<D:multistatus xmlns:D="DAV:">` + strings.Repeat(response, 3) + `</D:multistatus>`)
 	limits := DefaultXMLLimits()
@@ -117,6 +126,7 @@ func TestParseMultiStatusRejectsStructuralAmplificationBeforeUnmarshal(t *testin
 }
 
 func TestParseMultiStatusRejectsMalformedHTTPStatusLines(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		xml  string
@@ -139,6 +149,7 @@ func TestParseMultiStatusRejectsMalformedHTTPStatusLines(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := ParseMultiStatus([]byte(tc.xml), DefaultXMLLimits())
 			require.ErrorContains(t, err, "status")
 		})
@@ -146,6 +157,7 @@ func TestParseMultiStatusRejectsMalformedHTTPStatusLines(t *testing.T) {
 }
 
 func TestParseMultiStatusAllowsAbsentResponseStatusWhenPropstatIsValid(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -158,6 +170,7 @@ func TestParseMultiStatusAllowsAbsentResponseStatusWhenPropstatIsValid(t *testin
 }
 
 func TestParseMultiStatusAcceptsHTTPStatusWithoutReasonPhrase(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -171,6 +184,7 @@ func TestParseMultiStatusAcceptsHTTPStatusWithoutReasonPhrase(t *testing.T) {
 }
 
 func TestParseMultiStatusRequiresSingleDigitHTTPVersionComponents(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	valid := []byte(`<D:multistatus xmlns:D="DAV:"><D:response><D:href>/a.vcf</D:href><D:status>HTTP/1.1 200</D:status></D:response></D:multistatus>`)
@@ -185,6 +199,7 @@ func TestParseMultiStatusRequiresSingleDigitHTTPVersionComponents(t *testing.T) 
 }
 
 func TestRequestBodiesUseDAVNamespaces(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

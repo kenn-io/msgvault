@@ -650,7 +650,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 	var annualYears string
 	var current, currentPopulation, peakYear int
 	require.NoError(db.QueryRow(`
-		SELECT CAST(to_json(list_transform(annual_temperatures, x -> x.year)) AS VARCHAR),
+		SELECT CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR),
 		       current_temperature, current_temperature_population, peak_year
 		FROM read_parquet(?) WHERE canonical_id = 2
 	`, relationshipParquetGlob(root, DatasetPeople)).Scan(

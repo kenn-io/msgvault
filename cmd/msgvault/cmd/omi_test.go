@@ -38,10 +38,7 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 			require := require.New(t)
 			markDaemonCLISubprocessForTest(t)
 			cfg := lifecycleTestConfig(t.TempDir())
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			src, err := st.GetOrCreateSource(omi.SourceType, "work")
 			require.NoError(err)
 			changed := false
@@ -323,11 +320,8 @@ func TestDaemonManualOmiQueuesCacheRefreshAfterRealImport(t *testing.T) {
 			assert := assert.New(t)
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Analytics.AutoBuildCache = tc.auto
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			require.NoError(st.InitSchema())
-			_, err = st.GetOrCreateSource(omi.SourceType, "work")
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			_, err := st.GetOrCreateSource(omi.SourceType, "work")
 			require.NoError(err)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("offset") != "0" {
@@ -437,9 +431,7 @@ func TestOmiPacingSpansScheduledRunsAliasesAndManualCommands(t *testing.T) {
 		{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL, Enabled: true, Schedule: "* * * * *"},
 		{Identifier: "alias", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: aliasURL, Enabled: true, Schedule: "* * * * *"},
 	}
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	state := testInvocationWithConfig(cfg)
 	sched := scheduler.New(nil).WithLogger(testDiscardLogger())
 	for _, source := range cfg.Omi {
@@ -534,11 +526,9 @@ func TestManualOmiContinuesAfterSourceCooldown(t *testing.T) {
 		{Identifier: "ready", AccountEmail: "owner@example.com", APIKey: "omi_dev_ready", BaseURL: server.URL},
 	}
 	ctx := withStoreResolverConfig(t, cfg)
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	for _, source := range cfg.Omi {
-		_, err = st.GetOrCreateSource(omi.SourceType, source.Identifier)
+		_, err := st.GetOrCreateSource(omi.SourceType, source.Identifier)
 		require.NoError(err)
 	}
 	require.NoError(st.Close())
@@ -558,7 +548,7 @@ func TestManualOmiContinuesAfterSourceCooldown(t *testing.T) {
 	assert.Contains(output.String(), "Omi sync for deferred paused")
 	assert.Contains(output.String(), "Syncing Omi for ready")
 	assert.Equal(1, refreshes)
-	st, err = store.Open(cfg.DatabaseDSN())
+	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
 	source, err := st.GetSourceByTypeAndIdentifier(omi.SourceType, "ready")
@@ -625,10 +615,8 @@ func TestManualOmiKeepsFinalizationErrors(t *testing.T) {
 			}
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Omi = []config.OmiSource{{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: baseURL}}
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			require.NoError(st.InitSchema())
-			_, err = st.GetOrCreateSource(omi.SourceType, "work")
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			_, err := st.GetOrCreateSource(omi.SourceType, "work")
 			require.NoError(err)
 			if cause != "HTTP timeout" {
 				_, err = st.DB().Exec(`CREATE TRIGGER synthetic_finalize BEFORE UPDATE OF status ON sync_runs WHEN NEW.status IN ('failed', 'paused') BEGIN SELECT RAISE(ABORT, 'synthetic finalization failure'); END`)

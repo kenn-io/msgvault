@@ -22,6 +22,7 @@ func integrationRemoteResource(href, uid, etag string) store.CardDAVRemoteResour
 }
 
 func TestSnapshot507NeverTombstonesOmittedResources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -46,6 +47,7 @@ func TestSnapshot507NeverTombstonesOmittedResources(t *testing.T) {
 }
 
 func TestSnapshotHTTP507NeverTombstonesOmittedResources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -69,6 +71,7 @@ func TestSnapshotHTTP507NeverTombstonesOmittedResources(t *testing.T) {
 }
 
 func TestSnapshotAcceptsEquivalentCollectionURLWithTrailingSlash(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -92,6 +95,7 @@ func TestSnapshotAcceptsEquivalentCollectionURLWithTrailingSlash(t *testing.T) {
 }
 
 func TestSnapshotMovesResourceByAddressBookScopedRemoteUID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	phase := 1
@@ -138,6 +142,7 @@ func TestSnapshotMovesResourceByAddressBookScopedRemoteUID(t *testing.T) {
 }
 
 func TestSnapshotDuplicateRemoteUIDClaimsPreviousHrefOnlyOnce(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	phase := 1
@@ -178,6 +183,7 @@ func TestSnapshotDuplicateRemoteUIDClaimsPreviousHrefOnlyOnce(t *testing.T) {
 }
 
 func TestSyncRefetchesOneStalePlanThenAborts(t *testing.T) {
+	t.Parallel()
 	requests := 0
 	var st *store.Store
 	var bookID int64
@@ -201,6 +207,7 @@ func TestSyncRefetchesOneStalePlanThenAborts(t *testing.T) {
 }
 
 func TestSyncUsesOneInvalidTokenReconcileAcrossStaleRefetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -241,6 +248,7 @@ func TestSyncUsesOneInvalidTokenReconcileAcrossStaleRefetch(t *testing.T) {
 }
 
 func TestETagOnlyChurnUpdatesLedgerWithoutDuplicatingPerson(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -271,6 +279,7 @@ func TestETagOnlyChurnUpdatesLedgerWithoutDuplicatingPerson(t *testing.T) {
 }
 
 func TestSyncCanonicalizesEquivalentHrefSpellingsForUpdatesAndTombstones(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -352,6 +361,7 @@ func TestSyncCanonicalizesEquivalentHrefSpellingsForUpdatesAndTombstones(t *test
 }
 
 func TestSnapshotKeepsCardWithNonE164PhoneWithoutAbortingOtherImports(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -383,6 +393,7 @@ func TestSnapshotKeepsCardWithNonE164PhoneWithoutAbortingOtherImports(t *testing
 }
 
 func TestSyncRebasesUntouchedRemoteProjectionAndPreservesUserOwnedPersonOnTombstone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -473,6 +484,7 @@ func TestSyncRebasesUntouchedRemoteProjectionAndPreservesUserOwnedPersonOnTombst
 }
 
 func TestSnapshotPreservesLiteralCRLFAddressDataBytes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -501,6 +513,7 @@ func TestSnapshotPreservesLiteralCRLFAddressDataBytes(t *testing.T) {
 }
 
 func TestSyncCarriesRedirectedCollectionURLIntoRelativeHrefsAndMultiget(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -541,6 +554,7 @@ func TestSyncCarriesRedirectedCollectionURLIntoRelativeHrefsAndMultiget(t *testi
 }
 
 func TestSnapshotPreservesCDATAAddressDataBytes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

@@ -62,6 +62,7 @@ import type {
   CardDAVSyncRequest,
   Catalog,
   ChangesResponse,
+  ChatDiscoveryPage,
   CheckSettingsPeopleInferenceProviderPathParameters,
   ClearOrganizationAttributeParams,
   ClearOrganizationAttributePathParameters,
@@ -409,6 +410,7 @@ import type {
   SavedViewsResponse,
   SchedulerStatusResponse,
   SearchCLIParams,
+  SearchChatsParams,
   SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
@@ -1418,6 +1420,18 @@ export const getRemoteImage = (
   );
 };
 /**
+ * @summary Find archived chats by ranked name tokens
+ */
+export const searchChats = (
+  params: SearchChatsParams,
+  options?: SecondParameter<typeof orvalFetch<ChatDiscoveryPage>>,
+) => {
+  return orvalFetch<ChatDiscoveryPage>(
+    { url: `/api/v1/conversations/search`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get a bounded containing conversation
  */
 export const getConversation = (
@@ -2204,7 +2218,7 @@ export const getMCPCapabilities = (
   );
 };
 /**
- * @summary Search source-selected transcripts as visible messages
+ * @summary Search recordings and attachments as visible messages
  */
 export const searchMedia = (
   params: SearchMediaParams,

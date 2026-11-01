@@ -293,6 +293,10 @@ type ImportSummary struct {
 	// re-applied because the participant-link store was unavailable. Contested
 	// pairs are recorded as conflicts by the store and are not counted here.
 	IdentityReplayErrors int64
+	// RosterRepairErrors counts quiet-room membership repairs that failed with
+	// a store error. They appear in the run's error count but, unlike Errors,
+	// do not withhold source freshness, because message sync already finished.
+	RosterRepairErrors int64
 	// AttachmentsDownloaded counts media stored this run;
 	// AttachmentsPending counts failed/deferred downloads that left a
 	// retry marker (see backfill-beeper-media).
@@ -315,4 +319,28 @@ type ImportSummary struct {
 	// affected chats are re-visited next run.
 	FetchErrors int64
 	Errors      int64
+	FailedChats map[string]*ChatFailure
+}
+
+// ChatFailure counts a chat's fetch and attachment errors during one run.
+type ChatFailure struct {
+	FetchErrors, MediaErrors int64
+	LastError                string
+}
+
+func (sum *ImportSummary) failChat(chatID string, media bool, err error) {
+	if sum.FailedChats == nil {
+		sum.FailedChats = make(map[string]*ChatFailure)
+	}
+	cf := sum.FailedChats[chatID]
+	if cf == nil {
+		cf = &ChatFailure{}
+		sum.FailedChats[chatID] = cf
+	}
+	if media {
+		cf.MediaErrors++
+	} else {
+		cf.FetchErrors++
+	}
+	cf.LastError = err.Error()
 }

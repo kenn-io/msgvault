@@ -13,6 +13,7 @@ import (
 // user's source with the other's token and deleting the survivor's token on
 // remove-account.
 func TestTokensAreIsolatedPerWorkspaceUser(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
@@ -35,6 +36,7 @@ func TestTokensAreIsolatedPerWorkspaceUser(t *testing.T) {
 }
 
 func TestLoadTokenRejectsIdentityMismatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dir := t.TempDir()
 	require.NoError(SaveToken(dir, "T01", "testers", "UME", "xoxp-me"))

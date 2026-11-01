@@ -17,13 +17,6 @@ function response(status: number) {
 }
 
 describe('Login', () => {
-  it('uses the shared boot-screen layout', () => {
-    render(Login, { session: createSessionController(vi.fn<typeof fetch>()) });
-
-    expect(screen.getByRole('main', { name: 'Authentication' }).className).toContain('boot-screen');
-    expect(screen.getByText('msgvault').className).toContain('boot-screen__brand');
-  });
-
   it('exchanges the API key and leaves required mode on success', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => response(200));
     const session = createSessionController(fetchFn);

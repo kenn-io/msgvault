@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestCollectionListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
@@ -452,10 +452,7 @@ func TestCollectionShowPrintsReadableSourceNames(t *testing.T) {
 	invocationFromContext(testCtx).options.useLocal = true
 
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
-	t.Cleanup(func() { _ = st.Close() })
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	alice, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create alice source")
@@ -480,10 +477,7 @@ func TestCollectionShowPrintsReadableSourceNames(t *testing.T) {
 func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = st.Close() }()
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
@@ -512,10 +506,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 func TestResolveAccountListNumericFallthroughResolvesIdentifier(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = st.Close() }()
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 
 	// Create a source with a numeric identifier that is unlikely to
 	// collide with the auto-assigned source ID. Use a 12-digit string

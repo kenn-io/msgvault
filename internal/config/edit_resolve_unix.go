@@ -195,7 +195,7 @@ func readConfigFileSnapshotUnix(path string, retain bool) (ConfigFile, error) {
 		return snapshot, nil
 	}
 	if requestedSymlink {
-		return ConfigFile{}, errors.Join(ErrUnsafeConfigTarget, errors.New("config symlink target does not exist"))
+		return ConfigFile{}, errors.Join(ErrUnsafeConfigTarget, errConfigSymlinkTargetMissing)
 	}
 	snapshot.Path = resolved
 	snapshot.ETag = configETag(nil)

@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -229,6 +230,177 @@ func TestImportStopDuringConversationStatsCompletesSync(t *testing.T) {
 				"the resumed run must refresh the conversation preview after the prior stats pass yielded")
 		})
 	}
+}
+
+func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to expire the budget during quiet-roster stats")
+	require := require.New(t)
+	assertions := assert.New(t)
+	f := newFakeBeeper(t)
+	quiet := mediaChat()
+	f.addChat(quiet)
+	active := mediaChat()
+	active.ID = "!active-roster-stats:beeper.local"
+	active.LastActivity = time.Now().UTC()
+	active.Msgs = nil
+	f.addChat(active)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	st.DB().SetMaxOpenConns(1)
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(err)
+	staleSourceSync := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), staleSourceSync, source.ID)
+	require.NoError(err)
+	var conversationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations
+		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID).Scan(&conversationID))
+	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: "{}", Valid: true}))
+	f.mu.Lock()
+	quiet.Participants = append(quiet.Participants, map[string]any{
+		"id": "@signal_bob:beeper.local", "fullName": "Bob",
+	})
+	f.mu.Unlock()
+
+	statsStarted := make(chan struct{})
+	var startOnce sync.Once
+	var stopAt time.Time
+	conn, err := st.DB().Conn(context.Background())
+	require.NoError(err)
+	err = conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok, "driver connection is SQLite")
+		return sqliteConn.RegisterFunc("wait_for_quiet_roster_stats", func() (int, error) {
+			startOnce.Do(func() { close(statsStarted) })
+			timer := time.NewTimer(time.Until(stopAt))
+			defer timer.Stop()
+			<-timer.C
+			return 0, errors.New("quiet-roster stats reached the scheduled budget boundary")
+		}, true)
+	})
+	require.NoError(err)
+	require.NoError(conn.Close())
+	_, err = st.DB().Exec(`CREATE TRIGGER wait_during_quiet_roster_stats
+		BEFORE UPDATE OF participant_count ON conversations
+		WHEN NEW.participant_count != OLD.participant_count
+		BEGIN
+			SELECT wait_for_quiet_roster_stats();
+		END`)
+	require.NoError(err)
+	defer func() {
+		_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS wait_during_quiet_roster_stats`)
+		require.NoError(dropErr)
+	}()
+
+	stopAt = time.Now().Add(10 * time.Second)
+	type importResult struct {
+		sum *ImportSummary
+		err error
+	}
+	resultCh := make(chan importResult, 1)
+	go func() {
+		sum, importErr := imp.Import(context.Background(), ImportOptions{
+			AccountID: "signal", NoMedia: true, StopAt: stopAt,
+		})
+		resultCh <- importResult{sum: sum, err: importErr}
+	}()
+	select {
+	case <-statsStarted:
+	case result := <-resultCh:
+		require.FailNow("quiet roster import ended before its stats refresh", "error: %v", result.err)
+	case <-time.After(15 * time.Second):
+		require.FailNow("quiet roster stats refresh did not reach the budget trigger")
+	}
+	var result importResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(30 * time.Second):
+		require.FailNow("scheduled quiet-roster stats expiry did not finalize the import")
+	}
+	require.NoError(result.err, "optional stats expiry must not fail completed message work")
+	require.NotNil(result.sum)
+	assertions.False(result.sum.Stopped, "message sync completed before optional roster maintenance")
+	assertions.Zero(result.sum.Errors)
+	state := latestBeeperState(t, imp)
+	require.NotNil(state.Chats[quiet.ID])
+	assertions.NotEmpty(state.Chats[quiet.ID].RosterRetryAfter, "interrupted stats refresh must persist backoff")
+	ids, err := st.ListUnresolvedConversationIDs(context.Background(), source.ID)
+	require.NoError(err)
+	assertions.Equal([]string{quiet.ID}, ids, "the incomplete stats refresh must remain pending for retry")
+	run, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+	assertions.Equal("completed", run.Status)
+	src, err := st.GetSourceByID(source.ID)
+	require.NoError(err)
+	assertions.True(src.LastSyncAt.Valid, "optional roster work must not withhold message sync freshness")
+	assertions.True(src.LastSyncAt.Time.After(staleSourceSync), "the budget-expired sync must advance the stale source timestamp")
+}
+
+func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite function to slow quiet-roster writes")
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	quiet := mediaChat()
+	f.addChat(quiet)
+	active := mediaChat()
+	active.ID = "!active-slow-roster:beeper.local"
+	active.LastActivity = time.Now().UTC()
+	active.Msgs = nil
+	f.addChat(active)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	st.DB().SetMaxOpenConns(1)
+	opts := ImportOptions{AccountID: "signal", NoMedia: true}
+	_, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = '{}'
+		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID)
+	requirements.NoError(err)
+	f.mu.Lock()
+	quiet.Participants = append(quiet.Participants, map[string]any{
+		"id": "@signal_bob:beeper.local", "fullName": "Bob",
+	})
+	f.mu.Unlock()
+
+	oldTimeout := routeProbeTimeout
+	routeProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { routeProbeTimeout = oldTimeout })
+	conn, err := st.DB().Conn(t.Context())
+	requirements.NoError(err)
+	err = conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		requirements.True(ok, "driver connection is SQLite")
+		return sqliteConn.RegisterFunc("slow_quiet_roster_write", func() int {
+			// Hold the roster write open past the probe deadline it must outlast.
+			timer := time.NewTimer(4 * routeProbeTimeout)
+			defer timer.Stop()
+			<-timer.C
+			return 0
+		}, false)
+	})
+	requirements.NoError(err)
+	requirements.NoError(conn.Close())
+	_, err = st.DB().Exec(`CREATE TRIGGER slow_quiet_roster_write
+		AFTER INSERT ON conversation_participants
+		BEGIN
+			SELECT slow_quiet_roster_write();
+		END`)
+	requirements.NoError(err)
+	defer func() {
+		_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS slow_quiet_roster_write`)
+		requirements.NoError(dropErr)
+	}()
+
+	_, err = imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
+	requirements.NoError(err)
+	assertions.Empty(ids, "the probe timeout bounds the provider request, not the roster writes")
+	assertions.Len(rosterMembers(t, st, source.ID, quiet.ID), 3)
 }
 
 func TestImportStopsBeforeStaleRederivationWhenBudgetIsSpent(t *testing.T) {
@@ -581,7 +753,7 @@ func TestImportTailScanProgressesAcrossBudgetedRuns(t *testing.T) {
 		return state.LastTailScan
 	}
 	before := lastTailScan()
-	time.Sleep(1100 * time.Millisecond) //nolint:kennlint // waits for SQLite's second-precision tail-scan timestamp to advance
+	time.Sleep(1100 * time.Millisecond) //nolint:kennlint // sleeptest: waits for SQLite's second-precision tail-scan timestamp to advance
 
 	// Stop after three completed chats, then finish the remaining probe on the
 	// next scheduled run.

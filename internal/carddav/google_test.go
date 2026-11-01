@@ -13,6 +13,7 @@ import (
 )
 
 func TestGoogleDiscoveryDirectCollectionWithBearerTokens(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 	var authorization []string
@@ -56,11 +57,13 @@ func TestGoogleDiscoveryDirectCollectionWithBearerTokens(t *testing.T) {
 }
 
 func TestGoogleDiscoveryRequiresSuccessfulCollectionProperty(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, href, status string }{
 		{"failed property", "/", "404 Not Found"},
 		{"contact href", "/person.vcf", "200 OK"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusMultiStatus)
 				_, _ = fmt.Fprintf(w, `<D:multistatus xmlns:D="DAV:"><D:response><D:href>%s</D:href><D:propstat><D:prop><D:sync-token>token-1</D:sync-token></D:prop><D:status>HTTP/1.1 %s</D:status></D:propstat></D:response></D:multistatus>`, tc.href, tc.status)
@@ -73,6 +76,7 @@ func TestGoogleDiscoveryRequiresSuccessfulCollectionProperty(t *testing.T) {
 }
 
 func TestGoogleDiscoveryHonorsAdvertisedReadOnlyPrivileges(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +99,7 @@ func TestGoogleDiscoveryHonorsAdvertisedReadOnlyPrivileges(t *testing.T) {
 }
 
 func TestGoogleDiscoveryPrincipalCapabilities(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, privileges string
 		writable         bool
@@ -103,6 +108,7 @@ func TestGoogleDiscoveryPrincipalCapabilities(t *testing.T) {
 		{name: "read only", privileges: `<D:current-user-privilege-set><D:privilege><D:read/></D:privilege></D:current-user-privilege-set>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assertions := assert.New(t)
 			required := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +149,7 @@ func TestGoogleDiscoveryPrincipalCapabilities(t *testing.T) {
 }
 
 func TestGoogleDiscoverySharesTransferBudgetWithPrincipalDiscovery(t *testing.T) {
+	t.Parallel()
 	direct := []byte(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/dav</D:href><D:propstat><D:prop><D:current-user-principal><D:href>/principal/</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
 	principal := []byte(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/principal/</D:href><D:propstat><D:prop><C:addressbook-home-set><D:href>/books/</D:href></C:addressbook-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)
 	books := []byte(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:response><D:href>/books/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response><D:response><D:href>/books/default/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:addressbook/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`)

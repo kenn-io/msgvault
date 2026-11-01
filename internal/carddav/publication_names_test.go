@@ -31,8 +31,10 @@ func publicationFullNames(tb testing.TB, body []byte) []string {
 }
 
 func TestPublicationDisplayNameRenameUploadsOnce(t *testing.T) {
+	t.Parallel()
 	for _, promoted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "local", true: "promoted"}[promoted], func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &mutationFixture{}
@@ -76,8 +78,10 @@ func hasScalarNameMapping(mappings []vcard.NativeMapping, personID int64) bool {
 }
 
 func TestPublicationTypedNameReplacesDisplayFallback(t *testing.T) {
+	t.Parallel()
 	for _, publishFirst := range []bool{false, true} {
 		t.Run(map[bool]string{false: "initial", true: "replacement"}[publishFirst], func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &mutationFixture{}
@@ -137,6 +141,7 @@ func FuzzPublicationDisplayNameReplacement(f *testing.F) {
 }
 
 func TestPublicationAcceptsRemoteOnlyNameWithoutEcho(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &mutationFixture{reportCurrent: true}
@@ -157,6 +162,7 @@ func TestPublicationAcceptsRemoteOnlyNameWithoutEcho(t *testing.T) {
 }
 
 func TestPublicationNameConflictResolutionDoesNotReplay(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		choice ResolutionChoice
@@ -168,6 +174,7 @@ func TestPublicationNameConflictResolutionDoesNotReplay(t *testing.T) {
 		{name: "keep-remote-retained-fn", choice: ResolutionKeepRemote, remote: "Alice Example", want: "Alice Example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -204,6 +211,7 @@ func TestPublicationNameConflictResolutionDoesNotReplay(t *testing.T) {
 }
 
 func TestPublicationKeepRemoteStillProtectsTypedName(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &conflictMutationServer{}
@@ -227,6 +235,7 @@ func TestPublicationKeepRemoteStillProtectsTypedName(t *testing.T) {
 }
 
 func TestPublicationKeepRemoteDoesNotReplayRenameOverGeneratedFullName(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &conflictMutationServer{}
@@ -263,6 +272,7 @@ func TestPublicationKeepRemoteDoesNotReplayRenameOverGeneratedFullName(t *testin
 }
 
 func TestPublicationKeepRemoteDoesNotReplayRenameWhenGeneratedFullNameIsCleared(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		remove bool
@@ -271,6 +281,7 @@ func TestPublicationKeepRemoteDoesNotReplayRenameWhenGeneratedFullNameIsCleared(
 		{name: "removed", remove: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -314,6 +325,7 @@ func TestPublicationKeepRemoteDoesNotReplayRenameWhenGeneratedFullNameIsCleared(
 }
 
 func TestPublicationKeepRemoteDoesNotRestoreClearedScalarFullName(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		remove bool
@@ -322,6 +334,7 @@ func TestPublicationKeepRemoteDoesNotRestoreClearedScalarFullName(t *testing.T) 
 		{name: "removed", remove: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -358,6 +371,7 @@ func TestPublicationKeepRemoteDoesNotRestoreClearedScalarFullName(t *testing.T) 
 }
 
 func TestPublicationRemoteFullNameRemovalRequiresConflict(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		replacement string
@@ -366,6 +380,7 @@ func TestPublicationRemoteFullNameRemovalRequiresConflict(t *testing.T) {
 		{name: "removed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -396,6 +411,7 @@ func TestPublicationRemoteFullNameRemovalRequiresConflict(t *testing.T) {
 }
 
 func TestPublicationKeepRemoteWithoutRenameKeepsLabelOwnership(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		label *string
@@ -404,6 +420,7 @@ func TestPublicationKeepRemoteWithoutRenameKeepsLabelOwnership(t *testing.T) {
 		{name: "nameless"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -444,6 +461,7 @@ func TestPublicationKeepRemoteWithoutRenameKeepsLabelOwnership(t *testing.T) {
 }
 
 func TestPublicationRejectedRenameStaysRejectedAfterRemoteNameRemoval(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name               string
 		unrenderableStruct bool
@@ -454,6 +472,7 @@ func TestPublicationRejectedRenameStaysRejectedAfterRemoteNameRemoval(t *testing
 		{name: "unrenderable-structured-name", unrenderableStruct: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &conflictMutationServer{}
@@ -501,6 +520,7 @@ func TestPublicationRejectedRenameStaysRejectedAfterRemoteNameRemoval(t *testing
 }
 
 func TestPublicationConvergedRenameKeepsLabelOwnership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := &conflictMutationServer{}
@@ -529,6 +549,7 @@ func TestPublicationConvergedRenameKeepsLabelOwnership(t *testing.T) {
 }
 
 func TestPublicationAcceptedRemoteNameKeepsParameters(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, fullName string
 	}{
@@ -538,6 +559,7 @@ func TestPublicationAcceptedRemoteNameKeepsParameters(t *testing.T) {
 		{name: "type-and-pref", fullName: "FN;TYPE=work,pref:Remote Example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := &mutationFixture{reportCurrent: true}

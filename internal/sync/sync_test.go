@@ -1735,36 +1735,6 @@ func TestFullSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
 	assert.Equal("gmail_not_found", items[0].ErrorKind, "ErrorKind")
 }
 
-func TestMIMEParsing(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-
-	pdfData := []byte{0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a, 0x31, 0x20, 0x30, 0x20, 0x6f, 0x62, 0x6a, 0x0a, 0x3c, 0x3c, 0x2f, 0x54, 0x79, 0x70, 0x65, 0x2f, 0x43, 0x61, 0x74, 0x61, 0x6c, 0x6f, 0x67, 0x2f, 0x50, 0x61, 0x67, 0x65, 0x73, 0x20, 0x32, 0x20, 0x30, 0x20, 0x52, 0x3e, 0x3e, 0x0a, 0x65, 0x6e, 0x64, 0x6f, 0x62, 0x6a}
-	complexMIME := testemail.NewMessage().
-		From(`"John Doe" <john@example.com>`).
-		To(`"Jane Smith" <jane@example.com>, bob@example.com`).
-		Cc("cc@example.com").
-		Subject("Re: Meeting Notes").
-		Date("Tue, 15 Jan 2024 14:30:00 -0500").
-		Header("Message-ID", "<msg123@example.com>").
-		Header("In-Reply-To", "<msg122@example.com>").
-		Body("Hello,\n\nThis is the message body.\n\nBest regards,\nJohn\n").
-		WithAttachment("document.pdf", "application/pdf", pdfData).
-		Bytes()
-
-	env.Mock.Profile.MessagesTotal = 1
-	env.Mock.Profile.HistoryID = 12345
-	env.Mock.AddMessage("complex1", complexMIME, []string{"INBOX"})
-
-	env.SetOptions(t, func(o *Options) {
-		o.AttachmentsDir = filepath.Join(env.TmpDir, "attachments")
-	})
-
-	summary := runFullSync(t, env)
-	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
-	assertAttachmentCount(t, env.Store, 1)
-}
-
 func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -1970,20 +1940,6 @@ func TestFullSyncPagination(t *testing.T) {
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(6))})
 	assertListMessagesCalls(t, env, 3)
-}
-
-func TestSyncerWithLogger(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-	syncer := env.Syncer.WithLogger(nil)
-	assert.NotNil(t, syncer, "WithLogger should return syncer for chaining")
-}
-
-func TestSyncerWithProgress(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-	syncer := env.Syncer.WithProgress(gmail.NullProgress{})
-	assert.NotNil(t, syncer, "WithProgress should return syncer for chaining")
 }
 
 // Tests for incremental sync
@@ -3177,7 +3133,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	assertMessageCount(t, env.Store, 4)
 }
 
-func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
+func TestFullSyncRestartsLegacyUnfilteredCheckpoint(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
@@ -3204,9 +3160,9 @@ func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
 	requirements.NoError(env.Store.FailSync(syncID, "worker stopped"))
 
 	summary := runFullSync(t, env)
-	checks.True(summary.WasResumed)
-	checks.Equal("page_1", summary.ResumedFromToken)
-	checks.Equal(1, env.Mock.ListMessagesCalls)
+	checks.False(summary.WasResumed)
+	checks.Empty(summary.ResumedFromToken)
+	checks.Equal(2, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -3433,7 +3389,7 @@ func TestInitSyncState_Resume(t *testing.T) {
 	assert.Equal(int64(45), state.checkpoint.MessagesAdded, "MessagesAdded")
 }
 
-func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
+func TestLegacyFullCheckpointRestartsForCoverage(t *testing.T) {
 	t.Parallel()
 	legacy := &store.SyncRun{
 		CursorBefore: sql.NullString{String: "page_1", Valid: true},
@@ -3447,7 +3403,7 @@ func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
 		modify func(*Options)
 		want   bool
 	}{
-		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: true},
+		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: false},
 		{name: "filtered Gmail", run: legacy, modify: func(options *Options) {
 			options.Query = "after:2024/01/01"
 		}},

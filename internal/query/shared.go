@@ -181,40 +181,51 @@ func fetchLabelsForMessageList(ctx context.Context, db store.SQLReader, rebind r
 		return nil
 	}
 
-	ids := make([]any, len(messages))
-	placeholders := make([]string, len(messages))
 	idToIndex := make(map[int64]int)
 	for i, msg := range messages {
-		ids[i] = msg.ID
-		placeholders[i] = "?"
 		idToIndex[msg.ID] = i
 	}
 
-	query := fmt.Sprintf(`
-		SELECT ml.message_id, l.name
-		FROM %smessage_labels ml
-		JOIN %slabels l ON l.id = ml.label_id
-		WHERE ml.message_id IN (%s)
-	`, tablePrefix, tablePrefix, strings.Join(placeholders, ","))
+	for start := 0; start < len(messages); start += inListChunkSize {
+		end := min(start+inListChunkSize, len(messages))
+		chunk := messages[start:end]
+		ids := make([]any, len(chunk))
+		placeholders := make([]string, len(chunk))
+		for i, msg := range chunk {
+			ids[i] = msg.ID
+			placeholders[i] = "?"
+		}
 
-	rows, err := db.QueryContext(ctx, rebind(query), ids...)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
+		query := fmt.Sprintf(`
+			SELECT ml.message_id, l.name
+			FROM %smessage_labels ml
+			JOIN %slabels l ON l.id = ml.label_id
+			WHERE ml.message_id IN (%s)
+		`, tablePrefix, tablePrefix, strings.Join(placeholders, ","))
 
-	for rows.Next() {
-		var msgID int64
-		var labelName string
-		if err := rows.Scan(&msgID, &labelName); err != nil {
+		if err := func() error {
+			rows, err := db.QueryContext(ctx, rebind(query), ids...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var msgID int64
+				var labelName string
+				if err := rows.Scan(&msgID, &labelName); err != nil {
+					return err
+				}
+				if idx, ok := idToIndex[msgID]; ok {
+					messages[idx].Labels = append(messages[idx].Labels, labelName)
+				}
+			}
+			return rows.Err()
+		}(); err != nil {
 			return err
 		}
-		if idx, ok := idToIndex[msgID]; ok {
-			messages[idx].Labels = append(messages[idx].Labels, labelName)
-		}
 	}
 
-	return rows.Err()
+	return nil
 }
 
 // fetchParticipantsForMessageList adds recipients to message summaries using a batch query.
@@ -515,7 +526,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 			m.has_attachments,
 			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at,
-			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s
@@ -556,6 +567,9 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 		return nil, err
 	}
 	msg.RelatedMessageID = related[0].RelatedMessageID
+	if msg.MessageType == messageTypeCalendar {
+		msg.Calendar = store.ParseCalendarProjection(metadata.String)
+	}
 	if sentAt.Valid {
 		msg.SentAt = sentAt.Time
 	}

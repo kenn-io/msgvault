@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -32,9 +32,7 @@ func TestRunEmbeddingsListRetiredOnlySucceedsWithoutSQLiteVec(t *testing.T) {
 	testCtx := withTestConfig(t, c)
 	_ = testCtx
 
-	mainStore, err := store.Open(c.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, c.DatabaseDSN())
 	require.NoError(mainStore.Close())
 
 	vectorsDB, err := sql.Open("sqlite3", vectorPath)

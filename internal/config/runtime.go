@@ -25,7 +25,19 @@ func Load(path, home string) (*Config, error) {
 }
 
 // LoadWithOverrides applies flags before validating lower-priority env values.
+// It rejects invalid settings in every section, including those only the daemon reads.
 func LoadWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, error) {
+	cfg, err := LoadClientWithOverrides(path, home, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.requireDaemonValid()
+}
+
+// LoadClientWithOverrides loads like LoadWithOverrides, but records invalid
+// settings that only the daemon reads in DaemonConfigError instead of
+// failing, so client commands can still reach a running daemon.
+func LoadClientWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, error) {
 	return loadWithOverrides(path, home, overrides)
 }
 
@@ -164,12 +176,12 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		c.runtimeConfigState.apiPort.capture(c.Server.APIPort, *o.APIPort)
 		c.Server.APIPort = *o.APIPort
 	} else if v, ok := os.LookupEnv("MSGVAULT_API_PORT"); ok {
-		port, err := strconv.Atoi(v)
-		if err != nil {
-			return errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535")
+		if port, err := strconv.Atoi(v); err != nil {
+			c.deferDaemonError(errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535"))
+		} else {
+			c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
+			c.Server.APIPort = port
 		}
-		c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
-		c.Server.APIPort = port
 	}
 	if v, ok := os.LookupEnv("MSGVAULT_BACKUP_REPO"); ok {
 		value := expandPath(v)
@@ -194,7 +206,13 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		if v, ok := os.LookupEnv(entry.name); ok {
 			value, err := strconv.ParseBool(v)
 			if err != nil {
-				return fmt.Errorf("%s must be a boolean", entry.name)
+				err = fmt.Errorf("%s must be a boolean", entry.name)
+				// Only the daemon reads CORS credentials; clients read the others.
+				if entry.destination != &c.Server.CORSCredentials {
+					return err
+				}
+				c.deferDaemonError(err)
+				continue
 			}
 			entry.record.capture(*entry.destination, value)
 			*entry.destination = value

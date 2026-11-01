@@ -536,6 +536,43 @@ func TestImporterUsesContainerParticipantCountForMediaPolicy(t *testing.T) {
 	)
 }
 
+func TestImporterArchivesGuildParticipantFloorWithoutMedia(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := testutil.NewTestStore(t)
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			api.guildMembers = 12
+			if unknown {
+				api.guildCountErr = ErrGuildMembershipUnknown
+			}
+			api.messages["300"] = []Message{importerTestMessage("101", "300", "hello")}
+			imp := newTestImporter(st, api)
+			opts := ImportOptions{GuildID: "200", MediaPolicy: attachmentpolicy.Policy{MaxParticipants: 8}}
+			summary, err := imp.Import(t.Context(), opts)
+			requirements.NoError(err)
+			assertions.EqualValues(1, summary.MessagesAdded, "membership lookup must not prevent text archiving")
+			assertions.Equal(1, api.guildCountRequests())
+			var messageID int64
+			requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages LIMIT 1`).Scan(&messageID))
+			membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
+			requirements.NoError(err)
+			assertions.Equal(!unknown, membership.RosterArchived)
+			if !unknown {
+				assertions.Equal(12, membership.Conversation.ParticipantCount)
+			}
+			api.guildCountErr = nil
+			api.guildMembers = 3
+			_, err = imp.Import(t.Context(), opts)
+			requirements.NoError(err)
+			membership, err = st.AttachmentConversationMembershipContext(t.Context(), messageID)
+			requirements.NoError(err)
+			assertions.True(membership.RosterArchived)
+			assertions.Equal(3, membership.Conversation.ParticipantCount)
+		})
+	}
+}
+
 func TestImporterUsesGuildMemberCountForOrdinaryChannelMediaPolicy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

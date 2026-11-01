@@ -98,6 +98,7 @@ func (m *memoryRemote) CreateHref(collectionURL, uid string) (string, error) {
 func (m *memoryRemote) Limits() (time.Duration, int64) { return time.Minute, defaultOperationBytes }
 
 func TestServiceSyncsAndPublishesThroughAnyRemote(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -134,6 +135,7 @@ func TestServiceSyncsAndPublishesThroughAnyRemote(t *testing.T) {
 }
 
 func TestPullStopsFallbackAfterRetryAfter(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -155,6 +157,7 @@ func TestPullStopsFallbackAfterRetryAfter(t *testing.T) {
 }
 
 func TestCanonicalAbsentReadSavesRetryAfter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -175,6 +178,7 @@ func TestCanonicalAbsentReadSavesRetryAfter(t *testing.T) {
 // An update and an unpublish that fail on a missing Google sign-in were never
 // sent, so they go out after sign-in without a conflict.
 func TestWritesBlockedOnSignInResumeWithoutConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	allowed := true
@@ -216,6 +220,7 @@ func TestWritesBlockedOnSignInResumeWithoutConflict(t *testing.T) {
 // A token failure stops the publication sweep at the first write, instead of
 // repeating for every pending person.
 func TestTokenFailureStopsThePublicationSweep(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	allowed := true

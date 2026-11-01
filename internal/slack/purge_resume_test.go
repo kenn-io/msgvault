@@ -9,6 +9,7 @@ import (
 )
 
 func TestChannelPurgeInvalidatesCoverageDuringUnfinishedRepair(t *testing.T) {
+	t.Parallel()
 	for _, searchReplies := range []bool{true, false} {
 		name := "with search"
 		if !searchReplies {

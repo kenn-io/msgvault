@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/update"
 )
 
 type tuiStyles struct {
@@ -191,7 +192,9 @@ func (m Model) buildTitleBar() string {
 	// Update notification (right-aligned on title bar)
 	var updateNotice string
 	if m.updateAvailable != "" {
-		if m.updateIsDevBuild {
+		if upgrade := update.UpgradeCommand(m.distribution); upgrade != "" {
+			updateNotice = fmt.Sprintf("update: %s — %s", m.updateAvailable, upgrade)
+		} else if m.updateIsDevBuild {
 			updateNotice = fmt.Sprintf("latest: %s — msgvault update --force", m.updateAvailable)
 		} else {
 			updateNotice = fmt.Sprintf("update: %s — msgvault update", m.updateAvailable)

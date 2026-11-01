@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -329,7 +330,7 @@ func (r *observationRecorder) classifyAnchor(
 	service *store.CommunicationService,
 	scopeKind, scopeValue *string,
 ) error {
-	identifier := providerFallbackUserID(accountID, userID)
+	identifier := beeperidentity.Fallback(accountID, userID)
 	if _, done := r.classified[identifier]; done {
 		return nil
 	}

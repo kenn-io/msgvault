@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func saveMessengerState(t *testing.T) func() {
@@ -128,9 +129,7 @@ func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testi
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
 	testCtx := withStoreResolverConfig(t, testCfg)
 
-	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(err, "open seed store")
-	require.NoError(st.InitSchema(), "init seed schema")
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
 	emailSource, err := st.GetOrCreateSource("gmail", "mailbox@example.com")
 	require.NoError(err, "create eligible email source")
 	require.NoError(st.Close(), "close seed store")

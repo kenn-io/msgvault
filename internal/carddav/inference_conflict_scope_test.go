@@ -14,6 +14,7 @@ import (
 )
 
 func TestQueuedConflictPreviewRejectsPersonReboundByMerge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	t.Cleanup(server.Close)
@@ -66,8 +67,10 @@ func TestQueuedConflictPreviewRejectsPersonReboundByMerge(t *testing.T) {
 }
 
 func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprintf("restart_%t", restart), func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
 			fixtures := map[string]*mutationFixture{"/books/personal/": {}, "/books/subscribed/": {}}
@@ -128,7 +131,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 			require.NoError(service.ApproveConflictPublication(t.Context(), conflict.ID, preview.ApprovalToken))
 			if restart {
 				sf.timeout = true
-				service.dav().client.requestTimeout = 250 * time.Millisecond
+				service.dav().client.requestTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: the fixture withholds the mutation response until expiry to test recovery without replay
 				require.Error(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 				during, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 				require.NoError(err)
@@ -175,6 +178,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 }
 
 func TestLegacyNonWriteConflictRecoveryDoesNotEnrollPublication(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := &mutationFixture{}
@@ -224,8 +228,10 @@ func TestLegacyNonWriteConflictRecoveryDoesNotEnrollPublication(t *testing.T) {
 }
 
 func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"inference", "book", "generation", "capability"} {
 		t.Run(change, func(t *testing.T) {
+			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture := &mutationFixture{}

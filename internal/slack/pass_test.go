@@ -15,6 +15,7 @@ import (
 )
 
 func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -49,6 +50,7 @@ func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
 			}
 		}
 		resumed := NewImporter(imp.store, imp.client, opts.TeamID)
+		resumed.checkpointMinInterval = 0
 		resumed.now = func() time.Time { return now }
 		_, err = resumed.Import(ctx, opts)
 		cancel()
@@ -82,6 +84,7 @@ func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
 }
 
 func TestScheduledYieldKeepsRecoverableCheckpoint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -106,6 +109,7 @@ func TestScheduledYieldKeepsRecoverableCheckpoint(t *testing.T) {
 }
 
 func TestInterruptedPublicPassHonorsNewWorkOptions(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"limited", "no threads"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
@@ -145,6 +149,7 @@ func TestInterruptedPublicPassHonorsNewWorkOptions(t *testing.T) {
 }
 
 func TestScheduledYieldPreservesFetchFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -181,6 +186,7 @@ func TestScheduledYieldPreservesFetchFailure(t *testing.T) {
 }
 
 func TestInterruptedPublicPassWithFetchFailureStillRefreshesHealthyChannels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
@@ -218,6 +224,7 @@ func TestInterruptedPublicPassWithFetchFailureStillRefreshesHealthyChannels(t *t
 				}
 			}
 			resumed := NewImporter(imp.store, imp.client, opts.TeamID)
+			resumed.checkpointMinInterval = 0
 			resumed.now = func() time.Time { return now }
 			sum, err := resumed.Import(ctx, opts)
 			cancel(nil)
@@ -248,6 +255,7 @@ func TestInterruptedPublicPassWithFetchFailureStillRefreshesHealthyChannels(t *t
 }
 
 func TestFinalCheckpointYieldPreservesEarlierFetchFailure(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to cancel the final checkpoint")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -302,6 +310,7 @@ func TestFinalCheckpointYieldPreservesEarlierFetchFailure(t *testing.T) {
 }
 
 func TestScheduledYieldDuringFTSWrite(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite authorizer to interrupt the FTS write")
 	for _, tc := range []struct {
 		name       string

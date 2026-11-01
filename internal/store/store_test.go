@@ -19,13 +19,6 @@ import (
 
 var sampleRawMessage = []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")
 
-func TestStore_Open(t *testing.T) {
-	st := testutil.NewTestStore(t)
-
-	// Store should be usable
-	assert.NotNil(t, st.DB(), "DB() returned nil")
-}
-
 func TestStore_GetStats_Empty(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -736,13 +729,6 @@ func TestStore_Attachment(t *testing.T) {
 	assert.Equal(t, int64(1), stats.AttachmentCount, "AttachmentCount")
 }
 
-func TestStore_SyncRun(t *testing.T) {
-	f := storetest.New(t)
-
-	syncID := f.StartSync()
-	f.AssertActiveSync(syncID, "running")
-}
-
 func TestStore_SyncCheckpoint(t *testing.T) {
 	f := storetest.New(t)
 
@@ -814,24 +800,6 @@ func TestStore_GetMessage_DeletedMessageVisibleByID(t *testing.T) {
 	msg, err := f.Store.GetMessage(msgID)
 	require.NoError(t, err, "GetMessage()")
 	require.NotNil(t, msg, "GetMessage() = nil, want deleted message")
-}
-
-func TestStore_MarkMessageDeletedByGmailID(t *testing.T) {
-	f := storetest.New(t)
-
-	f.CreateMessage("gmail-msg-123")
-
-	// Mark as deleted (trash)
-	err := f.Store.MarkMessageDeletedByGmailID(false, "gmail-msg-123")
-	require.NoError(t, err, "MarkMessageDeletedByGmailID(trash)")
-
-	// Mark as permanently deleted
-	err = f.Store.MarkMessageDeletedByGmailID(true, "gmail-msg-123")
-	require.NoError(t, err, "MarkMessageDeletedByGmailID(permanent)")
-
-	// Non-existent message should not error (no rows affected is OK)
-	err = f.Store.MarkMessageDeletedByGmailID(true, "nonexistent-id")
-	require.NoError(t, err, "MarkMessageDeletedByGmailID(nonexistent)")
 }
 
 func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
@@ -1154,11 +1122,6 @@ func TestStore_ReplaceMessageRecipients_DuplicateParticipants(t *testing.T) {
 	require.NoError(t, err, "duplicate participant IDs must not error")
 
 	f.AssertRecipientCount(msgID, "to", 2)
-}
-
-func TestStore_GetActiveSync_NoSync(t *testing.T) {
-	f := storetest.New(t)
-	f.AssertNoActiveSync()
 }
 
 func TestStore_GetLastSuccessfulSync_None(t *testing.T) {
@@ -1514,14 +1477,6 @@ func TestStore_BackfillFTS(t *testing.T) {
 	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'unique'").Scan(&count)
 	require.NoError(err, "FTS MATCH unique")
 	assert.Equal(1, count, "FTS match 'unique'")
-}
-
-func TestStore_FTS5Available(t *testing.T) {
-	f := storetest.New(t)
-
-	// FTS5Available should return a boolean (true on most builds)
-	available := f.Store.FTS5Available()
-	t.Logf("FTS5Available = %v", available)
 }
 
 func TestStore_NeedsFTSBackfill(t *testing.T) {

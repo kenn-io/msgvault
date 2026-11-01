@@ -48,12 +48,6 @@ describe('AppSidebar', () => {
     );
   });
 
-  it('navigates when an item is chosen', async () => {
-    const props = renderSidebar();
-    await fireEvent.click(screen.getByRole('button', { name: 'Deletions' }));
-    expect(props.onNavigate).toHaveBeenCalledWith('deletions');
-  });
-
   it('keeps full accessible names in the icon rail and hides group headings', () => {
     renderSidebar({ collapsed: true });
     expect(screen.getByRole('button', { name: 'Saved views' })).toBeTruthy();

@@ -147,10 +147,7 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 	t.Setenv("VOYAGE_API_KEY", "")
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
-	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = mainStore.Close() })
-	require.NoError(t, mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
 		Path: filepath.Join(dir, "vectors.db"), MainPath: mainPath,
 		MainDB: mainStore.DB(), Dimension: 4,

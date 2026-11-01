@@ -2496,6 +2496,24 @@ func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	assert.ElementsMatch([]string{"msg1", "legacy-empty", "AAMk-1"}, ids, "WhatsApp, IMAP, Gmail Chat, source-deleted, dedup-deleted, and provider-ID-less messages must be dropped")
 }
 
+func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
+	env := newTestEnv(t)
+	// The bounded staging search can return 100,001 summaries, exceeding
+	// SQLite's 32,766-parameter limit for a single label lookup.
+	messages := make([]MessageSummary, MaxDeletionTargetSearchResults)
+	for i := range messages {
+		messages[i].ID = env.AddMessage(dbtest.MessageOpts{Subject: "label lookup"})
+	}
+	firstLabel := env.AddLabel(dbtest.LabelOpts{Name: "first chunk"})
+	lastLabel := env.AddLabel(dbtest.LabelOpts{Name: "last chunk"})
+	env.AddMessageLabel(messages[0].ID, firstLabel)
+	env.AddMessageLabel(messages[len(messages)-1].ID, lastLabel)
+
+	require.NoError(t, fetchLabelsForMessageList(env.Ctx, env.DB, SQLiteQueryDialect{}.Rebind, "", messages))
+	assert.Contains(t, messages[0].Labels, "first chunk")
+	assert.Contains(t, messages[len(messages)-1].Labels, "last chunk")
+}
+
 func TestGetDeletionTargetsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

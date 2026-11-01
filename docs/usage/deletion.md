@@ -34,7 +34,7 @@ msgvault stage-delete 'from:newsletter@example.com before:2024-01-01'
 msgvault show-deletion BATCH_ID
 ```
 
-Query staging uses the same search language as `msgvault search` and considers
+CLI query staging uses the same search language as `msgvault search` and considers
 active messages only. It reports and skips matches that this staging path
 cannot delete, such as chats, meetings, and mail from IMAP or file imports.
 The remaining targets must belong to one source. Use `--source-id` to narrow a
@@ -43,6 +43,8 @@ query when several accounts match:
 ```bash
 msgvault stage-delete 'label:Newsletters' --source-id 3 --dry-run
 ```
+
+MCP query staging also includes IMAP mail; see [staged deletion via MCP](chat.md#staged-deletion-via-mcp).
 
 If you already have internal message IDs, stage them directly:
 

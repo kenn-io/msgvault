@@ -27,7 +27,10 @@ func testConfigValue() *config.Config { return config.NewDefaultConfig() }
 func testDiscardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func testInvocationWithConfig(cfg *config.Config) *invocation {
-	return &invocation{cfg: cfg, logger: testDiscardLogger()}
+	state := newInvocation()
+	state.cfg = cfg
+	state.logger = testDiscardLogger()
+	return state
 }
 
 func testLoggerValue() *slog.Logger { return slog.New(slog.DiscardHandler) }

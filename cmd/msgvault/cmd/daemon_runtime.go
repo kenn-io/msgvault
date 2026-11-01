@@ -301,6 +301,9 @@ func listLiveDaemonRuntimeRecordsContext(ctx context.Context, dataDir string) ([
 		if rec.Service != "" && rec.Service != daemonService {
 			continue
 		}
+		if daemon.RuntimeProcessScope(rec) != daemon.ProcessScopeLocal {
+			continue
+		}
 		if !daemon.ProcessAlive(rec.PID) {
 			continue
 		}
@@ -502,7 +505,7 @@ func proveDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (
 // (PID reuse). An indeterminate or tolerance-skewed comparison keeps the
 // record, but an affirmative mismatch is never overridden by the
 // unauthenticated HTTP ping at the recorded address. This function never
-// deletes the record file: genuinely dead PIDs are reaped by CleanupDead,
+// deletes the record file: processes proven gone are reaped by CleanupDead,
 // and anything else is left in place for inspection.
 func runtimeRecordIdentityMismatched(rec daemon.RuntimeRecord) bool {
 	return runtimeRecordIdentity(rec) == createTimeMismatch

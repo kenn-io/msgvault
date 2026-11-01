@@ -375,7 +375,13 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
-const APISchemaVersion = "3.24.0"
+// 3.25.0 adds archived chat discovery ranked by the best matching name or title.
+// 3.26.0 adds bounded search-aware deletion resolution with an explicit
+// max_results cap and matched_count for skipped matches.
+// 3.27.0 adds optional attachment text results and recording errors in media search.
+// 3.28.0 adds the typed calendar projection to calendar event message details.
+// 3.29.0 adds literal address filtering to the durable people Directory.
+const APISchemaVersion = "3.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -991,6 +997,8 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// candidates whose saved display name has been cleared.
 	for _, field := range []struct{ schema, property string }{
 		{"ContactCandidate", "display_name"},
+		{"MediaAttachmentResult", "filename"},
+		{"MediaAttachmentResult", "containing_title"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},
@@ -1010,6 +1018,19 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	const emailProperty = "email"
+	if calendar := schemas["CalendarProjection"]; calendar != nil {
+		for name, goType := range map[string]string{"all_day": "*bool", "sequence": "*int64"} {
+			if property := calendar.Properties[name]; property != nil {
+				setCodegenGoType(property, goType)
+			}
+		}
+		// Fields the stored event does not carry are present as null, including
+		// zero-capable scalars. Keep every field nullable through parsing and
+		// encoding.
+		for _, name := range []string{statusFieldName, "sequence", "start", "end", "all_day", "time_zone", "ical_uid"} {
+			nullableSchemaProperty(calendar, name)
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {
@@ -1104,9 +1125,18 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	if account := schemas["CliAccountResponse"]; account != nil && account.Properties["alias"] != nil {
 		account.Properties["alias"].Nullable = true
 	}
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
-		if schema := schemas[schemaName]; schema != nil {
-			for _, property := range []string{"filename", "mime_type"} {
+	for _, fields := range []struct {
+		name       string
+		properties []string
+	}{
+		{"FileSearchRow", []string{"filename", "mime_type"}},
+		{"FileMetadataResponse", []string{"filename", "mime_type"}},
+		{"PersonFileSearchRow", []string{"filename", "mime_type"}},
+		{"MessageRecording", []string{"filename", "mime_type"}},
+		{"ChatDiscoveryResult", []string{"title", "source_display_name", "source_conversation_id", "source_identifier"}},
+	} {
+		if schema := schemas[fields.name]; schema != nil {
+			for _, property := range fields.properties {
 				if schema.Properties[property] != nil {
 					schema.Properties[property].Nullable = true
 				}

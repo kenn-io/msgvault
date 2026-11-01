@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -380,7 +381,7 @@ func TestImportClassifiesTheBeeperIdentifierAnchor(t *testing.T) {
 		`SELECT service_id, scope_kind, scope_value FROM participant_identifiers
 		 WHERE identifier_type = ? AND identifier_value = ?`),
 		participantIdentifierType,
-		providerFallbackUserID("slack", "@slack_alice:beeper.local"),
+		beeperidentity.Fallback("slack", "@slack_alice:beeper.local"),
 	).Scan(&serviceID, &scopeKind, &scopeValue), "read the anchor classification")
 	assert.Equal(slack.ID, serviceID,
 		"PR 3 leaves identifier_type 'beeper' unclassified; the bridge type is only knowable here")
@@ -560,7 +561,7 @@ func TestImportResetsRunLocalAnchorClassification(t *testing.T) {
 		require.NoError(st.DB().QueryRow(st.Rebind(
 			`SELECT service_id FROM participant_identifiers
 			 WHERE identifier_type = ? AND identifier_value = ?`),
-			participantIdentifierType, providerFallbackUserID(accountID, userID),
+			participantIdentifierType, beeperidentity.Fallback(accountID, userID),
 		).Scan(&serviceID), "read anchor service")
 		return serviceID
 	}

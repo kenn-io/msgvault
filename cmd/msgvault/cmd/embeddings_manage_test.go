@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -34,9 +34,7 @@ func TestRunEmbeddingsPruneRemovesOrphansWithoutEmbeddingCalls(t *testing.T) {
 	testCtx := withTestConfig(t, c)
 	_ = testCtx
 
-	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
-	require.NoError(t, mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
@@ -82,9 +80,7 @@ func TestRunEmbeddingsOptimizeBuildsFromStoredVectorsWithoutProvider(t *testing.
 	testCtx := withTestConfig(t, c)
 	_ = testCtx
 
-	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
-	require.NoError(t, mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
@@ -154,11 +150,8 @@ func (p *convergenceProgressPublisher) GetDocumentProgress(context.Context, vect
 func TestContextualConvergenceCheckerRequiresExactJournalAndCompletedReconciliation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	mainStore, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = mainStore.Close() })
-	require.NoError(mainStore.InitSchema())
-	_, err = mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 12 WHERE singleton = 1`)
+	mainStore := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
+	_, err := mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 12 WHERE singleton = 1`)
 	require.NoError(err)
 
 	publisher := &convergenceProgressPublisher{progress: vector.DocumentProgress{
@@ -238,10 +231,8 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	testCtx := withTestConfig(t, c)
 	_ = testCtx
 
-	mainStore, err := store.Open(mainPath)
-	require.NoError(err)
-	require.NoError(mainStore.InitSchema())
-	_, err = mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 2 WHERE singleton = 1`)
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
+	_, err := mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 2 WHERE singleton = 1`)
 	require.NoError(err)
 	require.NoError(sqlitevec.RegisterExtension())
 	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
@@ -301,9 +292,7 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 	_ = testCtx
 	require.NoError(c.Save())
 
-	mainStore, err := store.Open(mainPath)
-	require.NoError(err)
-	require.NoError(mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
 	require.NoError(err)
 	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(testCtx, semanticProfile)
@@ -364,9 +353,7 @@ func setupManualContextualGeneration(t *testing.T, fingerprint string, retire bo
 		fingerprint = c.Vector.GenerationFingerprint()
 	}
 
-	mainStore, err := store.Open(mainPath)
-	require.NoError(t, err)
-	require.NoError(t, mainStore.InitSchema())
+	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
 	require.NoError(t, sqlitevec.RegisterExtension())
 	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
@@ -432,11 +419,8 @@ func TestRunEmbeddingsListDoesNotWriteDuringEmbeddingJob(t *testing.T) {
 	cfg.Vector.Embeddings.Dimension = 4
 	cfg.Vector.Embed.Scope.Accounts = []string{"catalogue@example.test"}
 	ctx := withTestConfig(t, cfg)
-	main, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	defer func() { require.NoError(main.Close()) }()
-	require.NoError(main.InitSchema())
-	_, err = main.GetOrCreateSource("gmail", "catalogue@example.test")
+	main := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	_, err := main.GetOrCreateSource("gmail", "catalogue@example.test")
 	require.NoError(err)
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: cfg.Vector.DBPath, MainDB: main.DB(), Dimension: 4})
 	require.NoError(err)
@@ -479,10 +463,7 @@ func TestEmbeddingsListRequiresUpgradeWithoutWritingOldMetadata(t *testing.T) {
 	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
 	cfg.Vector.Embeddings.Dimension = 4
 	ctx := withTestConfig(t, cfg)
-	main, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	defer func() { require.NoError(main.Close()) }()
-	require.NoError(main.InitSchema())
+	main := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: cfg.Vector.DBPath, MainDB: main.DB(), Dimension: 4})
 	require.NoError(err)
 	defer func() { require.NoError(backend.Close()) }()

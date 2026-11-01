@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
 
@@ -106,10 +106,7 @@ func TestAddAccountCachedTokenIdentity(t *testing.T) {
 					require.NoError(err)
 					tokenPath := oauth.TokenFilePath(cfg.TokensDir(), "user@example.com")
 					require.NoError(os.WriteFile(tokenPath, token, 0600))
-					s, err := store.Open(cfg.DatabaseDSN())
-					require.NoError(err)
-					t.Cleanup(func() { _ = s.Close() })
-					require.NoError(s.InitSchema())
+					s := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 					if existing {
 						source, err := s.GetOrCreateSource("gmail", "user@example.com")
 						require.NoError(err)

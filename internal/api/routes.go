@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
@@ -313,7 +314,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
 	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchStatusResponse](apiV1, "getMediaSearchStatus", http.MethodGet, "/media/search/status", "Get recording transcript search configuration status", s.handleMediaSearchStatus)
-	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search source-selected transcripts as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
+	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search recordings and attachments as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
@@ -460,6 +461,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMuesliImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
+	registerAPIV1RawHumaJSONRoute[store.ChatDiscoveryPage](apiV1, "searchChats", http.MethodGet, "/conversations/search", "Find archived chats by ranked name tokens", s.handleSearchChats)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(
@@ -785,6 +787,14 @@ func rawAPIV1Operation(operationID, method, path, summary string) huma.Operation
 
 func rawRouteParameters(operationID string) []*huma.Param {
 	switch operationID {
+	case "searchChats":
+		q := queryStringParam("q", "Name or title tokens; OR matching, exact matches ranked first", true)
+		limit := queryIntegerParam("limit", "Maximum results (default 20, max 100)")
+		minimum, maximum := float64(1), float64(100)
+		limit.Schema.Minimum, limit.Schema.Maximum = &minimum, &maximum
+		source := queryIntegerParam("source_id", "Restrict to one archived source")
+		source.Schema.Minimum = &minimum
+		return []*huma.Param{q, limit, source}
 	case "listOperationRuns":
 		kind := queryStringParam("kind", "Exact operation kind", false)
 		kind.Schema.Enum = stringsToAny(operationKindValues())
@@ -829,7 +839,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}, scopeParams()...)
 	case "searchMedia":
 		return []*huma.Param{
-			queryStringParam("q", "Spoken words to find in transcripts", true),
+			queryStringParam("q", "Words to find in recordings and attachments", true),
 			queryStringParam("mode", "Lexical mode; semantic and hybrid are unavailable", false),
 			queryIntegerParam("person_id", "Durable person ID"),
 			queryIntegerParam("participant_id", "Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id"),
@@ -1018,6 +1028,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return append(messageFilterParams(),
 			queryStringParam("q", "Structured search query", false),
 			queryStringParam("search_mode", "Search mode: fast, deep, or aggregate; required with q", false),
+			queryIntegerParam("max_results", "Maximum results for bounded search-aware deletion resolution (max 100001)"),
 			queryStringParam("view_type", "Aggregate view type; required for aggregate search", false),
 			queryStringParam("aggregate_key", "Displayed aggregate row key; required for aggregate search", false),
 		)

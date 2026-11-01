@@ -11,6 +11,7 @@ import (
 )
 
 func TestMapMessageSizeEstimate(t *testing.T) {
+	t.Parallel()
 	lookup := func(string) string { return "" }
 	tests := []struct {
 		name string
@@ -31,6 +32,7 @@ func TestMapMessageSizeEstimate(t *testing.T) {
 }
 
 func TestRenderText(t *testing.T) {
+	t.Parallel()
 	names := map[string]string{"UALICE": "Alice"}
 	lookup := func(id string) string { return names[id] }
 	tests := []struct {
@@ -54,11 +56,13 @@ func TestRenderText(t *testing.T) {
 }
 
 func TestMentionedUserIDs(t *testing.T) {
+	t.Parallel()
 	m := Message{Text: "<@UALICE> meet <@WBOB|bob>, again <@UALICE>; not <#C1|chan> or <!here>"}
 	assert.Equal(t, []string{"UALICE", "WBOB"}, m.MentionedUserIDs())
 }
 
 func TestTsTimeAndOrdering(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tm := tsTime("1734567890.123456")
 	assert.Equal(time.Date(2024, 12, 19, 0, 24, 50, 123456000, time.UTC), tm)
@@ -71,6 +75,7 @@ func TestTsTimeAndOrdering(t *testing.T) {
 }
 
 func TestMessageRawCapturedOnDecode(t *testing.T) {
+	t.Parallel()
 	blob := `{"type":"message","ts":"1.000001","text":"hi","unmodeled_field":{"kept":true}}`
 	var m Message
 	require.NoError(t, json.Unmarshal([]byte(blob), &m))
@@ -78,6 +83,7 @@ func TestMessageRawCapturedOnDecode(t *testing.T) {
 }
 
 func TestThreadPredicates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	root := Message{TS: "5.0", ThreadTS: "5.0", ReplyCount: 2}
 	reply := Message{TS: "6.0", ThreadTS: "5.0"}
@@ -91,6 +97,7 @@ func TestThreadPredicates(t *testing.T) {
 }
 
 func TestPayloadTextExtraction(t *testing.T) {
+	t.Parallel()
 	lookup := func(string) string { return "" }
 
 	t.Run("fallback wins per attachment", func(t *testing.T) {
@@ -144,6 +151,7 @@ func TestPayloadTextExtraction(t *testing.T) {
 }
 
 func TestMapMessagePayloadRules(t *testing.T) {
+	t.Parallel()
 	lookup := func(string) string { return "" }
 	unfurl := []LegacyAttachment{{Fallback: "Some Page Title — example.com"}}
 
@@ -173,6 +181,7 @@ func TestMapMessagePayloadRules(t *testing.T) {
 }
 
 func TestConversationTypeAndTitle(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	lookup := func(id string) string {
 		if id == "UALICE" {

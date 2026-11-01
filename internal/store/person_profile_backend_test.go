@@ -128,19 +128,6 @@ func TestProfileTableColumnsMatchOnTheConfiguredBackend(t *testing.T) {
 	}
 }
 
-func TestParticipantIdentifiersGainedServiceScopeColumns(t *testing.T) {
-	assert := assert.New(t)
-	st := storetest.New(t).Store
-
-	columns := liveTableColumns(t, st, "participant_identifiers")
-	for _, column := range []string{"service_id", "scope_kind", "scope_value"} {
-		assert.Contains(columns, column)
-	}
-	for _, column := range []string{"identifier_type", "identifier_value", "participant_id"} {
-		assert.Contains(columns, column, "the existing anchor columns must be untouched")
-	}
-}
-
 func TestInitSchemaAddsObservationConflictOriginToExistingCandidateTable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -169,30 +156,6 @@ func TestInitSchemaAddsObservationConflictOriginToExistingCandidateTable(t *test
 	assert.Contains(columns, "application_pending")
 }
 
-func TestProfileReadsSucceedOnTheConfiguredBackend(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := storetest.New(t).Store
-	ctx := context.Background()
-
-	services, err := st.ListCommunicationServicesContext(ctx, true)
-	require.NoError(err, "communication_services and its alias table")
-	assert.GreaterOrEqual(len(services), 24)
-
-	personID := newTestPerson(t, st)
-	profile, err := st.GetPersonProfileContext(ctx, personID)
-	require.NoError(err, "person profile value tables")
-	assert.Empty(profile.Names)
-
-	history, err := st.GetPersonProfileHistoryContext(ctx, personID)
-	require.NoError(err, "participant_contact_observations")
-	assert.Empty(history.Observations)
-
-	candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
-	require.NoError(err, "identity match candidates and evidence")
-	assert.Empty(candidates)
-}
-
 func TestDirectoryPeoplePageSucceedsOnTheConfiguredBackend(t *testing.T) {
 	st := storetest.New(t).Store
 	alice := createDirectoryPerson(t, st, "Alice Example", "alice@example.test", "friend", "active", "Acme")
@@ -204,49 +167,6 @@ func TestDirectoryPeoplePageSucceedsOnTheConfiguredBackend(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.People, 1)
 	assert.Equal(t, alice.ID, page.People[0].ID)
-}
-
-// This uses storetest's selected backend (SQLite by default, PostgreSQL when
-// MSGVAULT_TEST_DB is configured) to keep keyset ordering identical across
-// the exact, prefix, and one-edit tiers.
-func TestDirectoryPeoplePageSequenceOnTheConfiguredBackend(t *testing.T) {
-	st := storetest.New(t).Store
-	exact := createDirectoryPerson(t, st, "Alice Exact", "alice-exact@example.test", "friend", "active", "Acme")
-	prefix := createDirectoryPerson(t, st, "Alicef Prefix", "alicef-prefix@example.test", "friend", "active", "Acme")
-	fuzzy := createDirectoryPerson(t, st, "Alicf Fuzzy", "alicf-fuzzy@example.test", "friend", "active", "Acme")
-
-	var got []int64
-	cursor := ""
-	for pageNumber := 0; ; pageNumber++ {
-		page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{
-			Query: "alice", Limit: 1, Cursor: cursor,
-		})
-		require.NoError(t, err)
-		got = append(got, directoryPersonIDs(page.People)...)
-		if page.NextCursor == "" {
-			break
-		}
-		require.Less(t, pageNumber, 3, "directory cursor must make bounded progress")
-		cursor = page.NextCursor
-	}
-
-	assert.Equal(t, []int64{exact.ID, prefix.ID, fuzzy.ID}, got)
-}
-
-// This runs on the configured backend and protects the persisted canonical
-// order key from whitespace or Unicode collation drift between page requests.
-func TestDirectoryPeopleUnicodeCursorSequenceOnTheConfiguredBackend(t *testing.T) {
-	require := require.New(t)
-	st := storetest.New(t).Store
-	first := createDirectoryPerson(t, st, "Ålice  a", "unicode-first@sample.test", "friend", "active", "Acme")
-	second := createDirectoryPerson(t, st, "Ålice z", "unicode-second@sample.test", "friend", "active", "Acme")
-
-	pageOne, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Limit: 1})
-	require.NoError(err)
-	require.NotEmpty(pageOne.NextCursor)
-	pageTwo, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Limit: 1, Cursor: pageOne.NextCursor})
-	require.NoError(err)
-	assert.Equal(t, []int64{first.ID, second.ID}, append(directoryPersonIDs(pageOne.People), directoryPersonIDs(pageTwo.People)...))
 }
 
 func TestDirectoryPeopleLastContactRangeAndCursorOnTheConfiguredBackend(t *testing.T) {

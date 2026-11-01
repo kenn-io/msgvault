@@ -292,3 +292,65 @@ func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
 	require.NotNil(gotCtx, "readiness wait received a nil context")
 	assert.NoError(gotCtx.Err(), "context usable")
 }
+
+// fakeUpdateRelease stands in for GitHub: checks report a newer release, and
+// installs are recorded instead of replacing the test binary.
+func fakeUpdateRelease(t *testing.T) (checks, installs *int) {
+	t.Helper()
+	checks, installs = new(int), new(int)
+	savedCheck, savedPerform := checkForUpdate, performUpdate
+	t.Cleanup(func() { checkForUpdate, performUpdate = savedCheck, savedPerform })
+	checkForUpdate = func(current string, _ bool) (*update.UpdateInfo, error) {
+		*checks++
+		return &update.UpdateInfo{CurrentVersion: current, LatestVersion: "v9.9.9", Checksum: "abc"}, nil
+	}
+	performUpdate = func(info *update.UpdateInfo, _ func(int64, int64)) error {
+		*installs++
+		assert.Equal(t, "v9.9.9", info.LatestVersion, "installed version")
+		return nil
+	}
+	return checks, installs
+}
+
+func runUpdateWithDistribution(t *testing.T, distribution string, args ...string) error {
+	t.Helper()
+	saved := Distribution
+	Distribution = distribution
+	t.Cleanup(func() { Distribution = saved })
+	// Keep the command away from the user's archive and update cache.
+	home := t.TempDir()
+	t.Setenv("MSGVAULT_HOME", home)
+	root := newRootCommand()
+	root.AddCommand(newUpdateCmd())
+	_, _, err := runRoot(t, root, append([]string{"--home", home, "update"}, args...)...)
+	return err
+}
+
+func TestUpdateRefusesToInstallOverHomebrewBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	for _, args := range [][]string{nil, {"--yes"}, {"--yes", "--force"}} {
+		checks, installs := fakeUpdateRelease(t)
+
+		err := runUpdateWithDistribution(t, "homebrew", args...)
+
+		require.ErrorContains(err, "managed by Homebrew", "msgvault update %v", args)
+		require.ErrorContains(err, "`brew upgrade msgvault`", "msgvault update %v", args)
+		assert.Zero(*checks, "msgvault update %v checked GitHub", args)
+		assert.Zero(*installs, "msgvault update %v installed", args)
+	}
+}
+
+func TestUpdateInstallsOverSelfUpdatingBuilds(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	for _, distribution := range []string{"", "kenn"} {
+		checks, installs := fakeUpdateRelease(t)
+
+		err := runUpdateWithDistribution(t, distribution, "--yes")
+
+		require.NoError(err, "distribution %q", distribution)
+		assert.Equal(1, *checks, "distribution %q checks", distribution)
+		assert.Equal(1, *installs, "distribution %q installs", distribution)
+	}
+}

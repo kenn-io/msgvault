@@ -29,8 +29,9 @@ func newRepairDerivedCmd() *cobra.Command {
 Message bodies, snippets, the search index, and attachment metadata are computed
 from a provider's payload when a message is imported, so improving how they are
 derived leaves already-archived rows stale. This command recomputes them from
-the verbatim payload stored alongside every message, for source types with a
-re-derivation pass. For every source it also derives account attribution (the
+the verbatim payload stored alongside every message. Sources with retained MIME,
+including custom email labels, rebuild bodies, HTML, previews, and search.
+For every source it also derives account attribution (the
 address searched by account: and received:) for email and calendar rows still
 waiting for it.
 
@@ -45,6 +46,7 @@ idempotent.
 
 Examples:
   msgvault repair-derived
+  msgvault repair-derived --source-type imap
   msgvault repair-derived --source-type beeper
   msgvault repair-derived --source-type beeper --identifier instagramgo`,
 		Args: cobra.NoArgs,
@@ -100,23 +102,23 @@ Examples:
 	return cmd
 }
 
-// repairDerivedSource runs a source's typed re-derivation pass, if any, then
+// repairDerivedSource runs a source's re-derivation passes, then
 // derives its pending account attribution, printing a summary of each.
 func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src *store.Source) error {
 	label := src.SourceType + "/" + src.Identifier
 	progress := func(msg string) { _, _ = fmt.Fprintf(out, "  %s: %s\n", label, msg) }
-	if _, _, ok := rederive.Lookup(src.SourceType); ok {
-		sum, err := rederive.Run(ctx, s, src.SourceType, src.Identifier, src.ID, progress)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprint(out, formatRepairDerivedSummary(label, sum))
-		if sum.Undecodable > 0 {
-			_, _ = fmt.Fprintf(out, "  %d archived payloads could not be decoded — left unchanged\n", sum.Undecodable)
-		}
-		if sum.Errors > 0 {
-			_, _ = fmt.Fprintf(out, "  %d errors — re-run to retry\n", sum.Errors)
-		}
+	textSum, err := rederive.Run(ctx, s, src.SourceType, src.Identifier, src.ID, progress)
+	if err != nil {
+		return err
+	}
+	if textSum.MessagesScanned > 0 {
+		_, _ = fmt.Fprint(out, formatRepairDerivedSummary(label, textSum))
+	}
+	if textSum.Undecodable > 0 {
+		_, _ = fmt.Fprintf(out, "  %d archived payloads could not be decoded — left unchanged\n", textSum.Undecodable)
+	}
+	if textSum.Errors > 0 {
+		_, _ = fmt.Fprintf(out, "  %d errors — re-run to retry\n", textSum.Errors)
 	}
 	report := func(sum store.AccountAttributionRepairSummary) {
 		progress(fmt.Sprintf("account attribution: %d messages", sum.Scanned))

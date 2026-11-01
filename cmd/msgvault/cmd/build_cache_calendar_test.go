@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
 
@@ -33,9 +34,7 @@ func TestBuildCache_IncludesCalendarEventsInModalityNeutralCache(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// An ordinary email: sender alice → recipient carol.
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
@@ -127,9 +126,7 @@ func TestBuildCache_AllCalendarEventsWritesAnalyticalCacheState(t *testing.T) {
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	mock := gcal.NewMockAPI()
 	mock.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
@@ -142,7 +139,7 @@ func TestBuildCache_AllCalendarEventsWritesAnalyticalCacheState(t *testing.T) {
 		End:       gcal.EventDateTime{DateTime: time.Date(2024, 5, 2, 9, 30, 0, 0, time.UTC)},
 	}}}
 	mock.FullSyncToken["primary"] = "T1"
-	_, err = calsync.New(mock, st, calsync.Options{AccountEmail: "alice@example.com"}).Full(context.Background())
+	_, err := calsync.New(mock, st, calsync.Options{AccountEmail: "alice@example.com"}).Full(context.Background())
 	require.NoError(err)
 	require.NoError(st.Close())
 

@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -65,10 +64,7 @@ func TestImportMbox_GoogleGroups(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	tmp := t.TempDir()
-	st, err := store.Open(filepath.Join(tmp, "archive.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "archive.db"))
 	var data strings.Builder
 	for i, group := range []string{"test-group", "test-group", "other-group", "test-group"} {
 		threadID := "123456"
@@ -116,10 +112,7 @@ func TestImportMbox_GoogleGroups(t *testing.T) {
 func TestImportMbox_GoogleGroupsHeadersInOrdinaryMail(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
-	st, err := store.Open(filepath.Join(tmp, "archive.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "archive.db"))
 	var data strings.Builder
 	for i := range 2 {
 		fmt.Fprintf(&data, "From synthetic@example.invalid Mon Jan 1 12:00:00 +0200 2024\r\nFrom: Alice <alice@example.com>\r\nTo: user@example.com\r\nMessage-ID: <message-%d@example.com>\r\nReferences: <root@example.com>\r\nX-GM-THRID: 123456\r\nX-Gmail-Labels: Inbox,Important\r\n", i)

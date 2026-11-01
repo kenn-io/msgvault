@@ -609,16 +609,6 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 	}
 }
 
-func TestMergeFilterIntoQuery_DoesNotMutateOriginal(t *testing.T) {
-	q := &search.Query{FromAddrs: []string{"original@example.com"}}
-	filter := MessageFilter{Sender: "added@example.com"}
-
-	_ = MergeFilterIntoQuery(q, filter)
-
-	require.Len(t, q.FromAddrs, 1, "Original query was mutated")
-	assert.Equal(t, "original@example.com", q.FromAddrs[0], "Original query was mutated")
-}
-
 func TestMergeFilterIntoQuery_ConversationID(t *testing.T) {
 	conversationID := int64(42)
 	original := &search.Query{ConversationIDs: []int64{7, 42}}

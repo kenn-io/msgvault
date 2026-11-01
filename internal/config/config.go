@@ -21,6 +21,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
@@ -31,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/recordingref"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -61,7 +63,7 @@ type AnalyticsConfig struct {
 	Engine             string        `toml:"engine"`               // auto, sql, or duckdb
 	AutoBuildCache     bool          `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
 	MinRebuildInterval time.Duration `toml:"min_rebuild_interval"` // Minimum age before a scheduled sync can rebuild a usable stale cache
-	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
+	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Empty: quarter of available memory, 256MiB–16GiB; 2GB fallback
 	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
 	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
 	QueryMemoryLimit   string        `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit; empty uses the default
@@ -299,6 +301,14 @@ func (t TelemetryConfig) EnabledOrDefault() bool {
 }
 
 func (s *ServerConfig) Validate() error {
+	if err := s.validateDaemonAutoRestart(); err != nil {
+		return err
+	}
+	return s.validateDaemonSettings()
+}
+
+// validateDaemonSettings checks the [server] settings only the daemon reads.
+func (s *ServerConfig) validateDaemonSettings() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
 	}
@@ -308,15 +318,6 @@ func (s *ServerConfig) Validate() error {
 			return fmt.Errorf("invalid [server] remote_clients client_id %q: must be non-empty and unique", client.ClientID)
 		}
 		clientIDs[client.ClientID] = true
-	}
-	switch s.DaemonAutoRestart {
-	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
-	default:
-		return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
-			s.DaemonAutoRestart,
-			DaemonAutoRestartNewer,
-			DaemonAutoRestartNever,
-			DaemonAutoRestartAlways)
 	}
 	for _, entry := range s.TrustedProxies {
 		if entry == "" {
@@ -330,6 +331,20 @@ func (s *ServerConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateDaemonAutoRestart checks the policy client commands read to decide
+// whether to replace a running daemon, so it fails every load.
+func (s *ServerConfig) validateDaemonAutoRestart() error {
+	switch s.DaemonAutoRestart {
+	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
+		return nil
+	}
+	return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
+		s.DaemonAutoRestart,
+		DaemonAutoRestartNewer,
+		DaemonAutoRestartNever,
+		DaemonAutoRestartAlways)
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
@@ -504,6 +519,7 @@ type MediaAccountConfig struct {
 //
 //nolint:recvcheck // ApplyDefaults mutates; MediaPolicy keeps the value receiver shared by the sibling provider configs
 type DiscordConfig struct {
+	MaxParticipants      int                           `toml:"max_participants"`
 	MaxMediaBytes        int64                         `toml:"max_media_bytes"`
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
@@ -547,6 +563,7 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
+	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
 	OAuth              OAuthConfig                     `toml:"oauth"`
@@ -570,10 +587,12 @@ type Config struct {
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
+	Inline             InlineConfig                    `toml:"inline"`
 	Omi                []OmiSource                     `toml:"omi"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
+	Pocket             []PocketSource                  `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
@@ -594,6 +613,41 @@ type Config struct {
 	bindSource         string
 	configPath         string // resolved path to the loaded config file
 	runtimeConfigState runtimeConfigState
+	// daemonErrs holds validation errors from settings only the daemon reads.
+	// Load joins them into its error; LoadClientWithOverrides keeps them here.
+	daemonErrs []error
+}
+
+func (c *Config) deferDaemonError(err error) {
+	if err != nil {
+		c.daemonErrs = append(c.daemonErrs, err)
+	}
+}
+
+// DaemonConfigError joins the invalid settings only the daemon reads, as
+// recorded by LoadClientWithOverrides, or returns nil when there are none.
+func (c *Config) DaemonConfigError() error {
+	return errors.Join(c.daemonErrs...)
+}
+
+// PeopleTiersError returns the recorded [people.tiers] errors, or nil. Tier
+// previews refuse to run on them instead of falling back to defaults.
+func (c *Config) PeopleTiersError() error {
+	var errs []error
+	for _, err := range c.daemonErrs {
+		if errors.Is(err, persontiers.ErrInvalidConfig) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// requireDaemonValid returns the config, or the recorded daemon errors.
+func (c *Config) requireDaemonValid() (*Config, error) {
+	if err := c.DaemonConfigError(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -632,6 +686,7 @@ type PeopleConfig struct {
 	Sweep           peoplesweep.Config      `toml:"sweep"`
 	Enrichment      personenrichment.Config `toml:"enrichment"`
 	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
+	Tiers           persontiers.Config      `toml:"tiers"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -803,6 +858,9 @@ type SyncConfig struct {
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
+	// IMAPSkipFolders maps exact source identifiers from list-accounts to
+	// folders excluded from sync unless command folder flags override them.
+	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's
@@ -813,6 +871,18 @@ type SyncConfig struct {
 	// a missing entry leaves snapshot refresh authorized only by
 	// unambiguous advertised \Sent or \Drafts placement.
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
+}
+
+// Validate rejects blank saved IMAP folder names.
+func (s *SyncConfig) Validate() error {
+	for identifier, folders := range s.IMAPSkipFolders {
+		for _, folder := range folders {
+			if strings.TrimSpace(folder) == "" {
+				return fmt.Errorf("sync.imap_skip_folders[%q] contains a blank folder name", identifier)
+			}
+		}
+	}
+	return nil
 }
 
 // DefaultHome returns the default msgvault home directory.
@@ -869,12 +939,14 @@ func NewDefaultConfig() *Config {
 			BatchSize:             500,
 			Schedule:              "17 * * * *",
 		},
-		Accounts:    []AccountSchedule{},
-		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
-		GCal:        []GCalSource{},
+		ConversationPolicy: ConversationPolicyConfig{ActivityWindowDays: conversationpolicy.DefaultActivityWindowDays},
+		Accounts:           []AccountSchedule{},
+		SynctechSMS:        SynctechSMSConfig{Sources: []SynctechSMSSource{}},
+		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
 		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Inline:  InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
@@ -890,6 +962,7 @@ func NewDefaultConfig() *Config {
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
+	cfg.People.Tiers = persontiers.DefaultConfig()
 	return cfg
 }
 
@@ -930,9 +1003,7 @@ func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Confi
 		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
 			return nil, err
 		}
-		if err := cfg.Server.Validate(); err != nil {
-			return nil, err
-		}
+		cfg.deferDaemonError(cfg.Server.Validate())
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
@@ -966,6 +1037,21 @@ func (c *Config) ReloadConfigFile(snapshot ConfigFile) (*Config, error) {
 }
 
 func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
+	cfg, err := loadConfigFileLenient(snapshot, homeDir, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.requireDaemonValid()
+}
+
+// LoadClientConfigFile decodes a captured snapshot for read-only use by a
+// client command. Like LoadClientWithOverrides, it records invalid daemon-only
+// settings in DaemonConfigError instead of failing.
+func LoadClientConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
+	return loadConfigFileLenient(snapshot, homeDir, nil)
+}
+
+func loadConfigFileLenient(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
 		homeDir = expandPath(homeDir)
@@ -987,9 +1073,7 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
 				return nil, err
 			}
-			if err := cfg.Server.Validate(); err != nil {
-				return nil, err
-			}
+			cfg.deferDaemonError(cfg.Server.Validate())
 		}
 		return cfg, nil
 	}
@@ -1030,11 +1114,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
 		cfg.People.IdentityScoring.MinimumProbability == 0 {
-		return nil, errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00")
+		cfg.deferDaemonError(errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00"))
 	}
 	if metadata.IsDefined("people", "identity_scoring", "batch_size") &&
 		cfg.People.IdentityScoring.BatchSize == 0 {
-		return nil, errors.New("people.identity_scoring.batch_size must be between 1 and 100")
+		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
@@ -1042,30 +1126,30 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
 		if key.String() == "carddav.password" {
-			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
+			cfg.deferDaemonError(errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json"))
 		}
 		if len(key) >= 3 && key[0] == "carddav_connections" && key[2] == "password" {
-			return nil, errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files")
+			cfg.deferDaemonError(errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files"))
 		}
 		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
-			return nil, fmt.Errorf("unknown people.identity_scoring config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown people.identity_scoring config key %q", key.String()))
+		}
+		if strings.HasPrefix(key.String(), "people.tiers.") {
+			cfg.deferDaemonError(fmt.Errorf("%w: unknown people.tiers config key %q", persontiers.ErrInvalidConfig, key.String()))
 		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
-			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown IMAP draft config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "gmail.drafts.") {
-			return nil, fmt.Errorf("unknown Gmail draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown Gmail draft config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "beeper.drafts.") {
-			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown Beeper draft config key %q", key.String()))
 		}
 	}
-	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateDraftSources(content); err != nil {
-		return nil, err
-	}
+	cfg.normalizeFastmailSources(fastmailSourceIDConfigured(content))
+	cfg.deferDaemonError(cfg.validateFastmailSources())
+	cfg.deferDaemonError(cfg.validateDraftSources(content))
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
@@ -1112,6 +1196,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// survived decode (e.g. `max_retries = 0` or an omitted timeout).
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
+	if err := cfg.validateConversationPolicy(); err != nil {
+		return nil, err
+	}
 	cfg.Vector.ApplyDefaults()
 	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
 		return metadata.IsDefined("attachments", "documents", field)
@@ -1139,38 +1226,28 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.OAuth.Validate(); err != nil {
 		return nil, fmt.Errorf("oauth: %w", err)
 	}
-
-	if err := cfg.Server.Validate(); err != nil {
+	if err := cfg.Server.validateDaemonAutoRestart(); err != nil {
 		return nil, err
 	}
+	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
+	cfg.deferDaemonError(cfg.Sync.Validate())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.Web.ApplyDefaults()
-	if err := cfg.Web.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Web.Validate())
 	if !ValidCardDAVProvider(cfg.CardDAV.Provider) {
-		return nil, errors.New("carddav.provider must be empty, \"google\" or \"microsoft\"")
+		cfg.deferDaemonError(errors.New("carddav.provider must be empty, \"google\" or \"microsoft\""))
 	}
-	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateCardDAVConnections(); err != nil {
-		return nil, err
-	}
+	_, _, err = cfg.CardDAV.TrustedDestination()
+	cfg.deferDaemonError(err)
+	cfg.deferDaemonError(cfg.validateCardDAVConnections())
 	cfg.Integrations.Tasks.ApplyDefaults()
-	if err := cfg.Integrations.Tasks.Validate("tasks"); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))
 	cfg.Integrations.Kata.ApplyDefaults()
-	if err := cfg.Integrations.Kata.Validate("kata"); err != nil {
-		return nil, err
-	}
-	if err := cfg.Integrations.Docbank.validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Integrations.Kata.Validate("kata"))
+	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
 		return nil, err
@@ -1183,13 +1260,15 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.People.IdentityScoring.ApplyDefaults()
-	if err := cfg.People.IdentityScoring.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.People.IdentityScoring.Validate())
+	cfg.deferDaemonError(cfg.People.Tiers.Validate())
 	if err := cfg.Backup.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateMediaPolicies(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInlineAccounts(); err != nil {
 		return nil, err
 	}
 	cfg.applySynctechSMSDefaults()
@@ -1281,13 +1360,21 @@ func fastmailSourceIDConfigured(content []byte) []bool {
 	return configured
 }
 
-func (c *Config) validateFastmailSources(sourceIDConfigured []bool) error {
-	seenAccounts := []string{}
-	seenSourceIDs := map[int64]bool{}
+// normalizeFastmailSources trims selectors and records which entries set
+// source_id, for every entry, so validation has no order-dependent side effects.
+func (c *Config) normalizeFastmailSources(sourceIDConfigured []bool) {
 	for i := range c.Fastmail {
 		source := &c.Fastmail[i]
 		source.Account = strings.TrimSpace(source.Account)
 		source.sourceIDConfigured = i < len(sourceIDConfigured) && sourceIDConfigured[i]
+	}
+}
+
+func (c *Config) validateFastmailSources() error {
+	seenAccounts := []string{}
+	seenSourceIDs := map[int64]bool{}
+	for i := range c.Fastmail {
+		source := &c.Fastmail[i]
 		if source.sourceIDConfigured && source.SourceID <= 0 {
 			return fmt.Errorf("[[fastmail]] entry %d: source_id must be positive", i+1)
 		}
@@ -1330,6 +1417,9 @@ var ErrFastmailSourceLookup = errors.New("fastmail source lookup failed")
 // inventory to multiple ingestion sources. Explicit source ID entries take
 // precedence over account matches.
 func (c *Config) FastmailSourceFor(st FastmailSourceStore, sourceID int64) (*FastmailSource, error) {
+	if err := c.validateFastmailSources(); err != nil {
+		return nil, err
+	}
 	if st == nil {
 		return nil, errors.New("fastmail source lookup requires a source store")
 	}
@@ -1498,7 +1588,21 @@ func (c *Config) Save() error {
 	return c.saveWithHooks(configSaveHooks{})
 }
 
+// ErrSaveRefused marks a save that would rewrite a file the daemon cannot load.
+var ErrSaveRefused = errors.New("refusing to save config")
+
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
+	// Saving re-encodes the decoded struct, which would drop unknown keys and
+	// default explicit zeros in a file the daemon would reject.
+	snapshot, err := ReadConfigFile(c.ConfigFilePath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errConfigSymlinkTargetMissing) {
+		return fmt.Errorf("%w: %w", ErrSaveRefused, err)
+	}
+	if err == nil && snapshot.Exists {
+		if _, err := LoadConfigFile(snapshot, c.HomeDir); err != nil {
+			return fmt.Errorf("%w: %w", ErrSaveRefused, err)
+		}
+	}
 	// Ensure home directory exists
 	if err := c.EnsureHomeDir(); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
@@ -1594,6 +1698,7 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 // there is exactly one instance per machine and the daemon must be co-located
 // with it.
 type BeeperConfig struct {
+	MaxParticipants int `toml:"max_participants"`
 	// URL is the Beeper Desktop API base URL. Empty means the default
 	// loopback address (http://localhost:23373).
 	URL string `toml:"url"`
@@ -1638,6 +1743,7 @@ type MatrixConfig struct {
 // One block covers every registered workspace: tokens are per-workspace
 // files, so no per-workspace config entries are needed.
 type SlackConfig struct {
+	MaxParticipants int `toml:"max_participants"`
 	// Enabled gates the daemon scheduler job.
 	Enabled bool `toml:"enabled"`
 	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
@@ -1671,6 +1777,7 @@ type SlackConfig struct {
 // MediaMaxParticipants follows the same omitted-versus-explicit-zero rule as
 // the other providers.
 type TeamsConfig struct {
+	MaxParticipants      int                           `toml:"max_participants"`
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
 	MediaMaxParticipants int                           `toml:"media_max_participants"`
@@ -1801,6 +1908,8 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
 		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
+		{name: "inline", policy: c.Inline.MediaPolicy(""), providerMaxMB: c.Inline.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Inline.AccountsConfig)},
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
@@ -2101,33 +2210,47 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 	return email, true
 }
 
+// defaultMeetingSourceIdentifier names the single unlabeled meeting source.
+const defaultMeetingSourceIdentifier = "default"
+
 // applyMeetingSourceDefaults normalizes native meeting-source entries: a
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
-		c.Omi[0].Identifier = "default"
+		c.Omi[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
-		c.Plaud[0].Identifier = "default"
+		c.Plaud[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
-		c.Twenty[0].Identifier = "default"
+		c.Twenty[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
+	}
+	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
+		c.Pocket[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		if c.Pocket[i].APIKeyEnv == "" {
+			c.Pocket[i].APIKeyEnv = "POCKET_API_KEY"
+		}
 	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
-		c.Granola[0].Identifier = "default"
+		c.Granola[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
-		c.Circleback[0].Identifier = "default"
+		c.Circleback[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
-		c.NotionMeetings[0].Identifier = "default"
+		c.NotionMeetings[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
-		c.Muesli[0].Identifier = "default"
+		c.Muesli[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
-		c.Twilio[0].Identifier = "default"
+		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
 }
 
@@ -2148,6 +2271,27 @@ func (c *Config) validateMeetingSources() error {
 			seen[key] = true
 		}
 		return nil
+	}
+	pocketIDs := make([]string, len(c.Pocket))
+	for i, src := range c.Pocket {
+		pocketIDs[i] = src.Identifier
+	}
+	if err := check("pocket", pocketIDs); err != nil {
+		return err
+	}
+	for i := range c.Pocket {
+		src := &c.Pocket[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		for j, char := range src.APIKeyEnv {
+			valid := char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || j > 0 && char >= '0' && char <= '9'
+			if !valid {
+				return fmt.Errorf("[[pocket]] identifier %q has invalid api_key_env", src.Identifier)
+			}
+		}
 	}
 	twentyIDs := make([]string, len(c.Twenty))
 	for i, s := range c.Twenty {

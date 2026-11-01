@@ -25,8 +25,10 @@ func savedState(t *testing.T, st *store.Store, source *store.Source) *syncState 
 }
 
 func TestActivityBacklogResumesWithinQueueLimit(t *testing.T) {
+	t.Parallel()
 	for _, pageSize := range []int{25, 150} {
 		t.Run(strconv.Itoa(pageSize), func(t *testing.T) {
+			t.Parallel()
 			checks, require := assert.New(t), require.New(t)
 			api := newContractAPI(t, 1000, nil)
 			api.PageSize = pageSize
@@ -55,6 +57,7 @@ func TestActivityBacklogResumesWithinQueueLimit(t *testing.T) {
 }
 
 func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
@@ -98,6 +101,7 @@ func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
 }
 
 func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1, nil)
@@ -124,6 +128,7 @@ func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 }
 
 func TestSameSecondMessageIsNotSkipped(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
@@ -143,6 +148,7 @@ func TestSameSecondMessageIsNotSkipped(t *testing.T) {
 	assert.Contains(archived, "102")
 }
 
+// serial: swaps the package clock now.
 func TestCallsAreRecheckedOnlyInsideTheWindow(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	previousNow := now
@@ -198,6 +204,7 @@ func TestCallsAreRecheckedOnlyInsideTheWindow(t *testing.T) {
 }
 
 func TestEmailReplyUsesItsAddressedRecipients(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	agent := map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"}
@@ -254,6 +261,7 @@ func TestEmailReplyUsesItsAddressedRecipients(t *testing.T) {
 }
 
 func TestCappedRangesCostPagesNotHoles(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name              string
 		cap, count, limit int
@@ -261,6 +269,7 @@ func TestCappedRangesCostPagesNotHoles(t *testing.T) {
 		{"cap_10", 10, 35, 0}, {"limit_20", 1000, 40, 20},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			checks, must := assert.New(t), require.New(t)
 			api := newContractAPI(t, tc.cap, nil)
 			at := now().Add(-30 * 24 * time.Hour)
@@ -300,6 +309,7 @@ func TestCappedRangesCostPagesNotHoles(t *testing.T) {
 }
 
 func TestFirstSyncBackfillsPastOneListingBatch(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                          string
 		count, pageSize, budget, runs int
@@ -308,6 +318,7 @@ func TestFirstSyncBackfillsPastOneListingBatch(t *testing.T) {
 		{"queue_batching", 250, 25, 0, 1, 1000}, {"scan_budget", 15, 3, 8, 20, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			checks, must := assert.New(t), require.New(t)
 			api := newContractAPI(t, 1000, nil)
 			api.PageSize = tc.pageSize
@@ -345,12 +356,14 @@ func TestFirstSyncBackfillsPastOneListingBatch(t *testing.T) {
 }
 
 func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
+	t.Parallel()
 	for _, rotation := range []bool{false, true} {
 		name := "skipped_id_ordering"
 		if rotation {
 			name = "budgeted_rotation"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			checks, must := assert.New(t), require.New(t)
 			api := newContractAPI(t, 2, nil)
 			offsets := map[int64]time.Duration{901: -time.Hour + 5*time.Second, 902: -time.Hour + time.Second, 903: -time.Hour + 2*time.Second}
@@ -399,6 +412,7 @@ func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
 	}
 }
 
+// serial: swaps the package clock now.
 func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 	for _, evidence := range []string{"commit_time", "missing", "invalid"} {
 		t.Run(evidence, func(t *testing.T) {
@@ -450,6 +464,7 @@ func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 	}
 }
 
+// serial: swaps the package clock now.
 func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		t.Run(strconv.FormatBool(empty), func(t *testing.T) {
@@ -491,6 +506,7 @@ func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 	}
 }
 
+// serial: swaps the package clock now.
 func TestFutureActivityDoesNotHideNormalDiscovery(t *testing.T) {
 	for _, poisoned := range []bool{false, true} {
 		t.Run(strconv.FormatBool(poisoned), func(t *testing.T) {

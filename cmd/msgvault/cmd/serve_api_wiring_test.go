@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,16 +25,14 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonRenameHTTPRefreshesCachedPeople(t *testing.T) {
+func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "test.db")
+	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice Observed", "example.com")
 	require.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "user@example.com")
@@ -51,17 +50,37 @@ func TestPersonRenameHTTPRefreshesCachedPeople(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
 
-	// Keep the real refresh builder and publication path, running it in this
-	// process so the HTTP fixture needs no separately installed daemon binary.
-	old := runDerivedCacheSubprocess
-	runDerivedCacheSubprocess = func(_ context.Context, dir string) error {
-		_, refreshErr := buildCacheDerivedOnly(dbPath, dir)
-		return refreshErr
+	// A lost invocation must fail in an owned fallback, never open the
+	// operator's default archive. A separate config directory also detects
+	// losing --home while retaining --config.
+	fallback := t.TempDir()
+	for _, home := range []string{fallback, tmp} {
+		require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("invalid = ["), 0o600))
 	}
-	t.Cleanup(func() { runDerivedCacheSubprocess = old })
+	t.Setenv("MSGVAULT_HOME", fallback)
+	configPath := filepath.Join(t.TempDir(), "custom.toml")
+	require.NoError(os.WriteFile(configPath, []byte("[analytics]\nengine = 'duckdb'\nauto_build_cache = false\n"), 0o600))
+	cfg, err := config.Load(configPath, tmp)
+	require.NoError(err)
+
+	old := executeBuildCacheSubprocessMode
+	executeBuildCacheSubprocessMode = func(ctx context.Context, mode buildCacheMode) error {
+		command, commandErr := newBuildCacheSubprocessCommand(ctx, mode)
+		if commandErr != nil {
+			return commandErr
+		}
+		// os.Executable returns the test runner; retain production arguments
+		// and environment, substituting only the freshly built native CLI.
+		command.Path, command.Args[0] = binary, binary
+		return runBuildCacheSubprocessCommand(command, nil)
+	}
+	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
 	srv := api.NewServerWithOptions(api.ServerOptions{
-		Config: &config.Config{},
-		Store:  &storeAPIAdapter{store: st, analyticsDir: analyticsDir},
+		Config: cfg,
+		Store: &storeAPIAdapter{
+			store: st, config: cfg, analyticsDir: analyticsDir,
+			options: invocationOptions{homeDir: tmp, cfgFile: configPath},
+		},
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	for _, test := range []struct {

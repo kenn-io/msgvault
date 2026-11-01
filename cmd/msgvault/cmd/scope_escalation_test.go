@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"google.golang.org/api/drive/v3"
 )
 
@@ -389,10 +389,7 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForGmailOnlyToken(t *testing.T
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err, "open store")
-	defer func() { _ = st.Close() }()
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 
 	plan, err := planCLIAddCalendar(testCtx, st, api.CLIAddCalendarPlanRequest{
 		Email: scopeEscalationAccount,
@@ -423,10 +420,7 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t
 		"acme": {ClientSecrets: cfg.OAuth.ClientSecrets},
 	}
 
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err, "open store")
-	defer func() { _ = st.Close() }()
-	require.NoError(st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 
 	plan, err := planCLIAddCalendar(testCtx, st, api.CLIAddCalendarPlanRequest{
 		Email:            scopeEscalationAccount,

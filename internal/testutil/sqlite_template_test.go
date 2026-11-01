@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +11,37 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestNewSQLiteTestStoreAt(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	st := NewSQLiteTestStoreAt(t, path)
+	source, err := st.GetOrCreateSource("gmail", "clone@example.com")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	reopened, err := store.Open(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	sources, err := reopened.ListSources("")
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal(t, source.ID, sources[0].ID)
+}
+
+func TestNewSQLiteTestStoreAtToleratesEarlyClose(t *testing.T) {
+	var logged bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	t.Run("closes before cleanup", func(t *testing.T) {
+		st := NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "archive.db"))
+		require.NoError(t, st.Close())
+	})
+
+	assert.NotContains(t, logged.String(), "maintenance failed")
+}
 
 // TestSQLiteFixtureClonesTemplateWithoutReplayingDDL pins the fixture's cost
 // model: the schema is built once per test binary and every later fixture is a

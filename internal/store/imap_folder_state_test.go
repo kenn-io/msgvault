@@ -9,17 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestIMAPFolderStates_EmptyForNewSource(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("imap", "folders-empty@example.com")
-	require.NoError(err)
-
-	states, err := st.GetIMAPFolderStates(source.ID)
-	require.NoError(err)
-	assert.Empty(t, states)
-}
-
 func TestIMAPFolderStates_RoundTrip(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

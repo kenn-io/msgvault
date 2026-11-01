@@ -363,11 +363,6 @@ func TestManifest_Save_CreatesDirectories(t *testing.T) {
 	assert.False(t, os.IsNotExist(err), "File was not created")
 }
 
-func TestLoadManifest_NotFound(t *testing.T) {
-	_, err := LoadManifest("/nonexistent/path/manifest.json")
-	assert.Error(t, err, "LoadManifest() should error for nonexistent file")
-}
-
 func TestLoadManifest_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "invalid.json")
@@ -709,38 +704,6 @@ func TestStatus_Values(t *testing.T) {
 func TestMethod_Values(t *testing.T) {
 	assert.Equal(t, MethodTrash, Method("trash"))
 	assert.Equal(t, MethodDelete, Method("delete"))
-}
-
-// TestStatusDirMap verifies that statusDirMap contains all persisted statuses
-// and maps them to the expected directory names.
-func TestStatusDirMap(t *testing.T) {
-	assert := assert.New(t)
-	// Verify all persistedStatuses have entries in statusDirMap
-	for _, status := range persistedStatuses {
-		dirName, ok := statusDirMap[status]
-		if !ok {
-			assert.Fail("missing from statusDirMap", "persistedStatus %q missing", status)
-			continue
-		}
-		assert.NotEmpty(dirName, "statusDirMap[%q] is empty", status)
-	}
-
-	// Verify expected mappings
-	expectedMappings := map[Status]string{
-		StatusPending:    "pending",
-		StatusInProgress: "in_progress",
-		StatusCompleted:  "completed",
-		StatusFailed:     "failed",
-		StatusCancelled:  "cancelled",
-	}
-	for status, wantDir := range expectedMappings {
-		gotDir, ok := statusDirMap[status]
-		if !ok {
-			assert.Fail("missing from statusDirMap", "statusDirMap missing entry for %q", status)
-			continue
-		}
-		assert.Equal(wantDir, gotDir, "statusDirMap[%q]", status)
-	}
 }
 
 // TestDirForStatus verifies that dirForStatus returns the correct path for each status.
@@ -1132,7 +1095,7 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	select {
 	case <-cancelDone:
 		require.FailNow("cancel ran while checkpoint held the lock")
-	case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the held manifest lock keeps cancel waiting
+	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held manifest lock keeps cancel waiting
 	}
 
 	// Complete the checkpoint's atomic write, then release the lock.

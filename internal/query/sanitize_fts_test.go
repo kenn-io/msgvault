@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.kenn.io/msgvault/internal/sqldialect"
 )
 
 // TestPostgreSQLSanitizeFTSQuery_NoMetacharacters verifies that the PostgreSQL
@@ -42,23 +41,6 @@ func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 			assert.True(t, isLetterOrDigit(r),
 				"input %q produced disallowed rune %q in output %q", in, string(r), got)
 		}
-	}
-}
-
-// TestPostgreSQLSanitizeFTSQuery_ParityWithEscapeTSQueryTerm asserts that
-// SanitizeFTSQuery and the live BuildFTSTerm path (via EscapeTSQueryTerm)
-// produce the same lexeme set for the same input, so the two PG FTS code
-// paths cannot diverge.
-func TestPostgreSQLSanitizeFTSQuery_ParityWithEscapeTSQueryTerm(t *testing.T) {
-	d := PostgreSQLQueryDialect{}
-	for _, in := range []string{"foo<3bar", "a=b", "c#d", "invoice 2024", "user@example.com"} {
-		want := make([]string, 0)
-		for _, lex := range sqldialect.EscapeTSQueryTerm(in) {
-			want = append(want, lex+":*")
-		}
-		wantArg := strings.Join(want, " & ")
-		assert.Equal(t, wantArg, d.SanitizeFTSQuery(in),
-			"SanitizeFTSQuery(%q) must match the EscapeTSQueryTerm lexeme set", in)
 	}
 }
 

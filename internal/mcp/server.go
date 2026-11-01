@@ -59,6 +59,7 @@ const (
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
+	ToolFindChat                  = "find_chat"
 	ToolGetPersonNotes            = "get_person_notes"
 	ToolGetPersonProfile          = "get_person_profile"
 	ToolGetPersonRelationship     = "get_person_relationship"
@@ -127,6 +128,7 @@ type ServeOptions struct {
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
 	DirectoryBackend       peoplebrowser.DirectoryLister
+	ChatDiscoveryBackend   ChatDiscoveryBackend
 	PersonAgendaBackend    PersonAgendaBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
@@ -396,6 +398,7 @@ func newMCPServerWithPolicy(
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
+		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

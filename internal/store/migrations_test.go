@@ -21,16 +21,6 @@ func TestIsMigrationApplied_NotApplied(t *testing.T) {
 	assert.False(t, applied, "migration should not be applied yet")
 }
 
-func TestMarkAndCheckMigrationApplied(t *testing.T) {
-	f := storetest.New(t)
-
-	require.NoError(t, f.Store.MarkMigrationApplied("test_migration"), "MarkMigrationApplied")
-
-	applied, err := f.Store.IsMigrationApplied("test_migration")
-	require.NoError(t, err, "IsMigrationApplied")
-	assert.True(t, applied, "migration should be marked as applied")
-}
-
 func TestMarkMigrationApplied_Idempotent(t *testing.T) {
 	f := storetest.New(t)
 

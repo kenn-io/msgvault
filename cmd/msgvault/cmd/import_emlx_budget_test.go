@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // Both option literals must reach the real merge: losing either CLI value
@@ -35,9 +36,7 @@ func TestImportEmlxCommandBudgetRetry(t *testing.T) {
 			emlxBudgetWriteFile(t, mbox, "1.partial.emlx", raw)
 			emlxBudgetWritePart(t, mbox, "1", "2", "one.bin", oldPart)
 			budget := int64(len(raw) + 350)
-			st, err := store.Open(filepath.Join(home, "msgvault.db"))
-			r.NoError(err)
-			r.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(home, "msgvault.db"))
 			seed, err := importer.ImportEmlxDir(t.Context(), st, account, importer.EmlxImportOptions{
 				Identifier: "owner@example.test", AttachmentsDir: filepath.Join(home, "attachments"), MaxMessageBytes: budget,
 			})

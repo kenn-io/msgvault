@@ -42,6 +42,7 @@ func TestExploreAttachmentByteEstimates(t *testing.T) {
 		{"beeper includes attachments", "beeper", "whatsapp", 12, 12},
 		{"slack includes attachments", "slack", "slack", 12, 12},
 		{"teams includes attachments", "teams", "teams", 12, 12},
+		{"inline includes attachments", "inline", "inline", 12, 12},
 		{"known attachments bound incomplete estimates", "teams", "teams", 0, 7},
 		{"body-only chat adds attachments", "imessage", "imessage", 5, 12},
 		{"email accounting is unchanged", "gmail", "email", 100, 107},
@@ -314,6 +315,58 @@ func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
 		{Key: "1", Label: "Alice Example", Count: 2, EstimatedBytes: 130, LatestAt: result.Rows[0].LatestAt},
 		{Key: "3", Label: "Bob Example", Count: 1, EstimatedBytes: 7, LatestAt: result.Rows[1].LatestAt},
 	}, result.Rows)
+}
+
+func TestExploreGroupsDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, curated, want string
+		files               bool
+	}{
+		{name: "named_alias", want: "Alice Alias"},
+		{name: "curated_name", curated: "Alice Curated", want: "Alice Curated"},
+		{name: "files_named_alias", want: "Alice Alias", files: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("owner@example.test", "gmail")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			b.AddOwnerParticipant(source, owner)
+			canonical := b.AddParticipant("alice@example.test", "example.test", "")
+			alias := b.AddParticipant("alias@example.test", "example.test", "Alice Alias")
+			b.LinkCluster(canonical, alias)
+			if tc.curated != "" {
+				addPersonOverride(b, alias, 10, &tc.curated)
+			}
+			draft := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
+			b.AddFrom(draft, owner, "Owner")
+			b.AddTo(draft, alias, "Alice Alias")
+			b.unsentMessages = "(SELECT " + strconv.FormatInt(draft, 10) + "::BIGINT AS message_id)"
+			b.AddAttachmentWithMIME(401, draft, 55, "draft.pdf", "application/pdf")
+			engine := b.BuildEngine()
+			if tc.files {
+				groups, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
+				require.NoError(err)
+				var label string
+				for _, row := range groups.Rows {
+					if row.Key == strconv.FormatInt(canonical, 10) {
+						label = row.Label
+						assert.Equal(int64(1), row.Count)
+					}
+				}
+				assert.Equal(tc.want, label)
+				return
+			}
+			groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+				Dimension: "participant", GroupKey: strconv.FormatInt(canonical, 10),
+			})
+			require.NoError(err)
+			require.Len(groups.Rows, 1)
+			assert.Equal(tc.want, groups.Rows[0].Label)
+			assert.Equal(int64(1), groups.Rows[0].Count)
+		})
+	}
 }
 
 func TestExploreGroupsPreservesFilteredChatAndRosterMembership(t *testing.T) {

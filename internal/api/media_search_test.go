@@ -16,18 +16,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type mediaSearchFixture struct {
 	*recordingFixture
 
-	report        docbankmedia.SearchReport
-	requests      []docbankmedia.SearchRequest
-	validated     int
-	duringSearch  func()
-	remoteStatus  int
-	waitForCancel bool
+	documentReport       *docbankmedia.SearchReport
+	documentRequests     []docbankmedia.SearchRequest
+	documentStatus       int
+	duringDocumentSearch func()
+	report               docbankmedia.SearchReport
+	requests             []docbankmedia.SearchRequest
+	validated            int
+	duringSearch         func()
+	remoteStatus         int
+	waitForCancel        bool
 }
 
 func TestMediaSearchStatus(t *testing.T) {
@@ -82,6 +88,16 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 	}}
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/processing/source-fences/resolve":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var request map[string]json.RawMessage
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+				return
+			}
+			assert.NotContains(t, request, "content_version_ids")
+			_ = json.NewEncoder(w).Encode(struct {
+				Fence docbankmedia.SearchFence `json:"fence"`
+			}{docbankmedia.SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{}}})
 		case "/api/v1/search", "/api/v1/search/validate":
 			var request docbankmedia.SearchRequest
 			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
@@ -93,6 +109,22 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 				assert.Nil(t, request.Fence)
 				f.validated++
 				_, _ = w.Write([]byte(`{"valid":true}`))
+				return
+			}
+			if len(request.MediaSources) == 0 {
+				for _, id := range request.Fence.ContentVersionIDs {
+					assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`, id)
+				}
+				f.documentRequests = append(f.documentRequests, request)
+				assert.Equal(t, suppliedTranscriptProfile, request.Profile)
+				if f.duringDocumentSearch != nil {
+					f.duringDocumentSearch()
+				}
+				if f.documentStatus != 0 {
+					w.WriteHeader(f.documentStatus)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(f.documentReport)
 				return
 			}
 			f.requests = append(f.requests, request)
@@ -209,9 +241,8 @@ func TestMediaSearchCompletePopulation(t *testing.T) {
 
 	t.Parallel()
 	f := newMediaSearchFixture(t)
-	for i := range 1001 {
-		f.retained(t, "recording-"+strconv.Itoa(i))
-	}
+	f.retained(t, "seed")
+	cloneSearchOccurrences(t, f, "msgvault:seed", 1000)
 	seed := f.match(t, "beyond-worker-window")
 	f.report.Coverage = docbankmedia.SearchCoverage{State: "incomplete", ScopedDocuments: 1002, CompleteDocuments: 1}
 	status, response, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
@@ -226,8 +257,8 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 	assert := assert.New(t)
 
 	t.Parallel()
+	f := newMediaSearchFixture(t)
 	for _, query := range []string{"q=words&mode=semantic", "q=words&mode=hybrid", "q=words&mode=invalid", "q=words&limit=101", "q=words&person_id=0", "q=words&participant_id=7&person_id=7", "q=words&direction=from_person", "q=words&person_id=7&direction=invalid", "q=words&person_id=7&direction=", "q=" + url.QueryEscape(strings.Repeat("x", 8193))} {
-		f := newMediaSearchFixture(t)
 		status, _, raw := searchMediaFor(t, f.server(true), query)
 		want := http.StatusBadRequest
 		if strings.Contains(query, "mode=semantic") || strings.Contains(query, "mode=hybrid") {
@@ -239,24 +270,21 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 		}
 		assert.Empty(f.requests)
 	}
-	f := newMediaSearchFixture(t)
 	w := httptest.NewRecorder()
 	f.server(true).Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil))
 	assert.Equal(http.StatusUnauthorized, w.Code)
 }
 
-func TestMediaSearchOversizedPopulation(t *testing.T) {
-	assert := assert.New(t)
+// cloneSearchOccurrences creates clones that share the seed's attachment, message, source, and processing key and differ only in occurrence_ref and content_version_id.
+func cloneSearchOccurrences(t *testing.T, f *mediaSearchFixture, ref string, count int) {
+	t.Helper()
 	require := require.New(t)
 
-	t.Parallel()
-	f := newMediaSearchFixture(t)
-	f.retained(t, "seed")
 	// Clone mapped identities to exercise the public fence ceiling without thousands of imports.
 	transaction, err := f.f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
-	for i := range docbankmedia.MaxSearchVersions {
+	for i := range count {
 		_, err := transaction.Exec(f.f.Store.Rebind(`INSERT INTO beeper_media_occurrences (
 			destination_key, occurrence_ref, revision, source_type, source_identifier, source_conversation_id,
 			source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
@@ -266,10 +294,19 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 			source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
 			occurrence_json, request_filename, request_mime_type, retention_state, vault_uid,
 			source_id, source_version_id, ?, processing_key
-			FROM beeper_media_occurrences WHERE occurrence_ref = 'msgvault:seed'`), fmt.Sprintf("msgvault:copy-%d", i), fmt.Sprintf("content-%d", i))
+			FROM beeper_media_occurrences WHERE occurrence_ref = ?`), fmt.Sprintf("msgvault:copy-%d", i), fmt.Sprintf("content-%d", i), ref)
 		require.NoError(err)
 	}
 	require.NoError(transaction.Commit())
+}
+
+func TestMediaSearchOversizedPopulation(t *testing.T) {
+	assert := assert.New(t)
+
+	t.Parallel()
+	f := newMediaSearchFixture(t)
+	f.retained(t, "seed")
+	cloneSearchOccurrences(t, f, "msgvault:seed", docbankmedia.MaxSearchVersions)
 	status, _, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
 	assert.Equal(http.StatusBadRequest, status, raw)
 	assert.Contains(raw, "media_search_scope_limit")
@@ -529,7 +566,7 @@ func TestMediaSearchRemoteErrors(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil)
 			r.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			if name == "timeout" {
-				ctx, cancel := context.WithTimeout(r.Context(), 300*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the remote blocks until cancellation
+				ctx, cancel := context.WithTimeout(r.Context(), 300*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the remote blocks until cancellation
 				defer cancel()
 				r = r.WithContext(ctx)
 			}
@@ -858,6 +895,303 @@ func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 				assert.Equal(selected.messageID, response.Results[0].MessageID)
 			} else {
 				assert.ElementsMatch(inputs, f.requests[0].MediaSources[0].SuppliedInputIDs)
+			}
+		})
+	}
+}
+
+func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int64) {
+	t.Helper()
+	first, second := f.message(t, "first-document"), f.message(t, "second-document")
+	hash := strings.Repeat("a", 64)
+	for _, mid := range []int64{first, second} {
+		require.NoError(t, f.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: "aa/" + hash, State: "stored"}))
+	}
+	require.NoError(t, f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "00000000-0000-4000-8000-000000000001"}, ""))
+	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
+	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "quartz in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}}}
+	return first, second
+}
+
+func TestMediaSearchDocumentsShared(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	recording := f.match(t, "audio")
+	server := f.server(false)
+	first, second := f.document(t, server)
+	query := "q=quartz"
+	hash := strings.Repeat("b", 64)
+	staleDocumentVersion := "00000000-0000-4000-8000-000000000002"
+	require.NoError(f.f.Store.UpsertAttachmentRecord(t.Context(), first, store.AttachmentWrite{ContentHash: hash, Filename: "stale.pdf", StoragePath: "bb/" + hash, State: "stored"}))
+	require.NoError(f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: 8, VersionID: staleDocumentVersion}, ""))
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.Len(response.Results, 1)
+	assert.Equal(recording.messageID, response.Results[0].MessageID)
+	assert.Equal("generated", response.Results[0].Origin)
+	assert.False(response.Attachments.Truncated)
+	require.Nil(response.Attachments.Error, raw)
+	require.Len(response.Attachments.Results, 2)
+	assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
+	for _, hit := range response.Attachments.Results {
+		assert.Equal("quartz in the PDF", hit.Excerpt)
+	}
+}
+
+func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		query            string
+		docbankTruncated bool
+		results          int
+	}{
+		{"occurrence limit", "q=quartz&limit=1", false, 1},
+		{"Docbank limit", "q=quartz", true, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.match(t, "audio")
+			server := f.server(false)
+			f.document(t, server)
+			f.documentReport.Truncated = test.docbankTruncated
+			status, response, raw := searchMediaFor(t, server, test.query)
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			assert.True(response.Attachments.Truncated)
+			require.Len(response.Attachments.Results, test.results)
+			for _, hit := range response.Attachments.Results {
+				assert.Equal("quartz in the PDF", hit.Excerpt)
+			}
+		})
+	}
+}
+
+func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	first, _ := f.document(t, server)
+	var documents []storetest.DocumentAttachment
+	for i := 2; i <= 4097; i++ {
+		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+	}
+	f.f.SeedDocumentAttachments(first, documents)
+	status, response, raw := searchMediaFor(t, server, "q=quartz")
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	require.NotNil(response.Attachments.Error)
+	assert.Empty(response.Attachments.Results)
+	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
+	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding images, audio, and video")
+	assert.Contains(response.Attachments.Error.Message, "--person")
+	assert.False(response.Attachments.Truncated)
+	assert.Empty(f.documentRequests)
+}
+
+func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		code   string
+	}{
+		{"unavailable", http.StatusServiceUnavailable, ""},
+		{"rejected query", http.StatusBadRequest, "invalid_media_search"},
+		{"store failure", 0, "server_error"},
+		{"late store failure", 0, "server_error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.match(t, "audio")
+			server := f.server(false)
+			f.document(t, server)
+			f.documentStatus = test.status
+			storeFailure := func() {
+				_, err := f.f.Store.DB().Exec(`ALTER TABLE docbank_attachment_deliveries RENAME TO unavailable_attachment_deliveries`)
+				require.NoError(err)
+			}
+			switch test.name {
+			case "store failure":
+				storeFailure()
+			case "late store failure":
+				f.duringDocumentSearch = storeFailure
+			}
+			status, response, raw := searchMediaFor(t, server, "q=quartz")
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			require.NotNil(response.Attachments.Error)
+			assert.Empty(response.Attachments.Results)
+			assert.NotEmpty(response.Results)
+			if test.code != "" {
+				assert.Equal(test.code, response.Attachments.Error.Error)
+			}
+		})
+	}
+}
+
+func TestMediaSearchDocumentsEmptyScope(t *testing.T) {
+	for _, name := range []string{"no versions in scope", "no Docbank hits"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.match(t, "audio")
+			server := f.server(false)
+			if name == "no versions in scope" {
+				server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
+			} else {
+				f.document(t, server)
+				f.documentReport.Results = []docbankmedia.SearchHit{}
+			}
+			status, response, raw := searchMediaFor(t, server, "q=quartz")
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			assert.Nil(response.Attachments.Error)
+			assert.Empty(response.Attachments.Results)
+			assert.False(response.Attachments.Truncated)
+		})
+	}
+}
+
+func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		recordingStatus int
+		documentStatus  int
+		timeout         bool
+		status          int
+	}{
+		{"timeout", 0, 0, true, http.StatusOK},
+		{"unavailable", http.StatusServiceUnavailable, 0, false, http.StatusOK},
+		{"late store failure", 0, 0, false, http.StatusOK},
+		{"rejected query", http.StatusBadRequest, 0, false, http.StatusBadRequest},
+		{"both fail", http.StatusServiceUnavailable, http.StatusServiceUnavailable, false, http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.match(t, "audio")
+			server := f.server(false)
+			f.document(t, server)
+			f.remoteStatus, f.documentStatus = test.recordingStatus, test.documentStatus
+			f.waitForCancel = test.timeout
+			if test.name == "late store failure" {
+				f.report.Truncated = true
+				f.duringSearch = func() {
+					_, err := f.f.Store.DB().Exec(`ALTER TABLE beeper_media_occurrences RENAME TO unavailable_media_occurrences`)
+					assert.NoError(err)
+				}
+			}
+			ctx := t.Context()
+			if test.timeout {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 4*time.Second)
+				defer cancel()
+			}
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=quartz", nil).WithContext(ctx)
+			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
+			recorder := httptest.NewRecorder()
+			server.Router().ServeHTTP(recorder, request)
+			raw := recorder.Body.String()
+			require.Equal(test.status, recorder.Code, raw)
+			if test.status == http.StatusBadRequest {
+				assert.Contains(raw, `"error":"invalid_media_search"`)
+				return
+			}
+			if test.status != http.StatusOK {
+				return
+			}
+			var response MediaSearchResponse
+			require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
+			require.NotNil(response.Attachments)
+			require.NotNil(response.RecordingsError)
+			assert.Equal(docbankmedia.SearchCoverage{State: "unknown"}, response.Coverage)
+			assert.False(response.Truncated)
+			assert.Zero(response.PendingOccurrences)
+			assert.Zero(response.UnavailableOccurrences)
+			assert.Zero(response.AttributionUnavailable)
+			assert.Empty(response.Results)
+			assert.True(response.Partial)
+			assert.False(response.Attachments.Truncated)
+			require.Len(response.Attachments.Results, 2)
+			for _, hit := range response.Attachments.Results {
+				assert.Equal("quartz in the PDF", hit.Excerpt)
+			}
+		})
+	}
+}
+
+func TestMediaSearchDocumentsUnlinkedDuringSearch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	f.match(t, "audio")
+	server := f.server(false)
+	first, second := f.document(t, server)
+	query := "q=quartz"
+	participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
+	alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
+	_, err := f.f.Store.LinkParticipants(participant, alias)
+	require.NoError(err)
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), alias, first, second)
+	require.NoError(err)
+	query += "&participant_id=" + strconv.FormatInt(participant, 10)
+	f.duringDocumentSearch = func() {
+		_, err := f.f.Store.UnlinkParticipants(participant, alias)
+		assert.NoError(err)
+	}
+	status, response, raw := searchMediaFor(t, server, query)
+	require.Equal(http.StatusOK, status, raw)
+	require.NotNil(response.Attachments)
+	assert.Empty(response.Results)
+	assert.False(response.Attachments.Truncated)
+	require.Empty(response.Attachments.Results)
+}
+
+// Local attribution can outlast the remote budget after a slow successful response.
+func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
+	for _, kind := range []string{"recording", "attachment"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			recording := f.match(t, "audio")
+			server := f.server(false)
+			remoteCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			slowCtx, slowCancel := context.WithTimeout(t.Context(), time.Second)
+			defer slowCancel()
+			slow := func() { <-slowCtx.Done() }
+			resolve := func() (*personscope.Scope, error) {
+				// The request still has time for local queries when Docbank's budget ends.
+				<-remoteCtx.Done()
+				return nil, nil //nolint:nilnil // No Person filter searches the full visible archive.
+			}
+			if kind == "recording" {
+				f.duringSearch = slow
+				response, err := server.messageRecordings.search(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				require.NoError(err)
+				require.Len(response.Results, 1)
+				assert.Equal(recording.messageID, response.Results[0].MessageID)
+			} else {
+				first, second := f.document(t, server)
+				f.duringDocumentSearch = slow
+				response, err := server.docbankAttachments.SearchAttachments(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				require.NoError(err)
+				assert.Nil(response.Error)
+				var messages []int64
+				for _, hit := range response.Results {
+					messages = append(messages, hit.MessageID)
+				}
+				assert.ElementsMatch([]int64{first, second}, messages)
 			}
 		})
 	}

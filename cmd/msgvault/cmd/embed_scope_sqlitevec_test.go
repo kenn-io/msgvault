@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -59,11 +60,8 @@ func fakeEmbeddingsServer(t *testing.T, embedded *int) *httptest.Server {
 // message+body in each of two accounts.
 func seedTwoAccountMainDB(t *testing.T, dataDir string) {
 	t.Helper()
-	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(t, err, "open main db")
-	defer func() { require.NoError(t, s.Close()) }()
-	require.NoError(t, s.InitSchema(), "InitSchema")
-	_, err = s.DB().Exec(`
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
+	_, err := s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'a@example.com'), (2, 'gmail', 'b@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 2, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject) VALUES

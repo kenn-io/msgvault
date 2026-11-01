@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type identityDiscoverFailingWriter struct {
@@ -410,10 +411,7 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
-	s, err := store.Open(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, s.InitSchema())
-	t.Cleanup(func() { _ = s.Close() })
+	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	// Save and restore package-level globals.
 	savedCfg := cfg

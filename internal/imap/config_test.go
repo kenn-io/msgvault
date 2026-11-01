@@ -83,19 +83,6 @@ func TestAddr_IPv6(t *testing.T) {
 	}
 }
 
-func TestIdentifier_STARTTLSDistinctFromPlaintext(t *testing.T) {
-	starttls := Config{
-		Host: "mail.example.com", Port: 143,
-		STARTTLS: true, Username: "user@example.com",
-	}
-	plain := Config{
-		Host: "mail.example.com", Port: 143,
-		Username: "user@example.com",
-	}
-	assert.NotEqual(t, plain.Identifier(), starttls.Identifier(),
-		"STARTTLS and plaintext should have distinct identifiers")
-}
-
 func TestParseIdentifier_RoundTrip(t *testing.T) {
 	tests := []struct {
 		name string

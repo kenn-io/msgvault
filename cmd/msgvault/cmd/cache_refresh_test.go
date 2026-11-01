@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
@@ -33,9 +36,7 @@ func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
 	parent := t.TempDir()
 	dbPath := filepath.Join(parent, "msgvault.db")
 	analyticsDir := filepath.Join(parent, "analytics")
-	st, err := store.Open(dbPath)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	requirementsForTest.NoError(st.Close())
 	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 	marker, err := json.Marshal(query.CacheSyncState{
@@ -69,6 +70,8 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 	}
 
 	t.Run("full build", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
 		tmp := setupTestSQLite(t)
 		configure(tmp, filepath.Join(tmp, "test.db"))
 		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
@@ -78,16 +81,24 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 			invocationFromContext(testCtx),
 		)
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "memory_limit")
+		requirements.Error(err)
+		assertions.Contains(err.Error(), "memory_limit")
+		assertions.Contains(err.Error(), "analytics.builder_memory_limit=1B")
+		assertions.Contains(err.Error(), "analytics.builder_temp_limit=32GB")
+		assertions.Contains(err.Error(), "analytics.builder_threads=")
+		assertions.Contains(err.Error(), "msgvault build-cache")
 	})
 
 	t.Run("derived refresh", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
 		tmp := setupTestSQLite(t)
 		dbPath := filepath.Join(tmp, "test.db")
 		analyticsDir := filepath.Join(tmp, "analytics")
 		_, err := buildCache(dbPath, analyticsDir, true)
-		require.NoError(t, err)
+		requirements.NoError(err)
+		before, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+		requirements.NoError(err)
 		configure(tmp, dbPath)
 		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
@@ -96,8 +107,15 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 			invocationFromContext(testCtx),
 		)
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "memory_limit")
+		requirements.Error(err)
+		assertions.Contains(err.Error(), "memory_limit")
+		assertions.Contains(err.Error(), "analytics.builder_memory_limit=1B")
+		assertions.Contains(err.Error(), "analytics.builder_temp_limit=32GB")
+		after, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+		requirements.NoError(readErr)
+		assertions.Equal(before, after, "failed refresh must preserve the committed marker")
+		_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+		requirements.NoError(err, "a normal budget must allow retrying the staged build")
 	})
 }
 
@@ -213,10 +231,7 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.InitSchema())
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 
 	const revision = int64(42)
@@ -340,9 +355,7 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	require.NoError(st.Close())
 
 	savedCfg := cfg
@@ -355,7 +368,7 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	buildCacheBeforeMessagesExportHook = func() error { return sentinel }
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
 
-	err = rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx))
+	err := rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx))
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "refresh analytics cache")
 }
@@ -377,9 +390,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	var logs strings.Builder
 	invocationFromContext(testCtx).logger = slog.New(slog.NewTextHandler(&logs, nil))
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(
@@ -497,9 +508,7 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	analyticsDir := cfg.AnalyticsDir()
 	invocationFromContext(testCtx).logger = testDiscardLogger()
 
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "!mixed:example.org", "direct_chat", "Mixed")
@@ -599,10 +608,7 @@ func TestFailedAutomaticCacheBuildSchedulesRetry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
-	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{
@@ -625,7 +631,7 @@ func TestFailedAutomaticCacheBuildSchedulesRetry(t *testing.T) {
 		retries = append(retries, retry{delay, identifier})
 	}
 
-	err = rebuildCacheNow(testCtx, "muesli", schedule)
+	err := rebuildCacheNow(testCtx, "muesli", schedule)
 	require.ErrorIs(err, sentinel)
 	assert.Equal([]retry{{15 * time.Minute, "muesli"}}, retries,
 		"unchanged scans request no build, so a failure must schedule its own retry")
@@ -718,6 +724,102 @@ func TestScheduledCacheBuildDelay(t *testing.T) {
 			assert.Equal(t, tt.wantDelay, delay)
 		})
 	}
+}
+
+func TestScheduledCacheRefreshHandlesUnsentDrift(t *testing.T) {
+	t.Run("clean indexed state", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newUnsentCacheFixture(t)
+		require.NoError(f.store.ReplaceMessageLabels(f.draftID, nil))
+		_, err := f.store.DB().Exec(`UPDATE messages SET is_sent = FALSE WHERE id = ?`, f.draftID)
+		require.NoError(err)
+		_, err = buildCacheAuto(f.dbPath, f.analytics)
+		require.NoError(err)
+
+		_, err = f.store.DB().Exec(`UPDATE messages SET is_sent = TRUE WHERE id = ?`, f.draftID)
+		require.NoError(err)
+		indexed, err := cacheNeedsBuildForServing(t.Context(), f.dbPath, f.analytics)
+		require.NoError(err)
+		require.False(indexed.NeedsBuild, "%+v", indexed)
+		var indexedReads atomic.Int64
+		observeCacheSQLiteReads(t, f.store, f.dbPath, func(table, column string) {
+			if table == "sync_runs" && column == "messages_added" {
+				indexedReads.Add(1)
+			}
+		})
+		drift := cacheNeedsBuildForScheduledRefresh(t.Context(), f.dbPath, f.analytics)
+		assert.Positive(indexedReads.Load(), "indexed state is checked before full hashes")
+		assert.True(drift.NeedsBuild)
+		assert.True(drift.HasUnsentDrift)
+	})
+	t.Run("new mail already requires build", func(t *testing.T) {
+		t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newUnsentCacheFixture(t)
+		_, err := f.store.UpsertMessage(&store.Message{
+			SourceID: f.sourceID, ConversationID: f.conversationID, SourceMessageID: "new-mail", MessageType: "email",
+			SenderID: sql.NullInt64{Int64: f.aliceID, Valid: true}, SentAt: sql.NullTime{Time: f.sentAt.Add(time.Hour), Valid: true},
+		})
+		require.NoError(err)
+		_, err = f.store.ReconcileMessageLabels(f.draftID, []int64{f.sentLabelID}, true)
+		require.NoError(err)
+
+		var unsentReads atomic.Int64
+		observeCacheSQLiteReads(t, f.store, f.dbPath, func(table, column string) {
+			if table == "messages" && column == "is_sent" {
+				unsentReads.Add(1)
+			}
+		})
+
+		var preflightReads int64
+		builds := 0
+		originalBuild := runScheduledBuildCacheSubprocess
+		runScheduledBuildCacheSubprocess = func(context.Context) error {
+			builds++
+			preflightReads = unsentReads.Load()
+			_, err := buildCacheScheduled(f.dbPath, f.analytics, 0, time.Now)
+			return err
+		}
+		t.Cleanup(func() { runScheduledBuildCacheSubprocess = originalBuild })
+		cfg := &config.Config{
+			Data:      config.DataConfig{DataDir: filepath.Dir(f.analytics), DatabaseURL: f.dbPath},
+			Analytics: config.AnalyticsConfig{AutoBuildCache: true},
+		}
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		require.NoError(rebuildCacheNow(ctx, "synthetic-source", nil))
+		assert.Equal(1, builds)
+		assert.Zero(preflightReads, "new-mail drift already requires the authoritative builder; preflight must defer the unsent scan")
+		assert.Positive(unsentReads.Load(), "the lock-held builder still checks unsent state")
+	})
+}
+
+// The store opens a fixed driver name, so observation attaches to that driver
+// and filters connections by file identity, including resolved temp paths.
+func observeCacheSQLiteReads(t *testing.T, st *store.Store, path string, observe func(table, column string)) {
+	t.Helper()
+	require := require.New(t)
+	info, err := os.Stat(path)
+	require.NoError(err)
+	driver, ok := st.DB().Driver().(*sqlite3.SQLiteDriver)
+	require.True(ok)
+	original := driver.ConnectHook
+	driver.ConnectHook = func(conn *sqlite3.SQLiteConn) error {
+		if err := original(conn); err != nil {
+			return err
+		}
+		if actual, err := os.Stat(conn.GetFilename("main")); err == nil && os.SameFile(actual, info) {
+			conn.RegisterAuthorizer(func(action int, table, column, _ string) int {
+				if action == sqlite3.SQLITE_READ {
+					observe(table, column)
+				}
+				return sqlite3.SQLITE_OK
+			})
+		}
+		return nil
+	}
+	t.Cleanup(func() { driver.ConnectHook = original })
 }
 
 func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
@@ -868,10 +970,7 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 
 	const identifier = "imaps://user@example.com@imap.example.com:993"
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
@@ -1397,10 +1496,8 @@ func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T)
 	_ = testCtx
 
 	dbPath := cfg.DatabaseDSN()
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "initialize schema")
-	_, err = st.DB().Exec(`INSERT INTO sources
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := st.DB().Exec(`INSERT INTO sources
 		(id, source_type, identifier, created_at, updated_at)
 		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
 	require.NoError(err, "insert calendar source")
@@ -1444,14 +1541,12 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	st, err := store.Open(dbPath)
-	requirements.NoError(err)
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	t.Cleanup(func() {
 		if st != nil {
 			_ = st.Close()
 		}
 	})
-	requirements.NoError(st.InitSchema())
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice Observed", "example.com")
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "user@example.com")

@@ -487,20 +487,27 @@ func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) erro
 // FTSBackfillBatchSQL returns the SQL to backfill FTS5 for a range of message IDs.
 // Parameters: fromID(?), toID(?)
 func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
+	envelope := storedFTSEnvelopeSQL("GROUP_CONCAT")
 	return `INSERT OR REPLACE INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		SELECT m.id, m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
-			COALESCE(
-				CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-				     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
-				END,
-				(SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
-				''
-			),
-			COALESCE((SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''),
-			COALESCE((SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), '')
+		SELECT m.id, m.id, ` + envelope.subject + `, COALESCE(mb.body_text, ''), ` +
+		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id >= ? AND m.id < ?`
+}
+
+func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error) {
+	// Use indexed IDs without loading stored FTS text. columnsize=0 tables
+	// have no docsize table and use the same fallback as completeness probes.
+	var id int64
+	err := db.QueryRowContext(ctx, "SELECT id FROM messages_fts_docsize LIMIT 0").Scan(&id)
+	predicate := ` AND NOT EXISTS (SELECT 1 FROM messages_fts_docsize d WHERE d.id = m.id)`
+	if d.IsNoSuchTableError(err) {
+		predicate = ` AND NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.id)`
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("probe FTS indexed IDs: %w", err)
+	}
+	return d.FTSBackfillBatchSQL() + predicate, nil
 }
 
 // FTSAvailable probes for FTS5 by querying the virtual table.
@@ -561,11 +568,6 @@ func (d *SQLiteDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) b
 		).Scan(&ftsMax)
 	}
 	return err == nil && ftsMax < msgMax
-}
-
-// FTSClearSQL returns the SQL to clear all FTS5 data.
-func (d *SQLiteDialect) FTSClearSQL() string {
-	return "DELETE FROM messages_fts"
 }
 
 // SchemaFTS returns the embedded filename containing FTS5 virtual table DDL.

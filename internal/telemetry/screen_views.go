@@ -64,12 +64,30 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(canonical))
+	if req.Event == EventScreenViewed || req.Event == EventMessageOpened {
+		status := posthog.StatusDisabled
+		if h.reporter.Enabled() {
+			status, err = h.reporter.Report(r.Context(), req.Event, req.Properties)
+		}
+		if err != nil && !errors.Is(err, posthog.ErrInvalidProperty) {
+			http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+			return
+		}
+		if status == posthog.StatusDisabled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, "{\"status\":\"disabled\"}\n")
+			return
+		}
+		acceptedScreen(w)
+		return
+	}
 	if !h.reporter.EventAllowed(req.Event) || !h.reporter.Enabled() {
 		h.capture.ServeHTTP(w, r)
 		return
 	}
 	required, action := actionProperties[req.Event]
-	if !action && req.Event != EventScreenViewed || req.Event == EventSyncFailed {
+	if !action || req.Event == EventSyncFailed {
 		h.capture.ServeHTTP(w, r)
 		return
 	}
@@ -89,20 +107,8 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		acceptedScreen(w)
 		return
 	}
-	var claim string
-	switch req.Event {
-	case EventScreenViewed:
-		if req.Properties["screen"] == nil || req.Properties[propertySurface] == nil {
-			acceptedScreen(w)
-			return
-		}
-		claim, _ = req.Properties["screen"].(string)
-	case EventSearchRun, EventSearchEmpty:
-		searchType, _ := req.Properties["search_type"].(string)
-		claim = req.Event + ":" + surface + ":" + searchType
-	default: // EventMessageOpened
-		claim = req.Event + ":" + surface
-	}
+	searchType, _ := req.Properties["search_type"].(string)
+	claim := req.Event + ":" + surface + ":" + searchType
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	path := filepath.Join(h.dir, screenViewsFile)

@@ -173,17 +173,6 @@ func TestInspectCacheMarkerReadinessSkipsDatasetFingerprint(t *testing.T) {
 	assertions.Equal(CacheInterrupted, readiness)
 }
 
-func TestCacheWithoutArchiveOnlyDeletionEligibilityRequiresRebuild(t *testing.T) {
-	dir := completeReadinessCache(t)
-	state, err := ReadCacheSyncState(dir)
-	require.NoError(t, err)
-	state.SchemaVersion = 31
-	writeReadinessState(t, dir, state)
-	readiness, err := InspectCacheReadiness(dir)
-	require.NoError(t, err)
-	assert.Equal(t, CacheStaleSchema, readiness)
-}
-
 func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -259,6 +248,9 @@ func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	changed.ParticipantDisplayNameRevision++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
+	changed.PersonDisplayNameRevision++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
 	changed.PublishedAt = changed.PublishedAt.Add(time.Second)
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
@@ -294,28 +286,4 @@ func writeReadinessState(t *testing.T, dir string, state CacheSyncState) {
 	data, err := json.Marshal(state)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(CacheStatePath(dir), data, 0o600))
-}
-
-func TestCacheSchemaVersion26RequiresRebuild(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	dir := completeReadinessCache(t)
-	state, err := ReadCacheSyncState(dir)
-	requirements.NoError(err)
-	state.SchemaVersion = 26
-	data, err := json.Marshal(state)
-	requirements.NoError(err)
-	requirements.NoError(os.WriteFile(CacheStatePath(dir), data, 0o600))
-	requirements.NoError(os.RemoveAll(filepath.Join(dir, datasetPersonDisplayNames)))
-	readiness, err := InspectCacheReadiness(dir)
-	requirements.NoError(err)
-	assertions.Equal(CacheStaleSchema, readiness)
-}
-
-func TestCacheSchemaVersionPersonRevisionInvalidatesReaders(t *testing.T) {
-	assertions := assert.New(t)
-	state := CacheSyncState{SchemaVersion: CacheSchemaVersion}
-	before := state.Revision()
-	state.PersonDisplayNameRevision++
-	assertions.NotEqual(before, state.Revision())
 }

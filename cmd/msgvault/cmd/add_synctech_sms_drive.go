@@ -102,7 +102,7 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.OAuthApp, "oauth-app", "", "Named OAuth app from config.toml")
 	cmd.Flags().BoolVar(&opts.SkipAuthForTest, "skip-auth-for-test", false, "Skip OAuth setup in tests")
 	_ = cmd.Flags().MarkHidden("skip-auth-for-test")
-	return cmd
+	return markStrictConfig(cmd)
 }
 
 func newSyncSynctechSMSCmd() *cobra.Command {

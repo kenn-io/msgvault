@@ -295,3 +295,13 @@ func RuneByteRange(s string, startRune, endRune int) (int, int, bool) {
 	}
 	return 0, 0, false
 }
+
+// SnippetFromBody returns a body preview of up to 200 runes.
+func SnippetFromBody(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	line := FirstLine(body)
+	return TruncateRunes(line, 200)
+}

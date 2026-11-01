@@ -4,7 +4,7 @@
     listSavedViews as generatedListSavedViews,
     patchSavedView as generatedPatchSavedView,
   } from '../../api/generated/api/api';
-  import { Button, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import PageHeader from '../shell/PageHeader.svelte';
   import type { APIClient } from '../../api/client';
@@ -227,7 +227,7 @@
               {#if !incompatibility}
                 <ul class="summary" aria-label={`${view.name} summary`}>
                   {#each savedViewSummary(view.canonical_state as CanonicalState) as part, index (index)}
-                    <li>{part}</li>
+                    <li><Chip size="sm" uppercase={false} class="summary-chip">{part}</Chip></li>
                   {/each}
                 </ul>
               {/if}
@@ -330,7 +330,7 @@
     min-height: 28px;
     align-items: center;
     gap: var(--space-2);
-    padding-inline: var(--space-2);
+    padding-inline: var(--pane-pad-x);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
@@ -364,7 +364,7 @@
   article {
     justify-content: space-between;
     min-height: 64px;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border-bottom: 1px solid var(--border-muted);
   }
   article:last-child {
@@ -391,6 +391,7 @@
   }
   .summary {
     display: flex;
+    min-width: 0;
     flex-wrap: wrap;
     gap: var(--space-1);
     margin: 0;
@@ -398,15 +399,17 @@
     list-style: none;
   }
   .summary li {
-    padding: 0 var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+  }
+  .summary :global(.summary-chip) {
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
     background: var(--bg-subtle);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
   }
   .notice {
-    padding: var(--space-2) var(--space-3);
+    padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--accent-amber);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);

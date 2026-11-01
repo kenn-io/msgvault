@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -83,10 +84,8 @@ func TestFillFullCoverageKeepsSnapshotAcrossEmbeddingBatchCommit(t *testing.T) {
 	assert := assert.New(t)
 	dataDir := t.TempDir()
 	vecPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
-	main, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	require.NoError(err)
-	require.NoError(main.InitSchema())
-	_, err = main.DB().Exec(`
+	main := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
+	_, err := main.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES

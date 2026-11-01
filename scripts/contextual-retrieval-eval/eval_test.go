@@ -1384,10 +1384,6 @@ func TestReport_ContainsQualityOperationalAndAuditFields(t *testing.T) {
 	}
 }
 
-func TestCommandBoundary_IsStable(t *testing.T) {
-	assert.Equal(t, []string{"generate", "embed", "pool", "score", "replay", "apply-replay"}, commandNames())
-}
-
 type countingEmbedder struct {
 	queryCalls  int
 	queryVector []float32

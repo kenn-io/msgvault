@@ -12,6 +12,7 @@ import (
 // written by the source's own user, so revalidating that same user must not
 // discard every conversation's coverage and re-walk the workspace.
 func TestRevalidationKeepsCoverageFromUntrackedOwnerCheckpoint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)

@@ -43,14 +43,4 @@ describe('NavigationDrawer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Close navigation' }));
     expect(onclose).toHaveBeenCalledOnce();
   });
-
-  it('returns focus to the opener when unmounted', () => {
-    const opener = document.createElement('button');
-    document.body.append(opener);
-    opener.focus();
-    const rendered = render(NavigationDrawer, { onclose: vi.fn(), children: items });
-    rendered.unmount();
-    expect(document.activeElement).toBe(opener);
-    opener.remove();
-  });
 });

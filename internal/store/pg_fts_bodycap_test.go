@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -140,16 +141,22 @@ func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
 	// every row in LATER batches still gets indexed.
 	const total = 5500
 	const oversizedIdx = 2500
-	ids := f.CreateMessages(total)
-	require.Len(ids, total)
+	// Bulk insertion skips UpsertMessage's journal and attribution writes, which BackfillFTS doesn't read.
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type, size_estimate)
+		SELECT ?, ?, 'msg-' || g, 'email', 1000 FROM generate_series(0, ?) g`), f.ConvID, f.Source.ID, total-2)
+	require.NoError(err)
+	sentinelID := f.CreateMessage("sentinel")
 
-	require.NoError(f.Store.UpsertMessageBody(ids[oversizedIdx],
+	var oversizedID int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?"), f.Source.ID, fmt.Sprintf("msg-%d", oversizedIdx)).Scan(&oversizedID))
+
+	require.NoError(f.Store.UpsertMessageBody(oversizedID,
 		sql.NullString{String: oversizedBody(), Valid: true}, sql.NullString{}),
 		"attach oversized body")
 
-	// Give a couple of normal rows after the oversized one bodies too, so the
+	// Give the sentinel row after the oversized one a body too, so the
 	// "rows after the bad one are indexed" claim is concrete.
-	require.NoError(f.Store.UpsertMessageBody(ids[total-1],
+	require.NoError(f.Store.UpsertMessageBody(sentinelID,
 		sql.NullString{String: "final sentinel body apricot", Valid: true}, sql.NullString{}),
 		"attach sentinel body")
 

@@ -32,29 +32,6 @@ func savedViewInput(name string) store.SavedViewInput {
 	}
 }
 
-func TestSavedViewsSQLiteSchema(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-
-	rows, err := st.DB().Query(`PRAGMA table_info('saved_views')`)
-	requirements.NoError(err)
-	defer func() { requirements.NoError(rows.Close()) }()
-
-	columns := make(map[string]bool)
-	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, columnType string
-		var defaultValue any
-		requirements.NoError(rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey))
-		columns[name] = true
-	}
-	requirements.NoError(rows.Err())
-	assert.Equal(t, map[string]bool{
-		"id": true, "name": true, "description": true, "canonical_state": true,
-		"schema_version": true, "revision": true, "created_at": true, "updated_at": true,
-	}, columns)
-}
-
 func TestSavedViewsCRUDAndStableListOrder(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

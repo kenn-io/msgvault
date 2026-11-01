@@ -111,7 +111,7 @@
   h2, p { margin: 0; }
   .queue-note { color: var(--text-muted); }
   .loading { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
-  .message { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--accent-red); color: var(--text-secondary); }
+  .message { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--accent-red); border-start-start-radius: 0; border-end-start-radius: 0; color: var(--text-secondary); }
   [data-review-section] { position: relative; border-radius: var(--radius-md); }
   [data-review-section]:has(> .review-heading:focus-visible) {
     outline: 2px solid var(--focus-color); outline-offset: 4px;

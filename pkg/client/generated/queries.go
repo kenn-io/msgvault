@@ -410,6 +410,21 @@ type ListCommunicationServicesQuery struct {
 	IncludeInactive *bool `json:"include_inactive,omitempty"`
 }
 
+type SearchChatsQuery struct {
+	// Q Name or title tokens; OR matching, exact matches ranked first
+	Q string `json:"q" validate:"required"`
+
+	// Limit Maximum results (default 20, max 100)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// SourceID Restrict to one archived source
+	SourceID *int64 `json:"source_id,omitempty" validate:"omitempty,gte=1"`
+}
+
+func (s SearchChatsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type GetConversationQuery struct {
 	// Anchor Selected message ID anchoring the chronological window
 	Anchor int64 `json:"anchor"`
@@ -609,7 +624,7 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 }
 
 type SearchMediaQuery struct {
-	// Q Spoken words to find in transcripts
+	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
 
 	// Mode Lexical mode; semantic and hybrid are unavailable
@@ -795,6 +810,9 @@ type GetGmailIDsByFilterQuery struct {
 	// SearchMode Search mode: fast, deep, or aggregate; required with q
 	SearchMode *string `json:"search_mode,omitempty"`
 
+	// MaxResults Maximum results for bounded search-aware deletion resolution (max 100001)
+	MaxResults *int64 `json:"max_results,omitempty"`
+
 	// ViewType Aggregate view type; required for aggregate search
 	ViewType *string `json:"view_type,omitempty"`
 
@@ -940,6 +958,9 @@ func (f FindContactCandidatesQuery) Validate() error {
 type ListDirectoryPeopleQuery struct {
 	// Q Lexical query over person names, contact points, and organizations
 	Q *string `json:"q,omitempty"`
+
+	// Address Literal case-insensitive substring of current bound participant identities or curated contact points
+	Address *string `json:"address,omitempty"`
 
 	// Cursor Opaque cursor returned by the previous Directory page
 	Cursor *string `json:"cursor,omitempty"`

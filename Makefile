@@ -6,11 +6,25 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-LDFLAGS := -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
-           -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
-           -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE)
+# Public PostHog ingest key for anonymous telemetry. Builds without it, such as
+# plain `go build` and `go test`, send no telemetry.
+POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
 
-LDFLAGS_RELEASE := $(LDFLAGS) -s -w
+# Who distributes the binary; telemetry reports it too. Empty for source
+# builds and "kenn" for official direct downloads, which both replace
+# themselves. A package manager such as homebrew makes `msgvault update`
+# refuse and point at that package manager.
+DISTRIBUTION ?=
+
+# Recursive so a target-specific DISTRIBUTION, as in `homebrew`, takes effect.
+LDFLAGS = -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
+          -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
+          -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE) \
+          -X go.kenn.io/msgvault/cmd/msgvault/cmd.Distribution=$(DISTRIBUTION) \
+          -X go.kenn.io/kit/telemetry/posthog.distribution=$(DISTRIBUTION) \
+          -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
+
+LDFLAGS_RELEASE = $(LDFLAGS) -s -w
 
 # Default build tags applied to every go build/test/bench invocation.
 # - fts5: enable the SQLite FTS5 full-text search extension
@@ -54,6 +68,19 @@ GOEXE := $(shell go env GOEXE)
 CUSTOM_GCL_BIN := $(CI_TOOLS_BIN)/custom-gcl$(GOEXE)
 GOVULNCHECK_BIN := $(CI_TOOLS_BIN)/govulncheck
 
+# Compile without absolute source paths so every checkout and worktree shares
+# one Go build cache instead of each compiling its own copy of every package.
+# Read `go env` first so flags saved with `go env -w GOFLAGS=...` survive the
+# export. GOFLAGS=-trimpath=false opts out. Debuggers need a source mapping:
+# docs/development.md#share-the-go-build-cache-across-worktrees.
+ifeq ($(origin GOFLAGS),undefined)
+GOFLAGS := $(shell go env GOFLAGS)
+endif
+ifeq ($(filter -trimpath -trimpath=%,$(GOFLAGS)),)
+override GOFLAGS += -trimpath
+endif
+export GOFLAGS
+
 # Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
 # pgvector gates the vector-on-PG code paths (//go:build pgvector), and sqlite_vec
 # is required too because several tests are gated on BOTH tags
@@ -72,8 +99,8 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # in both configurations, so test-pg-both runs just these in the shipped-build
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
-NOCGO_LINT_PKGS := ./pkg/archive/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./scripts/contextual-retrieval-eval
+NOCGO_LINT_PKGS := ./pkg/archive/... ./pkg/mcp/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -90,7 +117,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -115,6 +142,26 @@ else
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o msgvault$(GOEXE) ./cmd/msgvault
 endif
 	@chmod +x msgvault$(GOEXE)
+
+# Build the binary a Homebrew formula installs, into $(BINDIR). This is the
+# normal build plus DISTRIBUTION=homebrew, so the binary defers upgrades to
+# `brew upgrade msgvault`. duckdb_use_lib links Homebrew's libduckdb instead of
+# the bundled static library; CGO_CFLAGS and CGO_LDFLAGS from the environment
+# locate it and, where the system lacks it, sqlite3.h.
+BINDIR ?= bin
+HOMEBREW_BUILD_TAGS := $(BUILD_TAGS) duckdb_use_lib
+
+homebrew: DISTRIBUTION = homebrew
+homebrew: web-embed
+	@mkdir -p "$(BINDIR)"
+ifeq ($(shell go env GOOS),linux)
+	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o "$(BINDIR)/msgvault-codex-bridge" ./cmd/msgvault-codex-bridge
+	chmod 755 "$(BINDIR)/msgvault-codex-bridge"
+	@bridge_digest=$$(sha256sum "$(BINDIR)/msgvault-codex-bridge" | cut -d' ' -f1); \
+		CGO_ENABLED=1 go build -trimpath -buildvcs=false -tags "$(HOMEBREW_BUILD_TAGS)" -ldflags="$(LDFLAGS) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -o "$(BINDIR)/msgvault$(GOEXE)" ./cmd/msgvault
+else
+	CGO_ENABLED=1 go build -trimpath -buildvcs=false -tags "$(HOMEBREW_BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(BINDIR)/msgvault$(GOEXE)" ./cmd/msgvault
+endif
 
 # Install to ~/.local/bin, $GOBIN, or $GOPATH/bin
 install: build
@@ -206,7 +253,7 @@ test-pg: require-test-db
 .PHONY: test-pg-nocgo
 test-pg-nocgo: require-test-db
 	CGO_ENABLED=0 go build ./internal/store ./internal/query ./internal/slack ./internal/discord ./internal/api
-	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive
+	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive ./pkg/mcp
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -340,10 +387,12 @@ web-check: web-install
 web-test:
 	cd web && bun run test
 
-# Install the locked Chromium revision even when a main-pinned PR workflow
-# supplies an older browser image. Keep other projects' cached browsers.
+# Use the remote browser server in CI, or install the locked Chromium locally.
+# Keep other projects' cached browsers.
 web-browser-install: web-install
-	cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium
+	@if [ -z "$$PW_TEST_CONNECT_WS_ENDPOINT" ]; then \
+		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
+	fi
 
 # test:browser runs everything under web/tests, including tests/e2e specs
 # whose fixtures spawn the repo-root msgvault daemon, so the binary must
@@ -351,7 +400,7 @@ web-browser-install: web-install
 web-test-browser: build web-browser-install
 	cd web && bun run test:browser
 
-# Browser gates use the same digest-pinned Playwright environment as CI.
+# Browser gates use local Chromium or the remote Playwright server in CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.
 web-e2e: build web-browser-install
 	cd web && bun run test:e2e
@@ -549,6 +598,7 @@ help:
 	@echo ""
 	@echo "  build          - Debug build"
 	@echo "  build-release  - Release build (optimized, stripped)"
+	@echo "  homebrew       - Homebrew formula build into BINDIR (DISTRIBUTION=homebrew, system libduckdb)"
 	@echo "  install        - Install to ~/.local/bin or GOPATH"
 	@echo ""
 	@echo "  test           - Run SQLite tests with automatic CPU/memory scaling (TEST_PROFILE=standard disables)"

@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBackupRestorePackedTargetSelection(t *testing.T) {
@@ -160,10 +161,7 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "restore-cli@example.com")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(source.ID, "restore-cli-thread", "Restore CLI")
@@ -294,9 +292,7 @@ func TestRunBackupRestoreIntoNonexistentConfiguredDataDir(t *testing.T) {
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err, "open source store")
-	require.NoError(st.InitSchema(), "initialize source schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	require.NoError(st.Close(), "close source store")
 	attachmentsDir := filepath.Join(sourceDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
@@ -359,9 +355,7 @@ func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err, "open source store")
-	require.NoError(st.InitSchema(), "initialize source schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	require.NoError(st.Close(), "close source store")
 	attachmentsDir := filepath.Join(sourceDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
@@ -438,9 +432,7 @@ func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestor
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err, "open source store")
-	require.NoError(st.InitSchema(), "initialize source schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	require.NoError(st.Close(), "close source store")
 	attachmentsDir := filepath.Join(sourceDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
@@ -582,9 +574,7 @@ func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *te
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err, "open source store")
-	require.NoError(st.InitSchema(), "initialize source schema")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	require.NoError(st.Close(), "close source store")
 	attachmentsDir := filepath.Join(sourceDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")

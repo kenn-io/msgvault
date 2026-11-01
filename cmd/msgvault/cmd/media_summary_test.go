@@ -17,27 +17,43 @@ func TestProviderSyncSummariesReportPolicySkips(t *testing.T) {
 	tests := []struct {
 		name  string
 		print func(*cobra.Command)
+		empty func(*cobra.Command)
+		want  string
 	}{
 		{
 			name: "beeper",
 			print: func(cmd *cobra.Command) {
-				printBeeperSummary(cmd, "account", &beeper.ImportSummary{AttachmentsSkipped: 2})
+				printBeeperSummary(cmd.OutOrStdout(), "account", &beeper.ImportSummary{AttachmentsSkipped: 2})
 			},
 		},
 		{
 			name: "slack",
 			print: func(cmd *cobra.Command) {
-				printSlackSummary(cmd, "workspace", &slack.ImportSummary{AttachmentsSkipped: 2})
+				printSlackSummary(cmd, "workspace", &slack.ImportSummary{
+					AttachmentsSkipped: 2, Errors: 2, FirstMediaError: "F123: \x1b[31mslack file GET: status 503\x1b[0m\n",
+				})
 			},
+			empty: func(cmd *cobra.Command) {
+				printSlackSummary(cmd, "workspace", &slack.ImportSummary{})
+			},
+			want: ", 2 errors, first media error: F123: slack file GET: status 503 \n",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			var output bytes.Buffer
 			cmd := &cobra.Command{}
 			cmd.SetOut(&output)
 			tt.print(cmd)
-			assert.Contains(t, output.String(), "2 media skipped by policy")
+			assert.Contains(output.String(), "2 media skipped by policy")
+			if tt.empty != nil {
+				assert.Contains(output.String(), tt.want)
+				output.Reset()
+				tt.empty(cmd)
+				assert.NotContains(output.String(), "errors")
+				assert.NotContains(output.String(), "first media error")
+			}
 		})
 	}
 }
@@ -47,7 +63,7 @@ func TestBeeperSummariesReportUnavailableMedia(t *testing.T) {
 	var syncOut bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&syncOut)
-	printBeeperSummary(cmd, "account", sum)
+	printBeeperSummary(cmd.OutOrStdout(), "account", sum)
 	assert.Contains(t, syncOut.String(), ", 3 media no longer available at source")
 
 	var backfillOut bytes.Buffer
@@ -59,6 +75,8 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	tests := []struct {
 		name  string
 		print func(*bytes.Buffer)
+		empty func(*bytes.Buffer)
+		want  string
 	}{
 		{
 			name: "discord sync",
@@ -81,8 +99,14 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 		{
 			name: "slack backfill",
 			print: func(out *bytes.Buffer) {
-				writeSlackMediaBackfillSummary(out, "workspace", &slack.ImportSummary{AttachmentsSkipped: 2})
+				writeSlackMediaBackfillSummary(out, "workspace", &slack.ImportSummary{
+					AttachmentsSkipped: 2, Errors: 2, FirstMediaError: "F123: \x1b[31mslack file GET: status 503\x1b[0m\n",
+				})
 			},
+			empty: func(out *bytes.Buffer) {
+				writeSlackMediaBackfillSummary(out, "workspace", &slack.ImportSummary{})
+			},
+			want: ", 2 errors, first media error: F123: slack file GET: status 503 \n",
 		},
 		{
 			name: "teams backfill",
@@ -93,10 +117,18 @@ func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			var output bytes.Buffer
 			tt.print(&output)
-			assert.Contains(t, output.String(), "2")
-			assert.Contains(t, strings.ToLower(output.String()), "skipped by policy")
+			assert.Contains(output.String(), "2")
+			assert.Contains(strings.ToLower(output.String()), "skipped by policy")
+			if tt.empty != nil {
+				assert.Contains(output.String(), tt.want)
+				output.Reset()
+				tt.empty(&output)
+				assert.NotContains(output.String(), "errors")
+				assert.NotContains(output.String(), "first media error")
+			}
 		})
 	}
 }
@@ -149,7 +181,7 @@ func TestBeeperSummariesReportOverCapBytesSeparately(t *testing.T) {
 			print: func(out *bytes.Buffer, sum *beeper.ImportSummary) {
 				cmd := &cobra.Command{}
 				cmd.SetOut(out)
-				printBeeperSummary(cmd, "account", sum)
+				printBeeperSummary(cmd.OutOrStdout(), "account", sum)
 			},
 			want: "2 media over size cap (15.0M total), 1 media skipped by policy",
 		},

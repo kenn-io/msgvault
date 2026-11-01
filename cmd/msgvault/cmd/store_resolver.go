@@ -402,7 +402,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	// daemon that is running instead of restarting it.
 	autoStart := c.Server.DaemonAutoStartEnabled()
 	restartPolicy := c.Server.DaemonAutoRestart
-	if !autoStart {
+	// A daemon must not be replaced by one this config cannot start.
+	configErr := c.DaemonConfigError()
+	if !autoStart || configErr != nil {
 		restartPolicy = config.DaemonAutoRestartNever
 	}
 	if err := os.MkdirAll(c.Data.DataDir, 0o700); err != nil {
@@ -471,6 +473,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		incompatibleGuidance = "restart or upgrade the supervised service"
 	}
 	prep, err := prepareBackgroundDaemonStart(c, restartPolicy, incompatibleGuidance, loggerFromContext(ctx))
+	if errors.Is(err, errIncompatibleDaemon) && configErr != nil && autoStart {
+		return nil, localDaemonStartupInfo{}, daemonConfigStartError(configErr)
+	}
 	if err != nil {
 		return nil, localDaemonStartupInfo{}, err
 	}
@@ -482,6 +487,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	}
 	if !autoStart {
 		return nil, localDaemonStartupInfo{}, localDaemonAutoStartDisabledError(c.Data.DataDir)
+	}
+	if configErr != nil {
+		return nil, localDaemonStartupInfo{}, daemonConfigStartError(configErr)
 	}
 
 	startedAt := time.Now()
@@ -551,6 +559,11 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		LogPath: proc.LogPath,
 		Outcome: startupCacheBuildOutcomeFromRuntime(rt),
 	}, nil
+}
+
+// daemonConfigStartError refuses to start a daemon from a config it would reject.
+func daemonConfigStartError(err error) error {
+	return fmt.Errorf("start background daemon: daemon config invalid: %w", err)
 }
 
 // errLocalDaemonAutoStartDisabled marks a local resolution that found no

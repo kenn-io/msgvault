@@ -232,7 +232,7 @@ func docbankAttachmentDestinationKey(endpoint, archiveUID, folder string) string
 	return "attachments:" + hex.EncodeToString(digest[:])
 }
 
-func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (*api.DocbankAttachmentReader, error) {
+func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig, client *docbankmedia.Client) (*api.DocbankAttachmentReader, error) {
 	if !cfg.Enabled || !cfg.AttachmentUploadConsent {
 		return nil, nil //nolint:nilnil // a nil reader means attachment mirroring is off; callers branch on it
 	}
@@ -240,7 +240,7 @@ func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config
 	if err != nil {
 		return nil, err
 	}
-	return &api.DocbankAttachmentReader{Store: st, Destination: destination, Folder: cfg.MirrorFolder()}, nil
+	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder()}, nil
 }
 
 func docbankAttachmentDestination(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (string, error) {

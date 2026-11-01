@@ -181,6 +181,15 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 			},
 			Page: PageSpec{Limit: 50},
 		}},
+		{name: "domain filter with ranked semantic candidates", request: ExploreRequest{
+			Context: Context{Domains: []string{"example.com"}},
+			Search: SearchSpec{
+				Mode: SearchSemantic, Query: "photos",
+				CandidateMessageIDs: []int64{ids.group1, ids.email2, ids.email1},
+				VectorGeneration:    &generation,
+			},
+			Page: PageSpec{Limit: 2, Offset: 1},
+		}},
 		{name: "semantic strongest match inside chat group", request: ExploreRequest{
 			Search: SearchSpec{
 				Mode: SearchSemantic, Query: "photos",

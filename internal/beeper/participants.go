@@ -5,13 +5,14 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // participantIdentifierType namespaces Beeper user IDs in
 // participant_identifiers. The payload IDs are Beeper-local Matrix-style IDs
 // (@x:beeper.local), not federated Matrix IDs; importer writes use the
-// account-scoped providerFallbackUserID form below.
+// account-scoped beeperidentity.Fallback form below.
 const participantIdentifierType = "beeper"
 
 // participantResolver resolves Beeper users to msgvault participant IDs,
@@ -71,7 +72,7 @@ func (r *participantResolver) identifierForUser(userID string) string {
 	if userID == "" || r.accountID == "" {
 		return userID
 	}
-	return providerFallbackUserID(r.accountID, userID)
+	return beeperidentity.Fallback(r.accountID, userID)
 }
 
 func (r *participantResolver) resolveUser(u *User) (int64, error) {
@@ -197,7 +198,7 @@ func (r *participantResolver) adoptLegacyIdentifier(userID, identifier string) (
 		return 0, nil
 	}
 	return r.store.AdoptLegacyParticipantIdentifier(
-		participantIdentifierType, userID, identifier, beeperProviderPrefix+":",
+		participantIdentifierType, userID, identifier, beeperidentity.Prefix+":",
 	)
 }
 

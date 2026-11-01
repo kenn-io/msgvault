@@ -346,3 +346,31 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	require.NoError(err)
 	assert.False(more)
 }
+
+// TestSkipLooseEnumerationReportsNoCandidates checks that a verification
+// follow-up skips loose candidates.
+func TestSkipLooseEnumerationReportsNoCandidates(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+	root := t.TempDir()
+	content := []byte("loose blob awaiting a pass that enumerates candidates")
+	hash := pack.ComputeBlobID(content).String()
+	loosePath := filepath.Join(root, hash[:2], hash)
+	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
+	require.NoError(os.WriteFile(loosePath, content, 0o600))
+	fx.addAttachment(hash, hash[:2]+"/"+hash, len(content))
+
+	catalog := store.NewMaintenancePackCatalog(st, root)
+	candidates, err := catalog.ListUnpacked(context.Background())
+	require.NoError(err)
+	require.Len(candidates, 1, "the loose blob is a candidate without the flag")
+
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
+	require.NoError(err)
+	pass.SkipLooseEnumeration()
+	skipped, err := catalog.ListUnpacked(ctx)
+	require.NoError(err)
+	assert.Empty(skipped, "a suppressed pass reports no loose candidates")
+}

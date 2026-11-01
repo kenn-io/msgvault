@@ -46,18 +46,29 @@ func NewTestStore(t *testing.T) *store.Store {
 // because MSGVAULT_TEST_DB is set.
 func NewSQLiteTestStore(t *testing.T) *store.Store {
 	t.Helper()
+	return NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "test.db"))
+}
+
+// NewSQLiteTestStoreAt clones an empty SQLite store at dbPath and closes it on cleanup.
+func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
+	t.Helper()
 
 	template, err := sqliteTemplateBytes()
 	require.NoError(t, err, "build sqlite template")
 
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	require.NotContains(t, dbPath, "://", "NewSQLiteTestStoreAt takes a file path, not a database URL")
+	require.NoFileExists(t, dbPath, "NewSQLiteTestStoreAt clones onto a new path; reopen an existing archive with store.Open")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700), "create sqlite fixture directory")
 	require.NoError(t, os.WriteFile(dbPath, template, 0o600), "clone sqlite template")
 
 	st, err := store.OpenForTest(dbPath)
 	require.NoError(t, err, "open store")
 
 	t.Cleanup(func() {
-		_ = st.Close()
+		// A test may close the store early to run a command against the file.
+		if st.DB().Ping() == nil {
+			_ = st.Close()
+		}
 	})
 	assignFreshArchiveUID(t, st)
 

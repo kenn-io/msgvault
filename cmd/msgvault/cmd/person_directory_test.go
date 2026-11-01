@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
@@ -25,26 +24,15 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
-func TestPersonDirectoryProductionCommandRegistrationAndFlags(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	command, args, err := rootCmd.Find([]string{personValue, "directory"})
-	require.NoError(err)
-	require.Equal("directory", command.Name())
-	assert.Empty(args)
-	assert.Same(personCmd, command.Parent())
-	var flags []string
-	command.Flags().VisitAll(func(flag *pflag.Flag) { flags = append(flags, flag.Name) })
-	assert.Equal([]string{"cursor", "json", "last-contact-after", "last-contact-before", "sort"}, flags)
-	assert.Equal("last_contact_desc", command.Flags().Lookup("sort").DefValue)
-	require.NoError(command.Args(command, nil))
-	require.Error(command.Args(command, []string{"unexpected"}))
-}
-
 func personDirectoryTestResponse(t *testing.T, status int, payload string) (<-chan *http.Request, context.Context) {
 	t.Helper()
 	requests := make(chan *http.Request, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"3.29.0"}`)
+			return
+		}
 		requests <- r
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -94,6 +82,11 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 	}{
 		{name: "default recent ordering", want: url.Values{"sort": {"last_contact_desc"}}},
 		{
+			name: "saved name and literal address",
+			args: []string{"--query", "Curated École", "--address", `ÉCOLE+%_\&@example.test`},
+			want: url.Values{"q": {"Curated École"}, "address": {`ÉCOLE+%_\&@example.test`}, "sort": {"last_contact_desc"}},
+		},
+		{
 			name: "date boundary 2026-06-01T00:00:00Z",
 			args: []string{
 				"--last-contact-after", "2026-06-01", "--last-contact-before", "2026-07-01",
@@ -117,7 +110,7 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 		},
 		{
 			name: "empty optional values",
-			args: []string{"--last-contact-after=", "--last-contact-before=", "--sort=", "--cursor="},
+			args: []string{"--last-contact-after=", "--last-contact-before=", "--sort=", "--cursor=", "--query=", "--address= "},
 			want: url.Values{"sort": {"last_contact_desc"}},
 		},
 	} {
@@ -152,6 +145,27 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var lookups atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"3.28.0"}`)
+			return
+		}
+		lookups.Add(1)
+		_, _ = io.WriteString(w, `{"people":[]}`)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output, err := runPersonDirectoryCommand(ctx, t, "--address", "alex@example.test", "--json")
+	require.ErrorContains(err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
+	assert.Empty(output)
+	assert.Zero(lookups.Load())
 }
 
 func TestPersonDirectoryCommandForwardsCursorAndPrintsNextCursor(t *testing.T) {

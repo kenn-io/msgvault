@@ -11,9 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 var attributionSentAt = sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}
@@ -38,10 +40,7 @@ func TestAccountAttributionCacheParity(t *testing.T) {
 				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
 			}
 			path := filepath.Join(t.TempDir(), "archive.db")
-			st, err := store.OpenForTest(path)
-			require.NoError(err)
-			defer func() { require.NoError(st.Close()) }()
-			require.NoError(st.InitSchema())
+			st := testutil.NewSQLiteTestStoreAt(t, path)
 			src, err := st.GetOrCreateSource("gmail", "inbox@example.net")
 			require.NoError(err)
 			require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
@@ -65,7 +64,8 @@ func TestAccountAttributionCacheParity(t *testing.T) {
 			require.NoError(err)
 
 			cache := filepath.Join(t.TempDir(), "analytics")
-			_, err = buildCache(path, cache, true)
+			// Both snapshot paths must work at the adaptive builder's minimum budget.
+			_, err = buildCache(path, cache, true, duckdbutil.BuilderOverrides{MemoryLimit: "256MiB"})
 			require.NoError(err)
 			duck, err := query.NewDuckDBEngine(cache, path, nil)
 			require.NoError(err)
@@ -148,10 +148,7 @@ func TestAccountScopeCacheParity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
-	st, err := store.OpenForTest(path)
-	require.NoError(err)
-	defer func() { require.NoError(st.Close()) }()
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, path)
 	src, err := st.GetOrCreateSource("gmail", "inbox@example.net")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))

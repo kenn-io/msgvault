@@ -24,7 +24,38 @@ make build-release
 
 # Install to ~/.local/bin or GOPATH
 make install
+
+# Homebrew formula build into $BINDIR (default bin/)
+make homebrew VERSION=1.2.3
 ```
+
+`make homebrew` is the normal build with `DISTRIBUTION=homebrew`, so the binary
+refuses `msgvault update` and points at `brew upgrade msgvault`. It adds the
+`duckdb_use_lib` tag, which links a system `libduckdb`; set `CGO_LDFLAGS` (and
+`CGO_CFLAGS` for headers) when that library is outside the default search path.
+
+### Share the Go build cache across worktrees
+
+Make targets compile Go with `-trimpath`, so binaries record module-relative
+source paths instead of absolute ones. Without it, Go caches every package
+separately for each checkout directory, and each git worktree grows the build
+cache by another full copy. With it, identical source in any checkout reuses
+the same cache entries.
+
+- Run `make <target> GOFLAGS=-trimpath=false` to opt out for one command.
+- Plain `go` commands outside Make do not add the flag. Run
+  `go env -w GOFLAGS=-trimpath` to make it your default; Make keeps any value
+  saved that way.
+
+Debuggers need a source mapping for trimmed binaries:
+
+- `dlv debug` and `dlv test` inherit `GOFLAGS` and cannot find source files.
+  Pass `--build-flags=-trimpath=false`. Debug builds disable optimizations, so
+  they never shared cache entries anyway.
+- For `dlv exec` or `dlv attach` on a trimmed binary, start Delve from the
+  repository root and run `config substitute-path -guess` (Delve 1.24 or
+  later). It maps the module path to your checkout, the standard library to
+  `GOROOT`, and dependencies to the module cache.
 
 ### Windows
 
@@ -133,15 +164,20 @@ goroutines, channels, timers, tickers, and fakes. Advance virtual time with
 
 Keep real waits for PostgreSQL and SQLite locks, database clocks, network
 requests, subprocesses, DuckDB, and operating-system events.
+Call Kit's `stacktest.Dump(t)` before failing a timeout while waiting on goroutines.
 
 `make lint` and `make lint-ci` build a pinned golangci-lint with Kit's
 `kennlint` plugin and run its `sleeptest` and `deadlinetest` checks. Outside a
 `synctest.Test` bubble, `sleeptest` rejects `time.Sleep` and `deadlinetest`
 rejects sub-second `context.WithTimeout`, `context.WithDeadline`, `time.After`,
-`time.NewTimer`, `time.AfterFunc` and testify `Eventually` budgets, plus zero
-or negative `Never` windows. A kept real wait carries `//nolint:kennlint //
-<what it waits for>` on the flagged line; for a deadline, that is only when its
-expiry is the asserted result or a `select` shows an event does not happen.
+`time.NewTimer`, `time.AfterFunc`, and testify `Eventually` budgets, plus zero
+or negative `Never` windows. It also checks duration fields and same-module
+helper parameters whose camelCase or snake_case names contain a `timeout`,
+`deadline`, `budget`, or `wait` word, including plurals. Standalone
+`time.Now().Add` deadlines are checked too. A kept real wait carries
+`//nolint:kennlint // sleeptest: <what it waits for>` on the flagged line.
+Use `deadlinetest:` for a deadline, only when its expiry is the asserted result
+or a `select` shows an event does not happen.
 
 ### PostgreSQL tests
 

@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestAddSlackContinuesWhenDisplayNameConflictsWithAlias(t *testing.T) {
@@ -24,9 +25,7 @@ func TestAddSlackContinuesWhenDisplayNameConflictsWithAlias(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	selector, err := st.GetOrCreateSource(sourceTypeGmail, "reader@example.test")
 	require.NoError(err)
 	alias := "Slack Synthetic"

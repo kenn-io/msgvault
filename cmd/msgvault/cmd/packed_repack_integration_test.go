@@ -29,6 +29,7 @@ import (
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestPostRepackBlobReadsThroughAPIMCPAndExports(t *testing.T) {
@@ -69,10 +70,7 @@ func TestPackedRestoreReadsThroughAPIMCPAndExports(t *testing.T) {
 	require := require.New(t)
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
-	st, err := store.OpenForTest(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "restore-reader@example.com")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(source.ID, "restore-reader-thread", "Restore Reader")

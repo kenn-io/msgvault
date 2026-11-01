@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-11-01"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -166,20 +166,34 @@ person and UID.
 
 ### Browse people by last contact
 
+Drafts and unsent messages don't set last contact, cadence, or relationship temperature. They stay out of the relationship calendar, relationship list, person and domain timelines, and chat inbox summaries. Explore, search, and the Files view still include them for lookup. A person's or domain's Files tab, `person files`, and MCP `search_person_files` list only files on sent or received mail. Opening someone you have only drafted to shows no contact activity.
+
+Cached views update after a cache refresh. Full checks at startup and during explicit cache builds detect sent-state changes. Scheduled post-sync refresh checks indexed changes first. If those already require a build, `min_rebuild_interval` can delay both the full sent-state check and the visible update. If indexed state is clean, sent state is checked before that interval is applied. Ordinary requests use a cache marker check; they don't scan the archive for sent-state changes.
+
 Use `person directory` to browse promoted people, most recent contact first. It queries the selected daemon and returns a page of up to 50 people by default.
 
 ```bash
 msgvault person directory --last-contact-after 2026-06-01
 msgvault person directory --sort last_contact_asc
 msgvault person directory --sort name
+msgvault person directory --query "Alex Example"
+msgvault person directory --address alex@example.test
 msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 2026-07-01 --json
 ```
 
+`--query` uses the Directory's lexical search over current curated names, contact points, and organizations. It works without semantic search. `--address` matches a literal, case-insensitive substring of addresses and identifiers on the person's currently bound participants, or current curated contact points. `%`, `_`, and backslash are ordinary characters. Superseded contact points and observed participants without a saved person are excluded. A cleared saved display name stays cleared; observed names do not replace it.
+
+Combine flags to narrow results, for example `person directory --query Alex --address example.test`. Address filtering requires an up-to-date daemon; the CLI reports an upgrade error if the selected daemon cannot apply it. Lookup does not create profiles or change identity links.
+
+Address-only lookups can scan all saved people when matches are sparse or absent. A remote PostgreSQL database can make these database round trips slower. Combine `--query` with `--address` when you know a name or organization to narrow the candidates first.
+
 `--last-contact-after` and `--last-contact-before` are inclusive. Both accept `YYYY-MM-DD` or RFC3339 timestamps with offsets and fractional seconds. A date alone means midnight UTC, so an upper bound of `2026-07-01` includes the start of that day. The default sort is `last_contact_desc`. Use `last_contact_asc` for oldest contact first or `name` for name order.
+
+Drafts and unsent messages don't set last contact or cadence.
 
 The table shows ID, display name, and last contact in UTC. Missing names and timestamps show `-`. JSON returns the Directory envelope with a `people` array and optional `next_cursor`. It preserves the daemon's fields and omits `last_contact_at` when no timestamp exists.
 
-When output includes `Next cursor`, pass it unchanged with the same date bounds and sort to read the next page. For JSON, use the `next_cursor` value.
+When output includes `Next cursor`, pass it unchanged with the same query, address, date bounds, and sort to read the next page. For JSON, use the `next_cursor` value.
 
 ```bash
 msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor>"
@@ -275,6 +289,7 @@ msgvault person files 7 --lane all --query "project proposal" --json
 ```
 
 The default `metadata` lane lists archived attachments without semantic search.
+The `metadata` lane lists only attachments on sent or received mail.
 `--direction` accepts `from_person`, `to_person`, and `group`; it is repeatable.
 `--filename` matches a case-insensitive substring. MIME families are `image`,
 `pdf`, `audio`, `video`, `text`, `document`, `archive`, and `other`.

@@ -29,27 +29,23 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `msgvault archives email, chat, and meetings for offline search.
-Commands start or reuse a local daemon, or use [remote].url from config.toml.
---local forces the local daemon.
+		Long: `Archive email, chats, and meetings offline. Use the daemon
+or config.toml's [remote].url; --local forces local.
 
 Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault list-senders -n 20 --json
-  msgvault stats
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
-Output and exit status:
-  --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
-  logs go to stderr; --log-level=warn quiets routine logs. Exit 0 success, 1 error,
-  130 interrupted. 'msgvault quickstart' has a longer agent guide.`,
+Output:
+  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
+  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
+  More: msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
@@ -112,7 +108,11 @@ Output and exit status:
 
 			// Load config first; logging options live under [log].
 			var err error
-			inv.cfg, err = config.LoadWithOverrides(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
+			load := config.LoadClientWithOverrides
+			if requiresStrictConfig(cmd) {
+				load = config.LoadWithOverrides
+			}
+			inv.cfg, err = load(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
@@ -236,6 +236,59 @@ Output and exit status:
 	registerRootFlags(root)
 	registerAgentFlags(root)
 	return root
+}
+
+// strictConfigAnnotation marks the commands that start or replace a daemon,
+// and setup commands that must fail before an OAuth browser flow.
+const strictConfigAnnotation = "msgvault/strict-config"
+
+// requiresStrictConfig reports whether cmd must fail on invalid settings that
+// only the daemon reads. Every other command loads them leniently and warns,
+// so it can still reach a running daemon.
+func requiresStrictConfig(cmd *cobra.Command) bool {
+	return cmd.Annotations[strictConfigAnnotation] != ""
+}
+
+// markStrictConfig makes cmd fail at load on an invalid daemon-only setting.
+func markStrictConfig(cmd *cobra.Command) *cobra.Command {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[strictConfigAnnotation] = "required"
+	return cmd
+}
+
+// warnDaemonConfigError prints each invalid daemon-only setting once, after
+// the command ran, unless runErr or the stderr a proxied child streamed
+// already reports it. The daemon's own CLI
+// children stay quiet; their parent warned.
+func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error) {
+	if cfg == nil || isDaemonConsoleSubprocess() {
+		return
+	}
+	err := cfg.DaemonConfigError()
+	if err == nil {
+		return
+	}
+	errs := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	}
+	for _, e := range errs {
+		if alreadyReported(runErr, e) {
+			continue
+		}
+		_, _ = fmt.Fprintf(root.ErrOrStderr(), "Warning: invalid daemon config: %v\n", e)
+	}
+}
+
+// alreadyReported reports whether runErr, or the stderr a failed proxied child
+// streamed, already shows err.
+func alreadyReported(runErr, err error) bool {
+	if child, ok := errors.AsType[proxiedChildError](runErr); ok {
+		return child.reported(err)
+	}
+	return runErr != nil && (errors.Is(runErr, err) || strings.Contains(runErr.Error(), err.Error()))
 }
 
 // skipsConfigLoad reports whether cmd must run without loading config
@@ -389,6 +442,7 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	defer recoverAndLogPanic(inv)
 
 	err := root.ExecuteContext(root.Context())
+	warnDaemonConfigError(root, inv.cfg, err)
 
 	// Record the exit outcome so users can see the per-run
 	// result in the log without parsing error messages.

@@ -17,13 +17,18 @@ func constrainedListingEngine(t *testing.T) *DuckDBEngine {
 }
 
 func TestExploreFastPathFitsConstrainedMemory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine := constrainedListingEngine(t)
+	// Exercise four query threads even when the test runner has fewer CPUs.
+	_, err := engine.db.Exec("SET threads=4")
+	require.NoError(err)
 	result, err := engine.Explore(context.Background(), ExploreRequest{
 		Page: PageSpec{Limit: 50},
 	})
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 50)
-	assert.Equal(t, int64(104), result.TotalCount)
+	require.NoError(err)
+	assert.Len(result.Rows, 50)
+	assert.Equal(int64(104), result.TotalCount)
 }
 
 func TestExploreFastPathCountsBeyondEndWithinConstrainedMemory(t *testing.T) {
@@ -57,14 +62,19 @@ func TestExploreGroupsFitsConstrainedMemory(t *testing.T) {
 }
 
 func TestExploreDomainFilterFitsConstrainedMemory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine := constrainedListingEngine(t)
+	// Exercise four query threads even when the test runner has fewer CPUs.
+	_, err := engine.db.Exec("SET threads=4")
+	require.NoError(err)
 	result, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{Domains: []string{"acme.com"}},
 		Page:    PageSpec{Limit: 50},
 	})
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 8)
-	assert.Equal(t, int64(8), result.TotalCount)
+	require.NoError(err)
+	assert.Len(result.Rows, 8)
+	assert.Equal(int64(8), result.TotalCount)
 }
 
 func TestFileSearchFastPathFitsConstrainedMemory(t *testing.T) {

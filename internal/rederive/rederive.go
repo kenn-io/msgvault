@@ -34,6 +34,8 @@ type Summary struct {
 	// left untouched.
 	Undecodable int64
 	Errors      int64
+	// unchanged is set only by passes that verify no derived writes committed.
+	unchanged bool
 }
 
 // Add accumulates other into s, except Duration, which the caller owns.
@@ -78,6 +80,14 @@ func Lookup(sourceType string) (Func, string, bool) {
 	return e.fn, e.version, ok
 }
 
+func passes(sourceType, identifier string, retry bool) []entry {
+	email := entry{fn: emailPass(LedgerKey(sourceType, identifier, emailVersion), retry), version: emailVersion}
+	if fn, version, ok := Lookup(sourceType); ok {
+		return []entry{{fn: fn, version: version}, email}
+	}
+	return []entry{email}
+}
+
 // SourceTypes lists every registered source type, sorted for stable output.
 func SourceTypes() []string {
 	out := make([]string, 0, len(registry))
@@ -95,8 +105,8 @@ func LedgerKey(sourceType, identifier, version string) string {
 	return fmt.Sprintf("rederive:%s:%s:%s", sourceType, identifier, version)
 }
 
-// Run executes a source's pass and records it in the ledger, whether or not the
-// ledger already held it. This is the on-demand path; recording still matters
+// Run executes a source's passes and records each in the ledger, whether or not
+// the ledger already held it. This is the on-demand path; recording still matters
 // here, or the next sync would repeat a full scan of an archive that is already
 // current.
 //
@@ -105,16 +115,17 @@ func LedgerKey(sourceType, identifier, version string) string {
 func Run(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (*Summary, error) {
-	fn, version, ok := Lookup(sourceType)
-	if !ok {
-		return nil, fmt.Errorf("no re-derivation pass registered for source type %q", sourceType)
-	}
-	sum, err := fn(ctx, s, sourceID, progress)
+	sum, _, err := run(ctx, s, sourceType, identifier, sourceID, progress, false)
+	return sum, err
+}
+
+func runPass(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), pass entry) (*Summary, error) {
+	sum, err := pass.fn(ctx, s, sourceID, progress)
 	if err != nil {
 		// A pass can fail after earlier message transactions committed. Make
 		// those partial authoritative writes visible to cache maintenance even
 		// though the repair remains retryable.
-		if sum != nil && (sum.MessagesScanned > 0 || sum.Errors > 0) {
+		if sum != nil && !sum.unchanged && (sum.MessagesScanned > 0 || sum.Errors > 0) {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			return sum, errors.Join(err, s.AdvanceDerivedDataRevisionContext(cleanupCtx))
@@ -122,14 +133,16 @@ func Run(
 		return sum, err
 	}
 	if sum != nil && sum.Errors > 0 {
+		if sum.unchanged {
+			return sum, s.PublishPendingDerivedEmailRevisionContext(ctx)
+		}
 		return sum, s.AdvanceDerivedDataRevisionContext(ctx)
 	}
-	ledgerKey := LedgerKey(sourceType, identifier, version)
-	if sum == nil || sum.MessagesScanned == 0 {
-		// New and empty sources have no existing derived rows to invalidate.
-		// Record the pass so sync does not repeat it, but keep a current cache
-		// valid after the source's first import.
-		return sum, s.MarkMigrationAppliedContext(ctx, ledgerKey, 1)
+	ledgerKey := LedgerKey(sourceType, identifier, pass.version)
+	if sum == nil || sum.MessagesScanned == 0 || sum.unchanged {
+		// Current rows need no invalidation of their own. Publish any pending
+		// committed email writes before recording completion.
+		return sum, s.MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx, ledgerKey)
 	}
 	if err := s.MarkMigrationAppliedWithDerivedDataRevisionContext(ctx, ledgerKey); err != nil {
 		return sum, err
@@ -137,21 +150,37 @@ func Run(
 	return sum, nil
 }
 
-// RunIfStale runs the registered pass for a source unless the ledger already
-// records it at the current version. ran reports whether the pass actually
-// executed: a source type with no registered pass, or one already recorded, is
-// a no-op. This is the upgrade path, called from a sync.
+// RunIfStale runs each stale pass for a source, including retained MIME repair.
+// ran reports whether any pass executed. This is the upgrade path, called from a sync.
 func RunIfStale(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (sum *Summary, ran bool, err error) {
-	_, version, ok := Lookup(sourceType)
-	if !ok {
-		return nil, false, nil
+	return run(ctx, s, sourceType, identifier, sourceID, progress, true)
+}
+
+func run(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), onlyStale bool) (sum *Summary, ran bool, err error) {
+	for _, pass := range passes(sourceType, identifier, onlyStale) {
+		if onlyStale {
+			applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, pass.version), 1)
+			if err != nil {
+				return sum, ran, err
+			}
+			if applied {
+				continue
+			}
+		}
+		if sum == nil {
+			sum = &Summary{}
+		}
+		partial, err := runPass(ctx, s, sourceType, identifier, sourceID, progress, pass)
+		sum.Add(partial)
+		if partial != nil {
+			sum.Duration += partial.Duration
+		}
+		ran = true
+		if err != nil {
+			return sum, ran, err
+		}
 	}
-	applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, version), 1)
-	if err != nil || applied {
-		return nil, false, err
-	}
-	sum, err = Run(ctx, s, sourceType, identifier, sourceID, progress)
-	return sum, true, err
+	return sum, ran, nil
 }

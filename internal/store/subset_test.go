@@ -1868,17 +1868,20 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 
 	st, err := Open(srcDB)
 	require.NoError(err, "open source for upgrade")
-	// A pre-attribution archive predates both triggers that name source_is_from_me.
-	// The upgrade below reinstalls them through their migrations.
+	// A pre-attribution archive predates both triggers and the chat owner
+	// index that name source_is_from_me. The upgrade below reinstalls them
+	// through their migrations.
 	_, err = st.DB().Exec(`
 		DROP TRIGGER trg_activity_queue_messages_update;
 		DROP TRIGGER trg_cache_message_facts_update;
+		DROP INDEX idx_messages_source_owner;
 		ALTER TABLE messages DROP COLUMN identity_is_from_me;
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
 		WHERE name IN ('message_attribution_provenance_v3',
-		               'activity_projection_triggers_v4',
-		               'cache_message_source_attribution');
+		               'activity_projection_triggers_v5',
+		               'cache_message_source_attribution',
+		               'chat_members_v1');
 	`)
 	require.NoError(err, "simulate pre-attribution schema")
 	require.NoError(st.InitSchema(), "upgrade source schema")
@@ -3835,8 +3838,9 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require.NoError(err, "open source db")
 
 	_, err = db.Exec(`DROP TRIGGER trg_activity_queue_messages_update;
-		DROP TRIGGER trg_cache_message_facts_update`)
-	require.NoError(err, "drop triggers that name source_is_from_me")
+		DROP TRIGGER trg_cache_message_facts_update;
+		DROP INDEX idx_messages_source_owner`)
+	require.NoError(err, "drop triggers and index that name source_is_from_me")
 
 	for _, col := range []string{"source_is_from_me", "identity_is_from_me"} {
 		_, err = db.Exec(
@@ -4401,6 +4405,11 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 		`DROP INDEX IF EXISTS idx_conversations_type`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_messages_update`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_messages_delete`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_recipients_update`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_recipients_delete`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN title`,
 		`ALTER TABLE conversations ADD COLUMN title TEXT`,
@@ -5423,6 +5432,102 @@ func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
 	assert.Equal(accountPathSent, path.String, "a copied draft is written, not received")
 }
 
+func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
+	for _, evidence := range []struct {
+		name, sourceType, statement string
+	}{
+		{"imap-flags", "imap", `INSERT INTO imap_message_memberships
+			(source_id, mailbox, uidvalidity, uid, message_id, flags)
+			VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`},
+		{"imap-record", "imap", `INSERT INTO imap_drafts
+			(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision)
+			VALUES ('managed-draft', 1, 1, 'Scratch', 7, 1, 1)`},
+		{"imap-pending-record", "imap", `INSERT INTO imap_drafts
+			(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision,
+			 pending_operation, pending_original_message_id, pending_original_mailbox,
+			 pending_original_uidvalidity, pending_original_uid, pending_raw)
+			VALUES ('managed-draft', 1, 2, 'Scratch', 7, 2, 2, 'edit', 1, 'Scratch', 7, 1, X'78')`},
+		{"gmail-record", "gmail", `INSERT INTO gmail_drafts
+			(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
+			VALUES ('managed-draft', 1, 'provider-draft', 1, 'msg_1', 'thread_1', 1)`},
+		{"gmail-pending-record", "gmail", `INSERT INTO gmail_drafts
+			(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision,
+			 pending_operation, pending_original_message_id, pending_original_gmail_message_id, pending_raw)
+			VALUES ('managed-draft', 1, 'provider-draft', 2, 'msg_2', 'thread_1', 2, 'edit', 1, 'msg_1', X'78')`},
+	} {
+		for _, sentEvidence := range []string{"none", "label", "origin"} {
+			if evidence.sourceType == "gmail" && sentEvidence == "origin" {
+				continue
+			}
+			t.Run(evidence.name+"/"+sentEvidence, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				srcDB := createTestSourceDB(t, t.TempDir(), 3)
+				src, err := Open(srcDB)
+				require.NoError(err)
+				_, err = src.DB().Exec(`UPDATE sources SET source_type = ?`, evidence.sourceType)
+				require.NoError(err)
+				_, err = src.DB().Exec(evidence.statement)
+				require.NoError(err)
+				// A colliding user label must not turn an ordinary message into a draft.
+				_, err = src.DB().Exec(`INSERT INTO labels(source_id, name, label_type)
+					VALUES (1, 'msgvault-archive:1:draft', 'user')`)
+				require.NoError(err)
+				_, err = src.DB().Exec(`INSERT INTO message_labels(message_id, label_id)
+					SELECT 3, id FROM labels WHERE source_id = 1 AND name = 'msgvault-archive:1:draft'`)
+				require.NoError(err)
+				if sentEvidence == "label" {
+					labels, err := src.EnsureLabelsBatch(1, map[string]LabelInfo{
+						"sent": {Name: "Sent", Type: "system", SystemRole: LabelSystemRoleSent},
+					})
+					require.NoError(err)
+					require.NoError(src.AddMessageLabels(1, []int64{labels["sent"]}))
+				}
+				if sentEvidence == "origin" {
+					require.NoError(src.SetMessageMetadata(1, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
+				}
+				before, err := src.LoadActivityCandidatesByIDContext(t.Context(), []int64{1, 3})
+				require.NoError(err)
+				require.Len(before, 2)
+				require.Equal(sentEvidence == "none", before[0].Unsent)
+				require.True(before[1].Eligible)
+				var originalIsSent sql.NullBool
+				require.NoError(src.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&originalIsSent))
+				require.NoError(src.Close())
+
+				dstDir := filepath.Join(t.TempDir(), "dst")
+				_, err = CopySubset(srcDB, dstDir, 3, false)
+				require.NoError(err)
+				dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+				require.NoError(err)
+				t.Cleanup(func() { _ = dst.Close() })
+				after, err := dst.LoadActivityCandidatesByIDContext(t.Context(), []int64{1, 3})
+				require.NoError(err)
+				require.Len(after, 2)
+				assert.Equal(sentEvidence == "none", after[0].Unsent)
+				assert.Equal(sentEvidence != "none", after[0].Eligible)
+				assert.True(after[1].Eligible, "ordinary messages remain contact activity")
+				var isSent sql.NullBool
+				require.NoError(dst.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&isSent))
+				assert.Equal(originalIsSent, isSent)
+
+				labels, err := dst.EnsureLabelsBatch(1, map[string]LabelInfo{
+					"sent": {Name: "Sent", Type: "system", SystemRole: LabelSystemRoleSent},
+				})
+				require.NoError(err)
+				require.NoError(dst.AddMessageLabels(1, []int64{labels["sent"]}))
+				after, err = dst.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+				require.NoError(err)
+				require.Len(after, 1)
+				assert.False(after[0].Unsent)
+				assert.True(after[0].Eligible, "Sent evidence makes the former draft contact activity")
+				require.NoError(dst.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&isSent))
+				assert.Equal(originalIsSent, isSent)
+			})
+		}
+	}
+}
+
 func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
 	requirements := require.New(t)
 	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
@@ -5445,4 +5550,108 @@ func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
 	_, found, err = destination.GetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(99))
 	requirements.NoError(err)
 	assert.False(t, found, "markers for sources outside the subset stay behind")
+}
+
+func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, evidence string
+		merged, sent             bool
+	}{
+		{name: "flag_only_imap", provider: "imap", evidence: "flag"},
+		{name: "imap_record_only", provider: "imap", evidence: "record"},
+		{name: "gmail_record_only", provider: "gmail", evidence: "record"},
+		{name: "imap_pending_original_only", provider: "imap", evidence: "pending"},
+		{name: "gmail_pending_original_only", provider: "gmail", evidence: "pending"},
+		{name: "record_on_merged_away_source", provider: "imap", evidence: "record", merged: true},
+		{name: "draft_and_sent", provider: "imap", evidence: "flag", sent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+			source, err := Open(sourcePath)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(source.Close()) })
+			_, err = source.DB().Exec(`UPDATE sources SET source_type = ?`, tc.provider)
+			require.NoError(err)
+			currentID := int64(1)
+			if tc.evidence == "pending" {
+				// Only the old snapshot is selected; the newer, undated replacement stays behind.
+				currentID, err = source.UpsertMessage(&Message{
+					SourceID: 1, ConversationID: 2, SourceMessageID: "replacement", MessageType: MessageTypeEmail,
+				})
+				require.NoError(err)
+				require.NotEqual(int64(1), currentID)
+			}
+			switch tc.evidence {
+			case "flag":
+				_, err = source.DB().Exec(`INSERT INTO imap_message_memberships
+					(source_id, mailbox, uidvalidity, uid, message_id, flags)
+					VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`)
+				require.NoError(err)
+			case "record", "pending":
+				if tc.provider == "imap" {
+					_, err = source.DB().Exec(`INSERT INTO imap_drafts
+						(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision)
+						VALUES ('draft', 1, ?, 'Scratch', 7, 2, 2)`, currentID)
+				} else {
+					_, err = source.DB().Exec(`INSERT INTO gmail_drafts
+						(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
+						VALUES ('draft', 1, 'provider-draft', ?, 'replacement', 'thread', 2)`, currentID)
+				}
+				require.NoError(err)
+				if tc.evidence == "pending" {
+					if tc.provider == "imap" {
+						_, err = source.DB().Exec(`UPDATE imap_drafts SET pending_operation = 'edit',
+							pending_original_message_id = 1, pending_original_mailbox = 'Scratch',
+							pending_original_uidvalidity = 7, pending_original_uid = 1, pending_raw = X'01'`)
+					} else {
+						_, err = source.DB().Exec(`UPDATE gmail_drafts SET pending_operation = 'edit',
+							pending_original_message_id = 1, pending_original_gmail_message_id = 'msg_1', pending_raw = X'01'`)
+					}
+					require.NoError(err)
+				}
+			}
+			if tc.sent {
+				labels, err := source.EnsureLabelsBatch(1, map[string]LabelInfo{
+					"sent": {Name: "Sent", Type: "system", SystemRole: LabelSystemRoleSent},
+				})
+				require.NoError(err)
+				require.NoError(source.AddMessageLabels(1, []int64{labels["sent"]}))
+			}
+			if tc.merged {
+				// A retained, discarded draft record permits the account merge.
+				_, err = source.DB().Exec(`UPDATE imap_drafts SET discarded_at = CURRENT_TIMESTAMP`)
+				require.NoError(err)
+				destination, err := source.GetOrCreateSource(tc.provider, "destination@example.com")
+				require.NoError(err)
+				_, err = source.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: 1, IntoSourceID: destination.ID})
+				require.NoError(err)
+				var evidenceSourceID int64
+				require.NoError(source.DB().QueryRow(`SELECT source_id FROM imap_drafts WHERE current_message_id = 1`).Scan(&evidenceSourceID))
+				require.Equal(int64(1), evidenceSourceID, "the only draft evidence belongs to the retired source")
+			}
+			before, err := source.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(before, 1)
+			require.Equal(!tc.sent, before[0].Unsent)
+			require.Equal(tc.sent, before[0].Eligible)
+
+			destinationDir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(sourcePath, destinationDir, 1, false)
+			require.NoError(err, "export must succeed with the selected draft evidence")
+			subset, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(subset.Close()) })
+			after, err := subset.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.Equal(t, !tc.sent, after[0].Unsent, "the selected snapshot must retain its unsent status")
+			assert.Equal(t, tc.sent, after[0].Eligible, "only sent messages may count as contact")
+			if tc.evidence == "pending" {
+				var replacementCount int
+				require.NoError(subset.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE id = ?`, currentID).Scan(&replacementCount))
+				assert.Zero(t, replacementCount, "the original must stay unsent without copying its replacement")
+			}
+		})
+	}
 }

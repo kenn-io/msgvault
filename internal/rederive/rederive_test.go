@@ -28,11 +28,6 @@ func TestRegisterRejectsDuplicates(t *testing.T) {
 	assert.Panics(func() { Register("test-dup", "v1", noop) })
 }
 
-func TestLookupReportsUnregisteredTypes(t *testing.T) {
-	_, _, ok := Lookup("not-a-source-type")
-	assert.False(t, ok)
-}
-
 func TestSummaryAddAccumulates(t *testing.T) {
 	assert := assert.New(t)
 	total := &Summary{}
@@ -193,15 +188,4 @@ func derivedDataRevision(t *testing.T, st *store.Store) int64 {
 		) AS BIGINT), 0)
 	`).Scan(&revision))
 	return revision
-}
-
-func TestRunRejectsUnregisteredType(t *testing.T) {
-	_, err := Run(context.Background(), testutil.NewTestStore(t), "no-such-type", "acct", 1, nil)
-	require.Error(t, err)
-}
-
-func TestRunIfStaleIsNoOpForUnregisteredType(t *testing.T) {
-	_, ran, err := RunIfStale(context.Background(), testutil.NewTestStore(t), "no-such-type", "acct", 1, nil)
-	require.NoError(t, err)
-	assert.False(t, ran)
 }

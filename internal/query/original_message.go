@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -168,6 +169,7 @@ func (e *SQLiteEngine) resolveMessageRecord(ctx context.Context, ref MessageRef,
 		args = append(args, ref.Account)
 	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 	rows, err := e.queryContext(ctx, `
 		SELECT m.id, COALESCE(m.source_message_id, ''), COALESCE(m.conversation_id, 0),
 		       COALESCE(conv.source_conversation_id, ''),
@@ -345,12 +347,13 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		return nil, err
 	}
 
-	live := store.LiveMessagesWhere("m", false)
+	conditions, args := appendSourceFilter([]string{"m.conversation_id = ?", store.LiveMessagesWhere("m", false)}, []any{header.ConversationID}, "m.", nil, q.SourceIDs)
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	where := strings.Join(conditions, " AND ")
 	page := &ThreadPage{MessageRecord: *header, Offset: offset, Messages: []ThreadMessage{}}
 	if !q.All {
 		if err := e.queryRowContext(ctx, `
-			SELECT COUNT(*) FROM messages m WHERE m.conversation_id = ? AND `+live,
-			header.ConversationID).Scan(&page.Total); err != nil {
+			SELECT COUNT(*) FROM messages m WHERE `+where, args...).Scan(&page.Total); err != nil {
 			return nil, fmt.Errorf("count thread messages: %w", err)
 		}
 	}
@@ -363,9 +366,8 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		           WHERE mr.message_id = m.id AND mr.raw_format = 'mime'
 		       ) THEN 1 ELSE 0 END
 		FROM messages m
-		WHERE m.conversation_id = ? AND ` + live + `
+		WHERE ` + where + `
 		ORDER BY CASE WHEN ` + e.dialect.DateOrderExpression("m.sent_at") + ` IS NULL THEN 1 ELSE 0 END, ` + e.dialect.DateOrderExpression("m.sent_at") + `, m.id`
-	args := []any{header.ConversationID}
 	if !q.All {
 		statement += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
@@ -425,6 +427,7 @@ func (e *SQLiteEngine) resolveThreadRecord(ctx context.Context, threadID, accoun
 		args = append(args, account)
 	}
 	filtered, args := appendSourceFilter([]string{conditions}, args, "conv.", nil, sourceIDs)
+	filtered, args = appendSourceFilter(filtered, args, "conv.", nil, sourcescope.IDs(ctx))
 	rows, err := e.queryContext(ctx, `
 		SELECT conv.id, conv.source_conversation_id, s.id, s.identifier, s.source_type, s.last_sync_at
 		FROM conversations conv

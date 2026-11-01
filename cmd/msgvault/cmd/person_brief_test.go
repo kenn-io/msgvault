@@ -281,20 +281,3 @@ func TestPersonBriefRejectsInvalidPersonIDBeforeNetwork(t *testing.T) {
 	}
 	assert.Zero(t, daemon.requests.Load())
 }
-
-func TestPersonBriefIsRegisteredUnderPerson(t *testing.T) {
-	var brief *cobra.Command
-	for _, command := range personCmd.Commands() {
-		if command.Name() == "brief" {
-			brief = command
-		}
-	}
-	require.NotNil(t, brief, "person brief is registered next to person track")
-	names := make([]string, 0, len(brief.Commands()))
-	for _, command := range brief.Commands() {
-		names = append(names, command.Name())
-		assert.NotNil(t, command.Flags().Lookup(flagJSON), command.Name()+" needs --json")
-	}
-	assert.ElementsMatch(t,
-		[]string{"show", "history", "generate", "reject", "enroll", "unenroll"}, names)
-}

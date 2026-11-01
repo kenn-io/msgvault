@@ -862,7 +862,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 					cancel()
 				}()
 			} else {
-				opts.StopAt = time.Now().Add(500 * time.Millisecond)
+				opts.StopAt = time.Now().Add(500 * time.Millisecond) //nolint:kennlint // deadlinetest: the blocked roster request must exhaust the import budget
 			}
 			_, _, _, err = imp.ensureConversation(ctx, 0, source.ID, ch, opts, &ImportSummary{})
 			if test.cancelContext {
@@ -1390,6 +1390,22 @@ func TestThrottledMissingChatProbesDoNotBlockListedChats(t *testing.T) {
 		})
 		var partial *PartialSyncError
 		requirements.ErrorAs(err, &partial, "run %d", run)
+		requirements.Len(sum.FailedChats, 2)
+		var tallied int64
+		var deferred int
+		for _, id := range []string{"!throttled-a:example.test", "!throttled-b:example.test"} {
+			cf := sum.FailedChats[id]
+			requirements.NotNil(cf)
+			assertions.EqualValues(1, cf.FetchErrors)
+			if cf.LastError == "probe deferred after an earlier timeout" {
+				deferred++
+			} else {
+				assertions.NotEmpty(cf.LastError)
+			}
+			tallied += cf.FetchErrors + cf.MediaErrors
+		}
+		assertions.Equal(1, deferred)
+		assertions.Equal(tallied, sum.Errors)
 		assertions.False(sum.Stopped, "run %d: probes must not consume the budget", run)
 		assertions.EqualValues(1, sum.ChatsProcessed, "run %d: the listed chat still syncs", run)
 		mu.Lock()

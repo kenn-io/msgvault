@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestGCAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
@@ -212,9 +213,7 @@ func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64, tes
 	t.Cleanup(func() { cfg = savedCfg })
 	testCtx = testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	require.NoError(err, "OpenForTest")
-	require.NoError(st.InitSchema(), "InitSchema")
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "gc@example.test")
 	require.NoError(err, "GetOrCreateSource")
 	conversationID, err := st.EnsureConversation(source.ID, "gc-thread", "GC")

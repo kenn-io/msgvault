@@ -3,22 +3,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
+import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import KataFileIssueAction from './KataFileIssueAction.svelte';
 
-afterEach(() => vi.restoreAllMocks());
+let stop: (() => void) | undefined;
+afterEach(() => { stop?.(); vi.restoreAllMocks(); });
 
 describe('KataFileIssueAction', () => {
   it('discards dismissed searches and reports an accepted passage search', async () => {
     const requests: Request[] = [];
+    const telemetryRequests: Request[] = [];
     let release!: (response: Response) => void;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request.clone());
       const path = new URL(request.url).pathname;
+      if (path.endsWith('/telemetry/events')) {
+        if (['search_run', 'search_empty'].includes((await request.clone().json()).event)) telemetryRequests.push(request.clone());
+        return Response.json({ status: 'queued' }, { status: 202 });
+      }
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example', message: 'Ready' });
       if (path.endsWith('/documents/search') && new URL(request.url).searchParams.get('q') === 'dismissed') return new Promise<Response>((resolve) => { release = resolve; });
       return Response.json({ results: [] });
     }));
+    startTelemetryReporting(client);
+    stop = () => stopTelemetryReporting(client);
     render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
     await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'dismissed' } });
@@ -27,13 +36,13 @@ describe('KataFileIssueAction', () => {
     await fireEvent.keyDown(window, { key: 'Escape' });
     await act(async () => { release(Response.json({ results: [] })); });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/telemetry/events'))).toHaveLength(0);
+    expect(telemetryRequests).toHaveLength(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));
     await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'missing' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
     await screen.findByText('No indexed passage in this file matches.');
-    await waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/telemetry/events'))).toHaveLength(2));
-    const events = await Promise.all(requests.filter((request) => new URL(request.url).pathname.endsWith('/telemetry/events')).map((request) => request.json()));
+    await waitFor(() => expect(telemetryRequests).toHaveLength(2));
+    const events = await Promise.all(telemetryRequests.map((request) => request.json()));
     expect(events).toEqual(expect.arrayContaining([
       { event: 'search_run', properties: { surface: 'web', search_type: 'text' } },
       { event: 'search_empty', properties: { surface: 'web', search_type: 'text' } },

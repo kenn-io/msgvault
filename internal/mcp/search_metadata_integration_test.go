@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,9 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func seedMetadataSearch(t *testing.T, db *sql.DB) {
@@ -36,15 +39,39 @@ func seedMetadataSearch(t *testing.T, db *sql.DB) {
 	require.NoError(t, err)
 }
 
+// metadataDaemon serves engine over HTTP.
 func metadataDaemon(t *testing.T, engine query.Engine, requests *atomic.Int32) *daemonclient.Engine {
 	t.Helper()
-	server := api.NewServerWithOptions(api.ServerOptions{
+	return metadataDaemonWithPeer(t, engine, requests, nil, "")
+}
+
+func metadataDaemonWithPeer(
+	t *testing.T,
+	engine query.Engine,
+	fastRequests, boundedDeletionRequests *atomic.Int32,
+	remoteAddr string,
+	st ...*store.Store,
+) *daemonclient.Engine {
+	t.Helper()
+	opts := api.ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}},
 		Engine: engine, Logger: slog.New(slog.DiscardHandler),
-	})
+	}
+	if len(st) > 0 {
+		opts.Store = st[0]
+	}
+	server := api.NewServerWithOptions(opts)
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/search/fast" {
-			requests.Add(1)
+		if r.URL.Path == "/api/v1/search/fast" && fastRequests != nil {
+			fastRequests.Add(1)
+		}
+		if r.URL.Path == "/api/v1/messages/gmail-ids" && r.URL.Query().Get("max_results") != "" && boundedDeletionRequests != nil {
+			boundedDeletionRequests.Add(1)
+		}
+		if remoteAddr != "" {
+			request := r.Clone(r.Context())
+			request.RemoteAddr = remoteAddr
+			r = request
 		}
 		server.Router().ServeHTTP(w, r)
 	}))
@@ -146,4 +173,66 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 		want[i] = int64(total - 1000 - i)
 	}
 	assert.Equal(t, want, got, "newest first, each message once")
+}
+
+func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchRequest(t *testing.T) {
+	f := storetest.New(t)
+	st := f.Store
+	persist := func(key, subject, body string) {
+		conversation, err := st.EnsureConversation(f.Source.ID, key, "Synthetic selection")
+		require.NoError(t, err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: f.Source.ID, ConversationID: conversation, SourceMessageID: key,
+				MessageType: "email", Subject: sql.NullString{String: subject, Valid: true},
+			},
+			BodyText: sql.NullString{String: body, Valid: true},
+			FTS:      &store.FTSDoc{Subject: subject, Body: body},
+			RawMIME:  []byte("Subject: " + subject + "\r\n\r\n" + body),
+		})
+		require.NoError(t, err)
+	}
+	var metadataIDs, bodyIDs []string
+	for i := range 600 {
+		id := fmt.Sprintf("meta-%03d", i)
+		persist(id, "selectionmarker", "filler")
+		metadataIDs = append(metadataIDs, id)
+	}
+	for i := range 150 {
+		id := fmt.Sprintf("body-%03d", i)
+		persist(id, "plain", "bodyneedle")
+		bodyIDs = append(bodyIDs, id)
+	}
+	var requests atomic.Int32
+	var boundedRequests atomic.Int32
+	daemon := metadataDaemonWithPeer(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests,
+		&boundedRequests, "203.0.113.9:4242", st)
+
+	stage := func(t *testing.T, args map[string]any) (*captureDeletionManifestSaver, stageDeletionResponse) {
+		t.Helper()
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: daemon, manifestSaver: saver}
+		result := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, args)
+		require.NotNil(t, saver.manifest)
+		return saver, result
+	}
+
+	t.Run("metadata matches beyond the 500 page cap", func(t *testing.T) {
+		assert := assert.New(t)
+		before := boundedRequests.Load()
+		saver, result := stage(t, map[string]any{"query": "subject:selectionmarker"})
+		assert.ElementsMatch(metadataIDs, saver.manifest.GmailIDs)
+		assert.Equal(600, result.MessageCount)
+		assert.Equal(before+1, boundedRequests.Load())
+		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
+	})
+	t.Run("full-text fallback beyond the 100 page cap", func(t *testing.T) {
+		assert := assert.New(t)
+		before := boundedRequests.Load()
+		saver, result := stage(t, map[string]any{"query": "bodyneedle"})
+		assert.ElementsMatch(bodyIDs, saver.manifest.GmailIDs)
+		assert.Equal(150, result.MessageCount)
+		assert.Equal(before+2, boundedRequests.Load())
+		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
+	})
 }

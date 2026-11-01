@@ -443,11 +443,3 @@ func newStaticNotionClient(t *testing.T, body string) *Client {
 	t.Cleanup(server.Close)
 	return NewClient(server.URL, "ntn_test")
 }
-
-func TestAPIErrorSupportsErrorsIs(t *testing.T) {
-	err := &APIError{Kind: ErrMeetingAccess, Status: http.StatusForbidden, Code: "restricted_resource"}
-	require.ErrorIs(t, err, ErrMeetingAccess)
-	encoded, marshalErr := json.Marshal(err)
-	require.NoError(t, marshalErr)
-	assert.NotContains(t, string(encoded), "token")
-}

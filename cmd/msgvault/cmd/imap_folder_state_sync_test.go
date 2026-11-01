@@ -1,21 +1,131 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	imapapi "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestIMAPSyncFolderFilter(t *testing.T) {
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Archive": 1})
+	const identifier = "imap://user@example.com"
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
+	require.NoError(t, err)
+	cfg := &config.Config{Sync: config.SyncConfig{IMAPSkipFolders: map[string][]string{identifier: {" trash "}}}}
+	for _, tc := range []struct {
+		name, account string
+		folders, skip []string
+		want          []string
+	}{
+		{"saved", identifier, nil, nil, []string{"INBOX|1", "Archive|1"}},
+		{"blank include keeps saved", identifier, []string{" \t "}, nil, []string{"INBOX|1", "Archive|1"}},
+		{"blank exclude keeps saved", identifier, nil, []string{" \t "}, []string{"INBOX|1", "Archive|1"}},
+		{"include overrides saved", identifier, []string{"Trash"}, nil, []string{"Trash|1"}},
+		{"exclude overrides saved", identifier, nil, []string{"Archive"}, []string{"INBOX|1", "Trash|1"}},
+		{"other account", "imap://other@example.com", nil, nil, []string{"INBOX|1", "Trash|1", "Archive|1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filter := imapSyncFolderFilter(st, tc.account, testInvocationWithConfig(cfg), tc.folders, tc.skip)
+			client := listedIMAPClient(t, addr, filter)
+			resp, err := client.ListMessages(t.Context(), "", "")
+			require.NoError(t, err)
+			var ids []string
+			for _, msg := range resp.Messages {
+				ids = append(ids, msg.ID)
+			}
+			assert.ElementsMatch(t, tc.want, ids)
+		})
+	}
+}
+
+func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1})
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(err)
+	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+	require.NoError(err)
+	configJSON, err := imapCfg.ToJSON()
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
+	src, err = st.GetSourceByID(src.ID)
+	require.NoError(err)
+	home := t.TempDir()
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
+		IMAPSkipFolders: map[string][]string{src.Identifier: {"Trash", "Junk"}, "user@example.com": {"Trash"}},
+	}}
+	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	var logs bytes.Buffer
+	invocationFromContext(ctx).logger = slog.New(slog.NewTextHandler(&logs, nil))
+	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+	require.NoError(err)
+	assert.Zero(summary.Errors)
+	_, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+	require.NoError(err)
+	rows, err := st.DB().Query(st.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ?`), src.ID)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"INBOX|1"}, ids)
+	assert.Equal(1, strings.Count(logs.String(), "IMAP folder exclusions match no stored account"))
+	assert.Contains(logs.String(), "account=user@example.com")
+}
+
+func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://user@example.com")
+	require.NoError(err)
+	first, _ := syncedIMAPClient(t, addr)
+	seedObservedIMAPMessages(t, st, src, first)
+	require.NoError(saveIMAPFolderStates(t.Context(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
+	require.NoError(first.Close())
+	before, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ? AND source_message_id = 'Trash|1'`), src.ID)
+	require.NoError(err)
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapapi.UID(1))
+	testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
+	testutil.AppendIMAPMessage(t, user, "INBOX")
+	opts := append(imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger()), imaplib.WithFolderFilter(nil, []string{"Trash"}))
+	second, labels := syncedIMAPClient(t, addr, opts...)
+	require.Len(labels, 1, "the changed selected mailbox was listed again")
+	seedObservedIMAPMessages(t, st, src, second)
+	require.NoError(saveIMAPFolderStates(t.Context(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
+	after, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	assert.Equal(before, after, "filtered runs retain prior cursors and known UIDs")
+	assert.Equal(2, imapMembershipRowCount(t, st, src.ID))
+	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
+}
 
 // listedIMAPClient returns an IMAP client that has enumerated the test
 // server, so it holds observed folder states ready for persistence.

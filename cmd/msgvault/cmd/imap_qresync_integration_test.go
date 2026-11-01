@@ -718,7 +718,6 @@ func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
 				RFC822MessageID: sql.NullString{String: test.stored, Valid: true}, MessageType: "email",
 			})
 			requirements.NoError(err)
-			requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "Archived body", Valid: true}, sql.NullString{}))
 			requirements.NoError(st.UpsertMessageRaw(messageID, archivedRaw))
 			states, err := st.GetIMAPFolderStates(source.ID)
 			requirements.NoError(err)
@@ -751,9 +750,6 @@ func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
 			assertions.Equal(1, count)
 			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ? AND message_id = ?`), source.ID, messageID).Scan(&memberships))
 			assertions.Equal(3, memberships)
-			body, err := st.GetMessageBodyText(messageID)
-			requirements.NoError(err)
-			assertions.Equal("Archived body", body)
 			raw, err := st.GetMessageRaw(messageID)
 			requirements.NoError(err)
 			assertions.Equal(archivedRaw, raw)

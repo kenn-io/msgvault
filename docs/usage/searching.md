@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-12"
+last_edited: "2026-10-19"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -14,6 +14,7 @@ to read a message. On newer `main` builds, `show` is an alias; use
 |---|---|
 | Words in a message or its subject | `msgvault search "quarterly report"` |
 | A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
+| Text Docbank extracted from a mirrored attachment, on unreleased builds | `msgvault media search "quartz"` |
 | Words or topics inside an attached document | [Document attachment search](/docs/usage/document-indexing/#search-and-inspect-status) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
@@ -55,8 +56,13 @@ msgvault search <query>
 
 !!! note
     The full-text search index (FTS5) is populated automatically during sync.
-    If an older archive needs an index backfill, msgvault checks and rebuilds
-    the index in the background. Search uses the current index and warns about
+    If an older archive needs an index backfill, msgvault fills missing entries
+    in the background and keeps completed work across restarts. Indexed messages
+    stay searchable. Automatic backfill doesn't refresh stale content in entries
+    it considers complete or repair malformed SQLite search tables. Run
+    `msgvault rebuild-fts` to repair these problems by discarding and rebuilding
+    the full index.
+    Search uses the current index and warns about
     incomplete results only for a known gap or rebuild, including a queued
     rebuild. A completeness check alone stays quiet. See the
     [CLI reference](../cli-reference.md#search) for details.
@@ -181,7 +187,7 @@ Quote a literal pipe as `"a | b"`, `'a | b'`, `subject:"a|b"` or `label:"a|b"`. 
 
 Pipe OR works with CLI `--mode=fts`, Web Explore full-text search, TUI fast and deep search, MCP `search_metadata`, HTTP message search and aggregates, and search-based deletion staging. Texts, including TUI Texts mode and the `/api/v1/text/*` endpoints, keep pipes as literal text. Vector, hybrid, semantic and exact body-only search read pipes as text.
 
-MCP `stage_deletion` searches an OR query with text terms through full-text search once, so body and metadata matches share date ordering and one limit. Other queries try metadata first and use full-text search when metadata finds nothing and the query has text terms. Local MCP staging accepts up to 100,000 matches. Daemon-backed MCP staging is capped at 500 metadata matches or 100 full-text matches per call. CLI `stage-delete` refuses candidate sets above 10,000 messages.
+See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for search modes, supported sources, skipped matches, and selection limits.
 
 Message aggregates and general statistics default each alternative to email unless that alternative sets `message_type:` or `account:`. For example, `invoice | message_type:sms subject:receipt` counts email invoices and SMS receipts. Explicit message-type or account scopes apply to every alternative; search-result statistics use the search's message-type scope.
 
@@ -335,7 +341,13 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty result proves no match only with complete coverage and `partial=false`. Search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Everything search](../web-ui.md#recording-matches).
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Everything search](../web-ui.md#recording-matches).
+
+## Search mirrored attachment text
+
+On unreleased builds, media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+
+Use `documents search` for msgvault's local document index and `media search` for text Docbank has extracted from mirrored attachments.
 
 ## Read matches and conversations
 
