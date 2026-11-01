@@ -119,7 +119,7 @@ describe('PersonDetail', () => {
     expect(screen.getAllByRole('button', { name: 'More actions' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Rename person' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename person' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
     expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
   });
 
