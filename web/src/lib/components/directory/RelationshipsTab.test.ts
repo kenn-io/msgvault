@@ -71,6 +71,7 @@ describe('RelationshipsTab', () => {
 
   it('renders the shared type catalog without person connections and keeps system types read-only', () => {
     const { client, controller } = controllerWith(vi.fn());
+    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner')];
     controller.relationshipTypes = [
       relationshipType({ ownership: 'system', is_deletable: false }),
       relationshipType({ id: 32, slug: 'custom', forward_label: 'supports', reverse_label: 'is supported by' })
@@ -79,6 +80,7 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
     expect(screen.queryByRole('heading', { name: 'Connections' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add connection' })).toBeNull();
+    expect(screen.queryByText('Synthetic Learner · mentors')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete mentor relationship type' })).toBeNull();
     expect(screen.getByText('Built in')).toBeDefined();
