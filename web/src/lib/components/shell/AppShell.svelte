@@ -1285,7 +1285,6 @@
         <PeopleWorkspace
           onConfigureVisualSearch={openVisualAttachmentSettings}
           directory={directoryController}
-          operationLanes={operationsController.snapshot.statusLanes}
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
           urlState={exploreState.current}

@@ -2,7 +2,6 @@
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
-  import type { OperationStatusLane } from '../../operations/models';
   import PersonDetails from './PersonDetails.svelte';
   import PersonRecordActions from '../directory/PersonRecordActions.svelte';
   import type { MeetingRef } from '../../api/generated/models';
@@ -17,13 +16,13 @@
   import PersonMessages from './PersonMessages.svelte';
   import DomainCalendar from './DomainCalendar.svelte';
 
-  let { client, directory, operationLanes = [], onSaved, onRecordDeleted, onSplitCommitted, onOpenCardDAVConflict, onOpenCardDAVSettings, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
+  let { client, directory, onSaved, onRecordDeleted, onSplitCommitted, onOpenCardDAVConflict, onOpenCardDAVSettings, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange,
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
-    { client: APIClient; directory: DirectoryController; operationLanes?: readonly OperationStatusLane[]; onSaved?: (id: number) => void; onRecordDeleted?: () => void; onSplitCommitted?: (context: import('../../directory/person-merge-history-controller.svelte').PersonSplitCommittedContext) => void | Promise<void>; onOpenCardDAVConflict?: (id: number) => void; onOpenCardDAVSettings?: () => void; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
+    { client: APIClient; directory: DirectoryController; onSaved?: (id: number) => void; onRecordDeleted?: () => void; onSplitCommitted?: (context: import('../../directory/person-merge-history-controller.svelte').PersonSplitCommittedContext) => void | Promise<void>; onOpenCardDAVConflict?: (id: number) => void; onOpenCardDAVSettings?: () => void; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
       onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
@@ -77,7 +76,7 @@
   {:else if durablePersonID !== null && (!detail || controller.detailMissing)}
     <PersonHeader {name} {onBack} onOpenDetails={() => details = true}>{#snippet actions()}{#if savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}{/if}{/snippet}</PersonHeader>
     <div class="tabs"><SegmentedControl ariaLabel="Person tabs" value={filesOpen && !details ? 'files' : 'details'} options={[{ value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]} onchange={(value) => { details = value === 'details'; onFilesToggle(value === 'files'); }} /></div>
-    {#if filesOpen && !details}{@render files()}{:else}<div class="details"><PersonDetails {client} {directory} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} {operationLanes} /></div>{/if}
+    {#if filesOpen && !details}{@render files()}{:else}<div class="details"><PersonDetails {client} {directory} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} /></div>{/if}
   {:else if controller.detailMissing}
     <EmptyState title="Person or domain not found" />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
@@ -114,8 +113,8 @@
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
       <div class="details" hidden={!details}>
-        {#if profileID !== null}{#key profileID}<PersonDetails {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} {operationLanes} />{/key}{/if}
-        <RelationshipHeader showDirectoryAction={false} {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
+        {#if profileID !== null}{#key profileID}<PersonDetails {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}{/if}
+        <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
           capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
           onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
       </div>
