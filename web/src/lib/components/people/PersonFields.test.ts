@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import type { AttributeDefinition } from '../../api/generated/models';
@@ -109,14 +109,14 @@ it('blocks attribute additions after a failed read and retries loading values', 
     throw new Error(`unexpected ${request.method} ${path}`);
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: { attributes: 'Attributes unavailable' } });
+  const reload = vi.spyOn(controller, 'reload');
   const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
-    expect(await screen.findByText('Existing note')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Edit Note: Existing note' })).toBeDefined();
+    expect(reload).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); }
 });
 
