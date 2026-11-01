@@ -180,7 +180,10 @@ test('keyboard publication ambiguity locks mutation, retries GET only, and repea
     workspace: 'directory', directoryPersonID: 42
   }))}`);
 
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
+  await page.getByRole('button', { name: 'More actions', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: 'Publish to address book', exact: true }).focus();
+  await page.keyboard.press('Enter');
   const publish = page.getByRole('switch', { name: 'Publish person to CardDAV' });
   await expect(publish).toBeVisible();
   await expect(page.getByText(/^Attributes:/)).toHaveCount(0);
@@ -219,7 +222,10 @@ test('keyboard publication ambiguity locks mutation, retries GET only, and repea
 
   await page.goBack();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
+  await page.getByRole('button', { name: 'More actions', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: 'Publish to address book', exact: true }).focus();
+  await page.keyboard.press('Enter');
   const repeatedHandoff = page.getByRole('button', { name: 'Review CardDAV conflict 42' });
   await repeatedHandoff.focus();
   await page.keyboard.press('Enter');

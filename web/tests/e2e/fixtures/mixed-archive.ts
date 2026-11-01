@@ -715,6 +715,12 @@ export async function installDirectoryReviewArchive(page: Page) {
   let factCatalogMode: 'ready' | 'deferred' | 'failed' | 'malformed' = 'ready';
   let factCatalogGate: Promise<void> | null = null;
 
+  await page.route(/\/api\/v1\/participants\/(?:701|702|901)$/, (route) => {
+    const id = Number(new URL(route.request().url()).pathname.split('/').at(-1));
+    const profile = [...people.values()].find(person => person.participant_ids?.includes(id));
+    return route.fulfill({ json: { ...archivePerson, id, display_label: profile?.display_name, display_name: profile?.display_name, identifiers: [], profile } });
+  });
+
   await page.route(/\/api\/v1\/person-relationship-reviews(?:\?.*)?$/, (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -1150,7 +1156,7 @@ export async function installDirectoryReviewArchive(page: Page) {
     if (suffix === '' && request.method() === 'GET') {
       return route.fulfill({ headers: { ETag: `"person-${person.id}-r${person.revision}"` }, json: person });
     }
-    if (suffix === '/profile') {
+    if (suffix === '/profile' || suffix === '/profile/history') {
       return route.fulfill({
         headers: { ETag: `"person-${person.id}-r${person.revision}"` },
         json: {
@@ -1161,6 +1167,7 @@ export async function installDirectoryReviewArchive(page: Page) {
           dates: [],
           categories: [],
           media: [],
+          ...(suffix === '/profile/history' ? { observations: [] } : {}),
         },
       });
     }

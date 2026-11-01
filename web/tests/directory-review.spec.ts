@@ -210,7 +210,10 @@ for (const profile of [
 
     await expect(page).toHaveURL(new RegExp(`directoryPersonID%22%3A${profile.id}`));
     await expect(page.getByRole('heading', { name: profile.name })).toBeVisible();
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('menuitem', { name: 'History', exact: true }).focus();
+    await page.keyboard.press('Enter');
     await expect(page.getByText('No merge history on this page.')).toBeVisible();
     await expect(page.getByRole('table', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
@@ -240,7 +243,10 @@ for (const completionTarget of [
   await expect(page.getByRole('heading', { name: 'Synthetic One' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'Operation status' }))
     .toContainText('People merged into Synthetic One. Identity cache ready.');
-  const directoryPeople = page.getByRole('grid', { name: 'Directory people' });
+  await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('button', { name: 'Saved', exact: true }).click();
+  await page.keyboard.press('Escape');
+  const directoryPeople = page.getByRole('grid', { name: 'People results' });
   await expect(directoryPeople).toContainText('Synthetic One');
   await expect(directoryPeople).not.toContainText('Synthetic Two');
   await expect(directoryPeople).not.toContainText('Synthetic Restored');
@@ -254,7 +260,10 @@ for (const completionTarget of [
     .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
 
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
+  await page.getByRole('button', { name: 'More actions', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: 'History', exact: true }).focus();
+  await page.keyboard.press('Enter');
   const history = page.getByRole('table', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(0);
@@ -305,13 +314,18 @@ for (const completionTarget of [
   await completionAction.focus();
   await expect(completionAction).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.requests.filter((request) =>
+  if (completionTarget.id !== 7) await expect.poll(() => fixture.requests.filter((request) =>
     request.method === 'GET' && request.path === `/api/v1/people/${completionTarget.id}`).length)
     .toBe(personGETsBefore + 1);
+  await expect(page.getByRole('dialog', { name: 'Split merged profile', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Profile history', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: completionTarget.heading })).toBeVisible();
 
   if (completionTarget.id === 7) {
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('menuitem', { name: 'History', exact: true }).focus();
+    await page.keyboard.press('Enter');
     const updatedHistory = page.getByRole('table', { name: 'Person merge history' });
     await expect(updatedHistory).toBeVisible();
     await updatedHistory.getByRole('button', { name: 'Inspect merge 41' }).focus();
