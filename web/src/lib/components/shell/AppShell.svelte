@@ -7,6 +7,7 @@
     CommandPalette,
     FlashBanner,
     showFlash,
+    dismissFlash,
     getThemeMode,
     IconButton,
     appShortcuts,
@@ -89,7 +90,6 @@
   import type { JobTarget } from '../../jobs/jobs';
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
-  import UndoToast from '../common/UndoToast.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
 
   const media = mediaReadiness();
@@ -395,6 +395,43 @@
   let drawerOpen = $state(false);
   let drawerOpenerHost = $state<HTMLElement>();
   let shellRoot = $state<HTMLElement>();
+  let flashRoot = $state<HTMLElement>();
+  $effect(() => {
+    const view = shellData.pending;
+    if (view) return untrack(() => stageUndo(`Deleted ${view.name}`, () => undoViewDeletion(view), () => void flashViewError(shellData.expireDelete())));
+  });
+  $effect(() => {
+    const queued = directoryReviewController.pending;
+    if (queued) return untrack(() => stageUndo(queued.decision === 'accept' ? 'Merge queued' : 'Keep separate queued', () => undoDuplicateDecision(queued.candidate.id), () => void directoryReviewController.settleDecision()));
+  });
+
+  /** The flash only offers Undo; the timer and pagehide make the staged change final. */
+  function stageUndo(message: string, undo: () => Promise<void>, expire: () => void): () => void {
+    const flashID = showFlash(message, { durationMs: 8000, action: { label: 'Undo', onclick: () => void undo() } });
+    const timer = setTimeout(expire, 8000);
+    window.addEventListener('pagehide', expire);
+    void tick().then(() => {
+      if (document.activeElement === document.body) [...flashRoot?.querySelectorAll<HTMLElement>('.kit-flash-banner__action') ?? []].at(-1)?.focus();
+    });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', expire);
+      dismissFlash(flashID);
+    };
+  }
+
+  async function undoViewDeletion(view: SavedView): Promise<void> {
+    await shellData.undoDelete();
+    await tick();
+    shellRoot?.querySelector<HTMLElement>(`[data-saved-view-id="${view.id}"] .saved-view__open`)?.focus();
+  }
+
+  async function undoDuplicateDecision(candidateID: number): Promise<void> {
+    directoryReviewController.undoDecision();
+    await tick();
+    document.getElementById(`duplicate-${candidateID}`)?.focus();
+  }
+
   let sidebarCollapsed = $state(readSidebarCollapsed());
 
   function readSidebarCollapsed(): boolean {
@@ -695,9 +732,9 @@
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
+    if (exploreState.current.workspace === 'settings' && document.activeElement?.closest('.app-main')) return;
     const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
-      ? focusableResultsGrid()
-      : null;
+      ? focusableResultsGrid() : null;
     (grid ?? navigationFocusTarget())?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
@@ -1512,7 +1549,7 @@
     onclose={closeRunHistory} onNavigate={openOperationAuthority} onAnnounce={announceOperation}
     onConfigure={openVisualAttachmentSettings} />
 {/if}
-<FlashBanner />
+<div bind:this={flashRoot}><FlashBanner /></div>
 {#if directoryReviewController.mergeRequired}
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
@@ -1520,12 +1557,7 @@
     onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
-{#if directoryReviewController.pending}
-  {#key directoryReviewController.pending.candidate.id}<UndoToast message={directoryReviewController.pending.decision === 'accept' ? 'Merge queued' : 'Keep separate queued'} onUndo={async () => { const id = directoryReviewController.pending?.candidate.id; directoryReviewController.undoDecision(); await tick(); document.getElementById(`duplicate-${id}`)?.focus(); }} onExpire={() => void directoryReviewController.settleDecision()} />{/key}
-{/if}
-{#if shellData.pending}
-  {#key shellData.pending.id}<UndoToast message={`Deleted ${shellData.pending.name}`} onUndo={() => shellData.undoDelete()} onExpire={() => void flashViewError(shellData.expireDelete())} />{/key}
-{/if}
+
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 

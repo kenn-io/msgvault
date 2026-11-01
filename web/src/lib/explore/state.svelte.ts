@@ -143,6 +143,10 @@ const OPERATION_FILTER_FIELDS = [
   'operationStartedBefore'
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 
+const OPERATION_HISTORY_FIELDS: ReadonlySet<keyof ExploreURLState> = new Set([
+  ...OPERATION_FILTER_FIELDS, 'operationHistory', 'operationRunID', 'operationStatus'
+]);
+
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
   workspace: 'everything',
@@ -642,6 +646,21 @@ export class ExploreState {
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
+    if ((this.current.operationHistory || next.operationHistory) && (Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
+        OPERATION_HISTORY_FIELDS.has(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
+      this.current.operationHistory = next.operationHistory;
+      this.current.operationLane = next.operationLane;
+      this.current.operationKind = next.operationKind;
+      this.current.operationState = next.operationState;
+      this.current.operationStartedFrom = next.operationStartedFrom;
+      this.current.operationStartedBefore = next.operationStartedBefore;
+      this.current.operationRunID = next.operationRunID;
+      this.current.operationStatus = next.operationStatus;
+      this.historyIndex = nextIndex;
+      this.committed = normalize(this.current);
+      this.cancelHeldLeave?.();
+      return;
+    }
     const commit = () => this.commitPopped(next, nextIndex);
     if (this.current.workspace === 'settings' && next.workspace !== 'settings' && this.holdPop(nextIndex - this.historyIndex, commit)) return;
     commit();

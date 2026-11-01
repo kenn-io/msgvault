@@ -14,7 +14,7 @@ export class JobsStore {
   items = $derived.by(() => collectJobs(this.#sources, this.#kinds));
   /** Both source and operation status have answered. */
   loaded = $derived.by(() => this.#sourceError !== undefined && (this.#operations.snapshot.statusReadable || Boolean(this.#operations.snapshot.statusError)));
-  error = $derived.by(() => this.loaded && (this.#sourceError || !this.#operations.snapshot.statusReadable || this.#operations.snapshot.statusError ||
+  error = $derived.by(() => this.loaded && (this.#sourceError || this.#operations.snapshot.statusError ||
     this.#operations.snapshot.statusLanes.some(lane => lane.kinds.some(kind => kind.configured && kind.history_availability === 'unavailable')))
     ? 'Unable to refresh all job status.' : undefined);
   health = $derived.by<JobsHealth>(() => {

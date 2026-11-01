@@ -116,7 +116,7 @@
   }
 </script>
 
-<div class="saved-view" class:saved-view--open={menuOpen} bind:this={row}>
+<div class="saved-view" data-saved-view-id={view.id} class:saved-view--open={menuOpen} bind:this={row}>
   {#if renaming}
     <div class="saved-view__rename">
       <TextInput

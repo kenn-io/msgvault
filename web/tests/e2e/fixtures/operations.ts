@@ -10,6 +10,7 @@ import type {
   OperationRunSummaryKind as OperationKind,
   OperationRunSummaryLane as OperationLane,
   OperationStatusResponse,
+  SyncResult,
 } from '../../../src/lib/api/generated/models';
 type OperationState = OperationRunSummary['state'];
 
@@ -29,21 +30,15 @@ const firstPage = [sourceRun, cardDAVRun, documentRun, visualRun];
 const secondPage = [sweepRun];
 
 export type InstalledOperations = {
-  actionRequests: OperationAction[];
-  statusRequests: string[];
   readonly operationStatusReads: number;
-  conflictNextCardDAV(): void;
   failNextHistory(): void;
   holdNextOperationStatus(): () => void;
   setOperationConfigured(kind: 'document_extraction' | 'visual_embedding', configured: boolean): void;
 };
 
 export async function installOperations(page: Page): Promise<InstalledOperations> {
-  const actionRequests: OperationAction[] = [];
-  const statusRequests: string[] = [];
   let operationStatusReads = 0;
   let statusGate: Promise<void> | undefined;
-  let cardDAVConflict = false;
   let documentConfigured = true;
   let historyFailure = false;
   let visualConfigured = true;
@@ -76,17 +71,14 @@ export async function installOperations(page: Page): Promise<InstalledOperations
   await page.route('**/api/v1/carddav/conflicts**', (route) => route.fulfill({ json: { conflicts: [] } }));
   await page.route('**/api/v1/carddav/runs**', (route) => route.fulfill({ json: { runs: [] } }));
   await page.route('**/api/v1/documents/status/current', (route) => {
-    statusRequests.push('/api/v1/documents/status/current');
     return route.fulfill({ json: documentStatus });
   });
   await page.route('**/api/v1/documents/vectors/status', (route) => {
-    statusRequests.push('/api/v1/documents/vectors/status');
     return route.fulfill({ json: {
       enabled: true, configured: true, status: { coverage: { ready: 7, required: 9 } }
     } });
   });
   await page.route('**/api/v1/multimodal/status', (route) => {
-    statusRequests.push('/api/v1/multimodal/status');
     return route.fulfill({ json: {
       current: 8, eligible: 10, retryable: 1, terminal: 0, unavailable: 1,
       active_leases: 0, journal_lag: 2, reconciliation_complete: false
@@ -128,29 +120,19 @@ export async function installOperations(page: Page): Promise<InstalledOperations
   });
 
   await page.route('**/api/v1/carddav/sync', (route) => {
-    actionRequests.push('carddav_sync');
-    if (cardDAVConflict) {
-      cardDAVConflict = false;
-      return fulfillOperation(route, {
-        error: 'operation_conflict', message: 'The operation state changed.'
-      }, 409);
-    }
-    return fulfillOperation(route, { status: 'accepted' }, 202);
+    return fulfillOperation(route, {
+      books: 0, created: 0, updated: 0, removed: 0, status: 'succeeded'
+    } satisfies SyncResult);
   });
   await page.route('**/api/v1/multimodal/build', (route) => {
-    actionRequests.push('visual_build');
     return fulfillOperation(route, { status: 'accepted' }, 202);
   });
   await page.route('**/api/v1/multimodal/run', (route) => {
-    actionRequests.push('visual_resume');
     return fulfillOperation(route, { status: 'accepted' }, 202);
   });
 
   return {
-    actionRequests,
-    statusRequests,
     get operationStatusReads(): number { return operationStatusReads; },
-    conflictNextCardDAV(): void { cardDAVConflict = true; },
     failNextHistory(): void { historyFailure = true; },
     holdNextOperationStatus(): () => void {
       let release!: () => void;
