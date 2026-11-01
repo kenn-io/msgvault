@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "set CLI test home:", err)
 		os.Exit(1)
 	}
+	localEmbeddingsDir = func() (string, error) { return filepath.Join(testHome, "embeddings"), nil }
 	// Tests that run serve must never launch a real daemon.
 	startServeBackgroundProcessForRun = func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return nil, errors.New("test reached the real background daemon launcher; stub it with stubStartServeBackgroundProcess or disable daemon auto-start")
