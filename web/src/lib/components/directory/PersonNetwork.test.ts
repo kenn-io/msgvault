@@ -91,7 +91,13 @@ describe('PersonNetwork', () => {
   });
 
   it('draws every typed relationship and employment with its relation label and makes both entity kinds actionable', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async input => Response.json(connected(Number(new URL(requestOf(input).url).searchParams.get('depth'))))));
+    const projection = connected();
+    projection.nodes.push({ id: 'person:10', kind: 'person', entity_id: 10, label: 'Third Person', hop: 2 });
+    projection.edges.push(
+      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' },
+      { id: 'relationship:34', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:9', relationship_type_slug: 'sibling', label: 'sibling of' },
+    );
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => Response.json(Number(new URL(requestOf(input).url).searchParams.get('depth')) === 1 ? connected(1) : projection)));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
@@ -110,32 +116,16 @@ describe('PersonNetwork', () => {
     const relationOf = (button: HTMLElement) => button.parentElement?.querySelector('.relation')?.textContent;
     expect(relationOf(peer)).toBe('Selected Person works with');
     expect(relationOf(screen.getByRole('button', { name: 'Open organization Shared Organization' }))).toBe('Engineer');
-    expect(relationOf(screen.getByRole('button', { name: 'Open person Second Hop Person' }))).toBe('Curated Peer mentors');
+    expect(relationOf(screen.getByRole('button', { name: 'Open person Second Hop Person' }))).toBe('Curated Peer mentors, Third Person sibling of');
+    expect(relationOf(screen.getByRole('button', { name: 'Open person Third Person' }))).toBe('mentors Curated Peer');
+    const links = within(screen.getByRole('list', { name: 'Network connections' })).getAllByRole('listitem').map(item => item.textContent);
+    expect(links).toContain('Third Person sibling of Second Hop Person');
+    expect(links).toHaveLength(5);
 
     await fireEvent.click(peer);
     await fireEvent.click(screen.getByRole('button', { name: 'Open organization Shared Organization' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(onOpenOrganization).toHaveBeenCalledWith(21);
-  });
-
-  it('names both ends of a link, in either direction and between two people at the same distance', async () => {
-    const projection = connected();
-    projection.nodes.push({ id: 'person:10', kind: 'person', entity_id: 10, label: 'Third Person', hop: 2 });
-    projection.edges.push(
-      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' },
-      { id: 'relationship:34', kind: 'relationship', source_node_id: 'person:10', target_node_id: 'person:9', relationship_type_slug: 'sibling', label: 'sibling of' },
-    );
-    const controller = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async input => Response.json(Number(new URL(requestOf(input).url).searchParams.get('depth')) === 1 ? connected(1) : projection))), 7);
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    const relationOf = async (name: string) => (await screen.findByRole('button', { name })).parentElement?.querySelector('.relation')?.textContent;
-    // Curated Peer mentors Second Hop Person; Third Person mentors Curated Peer. The same verb reads differently by direction.
-    expect(await relationOf('Open person Second Hop Person')).toBe('Curated Peer mentors, Third Person sibling of');
-    expect(await relationOf('Open person Third Person')).toBe('mentors Curated Peer');
-    const links = within(screen.getByRole('list', { name: 'Network connections' })).getAllByRole('listitem').map((item) => item.textContent);
-    expect(links).toContain('Third Person sibling of Second Hop Person');
-    expect(links).toHaveLength(5);
   });
 
   it('sends exact depth and ended-data queries and retains the last projection through loading, error, and retry', async () => {
