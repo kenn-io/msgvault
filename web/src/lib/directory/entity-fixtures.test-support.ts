@@ -1,3 +1,4 @@
+import type { DirectoryPersonSummary } from '../api/generated/models/directoryPersonSummary';
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
 
@@ -90,4 +91,9 @@ export function mergeResult(survivor: import('../api/generated/models').Person, 
     person: survivor,
     review_candidates: [],
   };
+}
+
+export function directoryPerson(id: number, overrides: Partial<DirectoryPersonSummary> = {}): DirectoryPersonSummary {
+  const detail = person(id);
+  return { id, revision: detail.revision, display_name: detail.display_name, categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: detail.vcard_uid, ...overrides };
 }

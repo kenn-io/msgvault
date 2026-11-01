@@ -1,4 +1,4 @@
-import { person, mergeResult } from '../../directory/entity-fixtures.test-support';
+import { directoryPerson, person, mergeResult } from '../../directory/entity-fixtures.test-support';
 import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
@@ -2929,7 +2929,7 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [profile(7)] : [profile(7), profile(9)] });
+    if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [directoryPerson(7)] : [directoryPerson(7), directoryPerson(9)] });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
     if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
@@ -3004,14 +3004,14 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it.each([false, true])('refreshes Saved rows when browser Back restores unchanged filters, remount=%s', async remount => {
+it('refreshes Saved rows when browser Back restores unchanged filters', async () => {
   let synced = false;
-  const saved = () => ({ ...person(7, 1, []), display_name: synced ? 'After sync' : 'Before sync', organizations: [], categories: [], contact_state: 'active' });
+  const saved = () => directoryPerson(7, { revision: 1, display_name: synced ? 'After sync' : 'Before sync' });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path.endsWith('/people/directory')) return Response.json({ people: [saved()] });
-    if (path.endsWith('/people/7')) return Response.json(saved(), { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/people/7')) return Response.json(person(7, 1, []), { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
@@ -3021,14 +3021,8 @@ it.each([false, true])('refreshes Saved rows when browser Back restores unchange
   try {
     const grid = await screen.findByRole('grid', { name: 'People results' });
     await within(grid).findByText('Before sync');
-    if (!remount) {
-      await fireEvent.click(within(grid).getByText('Before sync'));
-      await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
-    }
-    if (remount) {
-      await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
-      await waitFor(() => expect(screen.queryByRole('grid', { name: 'People results' })).toBeNull());
-    }
+    await fireEvent.click(within(grid).getByText('Before sync'));
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
     synced = true;
     const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
     window.history.back();

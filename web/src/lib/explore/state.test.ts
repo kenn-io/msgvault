@@ -1019,27 +1019,32 @@ describe('relationships workspace state', () => {
     });
   });
 
-  it.each(['everything', 'duplicates'])('opens People and clears the prior %s view', async entry => {
+  it('opens People without carrying the Messages search', async () => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
-    state.commitNavigation({ workspace: entry === 'everything' ? 'everything' : 'relationships', peopleDuplicates: entry === 'duplicates', ...(entry === 'everything' ? { query: 'quarterly plan' } : {}) });
+    state.commitNavigation({ workspace: 'everything', query: 'quarterly plan' });
     state.commitWorkspace('relationships');
-
     expect(state.current.workspace).toBe('relationships');
-    if (entry === 'duplicates') expect(state.current.peopleDuplicates).toBe(false);
-    else {
-      expect(state.current.query).toBe('');
-      expect(state.predicate()).not.toHaveProperty('query');
-      expect(state.predicate()).not.toHaveProperty('search_mode');
-      expect(parseExploreURLState(window.location.search).query).toBe('');
-    }
-
+    expect(state.current.query).toBe('');
+    expect(state.predicate()).not.toHaveProperty('query');
+    expect(state.predicate()).not.toHaveProperty('search_mode');
+    expect(parseExploreURLState(window.location.search).query).toBe('');
     window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    if (entry === 'everything') {
-      expect(state.current.workspace).toBe('everything');
-      expect(state.current.query).toBe('quarterly plan');
-    } else expect(state.current.peopleDuplicates).toBe(true);
+    await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    expect(state.current.workspace).toBe('everything');
+    expect(state.current.query).toBe('quarterly plan');
+    state.destroy();
+  });
+
+  it('opens People from duplicates and restores duplicates on Back', async () => {
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window);
+    state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+    state.commitWorkspace('relationships');
+    expect(state.current.peopleDuplicates).toBe(false);
+    window.history.back();
+    await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    expect(state.current.peopleDuplicates).toBe(true);
     state.destroy();
   });
 

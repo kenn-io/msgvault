@@ -1,3 +1,4 @@
+import { directoryPerson } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -156,15 +157,15 @@ describe('LinkIdentityDialog', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('shows an already-linked outcome inline and stays open', async () => {
+  it.each(['already_linked', 'error'] as const)('shows a %s outcome inline and stays open', async code => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'nope' }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code, message: 'Target unavailable' }));
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
+    expect((await screen.findByRole('alert')).textContent).toContain(code === 'already_linked' ? 'Already linked — these two are treated as the same person.' : 'Target unavailable');
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -286,7 +287,7 @@ it.each((['saved', 'observed'] as const).flatMap(source => (['HTTP 503', 'transp
   const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' }));
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-    if (path.endsWith('/people/directory') && source === 'saved') return Response.json({ people: [{ id: 9, revision: 1, display_name: 'Synthetic Saved', categories: [], organizations: [] }] });
+    if (path.endsWith('/people/directory') && source === 'saved') return Response.json({ people: [directoryPerson(9, { revision: 1, display_name: 'Synthetic Saved' })] });
     if (path.endsWith('/participants/search') && source === 'observed') return Response.json({ rows: [person(2, 'Synthetic Observed')], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
     if (failure === 'transport failure') throw new TypeError('Source unavailable');
     return Response.json({ error: 'unavailable', message: 'Source unavailable' }, { status: 503 });

@@ -1,4 +1,4 @@
-import { person as profile } from '../../directory/entity-fixtures.test-support';
+import { directoryPerson, person as profile } from '../../directory/entity-fixtures.test-support';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -550,4 +550,23 @@ it('leaving People aborts its pending Save', async () => {
     view.unmount();
     expect(pending!.signal.aborted).toBe(true);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('refreshes retained Saved rows when the workspace remounts', async () => {
+  let synced = false;
+  const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7, { display_name: synced ? 'After sync' : 'Before sync' })] }) });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC');
+  const props = { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  let view = render(PeopleWorkspace, { props });
+  try {
+    await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Before sync');
+    view.unmount();
+    synced = true;
+    view = render(PeopleWorkspace, { props: { ...props, restorationEpoch: 1 } });
+    const grid = await screen.findByRole('grid', { name: 'People results' });
+    await within(grid).findByText('After sync');
+    expect(within(grid).queryByText('Before sync')).toBeNull();
+  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });

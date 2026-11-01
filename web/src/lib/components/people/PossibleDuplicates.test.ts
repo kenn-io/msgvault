@@ -5,8 +5,8 @@ import { DirectoryReviewController } from '../../directory/review-controller.sve
 import PossibleDuplicates from './PossibleDuplicates.svelte';
 import { pair } from '../shell/fixtures.test-support';
 
-it('renders endpoint summaries and wires Retry and Merge', async () => {
-  const row = { ...pair, left_kind: 'person', basis: 'stable_provider_id', review_token: 'after-profile-merge' };
+it('renders endpoint summaries and wires Retry and both decisions', async () => {
+  const row = { ...pair, left_kind: 'person', basis: 'stable_provider_id', review_token: 'displayed-token' };
   let unavailable = true;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -29,6 +29,8 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
     await screen.findByText('Same provider identity');
     const merge = screen.getByRole('button', { name: 'Merge' });
     await fireEvent.click(merge);
-    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'after-profile-merge' }), 'accept');
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'displayed-token' }), 'accept');
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'displayed-token' }), 'reject');
   } finally { view.unmount(); controller.destroy(); }
 });

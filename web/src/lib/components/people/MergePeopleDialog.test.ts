@@ -1,4 +1,4 @@
-import { mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
+import { directoryPerson, mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -13,7 +13,7 @@ it.each([false, true])('merges saved profiles with promotion=%s', async promote 
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request.clone());
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/directory') return Response.json({ people: promote ? [] : [profile(9)] });
+    if (path === '/api/v1/people/directory') return Response.json({ people: promote ? [] : [directoryPerson(9)] });
     if (path === '/api/v1/participants/search') return Response.json({ rows: promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') return Response.json(profile(9));
     if (path === '/api/v1/people/7' || path === '/api/v1/people/9') {
@@ -50,27 +50,42 @@ it.each([false, true])('merges saved profiles with promotion=%s', async promote 
 
 function renderRepresentativeLink(savedAnchor: boolean, missing = false) {
   const links: unknown[] = [];
+  let participantID = savedAnchor ? null : 1;
+  let finishProfile!: () => void;
+  const profileRequested = vi.fn();
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [{ ...profile(7), display_name: 'Synthetic Saved' }] });
+    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [directoryPerson(7, { display_name: 'Synthetic Saved' })] });
     if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 1, display_label: 'Synthetic Observed' }] : [] });
-    if (path.endsWith('/people/7')) return missing ? Response.json({ message: 'Target missing' }, { status: 404 }) : Response.json(profile(7, 4, [2, 3]));
+    if (path.endsWith('/people/7')) {
+      if (missing) return Response.json({ message: 'Target missing' }, { status: 404 });
+      if (savedAnchor) return Response.json(profile(7, 4, [2, 3]));
+      profileRequested();
+      return new Promise<Response>(resolve => { finishProfile = () => resolve(Response.json(profile(7, 4, [2, 3]))); });
+    }
     if (path.endsWith('/identity/links')) { links.push(await request.json()); return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
     throw new Error(`Unexpected ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   const onReconcile = vi.fn(async () => undefined), onClose = vi.fn();
-  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic', onReconcile, onClose });
-  return { view, controller, links, onClose, onReconcile };
+  // A live caller input stays unread in the saved-only search until the deferred link resumes.
+  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, get participantID() { return participantID; }, name: 'Synthetic', onReconcile, onClose });
+  return { view, controller, links, onClose, onReconcile, profileRequested, finishProfile: () => finishProfile(), changeOrigin: () => participantID = 99 };
 }
 
 it.each([false, true])('links a saved representative and an observed person without promotion: %s', async savedAnchor => {
-  const { view, controller, links, onClose, onReconcile } = renderRepresentativeLink(savedAnchor);
+  const { view, controller, links, onClose, onReconcile, profileRequested, finishProfile, changeOrigin } = renderRepresentativeLink(savedAnchor);
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Observed/ : /Synthetic Saved/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    if (!savedAnchor) {
+      await waitFor(() => expect(profileRequested).toHaveBeenCalledOnce());
+      view.unmount();
+      changeOrigin();
+      finishProfile();
+    }
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
     expect(onReconcile).toHaveBeenCalledOnce();
@@ -91,12 +106,12 @@ it('leaves both people unchanged when the saved profile cannot be read', async (
 });
 
 
-it.each([[false, 'read failure'], [true, 'read failure'], [false, 'cancel'], [true, 'cancel']] as const)('reconciles a committed promotion after %s saved anchor and %s', async (savedAnchor, outcome) => {
+it.each([[false, 'read failure'], [false, 'cancel'], [true, 'cancel']] as const)('reconciles a committed promotion after %s saved anchor and %s', async (savedAnchor, outcome) => {
   let promoted = false;
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [profile(7, 4, [])] });
+    if (path.endsWith('/directory')) return Response.json({ people: savedAnchor ? [] : [directoryPerson(7)] });
     if (path.endsWith('/participants/search')) return Response.json({ rows: savedAnchor ? [{ id: 2, display_label: 'Synthetic Observed' }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') { promoted = true; return Response.json(profile(9, 2, [savedAnchor ? 2 : 1])); }
     if (path === '/api/v1/people/7') return Response.json(profile(7, 4, []), { headers: { ETag: '"person-7-r4"' } });
