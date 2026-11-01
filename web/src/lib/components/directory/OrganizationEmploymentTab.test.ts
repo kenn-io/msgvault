@@ -45,7 +45,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText(/Recovered role/)).toBeDefined();
   });
 
-
   it('creates an employment for the exact selected person with user provenance', async () => {
     const requests: Request[] = [];
     let employmentReads = 0;
@@ -271,14 +270,14 @@ describe('OrganizationEmploymentTab', () => {
       const path = pathOf(request);
       if (path === '/api/v1/employments/11' && request.method === 'GET') return new Response(JSON.stringify(employment()), { headers: { ETag: '"employment-11-r1"' } });
       if (path === '/api/v1/employments/11/primary') return new Response(JSON.stringify(employment(11, 2, { is_primary: true })), { headers: { ETag: '"employment-11-r2"' } });
-      if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { is_primary: true })]);
+      if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { is_primary: true }), employment(12, 2, { title: 'Other role', is_primary: false })]);
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
-    controller.employments = [employment()];
+    controller.employments = [employment(), employment(12, 1, { title: 'Other role', is_primary: true })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Make primary employment' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Make primary employment' })).toBeNull());
+    await waitFor(() => expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).toContain('Primary'));
     expect(requests.find((request) => pathOf(request) === '/api/v1/employments/11/primary')?.headers.get('If-Match')).toBe('"employment-11-r1"');
   });
 
@@ -395,11 +394,6 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create employment' })).toHaveProperty('disabled', false));
     expect(posts).toBe(1);
   });
-
-
-
-
-
 
   it('keeps a conflicted employment delete open with complete current data and owns modal shortcuts', async () => {
     let reads = 0;

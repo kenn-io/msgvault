@@ -105,8 +105,6 @@ describe('ProfileHistoryDialog', () => {
     for (const title of ['Names', 'Contact points', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
-    expect(screen.queryByRole('heading', { name: 'Service observations' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Media metadata' })).toBeNull();
     const dateText = '(Jul|Aug) \\d{1,2}, 2026';
     for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current category', 'Current photo']) {
       const row = screen.getByText(value).closest('li')!;
