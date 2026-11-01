@@ -23,7 +23,7 @@ function ancillary(path: string): Response {
 }
 
 describe('meeting panel surfaces', () => {
-  it('refreshes same Details person identity revisions and ignores delayed pre-merge evidence', async () => {
+  it('refreshes same Details person revisions and ignores delayed evidence', async () => {
     const metrics: MeetingMetricsRequest[] = [];
     let resolveOld!: (response: Response) => void;
     let oldSignal!: AbortSignal;
