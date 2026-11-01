@@ -161,9 +161,9 @@ export class DirectoryReviewController {
     this.resetIdentityContext(this.identityState);
     if (reviewKind === 'identity') void this.loadIdentityPage(0, this.identityState);
   }
-  setIdentityState(identityState: IdentityReviewState): void {
+  async setIdentityState(identityState: IdentityReviewState): Promise<void> {
     if (this.reviewKind === 'identity' && this.identityState === identityState && this.initialized) return;
-    void this.settleDecision();
+    if (this.pending) await this.settleDecision();
     this.identityState = identityState;
     this.reviewKind = 'identity';
     this.commit({ identityState });
@@ -295,7 +295,7 @@ export class DirectoryReviewController {
         const kind = side === 'left' ? candidate.left_kind : candidate.right_kind;
         if (kind !== 'participant' && kind !== 'person') {
           const id = side === 'left' ? candidate.left_id : candidate.right_id;
-          this.summaries.set(key, { id, name: ENDPOINT_NAMES[kind] ?? 'Unknown', address: candidate.normalized_value ?? '', lastAt: null, count: 0 });
+          this.summaries.set(key, { id, name: ENDPOINT_NAMES[kind] ?? 'Unknown', address: candidate.normalized_value ?? '', lastAt: null });
           continue;
         }
         this.lookupQueue.push(key);
@@ -324,7 +324,7 @@ export class DirectoryReviewController {
         const response = await generatedGetPersonProfile({ id }, { ...this.client, signal });
         if (this.disposed || signal.aborted) return;
         const name = response.data?.display_name?.trim();
-        this.summaries.set(key, response.data ? { id, name: name || `Person ${id}`, address: 'Saved person', lastAt: null, count: 0, personID: id } : 'failed');
+        this.summaries.set(key, response.data ? { id, name: name || `Person ${id}`, address: 'Saved person', lastAt: null, personID: id } : 'failed');
       } catch {
         if (!this.disposed && !signal.aborted) this.summaries.set(key, 'failed');
       }
@@ -401,19 +401,22 @@ export class DirectoryReviewController {
           ? await generatedAcceptIdentityMatchCandidate({ id: candidateID }, body, {
               ...this.client,
               signal: abort.signal,
+              keepalive: true,
             })
           : await generatedRejectIdentityMatchCandidate({ id: candidateID }, body, {
               ...this.client,
               signal: abort.signal,
+              keepalive: true,
             });
       if (!this.ownsDecision(candidateID, abort)) {
         return { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
       }
       if (response.data) {
         const decidedCandidate = response.data.candidate;
-        this.summaries.clear();
+        if (decision === 'accept') this.summaries.clear();
         this.decisionDrafts.delete(candidateID);
         if (!this.ownsDecisionContext(context)) {
+          if (this.reviewKind === 'identity' && (context.identityState !== this.identityState || context.offset !== this.offset)) await this.loadIdentityPage(this.offset, this.identityState);
           return { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
         }
         this.rows = replaceByID(this.rows, decidedCandidate);

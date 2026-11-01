@@ -695,12 +695,12 @@ it('pages the combined decided queue beyond its first server page', async () => 
 });
 
 it('undoes before sending and settles an earlier pair with its exact token and notes', async () => {
-  const writes: Array<{ path: string; body: unknown }> = [];
+  const writes: Array<{ path: string; body: unknown; keepalive: boolean }> = [];
   const settled = vi.fn();
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
     if (request.method === 'POST') {
-      writes.push({ path: new URL(request.url).pathname, body: await request.json() });
+      writes.push({ path: new URL(request.url).pathname, body: await request.json(), keepalive: request.keepalive });
       return Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' });
     }
     return page([candidate(1), candidate(2)]);
@@ -711,29 +711,40 @@ it('undoes before sending and settles an earlier pair with its exact token and n
     controller.undoDecision();
     expect(writes).toEqual([]);
     expect(controller.hidden.has(1)).toBe(false);
+    controller.summaries.set('person:7', { id: 7, name: 'Saved', address: 'Saved person', lastAt: null });
     controller.setDecisionDraft(1, '  Different people  ');
     controller.queueDecision(controller.rows[0]!, 'reject');
     controller.queueDecision(controller.rows[1]!, 'accept');
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
-    expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/1/review/reject', body: { review_token: 'token-1-candidate', notes: 'Different people' } }]);
+    expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/1/review/reject', body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
+    expect(controller.summaries.has('person:7')).toBe(true);
     expect(controller.pending?.candidate.id).toBe(2);
     controller.undoDecision();
   } finally { controller.destroy(); }
 });
 
-it('settles before paging and reports a later mutation failure after the queue changes', async () => {
+it.each([false, true])('settles across queue changes, including a History switch: %s', async history => {
   const decision = deferredResponse(), settled = vi.fn();
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
     if (request.method === 'POST') return decision.promise;
-    const offset = Number(new URL(request.url).searchParams.get('offset'));
+    const url = new URL(request.url), offset = Number(url.searchParams.get('offset'));
+    if (url.searchParams.get('state') === 'accepted,rejected') return page([candidate(1, 'rejected')]);
     return page(offset ? [candidate(11)] : Array.from({ length: 10 }, (_, i) => candidate(i + 1)), offset);
   }), undefined, settled);
   try {
     await controller.loadIdentityPage();
     controller.queueDecision(controller.rows[0]!, 'reject');
-    await controller.loadNextPage();
+    const navigation = history ? controller.setIdentityState('accepted') : controller.loadNextPage();
+    if (history) expect(controller.identityState).toBe('candidate');
+    else await navigation;
     expect(controller.pending).toBeUndefined();
+    if (history) {
+      decision.resolve(Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
+      await navigation;
+      await vi.waitFor(() => expect(controller.rows[0]?.state).toBe('rejected'));
+      return;
+    }
     expect(controller.rows[0]?.id).toBe(11);
     decision.resolve(Response.json({ message: 'Could not save this decision.' }, { status: 503 }));
     await vi.waitFor(() => expect(settled).toHaveBeenCalledWith({ ok: false, kind: 'error', status: 503, message: 'Could not save this decision.' }));

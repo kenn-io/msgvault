@@ -73,5 +73,6 @@ it.each([false, true, undefined])('links a saved representative and an observed 
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
     expect(onReconcile).toHaveBeenCalledOnce();
+    expect(onReconcile).toHaveBeenCalledWith(expect.anything(), true);
   } finally { view.unmount(); controller.destroy(); }
 });

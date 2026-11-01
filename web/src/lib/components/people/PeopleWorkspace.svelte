@@ -189,11 +189,14 @@
     bulkPending = false; selection.clear();
     bulkMessage = staleLink ? 'People linked. The identity cache needs a retry.' : 'People are now treated as the same person.';
   }
-  async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+  async function refreshProfiles(): Promise<void> {
     onDuplicatesChanged();
-    await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
+    await directory.reloadFirstPage();
     if (directory.selectedPersonID === selectedProfileID) await directory.refreshSelectedPerson();
     else await directory.loadSelection(selectedProfileID);
+  }
+  async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+    await Promise.all([controller.reconcilePersonMerge(context), refreshProfiles()]);
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
     bulkPending = true;
@@ -247,7 +250,7 @@
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); void controller.loadList(page.predicate); }}
     onSplitCommitted={async (context) => { onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
-    onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
+    onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
@@ -264,7 +267,7 @@
   </div>
   {/if}
   {#if bulkConflict}<PersonBindingConflictModal client={page.client} conflict={bulkConflict} onOpenProfile={(id) => page.onOpenDirectoryPerson?.(id)} onSuccess={merged} onClose={() => { bulkConflict = undefined; bulkMessage = `${bulkCompleted} of ${bulkIDs.length - 1} linked. Linking stopped.`; }} />{/if}
-  {#if reviews.mergeRequired}<PersonBindingConflictModal client={page.client} conflict={reviews.mergeRequired.conflict} onOpenProfile={(id) => page.onOpenDirectoryPerson?.(id)} onSuccess={async (success) => { await reviews.completePersonMerge(reviews.mergeRequired!.candidateID, reviews.reviewContextSnapshot(), success); await reconcilePersonMerge(controller.personMergeContextSnapshot()); onDuplicatesChanged(); }} onClose={() => reviews.mergeRequired = null} />{/if}
+  {#if reviews.mergeRequired}<PersonBindingConflictModal client={page.client} conflict={reviews.mergeRequired.conflict} onOpenProfile={(id) => { reviews.mergeRequired = null; page.onOpenDirectoryPerson?.(id); }} onSuccess={async (success) => { await reviews.completePersonMerge(reviews.mergeRequired!.candidateID, reviews.reviewContextSnapshot(), success); await reconcilePersonMerge(controller.personMergeContextSnapshot()); }} onClose={() => reviews.mergeRequired = null} />{/if}
   {#if confirmDelete}<Modal title="Delete people" onclose={() => { if (!bulkPending) confirmDelete = false; }}><p>This permanently deletes {selectedSaved.length} saved profiles, their contact points, and profile history. Archived messages stay.</p>{#snippet footer()}<Button label="Cancel" disabled={bulkPending} onclick={() => confirmDelete = false} /><Button label={bulkPending ? 'Deleting…' : 'Confirm delete'} disabled={bulkPending} tone="danger" onclick={() => void deleteSelected()} />{/snippet}</Modal>{/if}
 </main>
 <style>
