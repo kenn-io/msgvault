@@ -18,6 +18,10 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 	before := time.Date(2026, 8, 21, 12, 30, 0, 987654321, time.UTC)
 	var gotQuery map[string]string
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"3.29.0"}`)
+			return
+		}
 		assert.Equal(http.MethodGet, r.Method)
 		assert.Equal("/api/v1/people/directory", r.URL.Path)
 		gotQuery = map[string]string{}
@@ -43,6 +47,7 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 
 	page, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{
 		Query:             "Alice",
+		Address:           "ÉCOLE+%_@example.test",
 		Cursor:            "opaque/cursor+bytes",
 		Limit:             -7,
 		Sort:              store.DirectoryPeopleSortLastContactDesc,
@@ -59,6 +64,7 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 
 	assert.Equal(map[string]string{
 		"q":                   "Alice",
+		"address":             "ÉCOLE+%_@example.test",
 		"cursor":              "opaque/cursor+bytes",
 		"limit":               "-7",
 		"sort":                "last_contact_desc",
@@ -83,6 +89,25 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 		Categories:    []string{}, Organizations: []string{},
 	}, page.People[0])
 	var _ peoplebrowser.DirectoryLister = engine
+}
+
+func TestPeopleBrowserDirectoryAddressRejectsUnsupportedDaemon(t *testing.T) {
+	for _, version := range []string{"3.28.0", "", "unknown"} {
+		t.Run(version, func(t *testing.T) {
+			var lookups int
+			engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"`+version+`"}`)
+					return
+				}
+				lookups++
+				http.NotFound(w, r)
+			}))
+			_, err := engine.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{Address: "alex@example.test"})
+			require.EqualError(t, err, "person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
+			assert.Zero(t, lookups)
+		})
+	}
 }
 
 func TestPeopleBrowserListDirectoryReturnsDaemonError(t *testing.T) {
