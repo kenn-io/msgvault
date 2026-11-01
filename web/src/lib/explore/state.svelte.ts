@@ -651,7 +651,7 @@ export class ExploreState {
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
-    if ((Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
+    if ((this.current.operationHistory || next.operationHistory) && (Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
         OPERATION_HISTORY_FIELDS.has(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
       this.current.operationHistory = next.operationHistory;
       this.current.operationLane = next.operationLane;
