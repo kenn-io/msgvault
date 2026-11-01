@@ -1052,6 +1052,10 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	if err != nil {
 		return nil, fmt.Errorf("vector embed scope: %w", err)
 	}
+	vecCfg, err = resolveLocalVectorConfig(ctx, vecCfg)
+	if err != nil {
+		return nil, err
+	}
 	// Validate the resolved config with the same check serve runs before it
 	// opens anything. It names the offending key and value — including an
 	// api_format this binary has no client for, which must fail here rather

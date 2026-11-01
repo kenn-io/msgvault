@@ -301,7 +301,7 @@ func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store
 	if !cfg.Vector.Multimodal.Enabled {
 		return false
 	}
-	vecCfg, err := resolvedVectorScopes(ctx, st, cfg.Vector)
+	vecCfg, err := resolvedVectorConfig(ctx, st, cfg.Vector)
 	if err != nil {
 		return false
 	}

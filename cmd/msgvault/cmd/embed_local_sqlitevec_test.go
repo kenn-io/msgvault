@@ -85,7 +85,7 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	t.Setenv("LOCAL_TEST_KEY", "synthetic-env-key")
 	snapshot, err := providercredentials.Read(cfg.TokensDir())
 	require.NoError(err)
-	_, err = providercredentials.Put(cfg.TokensDir(), snapshot.ETag, providercredentials.VectorEmbeddingsID, server.URL+"/v1", "synthetic-stored-key")
+	_, err = providercredentials.Put(cfg.TokensDir(), snapshot.ETag, providercredentials.VectorEmbeddingsID, "https://api.openai.com/v1", "synthetic-stored-key")
 	require.NoError(err)
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
@@ -99,8 +99,4 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	assert.Equal(1, inputs)
 	assert.Equal(oldGeneration, embedGenByID(t, dir)[3])
 	assert.Empty(cfg.Vector.Embeddings.Endpoint, "runtime URL stays out of saved config")
-
-	resolved, err := resolvedVectorConfig(t.Context(), st, cfg.Vector)
-	require.NoError(err)
-	assert.Equal(server.URL+"/v1", resolved.Embeddings.Endpoint)
 }

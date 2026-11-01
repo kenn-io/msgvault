@@ -188,15 +188,6 @@ func ensureEmbedScopeResolved(ctx context.Context, state *invocation) error {
 // leaving the supplied config untouched. Setup and the daemon must use the
 // same resolution when comparing generation fingerprints.
 func resolvedVectorConfig(ctx context.Context, s *store.Store, vecCfg vector.Config) (vector.Config, error) {
-	vecCfg, err := resolvedVectorScopes(ctx, s, vecCfg)
-	if err != nil {
-		return vector.Config{}, err
-	}
-	return resolveLocalVectorConfig(ctx, vecCfg)
-}
-
-// resolvedVectorScopes resolves account scopes without starting a provider.
-func resolvedVectorScopes(ctx context.Context, s *store.Store, vecCfg vector.Config) (vector.Config, error) {
 	// Each scope resolves only for its enabled lane: a stale account in a
 	// disabled lane's scope must not block the enabled lane from starting.
 	if vecCfg.Enabled && len(vecCfg.Embed.Scope.Accounts) > 0 {
@@ -225,7 +216,7 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 	}
 	cfg := state.cfg
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 && len(cfg.Vector.Multimodal.Scope.Accounts) == 0 {
-		return resolveLocalVectorConfig(context.Background(), cfg.Vector)
+		return cfg.Vector, nil
 	}
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {

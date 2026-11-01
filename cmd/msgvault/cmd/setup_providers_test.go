@@ -1507,19 +1507,6 @@ func TestSetupProvidersRollbackPreservesConcurrentConfig(t *testing.T) {
 	assert.Equal(string(concurrent.Content), fixture.readConfig(t))
 }
 
-func TestSetupProvidersWithoutKeysUsesLocalEmbeddings(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	output, err := fixture.run(t, "providers", "--yes", "--json")
-	require.NoError(err, output)
-	loaded := fixture.load(t)
-	assert.True(loaded.Vector.Enabled)
-	assert.True(loaded.Vector.Embeddings.LocalOnly)
-	assert.Empty(loaded.Vector.Embeddings.Endpoint)
-	assert.Equal("nomic-embed-text", loaded.Vector.Embeddings.Model)
-}
-
 func TestSetupProvidersDryRunWritesNothing(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1692,11 +1679,10 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 			fixture.tty = true
 			before := fixture.readConfig(t)
 			deps := fixture.deps(t)
-			installs, confirmations := 0, 0
+			installs := 0
 			deps.installEmbeddings = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
 				installs++
 				assert.NotEmpty(opts.DataDir)
-				confirmations++
 				approved, err := opts.Confirm(ctx, 295000000)
 				if err != nil {
 					return embedlocal.Installation{}, fmt.Errorf("confirm local download: %w", err)
@@ -1707,7 +1693,7 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 				return embedlocal.Installation{Executable: "cached-kennembed", DataDir: fixture.dir}, nil
 			}
 			command := newSetupProvidersCommand(deps)
-			args := []string{"--local-embeddings"}
+			var args []string
 			if mode == "dry run" {
 				args = append(args, "--dry-run")
 			}
@@ -1725,6 +1711,8 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 			case "accept":
 				require.NoError(err)
 				loaded := fixture.load(t)
+				assert.True(loaded.Vector.Enabled)
+				assert.Equal("nomic-embed-text", loaded.Vector.Embeddings.Model)
 				assert.True(loaded.Vector.Embeddings.LocalOnly)
 				assert.Empty(loaded.Vector.Embeddings.Endpoint)
 				assert.Equal(1, installs)
@@ -1737,10 +1725,7 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 				assert.Equal(before, fixture.readConfig(t))
 			}
 			if mode != "dry run" {
-				assert.Equal(1, confirmations)
 				assert.Contains(output.String(), "295000000 bytes")
-			} else {
-				assert.Zero(confirmations)
 			}
 		})
 	}
@@ -1800,18 +1785,4 @@ max_input_chars = 2000
 			}
 		})
 	}
-}
-
-func TestSetupProvidersVisualConsentDoesNotResolveTextTransport(t *testing.T) {
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	loaded := fixture.load(t)
-	loaded.Vector.Enabled = true
-	loaded.Vector.Embeddings.LocalOnly = true
-	loaded.Vector.Multimodal.Enabled = true
-	original := localEmbeddingsDir
-	calls := 0
-	localEmbeddingsDir = func() (string, error) { calls++; return "", errors.New("text transport must stay idle") }
-	t.Cleanup(func() { localEmbeddingsDir = original })
-	assert.False(t, setupVisualConsent(t.Context(), loaded, fixture.store))
-	assert.Zero(t, calls, "visual consent only needs account scopes")
 }

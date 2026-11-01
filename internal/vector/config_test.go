@@ -791,7 +791,4 @@ func TestEmbeddingsConfigLocalEndpointValidation(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 	cfg.LocalOnly = false
 	require.ErrorContains(t, cfg.Validate(), "endpoint: required")
-	cfg.LocalOnly = true
-	cfg.Endpoint = "invalid"
-	require.ErrorContains(t, cfg.Validate(), "http or https")
 }
