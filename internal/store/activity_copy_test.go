@@ -38,7 +38,7 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 			requirements.NoError(err)
 			observedAt := contact.Now.Add(-time.Hour)
 			observedID := f.add(t, observedRoom, observedSource.ID, observedAt, false, "<shared@example.com>")
-			countedID := f.add(t, countedRoom, countedSource.ID, contact.Now, false, "<shared@example.com>")
+			countedID := f.add(t, countedRoom, countedSource.ID, contact.Now, false, "shared@example.com")
 			requirements.Less(observedID, countedID)
 			projectTimelineActivity(t, f, "UTC")
 			for _, precondition := range []struct {
@@ -140,7 +140,7 @@ func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
 			received := f.add(t, f.ConvID, f.Source.ID, contact.Now.Add(-time.Hour), false, "<subject-copy@example.com>")
 			require.NoError(f.Store.ReplaceMessageRecipients(received, "from", []int64{owner2}, nil))
 			require.NoError(f.Store.ReplaceMessageRecipients(received, "to", []int64{f.owner, f.peer}, nil))
-			sent := f.add(t, room, source.ID, contact.Now, true, "<subject-copy@example.com>")
+			sent := f.add(t, room, source.ID, contact.Now, true, "subject-copy@example.com")
 			require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{owner2}, nil))
 			projectTimelineActivity(t, f, "UTC")
 			fullQuery := timelineBurstQuery()
@@ -173,6 +173,54 @@ func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
 				require.Len(page.Bursts, 1)
 				assert.Equal(scope.id, page.Bursts[0].AnchorMessageID)
 				assert.Equal(scope.copies, page.Bursts[0].CopyCounts[scope.id])
+			}
+		})
+	}
+}
+
+func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		count               int
+	}{
+		{"clean brackets", "<copy@example.com>", "copy@example.com", 1},
+		{"distinct IDs", "first@example.com", "second@example.com", 2},
+		{"missing IDs", "", "", 2},
+		{"empty brackets", "<>", "", 2},
+		{"inner whitespace", "< copy@example.com >", "copy@example.com", 2},
+		{"outer whitespace", " <copy@example.com> ", "copy@example.com", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			contact := timelineContactQuery(f)
+			source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
+			requirements.NoError(err)
+			requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			room, err := f.Store.EnsureConversationWithType(source.ID, "canonical-copy", "email_thread", "Copy")
+			requirements.NoError(err)
+			f.add(t, f.ConvID, f.Source.ID, contact.Now, false, tc.first)
+			f.add(t, room, source.ID, contact.Now, false, tc.second)
+			projectTimelineActivity(t, f, "UTC")
+			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
+			requirements.NoError(err)
+			assertions.Equal(tc.count, aggregate.Count)
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+			requirements.NoError(err)
+			assertions.Len(page.Bursts, tc.count)
+			for _, burst := range page.Bursts {
+				assertions.Equal(1, burst.Inbound)
+				assertions.Equal(3-tc.count, burst.CopyCounts[burst.AnchorMessageID])
+			}
+			for _, sourceID := range []int64{f.Source.ID, source.ID} {
+				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{sourceID})
+				aggregate, err := f.Store.MessageContactAggregateContext(ctx, contact)
+				requirements.NoError(err)
+				assertions.Equal(1, aggregate.Count)
+				page, err := f.Store.ListActivityBurstsContext(ctx, timelineBurstQuery())
+				requirements.NoError(err)
+				requirements.Len(page.Bursts, 1)
+				assertions.Equal(1, page.Bursts[0].CopyCounts[page.Bursts[0].AnchorMessageID])
 			}
 		})
 	}
