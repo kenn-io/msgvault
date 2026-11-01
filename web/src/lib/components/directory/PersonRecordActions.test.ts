@@ -39,7 +39,7 @@ describe('PersonRecordActions', () => {
       });
     }));
 
-    await choose('Rename person');
+    await choose('Rename');
     expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed User' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
@@ -55,7 +55,7 @@ describe('PersonRecordActions', () => {
     const pendingRename = new Promise<Response>((resolve) => { resolveRename = resolve; });
     const controller = renderActions(vi.fn<typeof fetch>(async () => pendingRename));
 
-    await choose('Rename person');
+    await choose('Rename');
     await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
 
     await waitFor(() => expect(controller.mutationPending).toBe(true));
@@ -75,7 +75,7 @@ describe('PersonRecordActions', () => {
       return new Response(null, { status: 204 });
     }));
 
-    await choose('Delete person');
+    await choose('Delete');
     expect(requests).toHaveLength(0);
     expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
@@ -90,7 +90,7 @@ describe('PersonRecordActions', () => {
     const pendingDelete = new Promise<Response>((resolve) => { resolveDelete = resolve; });
     const controller = renderActions(vi.fn<typeof fetch>(async () => pendingDelete));
 
-    await choose('Delete person');
+    await choose('Delete');
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
 
     await waitFor(() => expect(controller.mutationPending).toBe(true));
@@ -104,12 +104,12 @@ describe('PersonRecordActions', () => {
   it('shows one of rename or delete at a time', async () => {
     renderActions(vi.fn());
 
-    await choose('Rename person');
-    await choose('Delete person');
+    await choose('Rename');
+    await choose('Delete');
     expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
     expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
 
-    await choose('Rename person');
+    await choose('Rename');
     expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull();
     expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
   });
@@ -118,11 +118,11 @@ describe('PersonRecordActions', () => {
     renderActions(vi.fn(), null);
 
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('menuitem', { name: 'Rename person' }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByRole('menuitem', { name: 'Delete person' }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByRole('menuitem', { name: 'View profile history' }).getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Rename' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Delete' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'History' }).getAttribute('aria-disabled')).toBeNull();
 
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename person' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
     expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
   });
 
@@ -133,7 +133,7 @@ describe('PersonRecordActions', () => {
     })));
     const trigger = screen.getByRole('button', { name: 'More actions' });
 
-    await choose('View profile history');
+    await choose('History');
     const dialog = await screen.findByRole('dialog', { name: 'Profile history' });
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
     await fireEvent.click(screen.getByRole('button', { name: 'Close profile history' }));
