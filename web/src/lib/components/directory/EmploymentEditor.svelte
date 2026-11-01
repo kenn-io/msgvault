@@ -5,6 +5,7 @@
   import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization } from '../../directory/models';
+  import OrganizationEditor from './OrganizationEditor.svelte';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
 
   interface Props {
@@ -19,6 +20,7 @@
   let { controller, personID, employment = undefined, action = 'edit', onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialEmployment = untrack(() => employment);
   const initialAction = untrack(() => action);
+  let creatingOrganization = $state(false);
   let organizationID = $state(initialEmployment ? String(initialEmployment.organization_id) : '');
   let title = $state(initialEmployment?.title ?? '');
   let role = $state(initialEmployment?.role ?? '');
@@ -186,7 +188,8 @@
       <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
       {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     {:else}
-      <label>Organization<SelectDropdown title="Organization" value={organizationID} options={organizationOptions} onchange={(value) => { organizationID = value; }} disabled={submitting || !!initialEmployment} /></label>
+      <label>Organization<SelectDropdown title="Organization" value={organizationID} options={organizationOptions} onchange={(value) => { organizationID = value; }} disabled={submitting || !!initialEmployment} />
+        <Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} /></label>
       <label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
       <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label>
       <label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
@@ -215,6 +218,8 @@
     </div>
   </form>
 </Modal>
+{#if creatingOrganization}<OrganizationEditor {controller} onDone={() => { creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
+
 
 <style>
   .editor { display: grid; gap: var(--space-3); min-width: min(30rem, 80vw); }

@@ -239,12 +239,12 @@
     beforeCommit();
     directoryController.resetForPromotion();
     directoryPromotionParticipantID = participantID;
-    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: null });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: null, relationshipTarget: `cluster:${participantID}`, relationshipFiles: false });
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
     directoryPromotionParticipantID = undefined;
-    exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
@@ -366,6 +366,7 @@
   const directoryController = new DirectoryController(
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
+    () => { void relationshipsController.loadList(exploreState.predicate()); },
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
@@ -558,6 +559,7 @@
     const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
     appliedDirectoryRestorationEpoch = restorationEpoch;
     if (exploreState.current.workspace !== 'directory') return;
+    if (exploreState.current.directoryPersonID !== null) { untrack(() => openDirectoryPerson(exploreState.current.directoryPersonID!)); return; }
     const directoryState = {
       directoryQuery: exploreState.current.directoryQuery,
       directoryContactState: exploreState.current.directoryContactState,
@@ -1307,6 +1309,9 @@
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           directory={directoryController}
+          operationLanes={operationsController.snapshot.statusLanes}
+          onOpenCardDAVConflict={openCardDAVConflict}
+          onOpenCardDAVSettings={openCardDAVSettings}
           urlState={exploreState.current}
           onNavigate={commitNavigation}
           onReplaceNavigation={replaceCommittedNavigation}
@@ -1336,7 +1341,7 @@
               scrollAnchor: null,
             })}
           onOpenPerson={openRelationship}
-          onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+          onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
@@ -1351,6 +1356,7 @@
           controller={directoryController}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           promotionParticipantID={directoryPromotionParticipantID}
+          onOpenPerson={openDirectoryPerson}
           state={{
             directoryQuery: exploreState.current.directoryQuery,
             directoryContactState: exploreState.current.directoryContactState,

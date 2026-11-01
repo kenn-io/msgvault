@@ -263,7 +263,7 @@ fields, passwords and pending test or sign-in results. The sidebar status dot's
 aggregate sync and is disabled while any CardDAV run is active. Schedules, retry gates and run leases are
 independent per connection.
 
-To publish a person, open their saved profile in **Directory** and turn on
+To publish a person, open their saved profile in **People**, choose **More actions → Publish to address book**, and turn on
 **Publish person to CardDAV**. A contact UID identifies that published person
 across syncs. Later profile changes are reconciled to the write target.
 Turning publication off removes the remote card while retaining the local

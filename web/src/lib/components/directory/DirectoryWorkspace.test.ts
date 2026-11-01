@@ -6,6 +6,7 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import type { DirectoryURLState } from '../../directory/models';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { chooseSelectOption } from '../../../test/kit-ui';
+import DirectoryDetails from './DirectoryDetails.test-support.svelte';
 import DirectoryWorkspace from './DirectoryWorkspace.svelte';
 
 const state: DirectoryURLState = {
@@ -279,8 +280,6 @@ describe('DirectoryWorkspace', () => {
 
     await waitFor(() => expect(commits).toContainEqual({ directoryPersonID: 42 }));
     await waitFor(() => expect(controller.selectedPersonID).toBe(42));
-    expect(await screen.findByText('4 meetings')).toBeDefined();
-    expect(await screen.findByText('0 matching')).toBeDefined();
   });
 
   it('keeps loaded rows visible when loading another page fails and retries that page', async () => {
@@ -472,15 +471,10 @@ describe('DirectoryWorkspace', () => {
     }));
     const controller = new DirectoryController(client);
 
-    render(DirectoryWorkspace, { client, controller, state: selectedState });
+    render(DirectoryDetails, { client, controller, state: selectedState });
 
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
-    expect(await screen.findByRole('heading', { name: 'Structured profile' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Add name' })).toHaveProperty('disabled', false);
+    expect(await screen.findByRole('button', { name: 'Add phone' })).toHaveProperty('disabled', false);
     expect(controller.profile).not.toBeNull();
-    await fireEvent.click(screen.getByRole('tab', { name: 'Organizations' }));
-    expect(screen.getByRole('tabpanel', { name: 'Organizations' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Add employment' })).toBeDefined();
     expect(controller.entity).not.toBeNull();
   });
 
@@ -509,10 +503,10 @@ describe('DirectoryWorkspace', () => {
       return Response.json({ error: 'unavailable', message: 'not rendered' }, { status: 503 });
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
-    render(DirectoryWorkspace, { client: createAPIClient(fetchFn), controller, state: selectedState });
+    render(DirectoryDetails, { client: createAPIClient(fetchFn), controller, state: selectedState });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete person' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
 
     await waitFor(() => expect(controller.selectedPersonID).toBeNull());
@@ -565,19 +559,21 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryWorkspace, { client, controller, state: selectedState });
+    render(DirectoryDetails, { client, controller, state: selectedState });
 
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add category' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'VIP' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
     await waitFor(() => expect(row.textContent).toContain('Friend · VIP'));
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Close category VIP' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm close category' }));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Remove Category' })[1]!);
+    await vi.advanceTimersByTimeAsync(8000);
+    vi.useRealTimers();
     await waitFor(() => expect(row.textContent).not.toContain('VIP'));
     expect(row.textContent).toContain('Friend');
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
@@ -623,12 +619,12 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryWorkspace, { client, controller, state: selectedState });
+    render(DirectoryDetails, { client, controller, state: selectedState });
 
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add category' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
     await waitFor(() => expect(row.textContent).toContain('Straße'));
@@ -692,17 +688,17 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryWorkspace, { client, controller, state: selectedState });
+    render(DirectoryDetails, { client, controller, state: selectedState });
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add category' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More fields' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
 
     expect(await screen.findByText('Directory reconciliation unavailable.')).toBeDefined();
     expect(row.textContent).not.toContain('Straße');
-    expect(await screen.findByRole('button', { name: 'Close category Straße' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: 'Remove Category' })).toBeDefined();
     expect(controller.profile?.conflict).toBeNull();
     expect(controller.selectedPersonID).toBe(7);
     expect(screen.getByRole('button', { name: 'Reload directory' })).toBeDefined();
@@ -775,10 +771,9 @@ describe('DirectoryWorkspace', () => {
     });
     const client = createAPIClient(fetchFn);
     const controller = new DirectoryController(client);
-    render(DirectoryWorkspace, { client, controller, state: selectedState });
+    render(DirectoryDetails, { client, controller, state: selectedState });
 
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary channel value 1' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary channel' }));
     await fireEvent.change(screen.getByRole('combobox', { name: 'Primary channel' }), { target: { value: 'chat' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
 
@@ -789,80 +784,23 @@ describe('DirectoryWorkspace', () => {
     expect(row.textContent).toContain('Email · Active');
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Close Primary channel value 1' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm close attribute' }));
+    vi.useFakeTimers();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Primary channel' }));
+    await vi.advanceTimersByTimeAsync(8000);
+    vi.useRealTimers();
     await waitFor(() => expect(controller.profile?.attributes?.attributes?.[0]?.current).toEqual([]));
     expect(row.textContent).toContain('Email · Active');
     expect(requests.filter((request) => pathOf(request) === '/api/v1/people/directory')).toHaveLength(1);
   });
 
-  it('returns focus to the roving row after a narrow detail drawer closes', async () => {
-    const changeListeners = new Set<(event: MediaQueryListEvent) => void>();
-    vi.stubGlobal('matchMedia', () => ({
-      matches: true,
-      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => changeListeners.add(listener),
-      removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => changeListeners.delete(listener)
-    }));
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (pathOf(request) === '/api/v1/people/directory') return directoryResponse();
-      return Response.json({ id: 7, revision: 1, participant_ids: [], vcard_uid: '', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' });
-    });
-    const client = createAPIClient(fetchFn);
+  it('opens a listed person in People through the navigation callback', async () => {
+    const client = createAPIClient(async () => directoryResponse());
     const controller = new DirectoryController(client);
-    const rendered = render(DirectoryWorkspace, { client, controller, state });
-
-    const row = await screen.findByRole('row', { name: /Synthetic Person/ });
-    await fireEvent.click(row);
-    expect(await screen.findByRole('dialog', { name: 'Person detail' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(controller.selectedPersonID).toBeNull());
-    await waitFor(() => expect(document.activeElement).toBe(row));
-
-    rendered.unmount();
-    vi.unstubAllGlobals();
-  });
-
-  it('destroys the person publication context when a narrow detail drawer closes', async () => {
-    vi.stubGlobal('matchMedia', () => ({
-      matches: true,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn()
-    }));
-    let publicationSignal: AbortSignal | undefined;
-    let resolvePublication!: (response: Response) => void;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return directoryResponse();
-      if (path === '/api/v1/carddav/publications/7') {
-        publicationSignal = request.signal;
-        return new Promise<Response>((resolve) => { resolvePublication = resolve; });
-      }
-      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-01-01T00:00:00Z', stale: false });
-      return Response.json({
-        id: 7, revision: 1, participant_ids: [], vcard_uid: '',
-        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
-      });
-    });
-    const client = createAPIClient(fetchFn);
-    const controller = new DirectoryController(client);
-    const rendered = render(DirectoryWorkspace, { client, controller, state });
-
+    const onOpenPerson = vi.fn();
+    render(DirectoryWorkspace, { client, controller, state, onOpenPerson });
     await fireEvent.click(await screen.findByRole('row', { name: /Synthetic Person/ }));
-    expect(await screen.findByRole('dialog', { name: 'Person detail' })).toBeDefined();
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
-    await waitFor(() => expect(publicationSignal).toBeDefined());
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(publicationSignal?.aborted).toBe(true);
-    resolvePublication(Response.json({
-      person_id: 7, state: 'published', desired: true,
-      address_book: { id: 5, name: 'Old contacts' }
-    }));
-    await Promise.resolve();
-    expect(screen.queryByText('Old contacts')).toBeNull();
-
-    rendered.unmount();
-    vi.unstubAllGlobals();
+    expect(onOpenPerson).toHaveBeenCalledExactlyOnceWith(7);
+    expect(screen.queryByRole('dialog', { name: 'Person detail' })).toBeNull();
+    controller.destroy();
   });
 });
