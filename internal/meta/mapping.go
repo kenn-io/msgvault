@@ -26,9 +26,6 @@ type objectMetadata struct {
 
 func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge) error {
 	if obj.Parent != nil && obj.Parent.ID != "" {
-		if parent == "" {
-			return errors.New("facebook root post cannot have a parent")
-		}
 		parent = obj.Parent.ID
 	}
 	if parent != "" && !safeObjectID(parent) {

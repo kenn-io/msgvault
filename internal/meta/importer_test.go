@@ -290,25 +290,94 @@ func TestImportMissingAuthor(t *testing.T) {
 	assert.Equal(known, message(t, st, src.ID, c.ID).SenderID)
 }
 
+type recordingCommentErrorAPI struct {
+	API
+
+	err error
+}
+
+func (a *recordingCommentErrorAPI) Comments(ctx context.Context, parent, after string) (ObjectPage, error) {
+	page, err := a.API.Comments(ctx, parent, after)
+	a.err = err
+	return page, err
+}
+
 func TestImportFailureKeepsCheckpoint(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
+	provider := &recordingCommentErrorAPI{API: imp.api}
+	imp.api = provider
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "retained on failure")}
 	f.denied["100_201/comments"] = true
 	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.Error(err)
+	assert.Contains(err.Error(), strconv.Quote("100_201"))
+	var apiErr *APIError
+	require.ErrorAs(err, &apiErr)
+	require.ErrorIs(err, provider.err)
+	assert.Equal(http.StatusForbidden, apiErr.Status)
+	assert.NotContains(err.Error(), "synthetic-page-secret")
+	assert.NotContains(err.Error(), "retained on failure")
 	assert.True(sum.Partial)
 	got := message(t, st, src.ID, "100_201")
 	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
 	require.NoError(err)
 	assert.Contains(checkpoint.CursorBefore.String, "100_201")
 	assert.NotContains(checkpoint.CursorBefore.String, "synthetic-page-secret")
+	assert.Contains(checkpoint.ErrorMessage.String, strconv.Quote("100_201"))
+	assert.NotContains(checkpoint.ErrorMessage.String, "synthetic-page-secret")
 	assert.Equal(store.SyncStatusFailed, checkpoint.Status)
 	delete(f.denied, "100_201/comments")
 	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
 	assert.False(sum.Partial)
 	assert.Equal(got.ID, message(t, st, src.ID, "100_201").ID)
+}
+
+func TestImportTraversalRefusalKeepsPending(t *testing.T) {
+	for _, cause := range []string{"cyclic Facebook reply traversal", "bounded depth"} {
+		t.Run(cause, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, f, imp, src := setupImport(t)
+			blocked := "100_200"
+			if cause == "bounded depth" {
+				parent := blocked
+				for i := 1; i <= 128; i++ {
+					blocked = "100_" + strconv.Itoa(200+i)
+					f.comments[parent] = []Object{*comment(blocked, parent, "synthetic blocked object")}
+					parent = blocked
+				}
+			} else {
+				f.comments[blocked] = []Object{*comment(blocked, blocked, "synthetic blocked object")}
+			}
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.ErrorContains(err, cause)
+			assert.Contains(err.Error(), strconv.Quote(blocked))
+			assert.NotContains(err.Error(), "synthetic-page-secret")
+			assert.NotContains(err.Error(), "synthetic blocked object")
+			assert.True(sum.Partial)
+			checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
+			require.NoError(err)
+			var before syncState
+			require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &before))
+			frames := before.Phases[Posts].Stack
+			require.NotEmpty(frames)
+			pending := frames[len(frames)-1].Pending
+			require.NotEmpty(pending)
+			assert.Equal(blocked, pending[0].ID)
+			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.ErrorContains(err, cause)
+			assert.Contains(err.Error(), strconv.Quote(blocked))
+			assert.Zero(sum.MessagesAdded)
+			checkpoint, err = st.GetLatestCheckpointedSync(src.ID)
+			require.NoError(err)
+			assert.Equal(store.SyncStatusFailed, checkpoint.Status)
+			assert.Contains(checkpoint.ErrorMessage.String, strconv.Quote(blocked))
+			var after syncState
+			require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &after))
+			assert.Equal(before.Phases[Posts], after.Phases[Posts], "retry must retain the same blocked object without skipping work")
+		})
+	}
 }
 
 func TestAdPermissionFailureDoesNotStarveOrganic(t *testing.T) {
@@ -566,6 +635,7 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 				f.comments["100_200"][0].Message = "replacement comment must not overwrite an unknown format"
 				sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
 				require.Error(err)
+				assert.Contains(err.Error(), strconv.Quote(target))
 				if sum != nil {
 					assert.True(sum.Partial)
 				}
@@ -674,6 +744,7 @@ func TestImportDeclaredParentRefusesUnsafeTargets(t *testing.T) {
 			f.comments["100_200"] = []Object{*comment("100_202", tt.parentID, "must not link outside the selected root")}
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.Error(err)
+			assert.Contains(err.Error(), strconv.Quote("100_202"))
 			ids, readErr := st.MessageExistsBatch(src.ID, []string{"100_202"})
 			require.NoError(readErr)
 			assert.Zero(ids["100_202"], "unsafe declared parent must be rejected before persisting the new child")

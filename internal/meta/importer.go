@@ -228,7 +228,7 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
-				return err
+				return fmt.Errorf("facebook post %q: %w", post.ID, err)
 			}
 			p.Posts = p.Posts[1:]
 			p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
@@ -256,7 +256,7 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 	if !f.Loaded {
 		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.imp.api.Comments(ctx, f.Parent, f.After) })
 		if err != nil {
-			return err
+			return fmt.Errorf("facebook comments for %q: %w", f.Parent, err)
 		}
 		f.Pending, f.Next, f.Loaded = page.Data, page.After, true
 		return nil
@@ -265,14 +265,14 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 		child := f.Pending[0]
 		for _, ancestor := range p.Stack {
 			if child.ID == ancestor.Parent {
-				return errors.New("cyclic Facebook reply traversal")
+				return fmt.Errorf("facebook comment %q: cyclic Facebook reply traversal", child.ID)
 			}
 		}
 		if len(p.Stack) >= 128 {
-			return errors.New("facebook reply traversal exceeds bounded depth")
+			return fmt.Errorf("facebook comment %q: facebook reply traversal exceeds bounded depth", child.ID)
 		}
 		if err := r.persist(ctx, child, f.Root, f.Parent, edge); err != nil {
-			return err
+			return fmt.Errorf("facebook comment %q: %w", child.ID, err)
 		}
 		f.Pending = f.Pending[1:]
 		p.Stack = append(p.Stack, commentFrame{Root: f.Root, Parent: child.ID})
