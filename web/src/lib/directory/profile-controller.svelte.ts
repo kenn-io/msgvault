@@ -26,7 +26,6 @@ import type {
   SetPersonAttributeRequest,
 } from './models';
 interface DirectoryProfileControllerOptions {
-  includeHiddenDefinitions?: boolean;
   invalidateRow?: (
     personID: number,
     update?: DirectoryPersonSummaryUpdate,
@@ -163,7 +162,7 @@ export class DirectoryProfileController {
         ),
         settle(
           generatedListAttributeDefinitions(
-            { object_type: 'person' },
+            { object_type: 'person', include_hidden: true },
             {
               ...this.client,
               signal: abort.signal,
@@ -328,7 +327,7 @@ export class DirectoryProfileController {
     }
   }
   async reloadDefinitions(expectedDraftGeneration?: number): Promise<boolean> {
-    const response = await settle(generatedListAttributeDefinitions({ object_type: 'person', ...(this.options.includeHiddenDefinitions ? { include_hidden: true } : {}) }, this.client));
+    const response = await settle(generatedListAttributeDefinitions({ object_type: 'person', include_hidden: true }, this.client));
     if (this.disposed) return false;
     if (response.data) {
       this.definitions = response.data.definitions ?? [];
