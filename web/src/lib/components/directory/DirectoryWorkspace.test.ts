@@ -1,3 +1,4 @@
+import { pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,10 +12,6 @@ const state: DirectoryURLState = {
   directoryQuery: '', directoryContactState: '', directoryCategory: '',
   directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '', directorySort: 'name', directoryPersonID: null
 };
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
-}
 
 function directoryResponse() {
   return Response.json({
