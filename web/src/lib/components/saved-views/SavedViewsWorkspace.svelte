@@ -316,6 +316,7 @@
     flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
+    overflow-y: auto;
     background: var(--bg-primary);
   }
   article,
@@ -352,9 +353,12 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
+  /* overflow: hidden drops the list's content-based minimum height, so without
+     flex: none the column squeezes the rows to fit the viewport. */
   .view-list {
     display: grid;
     width: 100%;
+    flex: none;
     overflow: hidden;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);

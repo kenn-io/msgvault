@@ -4014,7 +4014,7 @@ Use this if `verify` reports FTS5 shadow-table corruption such as a malformed in
 
 ## embeddings
 
-Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and a configured `[vector.embeddings]` endpoint. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
+Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and configured `[vector.embeddings]` settings. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
 
 ```bash
 msgvault embeddings <subcommand> [flags]
@@ -4602,7 +4602,7 @@ Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
 configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
-available loopback Ollama model at `[chat].server`. Hosted people inference
+available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
 select it. Without an OpenAI key or explicit provider choice, setup can offer
 the configured local Ollama chat model. The running daemon does not fall back
@@ -4632,7 +4632,9 @@ search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
 
-An existing text model or endpoint is preserved even if the feature is disabled.
+`--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
+
+Without that flag, an existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
 schedule keys, including an empty cron and `run_after_sync = false`, are also
 preserved. Setup does not configure source syncs, track people, enroll briefs,

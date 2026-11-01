@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func providerHTTPClientWithoutRedirects(client *http.Client) *http.Client {
@@ -89,4 +90,11 @@ func personEnrichmentEnvironmentLookup(cfg *config.Config) personenrichment.Cred
 		value, err := resolvePersonEnrichmentSuppression(cfg)
 		return value, err == nil && value != ""
 	}
+}
+
+func resolveTextEmbeddingCredential(snapshot providercredentials.Snapshot, cfg vector.Config) (string, error) {
+	if cfg.Embeddings.LocalOnly {
+		return "", nil
+	}
+	return resolveProviderCredentialFromSnapshot(snapshot, providercredentials.VectorEmbeddingsID, cfg.Embeddings.Endpoint, cfg.Embeddings.APIKeyEnv)
 }
