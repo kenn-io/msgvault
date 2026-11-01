@@ -302,6 +302,8 @@ test('People supplies its selected participant to Save and commits the returned 
   await relationshipList.getByText('Archive Person').click();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'More actions' })).toHaveCount(0);
 
   const promotionRequest = page.waitForRequest((request) =>
     new URL(request.url()).pathname === '/api/v1/people' && request.method() === 'POST'

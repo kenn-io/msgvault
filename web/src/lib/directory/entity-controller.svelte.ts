@@ -54,6 +54,7 @@ type RequestResult<T> = {
   response: Response;
 };
 interface DirectoryEntityControllerOptions {
+  catalogOnly?: boolean;
   onDirectoryChange?: () => void | Promise<void>;
 }
 const unknownCreateMessage =
@@ -573,7 +574,7 @@ export class DirectoryEntityController {
       },
       prepared,
     );
-    if (result.ok) await this.loadRelationships(false);
+    if (result.ok && !this.options.catalogOnly) await this.loadRelationships(false);
     return result;
   }
   async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, RelationshipType>> {
