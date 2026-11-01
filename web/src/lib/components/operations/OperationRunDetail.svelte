@@ -3,6 +3,7 @@
 
   import {
     OPERATION_ACTION_LABELS,
+    OPERATION_KIND_LABELS,
     RELATED_STATUS_LABELS,
     counterLabel,
     counterValue,
@@ -32,6 +33,7 @@
 <section class="detail" aria-label="Operation run detail">
 
   <dl class="facts">
+    <div><dt>Operation</dt><dd>{OPERATION_KIND_LABELS[detail.kind]}</dd></div>
     {#if detail.connection}<div><dt>Connection</dt><dd>{detail.connection}</dd></div>{/if}
     <div><dt>State</dt><dd><Chip size="sm" tone={stateChip.tone} uppercase={false}>{stateChip.label}</Chip></dd></div>
     <div><dt>Trigger</dt><dd>{triggerLabel(detail.trigger)}</dd></div>

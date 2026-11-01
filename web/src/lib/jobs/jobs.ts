@@ -32,7 +32,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
       const runFailed = sourceRunState(source) === 'failed';
       if (runFailed || source.scheduler_last_error) {
         const diagnostics = runFailed
-          ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).filter(Boolean).join(' · ')
+          ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).find(Boolean)
           : '';
         items.push({ ...base, state: 'failed', detail: diagnostics || firstLine(source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : undefined });
       } else if (source.scheduler_queued || source.scheduler_pending) {

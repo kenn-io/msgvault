@@ -58,8 +58,8 @@ describe('overviewRows', () => {
   });
 });
 
-it('shows index progress only while a run is active', () => {
-  const embedding = { ...embeddingStatus, active_generation: activeGeneration, current: 2, pending: 8 };
+it.each([null, activeGeneration])('shows index progress only while a run is active with active generation %j', (generation) => {
+  const embedding = { ...embeddingStatus, active_generation: generation, current: 2, pending: 8 };
   const visual = { ...visualStatus, current: 3 };
   for (const kind of ['message_embedding', 'visual_embedding'] as const) {
     const active: NonNullable<OperationLaneStatus['active']> = { id: 'run-1', kind, lane: kind === 'visual_embedding' ? 'visual_attachments' : 'messages', state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] };

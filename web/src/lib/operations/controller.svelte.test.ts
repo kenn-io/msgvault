@@ -661,14 +661,18 @@ it.each(['failed', 'partial'] as const)('reports an aggregate CardDAV %s respons
     if (request.method === 'POST')
       return Response.json({
         ...syncResult(),
+        books: status === 'partial' ? 1 : 0,
+        created: status === 'partial' ? 1 : 0,
         status,
         connections: [
           {
             connection: 'work',
             status: 'failed',
+            books: 0, created: 0, updated: 0, removed: 0,
             error_code: 'connection_unavailable',
             error_message: 'private arbitrary upstream detail'
-          }
+          },
+          ...(status === 'partial' ? [{ connection: 'personal', status: 'succeeded', ...syncResult() }] : [])
         ]
       });
     reads++;

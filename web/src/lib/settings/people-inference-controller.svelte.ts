@@ -32,8 +32,6 @@ export class PeopleInferenceController {
 
   constructor(private readonly client: APIClient, private readonly onChanged: () => void | Promise<void> = () => undefined) {}
 
-  updateConfigRevision(etag: string): void { this.configETag = etag; }
-
   get selectedProfile(): PeopleInferenceProfileSetting | undefined {
     return this.status?.profiles.find((profile) => profile.name === this.selectedName);
   }
