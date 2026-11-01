@@ -4,9 +4,10 @@ import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
 import PossibleDuplicates from './PossibleDuplicates.svelte';
+import { pair } from '../shell/fixtures.test-support';
 
 it('renders endpoint summaries and wires Retry and Merge', async () => {
-  const row = { id: 17, left_id: 1, left_kind: 'person', right_id: 2, right_kind: 'participant', basis: 'stable_provider_id', state: 'candidate', source: 'user', actionable: true, application_pending: false, review_token: 'after-profile-merge', evidence: [], created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z' };
+  const row = { ...pair, left_kind: 'person', basis: 'stable_provider_id', review_token: 'after-profile-merge' };
   let unavailable = true;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -33,8 +34,6 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
     expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'after-profile-merge' }), 'accept');
   } finally { view.unmount(); controller.destroy(); }
 });
-
-const pair = { id: 17, left_id: 1, left_kind: 'participant', right_id: 2, right_kind: 'participant', basis: 'email', source: 'user', state: 'candidate', actionable: true, application_pending: false, review_token: 'review-17', evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
 
 it('disables Merge while the post-merge page reloads', async () => {
   let finish!: (response: Response) => void;
