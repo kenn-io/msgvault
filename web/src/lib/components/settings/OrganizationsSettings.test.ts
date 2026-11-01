@@ -83,6 +83,7 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Save organization' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
     expect(requests.find((request) => request.method === 'PATCH')!.headers.get('If-Match')).toBe('"organization-21-r2"');
+    await expect(requests.find((request) => request.method === 'PATCH')!.clone().json()).resolves.toMatchObject({ name: 'Renamed Synthetic Org' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
