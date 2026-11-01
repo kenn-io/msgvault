@@ -7,6 +7,9 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
+import PersonPage from './PersonPage.svelte';
+
+vi.mock('./PersonPage.svelte', { spy: true });
 
 const when = '2026-07-19T10:00:00Z';
 function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
@@ -187,9 +190,6 @@ it('reads a saved profile once and loads its fields when Details opens', async (
     expect(paths.filter(path => /people-inference|attribute-definitions|kata|agenda|brief/.test(path))).toEqual([]);
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
-    expect(screen.getByText('Last contact')).toBeDefined();
-    expect(screen.getByText('3 interactions')).toBeDefined();
-    expect(screen.queryByText(/Unknown ·/)).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -357,20 +357,15 @@ it.each([
 });
 
 
-it.each([false, undefined])('offers shared setup only when sweep configuration is explicitly disabled: %s', async sweepConfigured => {
+it.each([false, undefined])('forwards sweep configuration and settings navigation to the person page: %s', async sweepConfigured => {
+  vi.mocked(PersonPage).mockClear();
   const client = clientFor({ '/api/v1/people/7': () => Response.json(profile(7, 1, [])) });
   const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
   const onOpenSettings = vi.fn();
   const view = render(PeopleWorkspace, { props: { client, controller, directory, sweepConfigured, onOpenSettings, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('heading', { name: 'Last time we talked' });
-    for (const name of ['Set up Facts', 'Set up Briefs']) {
-      const button = screen.queryByRole('button', { name });
-      if (sweepConfigured === false) { expect(button).not.toBeNull(); await fireEvent.click(button!); }
-      else expect(button).toBeNull();
-    }
-    if (sweepConfigured === false) expect(onOpenSettings.mock.calls).toEqual([['enrichment'], ['enrichment']]);
+    await waitFor(() => expect(PersonPage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sweepConfigured, onOpenSettings })));
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
 

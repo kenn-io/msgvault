@@ -35,7 +35,6 @@ describe('ProfileHistoryDialog', () => {
         person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { ...currentEnvelope, id: 2 },
       }] });
       if (url.pathname.endsWith('/attributes')) {
-        expect(url.searchParams.get('history')).toBe('true');
         if (failing && failedSection === 'attributes') return Response.json({ message: 'attributes unavailable' }, { status: 503 });
         return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [{
           id: 9, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Earlier note' },
@@ -61,6 +60,7 @@ describe('ProfileHistoryDialog', () => {
     render(ProfileHistoryDialog, props);
     expect(await screen.findByText('Current Name')).toBeDefined();
     expect(requests.filter((url) => url.pathname.endsWith('/attributes'))).toHaveLength(3);
+    expect(requests.filter((url) => url.pathname.endsWith('/attributes')).map(url => url.searchParams.get('history'))).toEqual(['true', 'true', 'true']);
     expect(requests.filter((url) => url.pathname.endsWith('/attribute-definitions'))).toHaveLength(3);
   });
 
