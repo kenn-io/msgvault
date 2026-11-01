@@ -59,7 +59,8 @@
   });
   $effect(() => {
     if (!directoryMode) return;
-    untrack(() => directory.applyURLState({ ...urlState, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' }, false, false));
+    const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
+    untrack(() => directory.applyURLState(filters, false, false));
   });
   $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
   onMount(() => {
@@ -91,7 +92,8 @@
   const selectedProfileID = $derived(soloPerson ?? (controller.target === target && controller.detail && 'identifiers' in controller.detail ? (controller.detail as PersonSummary).profile?.id ?? null : null));
   $effect(() => {
     const id = selectedProfileID;
-    untrack(() => { if (directory.selectedPersonID !== id) void directory.loadSelection(id); });
+    if (id === null) void target;
+    untrack(() => void directory.loadSelection(id));
   });
   $effect(() => {
     const id = soloPerson;
