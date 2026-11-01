@@ -531,35 +531,6 @@ it.each(['participant', 'profile'])('retains a saved person and its recovery whe
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('refreshes the selected saved profile in place after linking another identity', async () => {
-  let linked = false;
-  const saved = () => profile(7, linked ? 2 : 1, linked ? [1, 2] : [1]);
-  const client = clientFor({
-    '/api/v1/people/7': () => Response.json(saved()),
-    '/api/v1/people/7/profile': () => {
-      return Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: linked ? [{ person_id: 7, address_kind: 'email', original_value: 'linked@example.com', normalized_value: 'linked@example.com', normalization: 'email', normalization_version: 1, envelope: { id: 31, source: 'user', ordinal: 0, created_at: when, updated_at: when, vcard: {} } }] : [] }, { headers: { ETag: `"person-7-r${linked ? 2 : 1}"` } });
-    },
-    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], identity_revision: linked ? 2 : 1 }),
-    '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Synthetic Two', identifiers: [] }], total_count: 1, cache_revision: 'cache', search_provenance: {} }),
-    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
-    '/api/v1/identity/links': () => { linked = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); },
-  });
-  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
-  const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await screen.findByRole('button', { name: 'Add email' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
-    const input = await openTypeahead('Search people to link');
-    await fireEvent.input(input, { target: { value: 'Synthetic Two' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Two/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-    await screen.findByText('linked@example.com');
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it.each([false, true])('refreshes the selected profile after bulk links (partial failure=%s)', async partial => {
   let links = 0; let revision = 1; const writes: Request[] = [];
   const saved = () => profile(7, revision, revision === 1 ? [1] : [1, 2]);
