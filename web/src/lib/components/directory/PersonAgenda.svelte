@@ -199,7 +199,7 @@
   <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if integrationState === 'disabled' && onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Tasks" onclick={onSetUp} />{/if}{#if loading}<span role="status">Loading…</span>{/if}</div>
   {#if error}<p class="notice" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
   {#if stateMessage && !(integrationState === 'disabled' && onSetUp)}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
-  {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No linked Kata items.</p>{/if}
+  {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
   {#each items as item (item.uid)}
     <DetailRow>
@@ -221,7 +221,8 @@
 </section>
 
 <style>
-  .person-agenda { display: grid; gap: var(--field-gap); min-width: 0; }
+  .person-agenda { display: grid; gap: var(--space-2); min-width: 0; }
+  .heading { min-height: var(--control-h); }
   .heading, form { display: flex; align-items: center; justify-content: space-between; gap: var(--control-gap); }
   h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
@@ -229,5 +230,5 @@
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
   small { margin-left: var(--space-2); color: var(--text-muted); }
   a { color: var(--link-ink); }
-  .notice { color: var(--text-secondary); }
+  .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>

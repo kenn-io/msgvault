@@ -67,7 +67,7 @@ describe('PersonAgenda', () => {
     }));
 
     render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
@@ -111,7 +111,7 @@ describe('PersonAgenda', () => {
     }));
 
     render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await fireEvent.input(screen.getByLabelText('List'), { target: { value: 'Gift  Ideas' } });
@@ -152,7 +152,7 @@ describe('PersonAgenda', () => {
     }));
 
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
@@ -276,7 +276,7 @@ describe('PersonAgenda', () => {
     // next to the notice and claim an emptiness it never checked.
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
     expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/7/agenda')).toBe(false);
-    expect(screen.queryByText('No linked Kata items.')).toBeNull();
+    expect(screen.queryByText('No tasks yet')).toBeNull();
   });
 
   it('does not request the agenda when the Kata service is incompatible', async () => {
@@ -296,7 +296,7 @@ describe('PersonAgenda', () => {
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
     expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/7/agenda')).toBe(false);
-    expect(screen.queryByText('No linked Kata items.')).toBeNull();
+    expect(screen.queryByText('No tasks yet')).toBeNull();
   });
 
   it('keeps the person page usable when Kata is unavailable', async () => {
@@ -317,7 +317,7 @@ describe('PersonAgenda', () => {
       return Response.json({ project: 'msgvault', items: [] });
     }));
     render(PersonAgenda, { client, personID: 7 });
-    expect(await screen.findByText('No linked Kata items.')).toBeDefined();
+    expect(await screen.findByText('No tasks yet')).toBeDefined();
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
   });
 
@@ -362,7 +362,7 @@ describe('PersonAgenda', () => {
     releaseStatus!(readyStatus());
     await waitFor(() => expect(releaseList).not.toBeNull());
     releaseList!(Response.json({ project: 'msgvault', items: [] }));
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
     await waitFor(() => expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(false));
     expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
   });
@@ -410,7 +410,7 @@ describe('PersonAgenda', () => {
     }));
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'A note' } });
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
@@ -448,7 +448,7 @@ describe('PersonAgenda', () => {
     }));
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'A note' } });
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
@@ -551,7 +551,7 @@ describe('PersonAgenda', () => {
     }));
 
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No linked Kata items.');
+    await screen.findByText('No tasks yet');
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'A note' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
     await waitFor(() => expect(releases.length).toBe(1)); // A's create hangs.
@@ -595,7 +595,7 @@ describe('PersonAgenda', () => {
     }));
     render(PersonAgenda, { client, personID: 7 });
     await fireEvent.click(await screen.findByRole('button', { name: 'Unlink Ask' }));
-    await waitFor(() => expect(screen.getByText('No linked Kata items.')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('No tasks yet')).toBeDefined());
     const request = requests.find((candidate) => candidate.method === 'DELETE');
     expect(new URL(request!.url).pathname).toBe('/api/v1/people/7/agenda/one');
   });

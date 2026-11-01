@@ -187,7 +187,9 @@ it('reads a saved profile once and loads its fields when Details opens', async (
     expect(paths.filter(path => /people-inference|attribute-definitions|kata|agenda|brief/.test(path))).toEqual([]);
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
-    expect(screen.getByText('Overdue · 3 interactions')).toBeDefined();
+    expect(screen.getByText('Last contact')).toBeDefined();
+    expect(screen.getByText('3 interactions')).toBeDefined();
+    expect(screen.queryByText(/Unknown ·/)).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -370,12 +372,13 @@ it('rereads relationships and network when reopening the selected person', async
   const props = { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   let view = render(PeopleWorkspace, { props });
   try {
-    await waitFor(() => expect(screen.getByRole('list', { name: 'Directory network connections' }).textContent).toContain('mentors'));
+    const relationOf = () => screen.getByRole('button', { name: 'Open person Peer' }).parentElement?.querySelector('.relation')?.textContent;
+    await waitFor(() => expect(relationOf()).toBe('mentors'));
     view.unmount();
     label = 'guides';
     view = render(PeopleWorkspace, { props });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Peer' }).closest('strong')?.textContent).toContain('guides'));
-    await waitFor(() => expect(screen.getByRole('list', { name: 'Directory network connections' }).textContent).toContain('guides'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Peer' }).closest('.detail-row')?.textContent).toContain('Guides'));
+    await waitFor(() => expect(relationOf()).toBe('guides'));
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
 

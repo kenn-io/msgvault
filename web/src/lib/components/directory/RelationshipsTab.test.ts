@@ -62,9 +62,11 @@ describe('RelationshipsTab', () => {
     ];
     render(RelationshipsTab, { client, controller, personID: 7 });
     expect(screen.queryByRole('heading', { name: 'Connection types' })).toBeNull();
-    expect(screen.getByText('Synthetic Learner · mentors')).toBeDefined();
-    expect(screen.getByText('Synthetic Guide · is mentored by')).toBeDefined();
-    expect(screen.getByText('Synthetic Peer · works with')).toBeDefined();
+    for (const [name, label] of [['Synthetic Learner', 'Mentors'], ['Synthetic Guide', 'Is mentored by'], ['Synthetic Peer', 'Works with']]) {
+      const row = screen.getByText(name).closest('.detail-row') as HTMLElement;
+      expect(within(row).getByText(label)).toBeDefined();
+    }
+    expect(screen.queryByText(/outgoing|incoming/)).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
   });
@@ -82,6 +84,8 @@ describe('RelationshipsTab', () => {
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete mentor relationship type' })).toBeNull();
     expect(screen.getByText('Built in')).toBeDefined();
+    expect(within(screen.getByRole('list', { name: 'Built-in connection types' })).getByText('mentors / is mentored by')).toBeDefined();
+    expect(screen.queryByText('mentor')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit custom relationship type' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Delete custom relationship type' })).toBeDefined();
   });
@@ -92,7 +96,9 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/people/7/relationships') {
         includeEnded.push(new URL(request.url).searchParams.get('include_ended') ?? '');
-        return Response.json({ relationships: [] });
+        return includeEnded.length === 1
+          ? Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 })
+          : Response.json({ relationships: [] });
       }
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     }));
@@ -100,7 +106,7 @@ describe('RelationshipsTab', () => {
 
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
     await waitFor(() => expect(includeEnded).toEqual(['true']));
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh relationships' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Refresh relationships' }));
 
     await waitFor(() => expect(includeEnded).toEqual(['true', 'true']));
   });
@@ -117,15 +123,16 @@ describe('RelationshipsTab', () => {
     }));
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh relationships' }));
-    expect(screen.getByRole('status').textContent).toContain('Loading relationships');
+    expect(screen.queryByRole('button', { name: 'Refresh relationships' })).toBeNull();
+    void controller.refreshRelationships();
+    expect((await screen.findByRole('status')).textContent).toContain('Loading relationships');
     resolveFirst(Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 }));
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('relationships unavailable');
     await fireEvent.click(within(alert).getByRole('button', { name: 'Refresh relationships' }));
 
-    expect(await screen.findByText('No connections')).toBeDefined();
+    expect(await screen.findByText('No connections yet')).toBeDefined();
     expect(reads).toBe(2);
   });
 
@@ -200,7 +207,8 @@ describe('RelationshipsTab', () => {
         notes: 'Synthetic note'
       });
       expect((await post.clone().json()).source).toBeUndefined();
-      expect(screen.getByText('Synthetic Counterpart · is mentored by')).toBeDefined();
+      const createdRow = screen.getByText('Synthetic Counterpart').closest('.detail-row') as HTMLElement;
+      expect(createdRow.textContent).toContain('Is mentored by');
     } finally {
       vi.useRealTimers();
     }
@@ -282,7 +290,8 @@ describe('RelationshipsTab', () => {
       target_person_id: 9,
       relationship_type_slug: 'mentor'
     });
-    expect(screen.getByText('Synthetic Colleague · mentors')).toBeDefined();
+    const createdRow = screen.getByText('Synthetic Colleague').closest('.detail-row') as HTMLElement;
+    expect(createdRow.textContent).toContain('Mentors');
   });
 
   it('retains an edge draft on conflict and uses the fresh individual ETag without auto-retry', async () => {

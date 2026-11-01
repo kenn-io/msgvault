@@ -9,9 +9,11 @@
   import RelationshipsTab from '../directory/RelationshipsTab.svelte';
   import AttributeDefinitionDialog from '../directory/AttributeDefinitionDialog.svelte';
   import OrganizationsSettings from './OrganizationsSettings.svelte';
+  import { sentenceCase } from '../../explore/labels';
   let { client, onDirectoryChange }: { client: APIClient; onDirectoryChange?: () => void | Promise<void> } = $props();
   const entities = new DirectoryEntityController(untrack(() => client), 0, { onDirectoryChange: () => onDirectoryChange?.() });
   const fields = new DirectoryProfileController(untrack(() => client), 0, { etags: {}, errors: {} });
+  const customFields = $derived(fields.definitions.filter((field) => field.ownership !== 'system'));
   let creating = $state(false);
   let editing = $state<AttributeDefinition>();
   let deleting = $state(false);
@@ -51,17 +53,21 @@
   }
 </script>
 
-<RelationshipsTab {client} controller={entities} personID={0} catalogOnly />
 <section class="fields" aria-label="Fields">
   <header><h3>Fields</h3><Button label="Add field" size="sm" disabled={pending || fields.definitionCreationCommit !== null || fields.createdDefinition !== null} onclick={() => creating = true} /></header>
   {#if fields.definitionCreationCommit || fields.createdDefinition}<Button label="Resume field creation" onclick={() => creating = true} />{/if}
   {#if fields.definitionsError}<p role="alert">{fields.definitionsError}<Button label="Retry fields" onclick={() => void fields.reloadDefinitions()} /></p>{/if}
   {#if error && !editing}<p role="alert">{error}</p>{/if}
-  {#each fields.definitions.filter((field) => field.ownership !== 'system') as field (field.id)}
-    <div class="row"><span>{field.label}</span><small>{field.value_type}{field.cardinality === 'multi' ? ' · several' : ''}{field.is_active ? '' : ' · Inactive'}</small><Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" disabled={pending} onclick={() => void edit(field)} /></div>
-  {:else}<p>No custom fields yet</p>{/each}
+  {#if customFields.length > 0}
+    <ul class="list">
+      {#each customFields as field (field.id)}
+        <li><span>{field.label}</span><small>{[sentenceCase(field.value_type), field.cardinality === 'multi' ? 'several values' : '', field.is_active ? '' : 'inactive'].filter(Boolean).join(' · ')}</small><Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} /></li>
+      {/each}
+    </ul>
+  {:else}<p class="muted">No custom fields yet</p>{/if}
 </section>
 <OrganizationsSettings controller={entities} />
+<RelationshipsTab {client} controller={entities} personID={0} catalogOnly />
 {#if creating}<AttributeDefinitionDialog controller={fields} onClose={() => creating = false} />{/if}
 {#if editing}
   <Modal title={deleting ? `Delete ${editing.label}?` : 'Edit field'} onclose={() => { if (!pending) editing = undefined; }}>
@@ -78,13 +84,15 @@
 {/if}
 <style>
   .fields, .form { display: grid; gap: var(--field-gap); }
-  header, .row { display: flex; align-items: center; gap: var(--control-gap); }
+  header { display: flex; align-items: center; gap: var(--control-gap); }
   header { justify-content: space-between; }
   h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
-  .row { min-width: 0; padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); flex-wrap: wrap; }
-  .row > span { flex: 1; }
-  small { color: var(--text-muted); }
+  .list { display: grid; margin: 0; padding: 0; border: 1px solid var(--border-muted); border-radius: var(--radius-md); list-style: none; }
+  .list li { display: flex; align-items: center; gap: var(--control-gap); min-height: var(--control-h-lg); padding: var(--space-1) var(--pane-pad-x); }
+  .list li + li { border-top: 1px solid var(--border-muted); }
+  .list span { flex: 1; min-width: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  small, .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
   label { display: grid; gap: var(--label-gap); }
   [role="alert"] { color: var(--text-danger); }
 </style>

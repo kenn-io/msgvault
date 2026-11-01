@@ -456,7 +456,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
         nodes: [
           { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
           { id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 1 },
-          { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 1 },
+          { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 },
         ],
         edges: [
           {
