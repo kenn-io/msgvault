@@ -170,7 +170,7 @@
         </div>
       {/if}
 
-      {#if controller.enrollment && !onSetUp}
+      {#if controller.enrollment}
         {@const enrollment = controller.enrollment}
         <div class="enrollment-row">
           <Toggle
