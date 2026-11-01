@@ -76,8 +76,21 @@ it('identifies row actions and confirmations by value and service scope without 
   ];
   const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const secret = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'private_note', label: 'Private note', is_sensitive: true };
+  const single = { ...secret, id: 10, universal_id: '00000000-0000-4000-8000-000000000010', slug: 'private_single', label: 'Private single', cardinality: 'single' };
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
-  const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note, secret] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }] } } });
+  let resolveSave!: (response: Response) => void;
+  const pendingSave = new Promise<Response>(resolve => { resolveSave = resolve; });
+  const writes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    if (request.method === 'PUT' && new URL(request.url).pathname === '/api/v1/people/7/attributes/private_single') {
+      writes.push(request.clone());
+      return pendingSave;
+    }
+    throw new Error(`unexpected ${request.method} ${request.url}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {}, definitions: { definitions: [note, secret, single] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }, { definition: single, current: values(single, ['Single secret']), history: [] }] } });
+  const view = render(PersonFields, { controller });
   try {
     for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
       expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeDefined();
@@ -93,7 +106,23 @@ it('identifies row actions and confirmations by value and service scope without 
     }
     expect(view.container.innerHTML).not.toContain('Secret one');
     expect(view.container.innerHTML).not.toContain('Secret two');
-  } finally { view.unmount(); controller.destroy(); }
+    await fireEvent.click(screen.getByRole('button', { name: 'Show Private single: value 1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Private single: Single secret' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Private single' }), { target: { value: 'Unsaved private draft' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide Private single: Single secret' }));
+    expect(screen.queryByRole('textbox', { name: 'Private single' })).toBeNull();
+    expect(view.container.innerHTML).not.toContain('Single secret');
+    expect(view.container.innerHTML).not.toContain('Unsaved private draft');
+    expect(controller.draft).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show Private single: value 1' })).toBeDefined();
+  } finally {
+    await act(() => resolveSave(Response.json({ message: 'Save unavailable' }, { status: 503 })));
+    await waitFor(() => expect(controller.mutationPending).toBe(false));
+    view.unmount(); controller.destroy();
+  }
 });
 
 it('blocks attribute additions after a failed read and retries loading values', async () => {
