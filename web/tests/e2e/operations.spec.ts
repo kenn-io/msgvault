@@ -102,7 +102,7 @@ test('operations sends confirmed unconfigured document and visual status links t
   await page.getByRole('button', { name: 'Open visual attachment settings' }).click();
   const settings = page.getByRole('main', { name: 'Settings' });
   await expect(settings).toBeVisible();
-  await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
+  await expect(settings.getByRole('heading', { level: 2, name: 'Search & AI' })).toBeVisible();
 });
 
 test('operations keeps a configured but unavailable document authority retry-only', async ({ page }) => {
