@@ -36,6 +36,7 @@
   import PageHeader from '../shell/PageHeader.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
   import { localDayBoundsUTC, timelineRowToSelection } from './timeline-support';
+  import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
 
   const QUERY_DEBOUNCE_MS = 250;
 
@@ -63,6 +64,8 @@
     onOpenDirectory?: (participantID: number) => void;
     onOpenDirectoryPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
+    onOpenSettings?: () => void;
+    onOpenPerson?: (participantID: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     /** Opening a file (or its containing conversation) from the hub's own
      * embedded Files pane has no reading pane of its own to resolve a full
@@ -96,6 +99,8 @@
     onOpenDirectoryPerson = undefined,
     onAnnounce = undefined,
     onOpenMeeting = undefined,
+    onOpenSettings = undefined,
+    onOpenPerson = undefined,
     onOpenFileItem = undefined,
     onOpenFileConversation = undefined
   }: Props = $props();
@@ -103,6 +108,20 @@
   let selection = $state<ReadingPaneSelection | undefined>();
   let conversationAnchorId = $state<number | undefined>();
   let conversationBounds = $state<{ start: string; end: string } | undefined>();
+  let historyRevision = $state(0);
+
+  onMount(() => {
+    const restore = () => { historyRevision += 1; };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  });
+
+  function rememberReadingPane(): void {
+    window.history.replaceState({
+      ...window.history.state,
+      [RELATIONSHIP_READER_HISTORY_KEY]: selection && target ? $state.snapshot({ target, selection, anchor: conversationAnchorId, bounds: conversationBounds }) : undefined
+    }, '');
+  }
   let mobileListOpen = $state(false);
   let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
   let fileFilenameQuery = $state('');
@@ -305,6 +324,7 @@
     selection = undefined;
     conversationAnchorId = undefined;
     conversationBounds = undefined;
+    rememberReadingPane();
     return wasOpen;
   }
 
@@ -410,21 +430,17 @@
     }
   }
 
-  // Esc closes the reading pane before it ever clears `target` (see
-  // handleEscape below), and selectListRow closes it before switching, so an
-  // in-component walk-back never reaches here with a pane still open. An
-  // EXTERNAL change — browser Back/Forward, which rewrites `target` via the
-  // URL without going through either path — skips that ordering, and can
-  // jump straight between two non-null targets as well as clear to null.
-  // Reset on ANY target change so the reading pane never keeps showing a
-  // message from the cluster/domain that just closed underneath it. Plain
-  // state reset only, no focus side effect: AppShell owns focus restoration
-  // for history navigation already.
-  let previousTarget: string | null = untrack(() => target);
+  // Each history entry owns its reader. A new target starts closed, while
+  // Back/Forward restores the message and its original conversation window.
   $effect(() => {
-    if (target === previousTarget) return;
-    previousTarget = target;
-    clearReadingPane();
+    const nextTarget = target;
+    void historyRevision;
+    untrack(() => {
+      const snapshot = relationshipReaderHistory(window.history.state, 'relationships', nextTarget);
+      selection = snapshot?.selection;
+      conversationAnchorId = snapshot?.anchor;
+      conversationBounds = snapshot?.bounds;
+    });
   });
 
   async function closeDrawer(): Promise<void> {
@@ -450,6 +466,7 @@
       row.anchor_message_id !== undefined
       ? localDayBoundsUTC(row.first_at ?? row.occurred_at)
       : undefined;
+    rememberReadingPane();
   }
 
   // Focus stays on the calendar control the person just used.
@@ -637,11 +654,13 @@
               {selection}
               predicate={contextPredicate(predicate)}
               {onOpenMeeting}
+              {onOpenSettings}
+              {onOpenPerson}
               onClose={() => { void closeReadingPane(); }}
               {conversationAnchorId}
               conversationStart={conversationBounds?.start}
               conversationEnd={conversationBounds?.end}
-              onConversationAnchorChange={(anchorId) => (conversationAnchorId = anchorId)}
+              onConversationAnchorChange={(anchorId) => { conversationAnchorId = anchorId; rememberReadingPane(); }}
             />
           </div>
         {/if}
