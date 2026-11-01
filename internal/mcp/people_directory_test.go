@@ -2,11 +2,15 @@ package mcp
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
@@ -130,6 +134,56 @@ func TestMCPListDirectoryPeopleMapsKnownErrors(t *testing.T) {
 			result := rawCallTool(t, directoryToolOptions(backend), ToolListDirectoryPeople, map[string]any{})
 			assert.Equal(t, true, result["isError"])
 			assert.Contains(t, toolErrorTextFromResult(t, result), test.want)
+		})
+	}
+}
+
+func TestMCPListDirectoryPeopleAddressCapability(t *testing.T) {
+	const privateMessage = "synthetic private directory failure detail"
+	for _, test := range []struct {
+		name        string
+		version     string
+		wantLookups int32
+	}{
+		{name: "old daemon requires upgrade", version: "3.28.0"},
+		{name: "current daemon keeps private failure redacted", version: "3.29.0", wantLookups: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var lookups atomic.Int32
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + test.version + `"}`))
+				case "/api/v1/people/directory":
+					lookups.Add(1)
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(`{"error":"private_directory_failure","message":"` + privateMessage + `"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			engine, err := daemonclient.NewEngine(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, engine.Close()) })
+			browser := daemonclient.NewPeopleBrowser(engine)
+			response, raw := task4RawRequest(t,
+				newMCPHTTPServer(directoryToolOptions(browser), HTTPOptions{}).Handler,
+				"tools/call", map[string]any{
+					"name": ToolListDirectoryPeople, "arguments": map[string]any{"address": "alex@example.test"},
+				}, nil)
+			assert.Equal(t, test.wantLookups, lookups.Load())
+			assert.NotContains(t, raw, privateMessage)
+			if test.wantLookups == 0 {
+				require.Empty(t, response.Error, "response: %s", raw)
+				assert.Equal(t, true, response.Result["isError"])
+				assert.Contains(t, toolErrorTextFromResult(t, response.Result),
+					"requires daemon API schema 3.29.0 or newer; upgrade the daemon")
+			} else {
+				assert.InDelta(t, -32603, response.Error["code"], 0, "response: %s", raw)
+				assert.Equal(t, "internal server error", response.Error["message"])
+			}
 		})
 	}
 }

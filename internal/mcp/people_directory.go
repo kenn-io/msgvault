@@ -123,6 +123,8 @@ func directoryDaemonError(err error) *toolResult {
 		return nil
 	}
 	switch coded.APIErrorCode() {
+	case "directory_address_unsupported":
+		return toolErrorResult("directory_address_unsupported: person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 	case "invalid_cursor":
 		return toolErrorResult("invalid_cursor: directory cursor is invalid; restart the query")
 	case "invalid_query":

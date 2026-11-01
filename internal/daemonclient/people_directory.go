@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/peoplebrowser"
@@ -28,7 +29,11 @@ func (c *Client) RequireDirectoryAddress(ctx context.Context, address string) er
 		return fmt.Errorf("check person directory address capability: %w", err)
 	}
 	if !supported {
-		return fmt.Errorf("person directory address filtering requires daemon API schema %s or newer; upgrade the daemon", DirectoryAddressMinAPISchemaVersion)
+		return &APIError{
+			Status:  http.StatusNotImplemented,
+			Code:    "directory_address_unsupported",
+			Message: fmt.Sprintf("person directory address filtering requires daemon API schema %s or newer; upgrade the daemon", DirectoryAddressMinAPISchemaVersion),
+		}
 	}
 	return nil
 }
