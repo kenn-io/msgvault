@@ -84,7 +84,7 @@ function renderSection(
     errors: {},
   } satisfies DirectoryReadBundle;
   const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle);
-  render(AttributeSection, { controller, historyOnly: true });
+  render(AttributeSection, { controller });
   return controller;
 }
 
@@ -153,6 +153,8 @@ describe('AttributeSection', () => {
     expect(history?.hasAttribute('open')).toBe(false);
     const row = screen.getByText('Two').closest('li')!;
     expect(row.textContent).toMatch(/Removed (Jul|Aug) \d{1,2}, 2026/);
-    expect(row.textContent).not.toMatch(/Source:|Reference:|vcard_import|synthetic-source/);
+    expect(row.textContent).toContain('Vcard import');
+    expect(row.textContent).toContain('Reference: synthetic-source');
+    expect(row.textContent).toMatch(/Valid from:.*Valid until:/);
   });
 });
