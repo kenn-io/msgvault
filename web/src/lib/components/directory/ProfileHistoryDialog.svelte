@@ -1,6 +1,10 @@
 <script lang="ts">
   import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
   import { Button, Modal } from '@kenn-io/kit-ui';
+  import AttributeSection from './AttributeSection.svelte';
+  import PersonMergeHistory from './PersonMergeHistory.svelte';
+  import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+  import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -13,8 +17,11 @@
     client: APIClient;
     personID: number;
     onClose: () => void;
+    controller?: DirectoryProfileController;
+    onOpenPerson?: (id: number) => void;
+    onSplitCommitted?: (context: PersonSplitCommittedContext) => void | Promise<void>;
   }
-  let { client, personID, onClose }: Props = $props();
+  let { client, personID, onClose, controller, onOpenPerson, onSplitCommitted }: Props = $props();
   let history = $state<PersonProfileHistory>();
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -154,6 +161,9 @@
         </ul>
       </section>
     {/if}
+    {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
+    {#if controller}<AttributeSection {controller} historyOnly />{/if}
+    <PersonMergeHistory {client} {personID} {onOpenPerson} {onSplitCommitted} />
   </div>
   {#snippet footer()}
     <Button label="Close" onclick={onClose} />

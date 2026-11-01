@@ -125,8 +125,7 @@ for exact settings and routes.
 ## Promote a durable person
 
 Directory starts empty until you save profiles or import contacts. In
-**People**, select a person, open **Details**, choose **Open in Directory**,
-then **Promote to person**. This creates a saved profile from the contact already
+**People**, select a person, and choose **Save** in the header. This creates a saved profile from the contact already
 observed in your archive. The profile starts with the first nonblank observed
 name in the linked cluster, ordered by participant ID. A contact without an
 observed name keeps the `Person N` fallback.
@@ -194,6 +193,8 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 `person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
 
 ## Keep private notes
+
+In **People → Details**, use **More fields** to add notes, pronunciation, and custom fields. Manage field definitions, connection types, and organizations in **Settings → People**. The header's **More actions → History** includes replaced values and merge history.
 
 Save context in your own words with the Notes field. It preserves line breaks
 and keeps earlier values in attribute history:
@@ -302,13 +303,13 @@ RFC3339 timestamp.
 
 [Person briefs](/docs/usage/people-briefs/) summarize recent chat and text
 messages with citations. The guide covers enrollment, generation, reading in
-Directory or the TUI, refresh timing, and saved versions. Email-only contacts
+People Details or the TUI, refresh timing, and saved versions. Email-only contacts
 cannot receive a brief yet.
 
 ## Keep a person’s follow-ups in view
 
 Enable the [Kata connection](../configuration.md#integrationskata) to see live
-todos on a person's Directory page. Create or unlink tasks there, and link
+todos on a person's Details tab in People. Create or unlink tasks there, and link
 existing tasks with the [CLI](../cli-reference.md#person-agenda) or API. Edit
 and complete tasks in Kata. Tasks stay in Kata; this connection requires Kata
 API schema 0.21.0 or later.

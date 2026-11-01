@@ -9,10 +9,11 @@
   interface Props {
     client: APIClient;
     personID: number;
+    onSetUp?: () => void;
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, onSetUp, onAnnounce = () => undefined }: Props = $props();
   const controller = new PersonBriefController(untrack(() => client));
   let root = $state<HTMLElement>();
   let alsoTrack = $state(false);
@@ -142,15 +143,12 @@
 </script>
 
 <section bind:this={root} class="brief" aria-labelledby={headingID}>
-  <Card level="default" padding="sm">
+
     <div class="brief-content">
       <div class="heading-row">
         <div>
           <h3 id={headingID} tabindex="-1">Last time we talked</h3>
-          <p>
-            Catch up before your next conversation with a summary of what this person recently shared
-            in supported chat and text messages. Expand a sentence to see its sources.
-          </p>
+
         </div>
         {#if busy}
           <span class="working" aria-label="Loading the brief" aria-busy="true">
@@ -171,7 +169,8 @@
         </div>
       {/if}
 
-      {#if controller.enrollment}
+      {#if onSetUp}<div class="heading-row"><span class="muted">Briefs</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
+      {#if controller.enrollment && !onSetUp}
         {@const enrollment = controller.enrollment}
         <div class="enrollment-row">
           <Toggle
@@ -333,7 +332,7 @@
             <Button
               size="sm"
               label="Regenerate this brief"
-              disabled={actionsDisabled}
+              disabled={actionsDisabled || Boolean(onSetUp)}
               onclick={() => void generateBrief()}
             />
           </div>
@@ -343,7 +342,7 @@
             <Button
               size="sm"
               label="Generate a brief now"
-              disabled={actionsDisabled}
+              disabled={actionsDisabled || Boolean(onSetUp)}
               onclick={() => void generateBrief()}
             />
           </div>
@@ -395,7 +394,7 @@
         </div>
       {/if}
     </div>
-  </Card>
+
 </section>
 
 <style>
@@ -407,7 +406,7 @@
   h3, h4, p, ul { margin: 0; }
   h3 { font-size: var(--font-size-md); }
   h4 { font-size: var(--font-size-sm); }
-  .heading-row p, .muted, .version-line, .meta, .evidence span { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .muted, .version-line, .meta, .evidence span { color: var(--text-muted); font-size: var(--font-size-sm); }
   .working { display: flex; align-items: center; gap: var(--space-2); }
   .notice { align-items: center; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
   .notice--error { border-color: var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
