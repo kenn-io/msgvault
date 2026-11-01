@@ -322,7 +322,7 @@ describe('DirectoryController', () => {
     expect(controller.detail).not.toHaveProperty('relationships');
   });
 
-  it('reloads Directory ordering and cursor membership after a person rename', async () => {
+  it('reloads Directory ordering, cursor membership, and the open Network after a person rename', async () => {
     const requests: Request[] = [];
     let directoryRead = 0;
     let renamed = false;

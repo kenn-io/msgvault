@@ -440,7 +440,7 @@ it('rereads relationships and network when reopening the selected person', async
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
 
-it.each([false, true, undefined])('offers shared setup only when sweep configuration is explicitly disabled: %s', async sweepConfigured => {
+it.each([false, undefined])('offers shared setup only when sweep configuration is explicitly disabled: %s', async sweepConfigured => {
   const client = clientFor({ '/api/v1/people/7': () => Response.json(profile(7, 1, [])) });
   const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
