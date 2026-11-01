@@ -64,7 +64,7 @@
   // Each node's drawn width, so a line starts where its name ends.
   let widths = $state<Record<string, number>>({});
 
-  // A line runs from the end of the left node's name to the right node's avatar, with its label sitting on the middle of the line.
+  // A line runs from the end of the left node's name to the right node's avatar, with the label in the connection list.
   function segment(edge: NetworkEdge) {
     const a = layout.place.get(edge.source_node_id);
     const b = layout.place.get(edge.target_node_id);
@@ -72,20 +72,16 @@
     const [left, right, leftID] = a.x <= b.x ? [a, b, edge.source_node_id] : [b, a, edge.target_node_id];
     if (left.x === right.x) {
       const x = left.x - AVATAR / 2 - 8;
-      return { x1: x, y1: left.y, x2: x, y2: right.y, tx: x, ty: (left.y + right.y) / 2 };
+      return { x1: x, y1: left.y, x2: x, y2: right.y };
     }
     const x1 = left.x - AVATAR / 2 + (widths[leftID] ?? AVATAR) + 8;
     const x2 = right.x - AVATAR / 2 - 6;
-    return { x1, y1: left.y, x2, y2: right.y, tx: (x1 + x2) / 2, ty: (left.y + right.y) / 2 };
+    return { x1, y1: left.y, x2, y2: right.y };
   }
 
   const hasLinks = $derived((network?.edges.length ?? 0) > 0);
 
-  function edgeLabel(edge: NetworkEdge): string {
-    return edge.label.trim();
-  }
 </script>
-
 
   <section aria-labelledby={`network-${personID}`}>
     <header>
@@ -99,14 +95,14 @@
     {#if controller.networkLoading}<p role="status">Loading network…</p>{/if}
     {#if network?.truncated}<p role="status">Showing a bounded prefix of at most 250 nodes and 500 connections at depth {depth}.</p>{/if}
     {#if network && !hasLinks}<p>No curated connections at this depth.</p>{/if}
-    {#if network}<ul class="kit-sr-only" aria-label="Directory network connections">
+    {#if network}<ul aria-label="Directory network connections">
       <li>{network?.nodes.find((node) => node.hop === 0)?.label}</li>
       {#each [1, 2, 3] as hop}
-        <li>Hop {hop}<ul>{#each network?.edges ?? [] as edge (edge.id)}
+        {#each network?.edges ?? [] as edge (edge.id)}
           {@const source = network?.nodes.find((node) => node.id === edge.source_node_id)}
           {@const target = network?.nodes.find((node) => node.id === edge.target_node_id)}
-          {#if Math.max(source?.hop ?? 0, target?.hop ?? 0) === hop}<li>{source?.label} {edge.label} {target?.label}</li>{/if}
-        {/each}</ul></li>
+          {#if Math.max(source?.hop ?? 0, target?.hop ?? 0) === hop}<li>Hop {hop}: {source?.label} {edge.label} {target?.label}</li>{/if}
+        {/each}
       {/each}
     </ul>{/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -120,12 +116,6 @@
             {/if}
           {/each}
         </svg>
-        {#each layout.edges as edge (edge.id)}
-          {@const line = segment(edge)}
-          {#if line && edgeLabel(edge)}
-            <span class="edge-label" class:ended={Boolean(edge.end_date)} style:left={`${line.tx}px`} style:top={`${line.ty}px`}>{edgeLabel(edge)}</span>
-          {/if}
-        {/each}
         {#each layout.nodes as node (node.id)}
           {@const at = layout.place.get(node.id)}
           {#if at}
@@ -171,10 +161,6 @@
     stroke-dasharray: 3 3;
   }
 
-  .edge-label.ended {
-    color: var(--text-muted);
-  }
-
   h3 {
     margin: 0;
     color: var(--text-primary);
@@ -200,19 +186,6 @@
   line {
     stroke: var(--border-strong);
     stroke-width: 1;
-  }
-
-  .edge-label {
-    position: absolute;
-    padding: 0 var(--chip-pad-x);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    line-height: 18px;
-    white-space: nowrap;
-    transform: translate(-50%, -50%);
   }
 
   .node {

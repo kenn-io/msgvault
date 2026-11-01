@@ -69,6 +69,10 @@
     if (reader) window.history.replaceState({ ...window.history.state, [RELATIONSHIP_READER_HISTORY_KEY]: { ...reader, bounds: undefined } }, '');
   }
   $effect(() => { if (filesOpen) clearDate(); });
+  async function refreshSaved<T extends { ok: boolean }>(outcome: T): Promise<T> {
+    if (outcome.ok && savedProfile) await directory.refreshSelectedPerson();
+    return outcome;
+  }
 </script>
 
 {#snippet files()}
@@ -84,6 +88,8 @@
     <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   {:else if durablePersonID !== null && (!detail || controller.detailMissing)}
     <PersonHeader {name} {onBack} onOpenDetails={() => details = true}>{#snippet actions()}{#if savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}{/if}{/snippet}</PersonHeader>
+    {#if controller.timelineLoading}<p role="status">Loading…</p>{/if}
+    {#if controller.timelineError}<div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>{/if}
     <div class="tabs"><SegmentedControl ariaLabel="Person tabs" value={filesOpen && !details ? 'files' : 'details'} options={[{ value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]} onchange={(value) => { details = value === 'details'; onFilesToggle(value === 'files'); }} /></div>
     {#if filesOpen && !details}{@render files()}{:else}<div class="details"><PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} /></div>{/if}
   {:else if controller.detailMissing}
@@ -125,7 +131,7 @@
         {#if details && profileID !== null}{#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}{/if}
         <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}
           capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
-          onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
+          onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
       </div>
     {#if !details && scope}
       {#key `${target}:${controller.activityRevision}`}

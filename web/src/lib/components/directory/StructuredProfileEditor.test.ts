@@ -806,25 +806,25 @@ describe('StructuredProfileEditor', () => {
     expect(screen.queryByLabelText('Media URI')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save media metadata' })).toBeNull();
   });
-});
 
-it('keeps pronunciation parts and the existing metadata when replacing a name', async () => {
-  const { controller, requests: writes } = requestHarness();
-  const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
-  const current = { person_id: 7, name_kind: 'phonetic', original_value: 'Example', given_name: 'Ex', family_name: 'Ample', phonetic_system: 'ipa', is_derived: false, envelope };
-  render(StructuredProfileEditor, { controller, section: 'names', current });
-  await fireEvent.input(screen.getByRole('textbox', { name: 'First name, said as' }), { target: { value: 'Ecks' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-  await waitFor(() => expect(writes).toHaveLength(1));
-  await expect(writes[0]!.json()).resolves.toEqual({ names: { add: [{ name_kind: 'phonetic', original_value: 'Ecks Ample', formatted: 'Ecks Ample', given_name: 'Ecks', family_name: 'Ample', phonetic_system: 'ipa', is_derived: false, envelope: { source: 'user', ordinal: 2 } }], supersede: [11] } });
-});
+  it('keeps pronunciation parts and the existing metadata when replacing a name', async () => {
+    const { controller, requests: writes } = requestHarness();
+    const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
+    const current = { person_id: 7, name_kind: 'phonetic', original_value: 'Example', given_name: 'Ex', family_name: 'Ample', phonetic_system: 'ipa', is_derived: false, envelope };
+    render(StructuredProfileEditor, { controller, section: 'names', current });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'First name, said as' }), { target: { value: 'Ecks' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    await expect(writes[0]!.json()).resolves.toEqual({ names: { add: [{ name_kind: 'phonetic', original_value: 'Ecks Ample', formatted: 'Ecks Ample', given_name: 'Ecks', family_name: 'Ample', phonetic_system: 'ipa', is_derived: false, envelope: { source: 'user', ordinal: 2 } }], supersede: [11] } });
+  });
 
-it('shows and preserves an existing formatted-only pronunciation', async () => {
-  const { controller, requests } = requestHarness();
-  const current = { person_id: 7, name_kind: 'phonetic', formatted: 'Arisu', original_value: 'Arisu', is_derived: false, envelope: { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} } };
-  render(StructuredProfileEditor, { controller, section: 'names', current });
-  expect(screen.getByRole('textbox', { name: 'First name, said as' })).toHaveProperty('value', 'Arisu');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-  await waitFor(() => expect(requests).toHaveLength(1));
-  await expect(requests[0]!.json()).resolves.toMatchObject({ names: { add: [{ name_kind: 'phonetic', formatted: 'Arisu', original_value: 'Arisu' }], supersede: [11] } });
+  it('shows and preserves an existing formatted-only pronunciation', async () => {
+    const { controller, requests } = requestHarness();
+    const current = { person_id: 7, name_kind: 'phonetic', formatted: 'Arisu', original_value: 'Arisu', is_derived: false, envelope: { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    render(StructuredProfileEditor, { controller, section: 'names', current });
+    expect(screen.getByRole('textbox', { name: 'First name, said as' })).toHaveProperty('value', 'Arisu');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await expect(requests[0]!.json()).resolves.toMatchObject({ names: { add: [{ name_kind: 'phonetic', formatted: 'Arisu', original_value: 'Arisu' }], supersede: [11] } });
+  });
 });

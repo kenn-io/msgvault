@@ -75,6 +75,7 @@
     onCardDAVRequestConsumed = () => undefined,
     onAppearanceSaved = () => undefined,
     onStatusChange = () => undefined,
+    onDirectoryChange,
   }: {
     client: APIClient;
     operationsController: OperationsController;
@@ -88,6 +89,7 @@
     onCardDAVRequestConsumed?: (key: number) => void;
     onAppearanceSaved?: (saved: SavedAppearance) => void;
     onStatusChange?: () => void;
+    onDirectoryChange?: () => void | Promise<void>;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -599,7 +601,7 @@
             <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'people_catalog'}
-          <PeopleCatalogSettings {client} />
+          <PeopleCatalogSettings {client} {onDirectoryChange} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {onStatusChange}
