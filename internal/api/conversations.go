@@ -26,6 +26,12 @@ type ConversationResponse struct {
 	Total     int64           `json:"total"`
 }
 
+// ConversationParticipant identifies the archived person behind a display label.
+type ConversationParticipant struct {
+	ParticipantID int64  `json:"participant_id"`
+	Display       string `json:"display"`
+}
+
 type conversationStore interface {
 	ConversationExists(conversationID int64) (bool, error)
 	GetConversationWindow(conversationID, anchorID int64, before, after int) (*store.ConversationWindow, error)
@@ -193,6 +199,12 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		for _, attachment := range message.Attachments {
 			detail.Attachments = append(detail.Attachments, attachmentInfoFromStore(attachment))
 		}
+		participants := make([]ConversationParticipant, 0, len(message.ToParticipants))
+		for _, recipient := range message.ToParticipants {
+			participants = append(participants, ConversationParticipant{ParticipantID: recipient.ParticipantID, Display: recipient.Display})
+		}
+		detail.FromParticipantID = message.FromParticipantID
+		detail.ToParticipants = participants
 		messages = append(messages, detail)
 	}
 	writeJSON(w, http.StatusOK, ConversationResponse{
