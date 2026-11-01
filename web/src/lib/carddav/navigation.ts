@@ -28,4 +28,5 @@ export function settingsNavigationTarget(
 export interface CardDAVSettingsRequest {
   key: number;
   conflictID?: number;
+  connection?: string;
 }

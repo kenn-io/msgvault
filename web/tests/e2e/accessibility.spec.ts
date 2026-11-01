@@ -83,12 +83,13 @@ for (const theme of ['light', 'dark'] as const) {
     await setKitTheme(page, theme);
 
     await selectWorkspace(page, 'Sources');
-    await page.getByRole('button', { name: 'Show details for Synthetic import' }).click();
+    await page.getByRole('button', { name: 'Details for Synthetic import' }).click();
+    await page.getByText('1 item failed', { exact: true }).click();
     await expect(page.getByText('Malformed MIME header')).toBeVisible();
     await assertNoViolations(page, `Sources row detail ${theme}`);
 
-    await selectWorkspace(page, 'Deletions');
-    await expect(page.getByText('Nothing selected for deletion')).toBeVisible();
+    await selectWorkspace(page, 'Staged deletions');
+    await expect(page.getByText('Nothing staged')).toBeVisible();
     await assertNoViolations(page, `Deletions empty ${theme}`);
 
     await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [
@@ -105,12 +106,12 @@ for (const theme of ['light', 'dark'] as const) {
       execution: { succeeded: 11, failed: 1, failed_ids: ['msg-1'] }
     } }));
     await selectWorkspace(page, 'Messages');
-    await selectWorkspace(page, 'Deletions');
-    const manifests = page.getByRole('table', { name: 'Deletion manifests' });
-    await expect(manifests.getByText('Completed')).toBeVisible();
+    await selectWorkspace(page, 'Staged deletions');
+    const manifests = page.getByRole('table', { name: 'Staged deletions' });
+    await expect(manifests.getByText('Deleted', { exact: true })).toBeVisible();
     await assertNoViolations(page, `Deletions manifests table ${theme}`);
-    await page.getByRole('button', { name: 'Inspect batch-done' }).click();
-    await expect(page.getByText('archive@example.com')).toBeVisible();
+    await manifests.getByRole('row').filter({ hasText: '12 messages' }).getByRole('button', { name: /^Open batch from / }).click();
+    await expect(page.getByRole('dialog', { name: /^Staged / }).getByText('archive@example.com')).toBeVisible();
     await assertNoViolations(page, `Deletions manifest detail ${theme}`);
 
     await selectWorkspace(page, 'Messages');
@@ -118,9 +119,11 @@ for (const theme of ['light', 'dark'] as const) {
     await grid.focus();
     await page.keyboard.press('Space');
     await page.keyboard.press('d');
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Stage deletion…' })).toBeVisible();
+    const review = page.getByRole('dialog', { name: 'Review deletion' });
+    await expect(review).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Stage 1 message', exact: true })).toBeVisible();
     await assertNoViolations(page, `Deletions review ${theme}`);
+    await page.keyboard.press('Escape');
 
     await selectWorkspace(page, 'Settings');
     await page.getByRole('button', { name: 'Advanced', exact: true }).click();
@@ -205,7 +208,7 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `modal ${theme}/${density}`);
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
 
-      for (const workspace of ['Directory', 'Files', 'Sources', 'Deletions', 'Settings']) {
+      for (const workspace of ['Directory', 'Files', 'Sources', 'Staged deletions', 'Settings']) {
         await selectWorkspace(page, workspace);
         await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
@@ -242,7 +245,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('Home');
     await page.keyboard.press('Space');
     await expect(page.getByRole('status').filter({ hasText: '1 selected' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Review for deletion…' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Review deletion…' })).toBeVisible();
     await assertNoViolations(page, `selection bar ${theme}`);
     await page.getByRole('button', { name: 'Clear selection' }).click();
 
@@ -255,11 +258,12 @@ for (const theme of ['light', 'dark'] as const) {
 
     await selectWorkspace(page, 'Files');
     await expect(page.getByRole('grid', { name: 'Files results' }).getByText('synthetic.txt')).toBeVisible();
-    await page.getByRole('button', { name: 'Type' }).click();
-    await expect(page.getByRole('button', { name: /^Images/ })).toBeVisible();
-    await assertNoViolations(page, `Type menu ${theme}`);
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    const filter = page.getByRole('dialog', { name: 'Filter', exact: true });
+    await expect(filter.getByRole('checkbox', { name: 'Images', exact: true })).toBeVisible();
+    await assertNoViolations(page, `Filter popover ${theme}`);
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('button', { name: /^Images/ })).toHaveCount(0);
+    await expect(filter).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Collapse sidebar' }).click();
     await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Messages' }).hover();
