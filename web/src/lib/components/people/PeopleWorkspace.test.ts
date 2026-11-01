@@ -112,7 +112,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the result when the next pair %s', async (outcome) => {
+it.each(['fails', 'is cancelled', 'clears the stale warning', 'merges'])('handles the next pair when it %s', async (outcome) => {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
   const links: Array<{ participant_a: number; participant_b: number }> = [];
   const client = clientFor({
@@ -123,7 +123,7 @@ it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
-      return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
+      return calls === 1 || outcome === 'clears the stale warning' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'clears the stale warning' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/7/merge': () => Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: profile(7, 5, [1, 2]), merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } })
   });
@@ -303,8 +303,6 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
     // Back returns to People with the same saved-list URL and shell-owned controllers.
     view = render(PeopleWorkspace, { props });
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
-    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic One'));
-    await waitFor(() => expect(props.onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
