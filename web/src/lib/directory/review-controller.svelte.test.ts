@@ -350,9 +350,10 @@ describe('DirectoryReviewController', () => {
 
   it('records merge success and refreshes the current page', async () => {
     const requests: Request[] = [];
+    const reload = deferredResponse();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(requestOf(input));
-      return page([{ ...candidate(17), review_token: 'after-profile-merge' }, candidate(18)]);
+      return reload.promise;
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     controller.rows = [candidate(17), candidate(18)];
@@ -363,9 +364,12 @@ describe('DirectoryReviewController', () => {
     };
 
     const completion = controller.completePersonMerge(17, success);
+    expect(controller.submitting).toBe(true);
     await controller.queueDecision(controller.rows[0] ?? candidate(17), 'accept');
     expect(controller.pending).toBeUndefined();
+    reload.resolve(page([{ ...candidate(17), review_token: 'after-profile-merge' }, candidate(18)]));
     await completion;
+    expect(controller.submitting).toBe(false);
 
     expect(controller.lastMerge).toEqual({ candidateID: 17, ...success });
     expect(controller.rows[0]?.review_token).toBe('after-profile-merge');

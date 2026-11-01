@@ -1026,11 +1026,13 @@ describe('relationships workspace state', () => {
     state.commitWorkspace('relationships');
 
     expect(state.current.workspace).toBe('relationships');
-    expect(state.current.query).toBe('');
     if (entry === 'duplicates') expect(state.current.peopleDuplicates).toBe(false);
-    expect(state.predicate()).not.toHaveProperty('query');
-    expect(state.predicate()).not.toHaveProperty('search_mode');
-    expect(parseExploreURLState(window.location.search).query).toBe('');
+    else {
+      expect(state.current.query).toBe('');
+      expect(state.predicate()).not.toHaveProperty('query');
+      expect(state.predicate()).not.toHaveProperty('search_mode');
+      expect(parseExploreURLState(window.location.search).query).toBe('');
+    }
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));

@@ -1106,7 +1106,6 @@ export async function installDirectoryReviewArchive(page: Page) {
         mergedCandidate.decided_by = 'synthetic-reviewer';
         mergedCandidate.updated_at = mergedCandidate.decided_at;
       }
-      for (const candidate of candidates) candidate.review_token = `review-${candidate.id}-postmerge`;
       phase = 'postmerge';
       return route.fulfill({
         headers: { ETag: '"person-7-r5"' },

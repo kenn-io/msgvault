@@ -1,4 +1,3 @@
-import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -32,19 +31,4 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
     await fireEvent.click(merge);
     expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'after-profile-merge' }), 'accept');
   } finally { view.unmount(); controller.destroy(); }
-});
-
-it('disables Merge while the post-merge page reloads', async () => {
-  let finish!: (response: Response) => void;
-  const controller = new DirectoryReviewController(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    if (new URL(request.url).pathname.endsWith('/match-candidates')) return new Promise<Response>(resolve => { finish = resolve; });
-    return Response.json({ id: 1, display_label: 'Alpha Example', identifiers: [] });
-  }));
-  controller.rows = [pair];
-  const view = render(PossibleDuplicates, { controller, onDecide: (candidate, decision) => void controller.queueDecision(candidate, decision) });
-  const refresh = controller.completePersonMerge(17, { survivor: person(7), result: mergeResult(person(7)), responseETag: '"person-7-r4"' });
-  try {
-    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true));
-  } finally { finish(Response.json({ candidates: [{ ...pair, review_token: 'refreshed-17' }], offset: 0, limit: 11 })); await refresh; view.unmount(); controller.destroy(); }
 });

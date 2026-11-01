@@ -68,6 +68,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 describe('PersonAddresses', () => {
   it.each([true, false])('offers unlink only for another clustered member (cluster=%s)', clustered => {
     render(PersonAddresses, baseProps({ detail: clustered ? clusteredPerson() : person() }));
+    expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
     expect(screen.queryByRole('button', { name: /Unlink alice@example.com|Unlink Alice/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Unlink +15550100002' }) !== null).toBe(clustered);
     expect(screen.queryByRole('button', { name: 'Unlink carol@example.com' }) !== null).toBe(clustered);
@@ -92,57 +93,33 @@ describe('PersonAddresses', () => {
     }
   });
 
-  it('hides an opaque key on the chip and copies the full value', async () => {
+  it('distinguishes opaque identity controls even when service and member names match', async () => {
     const writeText = vi.fn(async () => undefined);
     const originalClipboard = navigator.clipboard;
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     try {
-      const key = 'beeper:8:whatsapp:9:@user:x.y';
-      const base = person();
+      const base = clusteredPerson();
       render(PersonAddresses, baseProps({ detail: {
         ...base,
-        identifiers: [...base.identifiers, {
-          type: 'beeper', value: key, display_value: key, is_primary: false,
-          participant_id: 12, provenance: 'participant_identifiers', service_label: 'WhatsApp',
-          participant_display_name: 'Alias Example', scope_kind: 'account', scope_value: 'local-whatsapp_ba_example'
-        }]
+        identifiers: [34, 56].map((id) => ({
+          type: 'beeper', value: `beeper-user-${id}`, participant_id: id,
+          is_primary: true, provenance: 'participant_identifiers',
+          service_label: 'WhatsApp', participant_display_name: 'Alias Example', scope_kind: 'account', scope_value: 'local-whatsapp_ba_example'
+        }))
       } }));
 
-      const copy = screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 12)' });
+      const copy = screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 34)' });
       const chip = copy.closest('.detail-row');
       expect(chip?.textContent).toContain('WhatsApp');
       expect(chip?.textContent).toContain('local-whatsapp_ba_example');
-      expect(chip?.querySelector('summary')?.textContent).not.toContain(key);
+      expect(chip?.querySelector('summary')?.textContent).not.toContain('beeper-user-34');
       await fireEvent.click(copy);
-      await waitFor(() => expect(writeText).toHaveBeenCalledWith(key));
-    } finally {
-      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
-    }
-  });
-
-  it('labels the profile own row', () => {
-    render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
-
-    const own = screen.getByLabelText('Identity Alice');
-    expect(own.textContent).toContain('this profile');
-  });
-
-  it('distinguishes opaque identity controls even when service and member names match', async () => {
-    const base = clusteredPerson();
-    render(PersonAddresses, baseProps({ detail: {
-      ...base,
-      identifiers: [34, 56].map((id) => ({
-        type: 'beeper', value: `beeper-user-${id}`, participant_id: id,
-        is_primary: true, provenance: 'participant_identifiers',
-        service_label: 'WhatsApp', participant_display_name: 'Alias Example'
-      }))
-    } }));
-
-    expect(screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 34)' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 56)' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Unlink WhatsApp identifier for Alias Example (profile 34)' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink WhatsApp identifier for Alias Example (profile 56)' }));
-    expect(screen.getByRole('group', { name: 'Confirm unlinking WhatsApp identifier for Alias Example (profile 56)' })).toBeDefined();
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('beeper-user-34'));
+      expect(screen.getByRole('button', { name: 'Copy WhatsApp identifier for Alias Example (profile 56)' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Unlink WhatsApp identifier for Alias Example (profile 34)' })).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Unlink WhatsApp identifier for Alias Example (profile 56)' }));
+      expect(screen.getByRole('group', { name: 'Confirm unlinking WhatsApp identifier for Alias Example (profile 56)' })).toBeDefined();
+    } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); }
   });
 
   it('confirming a cut-vertex member\'s unlink removes every edge incident to it, not just one', async () => {
@@ -183,7 +160,7 @@ describe('PersonAddresses', () => {
     expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['failure', 'stale success'])('finishes captured unlinks without showing a late %s on the next person', async outcome => {
+  it.each(['failure', 'stale-cache banner'])('finishes captured unlinks without showing a late %s on the next person', async outcome => {
     let release!: (result: LinkOutcome) => void;
     let calls = 0;
     const onUnlinkParticipants = vi.fn((): Promise<LinkOutcome> => {
