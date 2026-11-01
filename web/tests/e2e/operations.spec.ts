@@ -91,13 +91,19 @@ test('Past runs Back and Forward preserve Messages and dialog focus', async ({ p
   await expect(grid.getByText('Synthetic subject 2')).toBeVisible();
   expect(exploreRequests).toBe(1);
   const row = page.getByRole('button', { name: 'Open Document extraction run' });
+  await expect(row).toContainText('Scheduled · 8 seconds · 5 documents attempted · 4 succeeded · 1 failed · Operation archive input changed.');
   await row.click();
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveAccessibleName('Past runs');
   await page.goBack();
   await expect(row).toBeFocused();
   expect(exploreRequests).toBe(1);
   await page.goForward();
   await expect(page.getByRole('button', { name: 'All runs' })).toBeFocused();
+  expect(exploreRequests).toBe(1);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(grid.getByText('Synthetic subject 1')).toBeVisible();
   expect(exploreRequests).toBe(1);
 });
 
