@@ -184,9 +184,6 @@ func providerCredentialRestartRequired(id string) bool {
 func providerCredentialBindingForID(cfg *config.Config, id string) (providerCredentialBinding, bool) {
 	switch id {
 	case providercredentials.VectorEmbeddingsID:
-		if cfg.Vector.Embeddings.LocalOnly {
-			return providerCredentialBinding{}, false
-		}
 		return providerCredentialBinding{id: id, endpoint: cfg.Vector.Embeddings.Endpoint,
 			environment: cfg.Vector.Embeddings.APIKeyEnv}, true
 	case providercredentials.VectorMultimodalID:

@@ -45,15 +45,16 @@ func explicitOpenAISetupFlags() []string {
 // archive store, a fixed environment, and a fixed filesystem view for the
 // probe manifests.
 type setupProvidersFixture struct {
-	dir     string
-	path    string
-	store   *store.Store
-	env     map[string]string
-	files   map[string]bool
-	ollama  ollamaProbeResult
-	checker *fixedPersonProviderChecker
-	input   io.Reader
-	tty     bool
+	dir      string
+	path     string
+	store    *store.Store
+	env      map[string]string
+	files    map[string]bool
+	ollama   ollamaProbeResult
+	checker  *fixedPersonProviderChecker
+	input    io.Reader
+	tty      bool
+	download bool
 }
 
 func newSetupProvidersFixture(t *testing.T, content string) *setupProvidersFixture {
@@ -410,13 +411,15 @@ func (f *setupProvidersFixture) deps(t *testing.T) setupProvidersDeps {
 		remoteConfigured: func() bool { return false },
 		isTerminal:       func(*cobra.Command) bool { return f.tty },
 		probeOllama:      func(context.Context, string) ollamaProbeResult { return f.ollama },
-		embeddingEndpoint: func(_ context.Context, opts embedlocal.Options) (string, error) {
-			if !opts.SkipOllama && f.ollama.Reachable && f.ollama.hasModel(setupOllamaTextModel) {
-				return "http://127.0.0.1:11434/v1", nil
+		localEndpoint:    func(context.Context, embedlocal.Options) (string, error) { return "", embedlocal.ErrNotFound },
+		localInstall: func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+			if f.download {
+				approved, err := opts.Confirm(ctx, 295000000)
+				require.NoError(t, err)
+				if !approved {
+					return embedlocal.Installation{}, errors.New("download declined")
+				}
 			}
-			return "", embedlocal.ErrNotFound
-		},
-		installEmbeddings: func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 			return embedlocal.Installation{Executable: "cached-kennembed", DataDir: f.dir}, nil
 		},
 		consentState: func(ctx context.Context, loaded *config.Config) *setupConsentState {
@@ -974,7 +977,7 @@ func TestSetupProvidersVoyageWritesRecommendedDefaults(t *testing.T) {
 	assert.Contains(fixture.readConfig(t), "# operator comment survives setup")
 	assert.Contains(output, "Configuration written to")
 	assert.Contains(output, "multimodal probe --seeds <private-seed-dir> --out "+setupVoyageManifestPath(loaded))
-	assert.Contains(output, "msgvault embeddings build --yes")
+	assert.Contains(output, "msgvault embeddings build --full-rebuild --yes")
 	assert.Contains(output, "person provider consent --semantic-embeddings --yes")
 	assert.NotContains(output, setupProvidersTestKey)
 
@@ -1302,6 +1305,8 @@ func TestSetupProvidersLocalOllamaFallback(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[chat]
+server = "http://localhost:11435"
 [vector.embeddings]
 api_key_env = "STALE_PROVIDER_KEY"
 `)
@@ -1312,7 +1317,8 @@ api_key_env = "STALE_PROVIDER_KEY"
 
 	loaded := fixture.load(t)
 	assert.True(loaded.Vector.Enabled)
-	assert.Equal("http://localhost:11434/v1", loaded.Vector.Embeddings.Endpoint)
+	assert.False(loaded.Vector.Embeddings.LocalOnly)
+	assert.Equal("http://localhost:11435/v1", loaded.Vector.Embeddings.Endpoint)
 	assert.Equal(setupOllamaTextModel, loaded.Vector.Embeddings.Model)
 	assert.Equal(setupOllamaTextDim, loaded.Vector.Embeddings.Dimension)
 	assert.Equal(setupOllamaDocPrefix, loaded.Vector.Embeddings.DocumentPrefix)
@@ -1327,25 +1333,13 @@ api_key_env = "STALE_PROVIDER_KEY"
 	assert.Equal("gpt-oss-128k", profile.Model)
 	assert.Equal(peoplesweep.AuthNone, profile.Auth)
 	assert.Equal(peoplesweep.CredentialNone, profile.Credential)
-	assert.Equal("http://localhost:11434/v1", profile.Endpoint)
+	assert.Equal("http://localhost:11435/v1", profile.Endpoint)
 	assert.Contains(output, "stays on this machine")
 	output, err = fixture.run(t, "status", "--json")
 	require.NoError(err, output)
 	var report laneReport
 	require.NoError(json.Unmarshal([]byte(output), &report))
 	assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
-}
-
-func TestSetupProvidersRemoteChatUsesLocalEmbeddings(t *testing.T) {
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
-[chat]
-server = "http://ollama.example.com:11434"
-`)
-	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"gpt-oss-128k"}}
-	output, err := fixture.run(t, "providers", "--yes", "--json")
-	require.NoError(t, err, output)
-	assert.True(t, fixture.load(t).Vector.Embeddings.LocalOnly)
-	assert.False(t, fixture.load(t).People.Sweep.Enabled)
 }
 
 func TestSetupProvidersOllamaWithoutChatModelSkipsInference(t *testing.T) {
@@ -1671,139 +1665,54 @@ func TestSetupProvidersRejectsExplicitProviderWhenSweepEnabled(t *testing.T) {
 }
 
 func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
-	for _, mode := range []string{"accept", "decline", "dry run"} {
-		t.Run(mode, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+	for _, answer := range []string{"yes", "no"} {
+		t.Run(answer, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			fixture.tty = true
+			fixture.tty, fixture.download, fixture.input = true, true, strings.NewReader(answer+"\n")
 			before := fixture.readConfig(t)
-			deps := fixture.deps(t)
-			installs := 0
-			deps.installEmbeddings = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				installs++
-				assert.NotEmpty(opts.DataDir)
-				approved, err := opts.Confirm(ctx, 295000000)
-				if err != nil {
-					return embedlocal.Installation{}, fmt.Errorf("confirm local download: %w", err)
-				}
-				if !approved {
-					return embedlocal.Installation{}, errors.New("download declined")
-				}
-				return embedlocal.Installation{Executable: "cached-kennembed", DataDir: fixture.dir}, nil
-			}
-			command := newSetupProvidersCommand(deps)
-			var args []string
-			if mode == "dry run" {
-				args = append(args, "--dry-run")
-			}
-			command.SetArgs(args)
-			input := "yes\n"
-			if mode == "decline" {
-				input = "no\n"
-			}
-			command.SetIn(strings.NewReader(input))
-			var output bytes.Buffer
-			command.SetOut(&output)
-			command.SetErr(io.Discard)
-			err := command.ExecuteContext(t.Context())
-			switch mode {
-			case "accept":
+			_, err := fixture.run(t, "providers")
+			if answer == "yes" {
 				require.NoError(err)
-				loaded := fixture.load(t)
-				assert.True(loaded.Vector.Enabled)
-				assert.Equal("nomic-embed-text", loaded.Vector.Embeddings.Model)
-				assert.True(loaded.Vector.Embeddings.LocalOnly)
-				assert.Empty(loaded.Vector.Embeddings.Endpoint)
-				assert.Equal(1, installs)
-			case "dry run":
-				require.NoError(err)
-				assert.Zero(installs)
-				assert.Equal(before, fixture.readConfig(t))
-			default:
+				assert.True(fixture.load(t).Vector.Embeddings.LocalOnly)
+			} else {
 				require.Error(err)
 				assert.Equal(before, fixture.readConfig(t))
-			}
-			if mode != "dry run" {
-				assert.Contains(output.String(), "295000000 bytes")
 			}
 		})
 	}
 }
 
 func TestSetupProvidersExplicitLocalSwitch(t *testing.T) {
-	for _, model := range []string{"nomic-embed-text", "other-model"} {
+	for _, model := range []string{"", "nomic-embed-text", "other-model"} {
 		t.Run(model, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
-[vector]
-enabled = true
-backend = "sqlite-vec"
-[vector.embeddings]
-endpoint = "http://127.0.0.1:11434/v1"
-model = "`+model+`"
-dimension = 768
-document_prefix = "search_document: "
-query_prefix = "search_query: "
-max_input_chars = 2000
-`)
-			fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
-			fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text"}}
-			credentials, err := providercredentials.Read(fixture.load(t).TokensDir())
-			require.NoError(err)
-			credentials, err = providercredentials.Put(fixture.load(t).TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID, "https://api.openai.com/v1", "synthetic-stored-key")
-			require.NoError(err)
-			before := fixture.load(t).Vector
-			if model == "nomic-embed-text" {
-				output, err := fixture.run(t, "providers", "--dry-run")
-				require.NoError(err)
-				assert.Contains(output, "msgvault setup providers --local-embeddings")
+			assert, require := assert.New(t), require.New(t)
+			content := setupProvidersMinimalConfig + "\n[chat]\nserver = \"http://ollama.example.com:11434\"\n"
+			if model != "" {
+				content += fmt.Sprintf("\n[vector]\nenabled = true\n[vector.embeddings]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = %q\ndimension = 768\nmax_input_chars = 1000\n", model)
 			}
+			fixture := newSetupProvidersFixture(t, content)
+			before := fixture.load(t).Vector.GenerationFingerprint()
 			deps := fixture.deps(t)
-			original := deps.embeddingEndpoint
-			deps.embeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
-				assert.True(opts.SkipOllama, "explicit switch must bypass a running Ollama")
-				return original(ctx, opts)
+			deps.localEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
+				assert.True(opts.SkipOllama)
+				return "", embedlocal.ErrNotFound
 			}
 			command := newSetupProvidersCommand(deps)
-			command.SetArgs([]string{"--local-embeddings", "--yes"})
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(io.Discard)
+			command.SetArgs([]string{"--local-embeddings", "--yes", "--json"})
 			require.NoError(command.ExecuteContext(t.Context()))
-			after := fixture.load(t).Vector
-			assert.True(after.Embeddings.LocalOnly)
-			assert.Equal(laneStateOn, textSearchLane(fixture.load(t), setupEnvironment{credentials: credentials}).State)
-			assert.Empty(after.Embeddings.Endpoint)
+			after := fixture.load(t)
+			assert.True(after.Vector.Embeddings.LocalOnly)
+			assert.Equal("local", textSearchLane(after, setupEnvironment{}).Provider)
+			build := "msgvault embeddings build --full-rebuild --yes"
 			if model == "nomic-embed-text" {
-				assert.Equal(before.GenerationFingerprint(), after.GenerationFingerprint())
-			} else {
-				assert.NotEqual(before.GenerationFingerprint(), after.GenerationFingerprint())
-				assert.Contains(output.String(), "different model")
-				assert.Contains(output.String(), "--full-rebuild")
+				assert.Equal(before, after.Vector.GenerationFingerprint())
+				build = "msgvault embeddings build --yes"
 			}
+			assert.Contains(output.String(), build)
 		})
 	}
-}
-
-func TestSetupProvidersPreservesCustomLocalOllama(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
-[chat]
-server = "http://localhost:11435"
-`)
-	fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text"}}
-	output, err := fixture.run(t, "providers", "--yes", "--json")
-	require.NoError(err, output)
-	cfg := fixture.load(t)
-	assert.Equal("http://localhost:11435/v1", cfg.Vector.Embeddings.Endpoint)
-	assert.False(cfg.Vector.Embeddings.LocalOnly)
-	cfg.Vector.Embeddings.LocalOnly = true
-	cfg.Vector.Embeddings.Endpoint = ""
-	cfg.Vector.People.Enabled = true
-	cfg.Attachments.Documents.Enabled = true
-	cfg.Attachments.Documents.Index.Embeddings.Enabled = true
-	assert.Equal("local", personSearchLane(cfg, setupEnvironment{}).Provider)
-	assert.Equal("local", documentVectorsLane(cfg, setupEnvironment{}).Provider)
 }

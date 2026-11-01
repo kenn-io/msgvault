@@ -144,12 +144,7 @@ func (s *Server) handleDocumentVectorStatus(w http.ResponseWriter, r *http.Reque
 		s.writeDocumentSearchError(w, err)
 		return
 	}
-	_, _, runtimeVector := s.vectorComponents()
-	vecCfg := s.cfg.Vector
-	if runtimeVector.Enabled {
-		vecCfg = runtimeVector
-	}
-	generationFingerprint, err := vectordocument.Fingerprint(target, vecCfg)
+	generationFingerprint, err := vectordocument.Fingerprint(target, s.cfg.Vector)
 	if err != nil {
 		s.writeDocumentSearchError(w, err)
 		return
@@ -157,14 +152,14 @@ func (s *Server) handleDocumentVectorStatus(w http.ResponseWriter, r *http.Reque
 	spec := store.DocumentVectorGenerationSpec{
 		Fingerprint: generationFingerprint, TargetExtractionProfileID: target,
 		EmbeddingProfile: s.cfg.Attachments.Documents.Index.Embeddings.Profile,
-		Model:            vecCfg.Embeddings.Model, Dimension: vecCfg.Embeddings.Dimension,
+		Model:            s.cfg.Vector.Embeddings.Model, Dimension: s.cfg.Vector.Embeddings.Dimension,
 	}
-	documentEgressFingerprint, err := vectordocument.EgressFingerprint(target, vecCfg)
+	documentEgressFingerprint, err := vectordocument.EgressFingerprint(target, s.cfg.Vector)
 	if err != nil {
 		s.writeDocumentSearchError(w, err)
 		return
 	}
-	queryEgressFingerprint, err := vectordocument.QueryEgressFingerprint(target, vecCfg)
+	queryEgressFingerprint, err := vectordocument.QueryEgressFingerprint(target, s.cfg.Vector)
 	if err != nil {
 		s.writeDocumentSearchError(w, err)
 		return

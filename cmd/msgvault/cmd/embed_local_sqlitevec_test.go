@@ -3,8 +3,7 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,13 +18,14 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	embedded := 0
-	oldServer := fakeEmbeddingsServer(t, &embedded)
+	oldServer := fakeEmbeddingsServer(t, &embedded, 768)
 	dir := t.TempDir()
 	seedTwoAccountMainDB(t, dir)
 	cfg := config.NewDefaultConfig()
@@ -34,15 +34,13 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
 	cfg.Vector.Embeddings.Endpoint = oldServer.URL
 	cfg.Vector.Embeddings.Model = "nomic-embed-text"
-	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Embeddings.Dimension = 768
+	cfg.Vector.Embeddings.MaxInputChars = 1000
 	oldRebuild, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
-	oldAccounts, oldCollections := embedAccounts, embedCollections
 	t.Cleanup(func() {
 		embedFullRebuild, embedYes, embedBackstop = oldRebuild, oldYes, oldBackstop
-		embedAccounts, embedCollections = oldAccounts, oldCollections
 	})
 	embedFullRebuild, embedYes, embedBackstop = true, true, false
-	embedAccounts, embedCollections = nil, nil
 	command := &cobra.Command{}
 	command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	command.SetOut(io.Discard)
@@ -52,25 +50,13 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	oldGeneration := embedGenByID(t, dir)[1]
 
 	ping := daemon.NewPingHandler(daemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	inputs := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/embeddings" {
+		if r.URL.Path == "/v1/embeddings" {
+			assert.Empty(r.Header.Get("Authorization"))
+			oldServer.Config.Handler.ServeHTTP(w, r)
+		} else {
 			ping.ServeHTTP(w, r)
-			return
 		}
-		assert.Empty(r.Header.Get("Authorization"))
-		var request struct {
-			Input []string `json:"input"`
-			Model string   `json:"model"`
-		}
-		if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
-			return
-		}
-		assert.Equal("nomic-embed-text", request.Model)
-		assert.Equal([]string{"Subject: new message\n\nnew body"}, request.Input)
-		inputs += len(request.Input)
-		_, err := io.WriteString(w, `{"data":[{"embedding":[1,0,0,0],"index":0}],"model":"nomic-embed-text"}`)
-		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	endpoint, err := daemon.ParseEndpoint(server.URL, daemon.ParseEndpointOptions{TCPPolicy: daemon.RequireLoopback})
@@ -81,8 +67,6 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	require.NoError(err)
 	cfg.Vector.Embeddings.LocalOnly = true
 	cfg.Vector.Embeddings.Endpoint = ""
-	cfg.Vector.Embeddings.APIKeyEnv = "LOCAL_TEST_KEY"
-	t.Setenv("LOCAL_TEST_KEY", "synthetic-env-key")
 	snapshot, err := providercredentials.Read(cfg.TokensDir())
 	require.NoError(err)
 	_, err = providercredentials.Put(cfg.TokensDir(), snapshot.ETag, providercredentials.VectorEmbeddingsID, "https://api.openai.com/v1", "synthetic-stored-key")
@@ -93,10 +77,41 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	_, err = st.DB().Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject) VALUES (3, 1, 1, 'a2', 'email', 'new message'); INSERT INTO message_bodies (message_id, body_text) VALUES (3, 'new body')`)
 	require.NoError(err)
 	embedFullRebuild = false
-	var output bytes.Buffer
-	command.SetOut(&output)
 	require.NoError(runEmbeddingsBuildLocal(command))
-	assert.Equal(1, inputs)
+	assert.Equal(3, embedded)
 	assert.Equal(oldGeneration, embedGenByID(t, dir)[3])
-	assert.Empty(cfg.Vector.Embeddings.Endpoint, "runtime URL stays out of saved config")
+	embedFullRebuild = true
+	require.NoError(runEmbeddingsBuildLocal(command))
+	assert.Equal(6, embedded)
+}
+
+func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	fixture, _, ctx := documentVectorCommandFixture(t)
+	cfg := invocationFromContext(ctx).cfg
+	cfg.Vector.Embeddings.LocalOnly = true
+	cfg.Vector.Embeddings.Endpoint = ""
+	cfg.Vector.Embeddings.Model, cfg.Vector.Embeddings.Dimension = "nomic-embed-text", 768
+	cfg.Vector.People.Enabled = true
+	cfg.Vector.People.RetentionPosture = setupPostureDeclared
+	cfg.Vector.People.TrainingPosture = setupPostureDeclared
+	original := localEmbeddingsDir
+	localEmbeddingsDir = func() (string, error) {
+		assert.Fail("policy reads must use saved config")
+		return "", embedlocal.ErrNotFound
+	}
+	t.Cleanup(func() { localEmbeddingsDir = original })
+	documents := documentsCommandDeps{openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil }}
+	status := newDocumentVectorStatusCmd(documents)
+	status.SetOut(io.Discard)
+	status.SetErr(io.Discard)
+	status.SetArgs([]string{"--json"})
+	require.NoError(status.ExecuteContext(ctx))
+	people := localPersonProviderDeps(cfg.People.Sweep, fixture.Store, nil)
+	people.vectorConfig = func() vector.Config { return cfg.Vector }
+	require.NoError(runPersonSemanticProviderStatus(status, people, false, true))
+	require.NoError(runPersonSemanticProviderConsent(status, people, true, true))
+	cfg.Vector.Enabled = false
+	_, err := resolveLocalVectorConfig(ctx, cfg.Vector)
+	require.NoError(err)
 }

@@ -1971,10 +1971,6 @@ func currentPersonSemanticProviderProfile(
 	if !config.Enabled || !config.People.Enabled {
 		return vector.SemanticPersonEmbeddingProfile{}, vector.ErrSemanticPersonEmbeddingsDisabled
 	}
-	config, err := resolveLocalVectorConfig(context.Background(), config)
-	if err != nil {
-		return vector.SemanticPersonEmbeddingProfile{}, err
-	}
 	return config.SemanticPersonEmbeddingProfile()
 }
 
@@ -1987,10 +1983,6 @@ func configuredPersonSemanticProviderProfile(
 		)
 	}
 	config := deps.vectorConfig()
-	config, err := discoverLocalVectorConfig(context.Background(), config)
-	if err != nil {
-		return vector.SemanticPersonEmbeddingProfile{}, err
-	}
 	return config.SemanticPersonEmbeddingProfile()
 }
 
@@ -2292,7 +2284,7 @@ func printPersonSemanticProviderDisclosure(
 	_, _ = fmt.Fprintln(w, "Semantic person embedding provider disclosure:")
 	_, _ = fmt.Fprintf(w, "Purpose: %s\n", profile.Purpose)
 	_, _ = fmt.Fprintf(w, "Fingerprint: %s\n", profile.Fingerprint)
-	_, _ = fmt.Fprintf(w, "Destination: %s\n", profile.Destination)
+	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(profile.Destination))
 	_, _ = fmt.Fprintf(w, "API format: %s\n", profile.APIFormat)
 	_, _ = fmt.Fprintf(w, "Model: %s\n", profile.Model)
 	_, _ = fmt.Fprintf(w, "Authentication: %s\n", authentication)

@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 const (
@@ -86,8 +87,8 @@ type setupProvidersDeps struct {
 	remoteConfigured  func() bool
 	isTerminal        func(*cobra.Command) bool
 	probeOllama       func(context.Context, string) ollamaProbeResult
-	embeddingEndpoint func(context.Context, embedlocal.Options) (string, error)
-	installEmbeddings func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	localEndpoint     func(context.Context, embedlocal.Options) (string, error)
+	localInstall      func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
 	consentState      func(context.Context, *config.Config) *setupConsentState
 	daemonAlive       func(context.Context, *config.Config) bool
 	personProvider    func() personProviderCommandDeps
@@ -147,12 +148,12 @@ func defaultSetupProvidersDeps(contexts ...context.Context) setupProvidersDeps {
 		loadConfig: func(snapshot config.ConfigFile) (*config.Config, error) {
 			return nil, errors.New("configuration is unavailable")
 		},
-		remoteConfigured:  func() bool { return false },
-		isTerminal:        commandStdinIsTerminal,
-		probeOllama:       probeOllamaServer,
-		embeddingEndpoint: embedlocal.Endpoint,
-		installEmbeddings: embedlocal.Install,
-		consentState:      readSetupConsentState,
+		remoteConfigured: func() bool { return false },
+		isTerminal:       commandStdinIsTerminal,
+		probeOllama:      probeOllamaServer,
+		localEndpoint:    embedlocal.Endpoint,
+		localInstall:     embedlocal.Install,
+		consentState:     readSetupConsentState,
 		daemonAlive: func(ctx context.Context, loaded *config.Config) bool {
 			return findAnyDaemonRuntimeContext(ctx, loaded.Data.DataDir) != nil
 		},
@@ -309,7 +310,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		if err != nil {
 			detection.embeddingError = fmt.Errorf("local embedding directory: %w", err)
 		} else {
-			detection.embeddingEndpoint, detection.embeddingError = deps.embeddingEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: detection.localEmbeddings})
+			detection.embeddingEndpoint, detection.embeddingError = deps.localEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: detection.localEmbeddings})
 		}
 	}
 	return detection
@@ -318,16 +319,16 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 // setupLanePlan is one lane's decision. The edits and next steps are
 // attached so the plan can be printed before anything is written.
 type setupLanePlan struct {
-	Lane         string `json:"lane"`
-	Label        string `json:"label"`
-	Action       string `json:"action"`
-	Provider     string `json:"provider,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Reason       string `json:"reason"`
-	Gate         string `json:"consent_gate,omitempty"`
-	installLocal bool
-	edits        []config.TableEdit
-	next         []string
+	Lane     string `json:"lane"`
+	Label    string `json:"label"`
+	Action   string `json:"action"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Reason   string `json:"reason"`
+	Gate     string `json:"consent_gate,omitempty"`
+	local    bool
+	edits    []config.TableEdit
+	next     []string
 }
 
 // setupInferencePlan onboards one people-sweep provider profile through the
@@ -573,7 +574,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			return lane
 		}
 		localOnly := detection.localEmbeddings || (detection.embeddingEndpoint != detection.ollamaEndpoint && detection.embeddingEndpoint != "http://127.0.0.1:11434/v1")
-		lane.installLocal = localOnly
+		lane.local = localOnly
 		endpoint := detection.embeddingEndpoint
 		if localOnly {
 			endpoint = ""
@@ -587,17 +588,22 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 				lane.Reason += "; different model: run `msgvault embeddings build --full-rebuild --yes`"
 			}
 		}
-		lane.edits = append([]config.TableEdit{vectorEdit, {
-			Path: []string{tomlTableVector, "embeddings"},
-			Values: map[string]any{
-				"api_format": "openai", "local_only": localOnly, "endpoint": endpoint, "api_key_env": "",
-				"model": setupOllamaTextModel, "dimension": setupOllamaTextDim,
-				"document_prefix": setupOllamaDocPrefix, "query_prefix": setupOllamaQueryPrefix,
-				"max_input_chars": setupOllamaMaxInput,
-			},
-		}}, setupScheduleEdits(detection.configKeys, "embed")...)
+		values := map[string]any{
+			"api_format": "openai", "local_only": localOnly, "endpoint": endpoint, "api_key_env": "",
+			"model": setupOllamaTextModel, "dimension": setupOllamaTextDim,
+			"document_prefix": setupOllamaDocPrefix, "query_prefix": setupOllamaQueryPrefix,
+			"max_input_chars": setupOllamaMaxInput,
+		}
+		if embeddings.EffectiveAPIFormat() == vector.APIFormatOpenAI && embeddings.Model == setupOllamaTextModel && embeddings.Dimension == setupOllamaTextDim {
+			values["document_prefix"], values["query_prefix"] = embeddings.DocumentPrefix, embeddings.QueryPrefix
+			values["max_input_chars"] = embeddings.MaxInputChars
+		}
+		lane.edits = append([]config.TableEdit{vectorEdit, {Path: []string{tomlTableVector, "embeddings"}, Values: values}}, setupScheduleEdits(detection.configKeys, "embed")...)
 	}
-	lane.next = []string{"msgvault embeddings build --yes"}
+	lane.next = []string{"msgvault embeddings build --full-rebuild --yes"}
+	if loaded.Vector.Enabled && embeddings.EffectiveAPIFormat() == vector.APIFormatOpenAI && embeddings.Model == lane.Model && embeddings.Dimension == setupOllamaTextDim {
+		lane.next = []string{"msgvault embeddings build --yes"}
+	}
 	return lane
 }
 
@@ -1121,14 +1127,14 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	}
 
 	for _, lane := range plan.Lanes {
-		if !lane.installLocal || lane.Action != planActionEnable {
+		if !lane.local || lane.Action != planActionEnable {
 			continue
 		}
 		dir, err := localEmbeddingsDir()
 		if err != nil {
 			return fmt.Errorf("local embedding directory: %w", err)
 		}
-		_, err = deps.installEmbeddings(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
+		_, err = deps.localInstall(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
 			if !options.jsonOutput {
 				_, _ = fmt.Fprintf(out, "Download approximately %d bytes for local embeddings.\n", size)
 			}
@@ -1138,12 +1144,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 			if deps.isTerminal == nil || !deps.isTerminal(command) || options.jsonOutput {
 				return false, errors.New("local embedding download needs confirmation; re-run with --yes")
 			}
-			_, _ = fmt.Fprint(out, "Download? [y/N]: ")
-			answer, err := bufio.NewReader(command.InOrStdin()).ReadString('\n')
-			if err != nil && !errors.Is(err, io.EOF) {
-				return false, fmt.Errorf("read download consent: %w", err)
-			}
-			return isYesAnswer(strings.ToLower(strings.TrimSpace(answer))), nil
+			return confirmEmbed(command, "Download? "), nil
 		}})
 		if err != nil {
 			return err

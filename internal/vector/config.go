@@ -200,6 +200,14 @@ func (e EmbeddingsConfig) EffectiveAPIFormat() EmbeddingAPIFormat {
 	return e.APIFormat
 }
 
+// IdentityDestination names the provider independently of a local server's port.
+func (e EmbeddingsConfig) IdentityDestination() string {
+	if e.LocalOnly {
+		return "http://local-embeddings.invalid/v1"
+	}
+	return e.Endpoint
+}
+
 // Validate checks embedding-provider settings without requiring the ordinary
 // message-vector lane to be enabled. Document vectors use the same provider
 // policy under their own enablement and consent controls.
@@ -214,23 +222,24 @@ func (e EmbeddingsConfig) Validate() error {
 		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
 			APIFormatVoyageContextual, "voyage-context-4", e.Model)
 	}
-	if !e.LocalOnly || e.Endpoint != "" {
-		if e.Endpoint == "" {
-			return errors.New("vector.embeddings.endpoint: required")
-		}
-		u, err := url.Parse(e.Endpoint)
-		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return errors.New("vector.embeddings.endpoint: must be an http or https URL with a host")
-		}
-		if u.User != nil {
-			return errors.New("vector.embeddings.endpoint: must not contain credentials")
-		}
-		if u.RawQuery != "" {
-			return errors.New("vector.embeddings.endpoint: must not contain a query")
-		}
-		if u.Fragment != "" {
-			return errors.New("vector.embeddings.endpoint: must not contain a fragment")
-		}
+	if e.LocalOnly && (e.EffectiveAPIFormat() != APIFormatOpenAI || e.Model != "nomic-embed-text" || e.Dimension != 768) {
+		return errors.New("vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions")
+	}
+	if e.IdentityDestination() == "" {
+		return errors.New("vector.embeddings.endpoint: required")
+	}
+	u, err := url.Parse(e.IdentityDestination())
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return errors.New("vector.embeddings.endpoint: must be an http or https URL with a host")
+	}
+	if u.User != nil {
+		return errors.New("vector.embeddings.endpoint: must not contain credentials")
+	}
+	if u.RawQuery != "" {
+		return errors.New("vector.embeddings.endpoint: must not contain a query")
+	}
+	if u.Fragment != "" {
+		return errors.New("vector.embeddings.endpoint: must not contain a fragment")
 	}
 	if e.Model == "" {
 		return fmt.Errorf("vector.embeddings.model: required (the index generation fingerprint is %q, which is ambiguous without a model name)", e.Fingerprint())
@@ -574,8 +583,7 @@ func (c *Config) Validate() error {
 	if err := c.Embeddings.Validate(); err != nil {
 		return err
 	}
-	// Local consent needs the live destination; runtime validates after discovery.
-	if c.People.Enabled && (!c.Embeddings.LocalOnly || c.Embeddings.Endpoint != "") {
+	if c.People.Enabled {
 		if _, err := c.SemanticPersonEmbeddingProfile(); err != nil {
 			return err
 		}

@@ -103,7 +103,7 @@ func (c *Config) SemanticPersonEmbeddingProfile() (SemanticPersonEmbeddingProfil
 
 func semanticPersonEmbeddingPolicyForConfig(c Config) (semanticPersonEmbeddingPolicy, error) {
 	format := c.Embeddings.EffectiveAPIFormat()
-	endpoint := c.Embeddings.Endpoint
+	endpoint := c.Embeddings.IdentityDestination()
 	if endpoint != strings.TrimSpace(endpoint) {
 		return semanticPersonEmbeddingPolicy{}, errors.New(
 			"vector.people: embedding endpoint must not have surrounding whitespace",

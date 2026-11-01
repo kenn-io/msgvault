@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
@@ -43,9 +45,6 @@ func desiredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.Docu
 	if cfg == nil || !cfg.Vector.Enabled || !cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		return store.DocumentVectorGenerationSpec{}, errors.New("document embeddings are disabled; enable [vector] and [attachments.documents.index.embeddings]")
 	}
-	if _, err := resolveLocalVectorConfig(ctx, cfg.Vector); err != nil {
-		return store.DocumentVectorGenerationSpec{}, err
-	}
 	return configuredDocumentVectorSpec(ctx, st)
 }
 
@@ -58,13 +57,6 @@ func configuredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.D
 	if cfg == nil || !cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		return store.DocumentVectorGenerationSpec{}, errors.New("document embeddings are not configured")
 	}
-	resolved := *cfg
-	var err error
-	resolved.Vector, err = discoverLocalVectorConfig(ctx, cfg.Vector)
-	if err != nil {
-		return store.DocumentVectorGenerationSpec{}, err
-	}
-	cfg = &resolved
 	if err := cfg.Vector.Embeddings.Validate(); err != nil {
 		return store.DocumentVectorGenerationSpec{}, fmt.Errorf("document embedding config: %w", err)
 	}
@@ -97,11 +89,7 @@ func configuredDocumentVectorConsentSpec(spec store.DocumentVectorGenerationSpec
 	if purpose == "query_embedding" {
 		fingerprint = vectordocument.QueryEgressFingerprint
 	}
-	vecCfg, err := discoverLocalVectorConfig(context.Background(), state.cfg.Vector)
-	if err != nil {
-		return store.DocumentVectorConsentSpec{}, err
-	}
-	egressFingerprint, err := fingerprint(spec.TargetExtractionProfileID, vecCfg)
+	egressFingerprint, err := fingerprint(spec.TargetExtractionProfileID, state.cfg.Vector)
 	if err != nil {
 		return store.DocumentVectorConsentSpec{}, err
 	}
@@ -161,13 +149,6 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDocumentVectorCommandHTTP(command, args, false)
 			}
-			state := invocationFromCommand(command)
-			if state == nil || state.cfg == nil {
-				return errors.New("configuration is unavailable")
-			}
-			if _, err := resolveLocalVectorConfig(command.Context(), state.cfg.Vector); err != nil {
-				return err
-			}
 			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
 				spec, err := configuredDocumentVectorSpec(command.Context(), st)
 				if err != nil {
@@ -204,13 +185,7 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 	if state == nil || state.cfg == nil {
 		return
 	}
-	resolved := *state.cfg
-	vecCfg, err := discoverLocalVectorConfig(context.Background(), resolved.Vector)
-	if err != nil {
-		return
-	}
-	resolved.Vector = vecCfg
-	cfg := &resolved
+	cfg := state.cfg
 	authentication := "no authentication environment variable configured"
 	if cfg.Vector.Embeddings.APIKeyEnv != "" {
 		authentication = "environment variable " + cfg.Vector.Embeddings.APIKeyEnv
@@ -218,7 +193,7 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 	_, _ = fmt.Fprintln(w, "Hosted document embedding disclosure:")
 	_, _ = fmt.Fprintf(w, "Corpus fingerprint: %s\n", spec.Fingerprint)
 	_, _ = fmt.Fprintf(w, "Egress fingerprint: %s\n", spec.EgressFingerprint)
-	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(cfg.Vector.Embeddings.Endpoint))
+	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(cfg.Vector.Embeddings.IdentityDestination()))
 	_, _ = fmt.Fprintf(w, "Authentication: %s\n", authentication)
 	_, _ = fmt.Fprintf(w, "API format: %s\n", cfg.Vector.Embeddings.EffectiveAPIFormat())
 	_, _ = fmt.Fprintf(w, "Model: %s\n", spec.Model)
@@ -232,6 +207,9 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 }
 
 func documentVectorConsentEndpoint(endpoint string) string {
+	if strings.HasPrefix(endpoint, (vector.EmbeddingsConfig{LocalOnly: true}).IdentityDestination()) {
+		return "shared local embedding server"
+	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "[configured endpoint omitted: invalid URL]"
@@ -415,7 +393,7 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 				return nil
 			}
 			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
-				spec, err := configuredDocumentVectorSpec(command.Context(), st)
+				spec, err := desiredDocumentVectorSpec(command.Context(), st)
 				if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
 					if jsonOutput {
 						return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), map[string]bool{"enabled": true, "configured": false}, json.Deterministic(true))

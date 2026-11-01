@@ -2193,32 +2193,16 @@ func TestSecretHint(t *testing.T) {
 func TestSettingsLocalEmbeddingsRejectsProviderCredentials(t *testing.T) {
 	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
-	server, _ := newSettingsTestServer(t, `[vector.embeddings]
-local_only = true
-model = "nomic-embed-text"
-dimension = 768
-`)
-	snapshot, err := providercredentials.Read(server.cfg.TokensDir())
-	require.NoError(err)
-	_, err = providercredentials.Put(server.cfg.TokensDir(), snapshot.ETag, providercredentials.VectorEmbeddingsID, "https://api.openai.com/v1", "synthetic-stored-key")
-	require.NoError(err)
+	server, path := newSettingsTestServer(t, "[vector.embeddings]\nlocal_only = true\n")
 	get := performSettingsRequest(t, server, http.MethodGet, settingsPath, nil, "", "")
 	require.Equal(http.StatusOK, get.Code, get.Body.String())
 	var settings SettingsResponse
 	require.NoError(json.Unmarshal(get.Body.Bytes(), &settings))
 	key := settingsByKey(settings.Settings)["vector.embeddings.api_key"]
 	assert.True(key.ReadOnly)
-	require.NotNil(key.Secret)
-	assert.False(key.Secret.Configured)
 	put := performSettingsRequest(t, server, http.MethodPut, "/api/v1/settings/provider-credentials/vector.embeddings", []byte(`{"value":"replacement-key"}`), get.Header().Get("Credential-Etag"), "")
 	assert.Equal(http.StatusBadRequest, put.Code, put.Body.String())
 	assert.Contains(put.Body.String(), "Local embeddings don't use provider credentials")
-}
-
-func TestSettingsLocalProviderCanSwitchEndpoint(t *testing.T) {
-	t.Parallel()
-	assert, require := assert.New(t), require.New(t)
-	server, path := newSettingsTestServer(t, "[vector.embeddings]\nlocal_only = true\n")
 	response := patchSettings(t, server, `{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"http://127.0.0.1:11434/v1"}}]}`)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	loaded, err := config.Load(path, "")

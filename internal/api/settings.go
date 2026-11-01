@@ -741,6 +741,9 @@ func (s *Server) buildSettingsResponse(
 		if definition.inherited != nil {
 			setting.Inherited = definition.inherited(cfg)
 		}
+		if definition.key == "vector.embeddings.endpoint" && cfg.Vector.Embeddings.LocalOnly {
+			setting.Description = "Shared local embedding server selected. Enter a URL to switch providers."
+		}
 		if definition.credentialID == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
 			setting.ReadOnly = true
 			setting.Description = "Local embeddings don't use provider credentials."

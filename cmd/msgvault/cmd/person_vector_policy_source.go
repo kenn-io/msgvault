@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"strings"
 
@@ -30,6 +29,6 @@ func currentSemanticPersonVectorConfigSource(state *invocation) vector.SemanticP
 		if err != nil {
 			return vector.Config{}, err
 		}
-		return resolveLocalVectorConfig(context.Background(), loaded.Vector)
+		return loaded.Vector, nil
 	}
 }

@@ -234,11 +234,6 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 // hide the others.
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
 	state := &setupConsentState{}
-	resolved := *cfg
-	if vecCfg, err := discoverLocalVectorConfig(ctx, cfg.Vector); err == nil {
-		resolved.Vector = vecCfg
-	}
-	cfg = &resolved
 	if cfg.Vector.Enabled && cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		if target, err := st.GetDocumentVectorTargetProfileID(ctx); err == nil {
 			if fingerprint, err := vectordocument.EgressFingerprint(target, cfg.Vector); err == nil {
