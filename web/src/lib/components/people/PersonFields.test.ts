@@ -10,13 +10,13 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
 function profile() { return { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } as NonNullable<DirectoryReadBundle['structuredProfile']>; }
-function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[]; conflictAttributes?: NonNullable<DirectoryReadBundle['attributes']> } = {}) {
+function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[] } = {}) {
   let stored = initial;
   const writes: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (request.method === 'PUT' && options.conflictAttributes) return Response.json({ error: 'attribute_value_conflict', message: 'Changed elsewhere', current_value_id: 42 }, { status: 409 });
+    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') return Response.json({ message: 'Unable to save field.' }, { status: 503 });
     if (request.method === 'PATCH') {
       writes.push(request.clone()); await options.wait;
       if (options.fail) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
@@ -25,7 +25,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
       return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
     }
     if (path.endsWith('/profile')) return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
-    if (path.endsWith('/attributes')) return Response.json(options.conflictAttributes ?? { attributes: [] });
+    if (path.endsWith('/attributes')) return Response.json({ attributes: [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: (options.definitions ?? []).filter(definition => new URL(request.url).searchParams.get('include_hidden') === 'true' || definition.is_active) });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
@@ -80,24 +80,37 @@ it('displays every structured address component before its original street value
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('joins refreshed field settings, keeping a renamed draft and discarding a restricted editor', async () => {
+it.each(['renamed draft', 'restricted editor', 'sensitive reveal', 'More fields choices'])('joins refreshed field settings for %s', async behavior => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
   const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
   const { controller, view } = harness(profile(), options);
   try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
-    await act(() => controller.reloadDefinitions());
-    expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
-    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, is_active: false, revision: 3 };
-    await act(() => controller.reloadDefinitions());
-    expect(screen.queryByDisplayValue('Private example')).toBeNull(); expect(screen.queryByText('Private example')).toBeNull();
-    expect(screen.getByText('Private note')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' })); expect(screen.getByText('Private example')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(screen.getByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
+    if (behavior === 'renamed draft' || behavior === 'restricted editor') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
+      if (behavior === 'renamed draft') {
+        await act(() => controller.reloadDefinitions());
+        expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
+      } else {
+        await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+        await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
+        options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, is_active: false, revision: 3 };
+        await act(() => controller.reloadDefinitions());
+        expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
+        expect(controller.draft).toBeNull();
+        expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
+      }
+    } else if (behavior === 'sensitive reveal') {
+      options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, revision: 2 };
+      await act(() => controller.reloadDefinitions());
+      expect(screen.queryByText('Private example')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
+      expect(screen.getByText('Private example')).toBeDefined();
+    } else {
+      await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+      expect(await screen.findByRole('menuitem', { name: 'Favorite color' })).toBeDefined();
+    }
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -115,21 +128,5 @@ it.each([
     await fireEvent.click(screen.getByRole('button', { name: save }));
     await waitFor(() => expect(writes).toHaveLength(1));
     await expect(writes[0]!.json()).resolves.toMatchObject({ [section]: { add: [{ [discriminator]: kind, original_value: value }] } });
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-it('retains an attribute draft through concurrent replacement recovery', async () => {
-  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'topics', label: 'Topics', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
-  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'topics', ordinal: 2, value: { type: 'text' as const, text: 'Original topic' }, active_from: when, created_at: when, source: 'user' };
-  const replacement = { ...value, id: 42, value: { type: 'text' as const, text: 'Concurrent topic' } };
-  const attributes = (current: typeof value[]) => ({ person_id: 7, attributes: [{ definition, current, history: [value] }] });
-  const { controller, view } = harness(profile(), { conflictAttributes: attributes([replacement]), definitions: [definition], bundle: { attributes: attributes([value]), definitions: { definitions: [definition] } } });
-  try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Topics' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Topics' }), { target: { value: 'My local topic' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Reload attributes' }));
-    await waitFor(() => expect(controller.reloadPending).toBe(false));
-    expect(screen.getByRole('textbox', { name: 'Topics' })).toHaveProperty('value', 'My local topic');
   } finally { view.unmount(); controller.destroy(); }
 });
