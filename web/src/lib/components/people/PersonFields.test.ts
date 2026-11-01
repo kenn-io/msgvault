@@ -133,7 +133,7 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows a repeated label once, in place of the edited row, and the summary before More fields', async () => {
+it('shows a repeated label once, the editor after the list, and the summary before More fields', async () => {
   const initial = profile();
   initial.contact_points = ['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } }));
   const { controller, view } = harness(initial, { summary: true });
@@ -145,7 +145,7 @@ it('shows a repeated label once, in place of the edited row, and the summary bef
     await fireEvent.click(screen.getAllByRole('button', { name: 'Edit Email' })[0]!);
     const input = await screen.findByRole('textbox', { name: /email|contact value/i });
     expect(screen.queryByText('first@example.com')).toBeNull();
-    expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   } finally { view.unmount(); controller.destroy(); }
 });
 
