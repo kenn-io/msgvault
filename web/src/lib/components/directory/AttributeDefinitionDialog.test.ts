@@ -370,16 +370,16 @@ describe('AttributeDefinitionDialog', () => {
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
-  it('treats a successful POST without a usable identity as non-repeatable and offers reload only', async () => {
+  it.each([
+    ['without a usable identity', () => Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 })],
+    ['with an empty body', () => new Response(null, { status: 204 })],
+    ['with malformed JSON', () => new Response('{"ownership":"user",', { status: 201, headers: { 'Content-Type': 'application/json' } })],
+  ] as const)('treats a successful POST %s as non-repeatable and offers reload only', async (_shape, response) => {
     const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
-      if (request.method === 'POST') {
-        return Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 });
-      }
-      if (new URL(request.url).pathname === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
-      return Response.json({});
+      return request.method === 'POST' ? response() : Response.json({ definitions: [] });
     });
     const profile = controller(fetchFn);
     render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
@@ -391,69 +391,10 @@ describe('AttributeDefinitionDialog', () => {
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'GET').map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/attribute-definitions']));
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+    await waitFor(() => expect(requests.filter(request => request.method === 'GET').map(request => new URL(request.url).pathname)).toEqual(['/api/v1/attribute-definitions']));
     expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-  });
-
-  it('treats an empty successful POST as non-repeatable', async () => {
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ definitions: [] });
-    });
-    const profile = controller(fetchFn);
-    render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unidentified field' } });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('usable identity');
-    expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-    expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    await expect(
-      profile.createDefinition({
-        object_type: 'person',
-        label: 'Unidentified field',
-        value_type: 'text',
-        field_type: 'text',
-        cardinality: 'single',
-        is_sensitive: false,
-      }),
-    ).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-  });
-
-  it('treats a malformed successful POST as non-repeatable through the production API client', async () => {
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST'
-        ? new Response('{"ownership":"user",', { status: 201, headers: { 'Content-Type': 'application/json' } })
-        : Response.json({ definitions: [] });
-    });
-    const profile = controller(fetchFn);
-    render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Malformed response field' } });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('usable identity');
-    expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-    expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    await expect(
-      profile.createDefinition({
-        object_type: 'person',
-        label: 'Malformed response field',
-        value_type: 'text',
-        field_type: 'text',
-        cardinality: 'single',
-        is_sensitive: false,
-      }),
-    ).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+    await expect(profile.createDefinition({ object_type: 'person', label: 'Unidentified field', value_type: 'text', field_type: 'text', cardinality: 'single', is_sensitive: false })).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
   });
 
   it('records a 201 before its body stream fails without observing another controller request', async () => {
