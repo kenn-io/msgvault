@@ -114,12 +114,13 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
+    {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
       onchange={(value) => onPresentationChange?.(value as ExploreURLState['presentation'])}
     />
-    {#if !lockedFilter}<div class="group-picker" data-group-picker>
+    <div class="group-picker" data-group-picker>
       <SelectDropdown
         value=""
         {options}

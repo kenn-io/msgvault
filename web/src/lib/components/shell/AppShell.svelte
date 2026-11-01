@@ -280,7 +280,6 @@
   }
   let displayOpen = $state(false);
   let personMessages = $state<MessagesTable>();
-  const messageDisplayState = $derived(personMessages?.state ?? (exploreState.current.workspace === 'everything' ? exploreState : undefined));
   let resultsWidth = $state(0);
   const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
@@ -931,10 +930,6 @@
     control?.focus();
     control?.click();
   }
-  function changeMessageColumns(columns: ExploreURLState['columns']): void {
-    if (personMessages) personMessages.state.replaceTransient({ columns });
-    else replaceTransient({ columns });
-  }
   function fixedSortNotice(): void {
     sortNotice = exploreState.current.groupingChain.length > 0
       ? 'Sorting isn’t available while grouped.'
@@ -1283,8 +1278,8 @@
           onThemeChange={(theme) => appearance.setTemporary({ theme })}
           onDensityChange={(density) => appearance.setTemporary({ density })}
           onUseDefaults={() => appearance.clearTemporary()}
-          columns={messageDisplayState?.current.presentation === 'table' && messageDisplayState.current.groupingChain.length === 0 ? messageDisplayState.current.columns : undefined}
-          onColumnsChange={changeMessageColumns}
+          columns={exploreState.current.workspace === 'everything' && exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0 ? exploreState.current.columns : undefined}
+          onColumnsChange={(columns) => replaceTransient({ columns })}
           readerPosition={exploreState.current.workspace === 'everything' && resultsWidth >= 960 ? readerPosition.value : undefined}
           onReaderPositionChange={(value) => readerPosition.set(value)}
         />
