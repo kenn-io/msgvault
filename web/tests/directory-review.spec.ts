@@ -74,7 +74,7 @@ test('refreshes cached duplicate tokens and the badge after Unlink and Split', a
   await page.locator('#duplicate-17').getByRole('button', { name: 'Keep separate' }).click();
   await page.getByRole('button', { name: 'Back to People' }).click();
   await expect.poll(() => fixture.requests.find(request => request.path.endsWith('/17/review/reject'))?.body).toEqual({ review_token: 'review-17-postsplit' });
-  await expect(badge).toHaveText('People1');
+  await expect(badge).toHaveText('People 1');
 });
 
 for (const bulk of [false, true]) {
