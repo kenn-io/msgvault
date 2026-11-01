@@ -51,7 +51,7 @@ function controllerWith(fetchFn: typeof fetch): { client: ReturnType<typeof crea
 }
 
 describe('RelationshipsTab', () => {
-  it.each([false, true])('renders one relationship mode and keeps system types read-only, catalog: %s', (catalogOnly) => {
+  it('renders connections without the shared type catalog', () => {
     const { client, controller } = controllerWith(vi.fn());
     controller.relationships = [
       view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
@@ -60,20 +60,25 @@ describe('RelationshipsTab', () => {
         relationship: relationship(43, 1, { is_symmetric: true, forward_label: 'works with', reverse_label: 'works with' })
       })
     ];
-    controller.relationshipTypes = [
-      relationshipType({ ownership: 'system', is_deletable: false }),
-      relationshipType({ id: 32, slug: 'custom', forward_label: 'supports', reverse_label: 'is supported by' })
-    ];
-
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly });
-    if (!catalogOnly) {
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    expect(screen.queryByRole('heading', { name: 'Connection types' })).toBeNull();
     expect(screen.getByText('Synthetic Learner · mentors')).toBeDefined();
     expect(screen.getByText('Synthetic Guide · is mentored by')).toBeDefined();
     expect(screen.getByText('Synthetic Peer · works with')).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
-      return;
-    }
+  });
+
+  it('renders the shared type catalog without person connections and keeps system types read-only', () => {
+    const { client, controller } = controllerWith(vi.fn());
+    controller.relationshipTypes = [
+      relationshipType({ ownership: 'system', is_deletable: false }),
+      relationshipType({ id: 32, slug: 'custom', forward_label: 'supports', reverse_label: 'is supported by' })
+    ];
+
+    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    expect(screen.queryByRole('heading', { name: 'Connections' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add connection' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete mentor relationship type' })).toBeNull();
     expect(screen.getByText('Built in')).toBeDefined();
@@ -181,7 +186,7 @@ describe('RelationshipsTab', () => {
       await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: 'Synthetic note' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
 
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
       const search = requests.find((request) => pathOf(request) === '/api/v1/people/directory')!;
       expect(new URL(search.url).searchParams.get('q')).toBe('Synthetic');
       expect(new URL(search.url).searchParams.get('limit')).toBe('20');
@@ -270,7 +275,7 @@ describe('RelationshipsTab', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
     await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
     const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST')!;
     await expect(post.clone().json()).resolves.toEqual({
       source_person_id: 7,
@@ -477,7 +482,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship type description' }), { target: { value: 'Synthetic type' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create relationship type' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add type' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship type' })).toBeNull());
     const post = requests.find((request) => request.method === 'POST')!;
     await expect(post.clone().json()).resolves.toEqual({
       slug: 'peer',
@@ -603,7 +608,7 @@ describe('RelationshipsTab', () => {
     expect(posts).toBe(1);
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Refresh relationship types' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add type' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship type' })).toBeNull());
     expect(posts).toBe(1);
     expect(reads).toBe(1);
   });

@@ -33,35 +33,32 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   return { controller, writes, definitionReads, view };
 }
 
-it('keeps a confirmed removal visible and gates other writes until the save succeeds', async () => {
+it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
   let finish!: () => void;
-  const { controller, view, writes } = harness(initial, { wait: new Promise<void>(resolve => { finish = resolve; }) });
+  const { controller, view, writes } = harness(initial, { fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
   await fireEvent.click(screen.getByRole('button', { name: 'Remove Email' }));
   expect(writes).toHaveLength(0);
   await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
-  expect(screen.getByText('old@example.com')).toBeDefined();
-  expect(screen.getByRole('button', { name: 'Add phone' })).toHaveProperty('disabled', true);
-  await act(() => finish()); await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
-  await expect(writes[0]!.json()).resolves.toEqual({ contact_points: { supersede: [11] } });
-  await act(() => controller.reload()); expect(screen.queryByText('old@example.com')).toBeNull();
+  if (!fail) {
+    expect(screen.getByText('old@example.com')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Add phone' })).toHaveProperty('disabled', true);
+  }
+  await act(() => finish());
+  if (fail) {
+    expect(await screen.findByRole('button', { name: 'Reload' })).toBeDefined();
+    expect(screen.getByRole('group', { name: 'Confirm removing Email' })).toBeDefined();
+    expect(screen.getByText('old@example.com')).toBeDefined();
+  } else {
+    await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
+    await expect(writes[0]!.json()).resolves.toEqual({ contact_points: { supersede: [11] } });
+    await act(() => controller.reload()); expect(screen.queryByText('old@example.com')).toBeNull();
+  }
   view.unmount(); controller.destroy();
 });
 
-it('keeps the confirmation and row after a failed removal and exposes reload', async () => {
-  const initial = profile();
-  initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
-  const { controller, view } = harness(initial, { fail: true });
-  await fireEvent.click(screen.getByRole('button', { name: 'Remove Email' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
-  expect(screen.getByText('old@example.com')).toBeDefined();
-  expect(await screen.findByRole('group', { name: 'Confirm removing Email' })).toBeDefined();
-  expect(await screen.findByRole('button', { name: 'Reload' })).toBeDefined();
-  view.unmount(); controller.destroy();
-});
-
-it('shows current URI and inline media with the supported edit and removal actions', () => {
+it('gates media editing by available data and keeps removal available', () => {
   const initial = profile();
   initial.media = [{ person_id: 7, media_kind: 'photo', original_value: 'Portrait', uri: 'https://example.com/photo.png', has_data: false, envelope }, { person_id: 7, media_kind: 'logo', original_value: 'Stored logo', has_data: true, envelope: { ...envelope, id: 12 } }];
   const { view, controller } = harness(initial);
