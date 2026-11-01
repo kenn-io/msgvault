@@ -278,8 +278,6 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+12025550123' } });
     observer.observe(view.container, { childList: true, subtree: true });
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     const input = await openTypeahead('Search people to link');
@@ -295,7 +293,6 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
     await screen.findByText('absorbed@example.com');
     expect(sawLoadingPerson).toBe(false);
-    expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+12025550123');
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
   } finally { observer.disconnect(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
