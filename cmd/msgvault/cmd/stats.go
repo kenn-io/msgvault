@@ -23,12 +23,31 @@ and database size. Messages includes active messages and those deleted at
 the source, with separate counts when source-deleted messages exist.
 list-labels and cache-stats read the analytics cache, which retains them too.
 
-Text output only. For structured counts use query, for example:
+Use --json for structured counts. For custom counts use query, for example:
   msgvault query "SELECT count(*) AS n FROM messages"`,
 	Example: `  msgvault stats
   msgvault stats --account you@example.com`,
 	Args: cobra.NoArgs,
 	RunE: runStats,
+}
+
+type statsJSONOutput struct {
+	TotalMessages         int64          `json:"total_messages"`
+	ActiveMessages        int64          `json:"active_messages"`
+	SourceDeletedMessages int64          `json:"source_deleted_messages"`
+	TotalThreads          int64          `json:"total_threads"`
+	TotalAttachments      int64          `json:"total_attachments"`
+	TotalLabels           int64          `json:"total_labels"`
+	TotalAccounts         int64          `json:"total_accounts"`
+	Scope                 statsJSONScope `json:"scope"`
+	DatabaseSizeBytes     *int64         `json:"database_size_bytes,omitzero"`
+	DatabaseSizeScope     string         `json:"database_size_scope,omitempty"`
+}
+
+type statsJSONScope struct {
+	Kind        string `json:"kind"`
+	Label       string `json:"label,omitempty"`
+	SourceCount int64  `json:"source_count"`
 }
 
 func runStats(cmd *cobra.Command, _ []string) error {
@@ -63,15 +82,46 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		"db_bytes", dbStats.DatabaseSize,
 	)
 
-	if scoped {
-		label := resp.ScopeLabel
-		if label == "" {
-			if statsAccount != "" {
-				label = statsAccount
-			} else {
-				label = statsCollection
-			}
+	label := resp.ScopeLabel
+	if scoped && label == "" {
+		if statsAccount != "" {
+			label = statsAccount
+		} else {
+			label = statsCollection
 		}
+	}
+	jsonOutput, _ := cmd.Flags().GetBool("json")
+	if jsonOutput {
+		scope := statsJSONScope{Kind: "archive", SourceCount: dbStats.SourceCount}
+		switch {
+		case statsAccount != "":
+			scope.Kind = "account"
+		case statsCollection != "":
+			scope.Kind = "collection"
+		case info.Kind == HTTPStoreAgentDelegated:
+			scope.Kind = "agent_grant"
+		}
+		if scoped || info.Kind == HTTPStoreAgentDelegated {
+			scope.Label = label
+		}
+		result := statsJSONOutput{
+			TotalMessages:         dbStats.MessageCount + dbStats.SourceDeletedCount,
+			ActiveMessages:        dbStats.MessageCount,
+			SourceDeletedMessages: dbStats.SourceDeletedCount,
+			TotalThreads:          dbStats.ThreadCount,
+			TotalAttachments:      dbStats.AttachmentCount,
+			TotalLabels:           dbStats.LabelCount,
+			TotalAccounts:         dbStats.SourceCount,
+			Scope:                 scope,
+		}
+		if showSize {
+			result.DatabaseSizeBytes = &dbStats.DatabaseSize
+			result.DatabaseSizeScope = "global"
+		}
+		return printJSONTo(out, result)
+	}
+
+	if scoped {
 		printScopedStats(out, dbStats, statsAccount != "", label, resp.ScopeSourceCount, showSize)
 		return nil
 	}
@@ -132,5 +182,6 @@ func init() {
 	statsCmd.Flags().StringVar(&statsAccount, "account", "", "Show stats for a specific account")
 	statsCmd.Flags().StringVar(&statsCollection, "collection", "",
 		"Show stats for all member accounts of one collection")
+	statsCmd.Flags().Bool("json", false, "Output as JSON")
 	statsCmd.MarkFlagsMutuallyExclusive("account", "collection")
 }

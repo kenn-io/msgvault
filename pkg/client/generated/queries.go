@@ -959,6 +959,9 @@ type ListDirectoryPeopleQuery struct {
 	// Q Lexical query over person names, contact points, and organizations
 	Q *string `json:"q,omitempty"`
 
+	// Address Literal case-insensitive substring of current bound participant identities or curated contact points
+	Address *string `json:"address,omitempty"`
+
 	// Cursor Opaque cursor returned by the previous Directory page
 	Cursor *string `json:"cursor,omitempty"`
 
