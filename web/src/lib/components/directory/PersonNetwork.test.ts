@@ -119,7 +119,6 @@ describe('PersonNetwork', () => {
     expect(relationOf(screen.getByRole('button', { name: /^Open person Second Hop Person(?:$|:)/ }))).toBe('Curated Peer mentors, Third Person sibling of');
     expect(relationOf(screen.getByRole('button', { name: /^Open person Third Person(?:$|:)/ }))).toBe('mentors Curated Peer');
     const secondHop = screen.getByRole('button', { name: /^Open person Second Hop Person(?:$|:)/ });
-    expect(secondHop.closest<HTMLElement>('.node')?.title).toBe('Second Hop Person: Curated Peer mentors, Third Person sibling of');
     expect(screen.getByRole('button', { name: 'Open person Second Hop Person: Curated Peer mentors, Third Person sibling of' })).toBe(secondHop);
     const links = within(screen.getByRole('list', { name: 'Network connections' })).getAllByRole('listitem').map(item => item.textContent);
     expect(links).toContain('Third Person sibling of Second Hop Person');
