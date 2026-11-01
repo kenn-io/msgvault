@@ -28,8 +28,9 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
 const primary = () => within(screen.getByRole('navigation', { name: 'Primary' }));
 
 describe('AppSidebar', () => {
-  it('lists four places with the active one current', () => {
-    renderSidebar();
+  it.each([4, 500])('lists four places with a waiting badge of %s', duplicateCount => {
+    renderSidebar({ duplicateCount });
+    expect(primary().getByRole('button', { name: 'People' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
     expect(
       primary()
         .getAllByRole('button')

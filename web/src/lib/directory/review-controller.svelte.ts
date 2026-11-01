@@ -61,6 +61,7 @@ export class DirectoryReviewController {
   identityState = $state<IdentityReviewState>('candidate');
   rows = $state<IdentityMatchCandidate[]>([]);
   offset = $state(0);
+  private moreRows = $state(false);
   loading = $state(false);
   error = $state<string | null>(null);
   pageError = $state<string | null>(null);
@@ -69,6 +70,7 @@ export class DirectoryReviewController {
   mergeRequired = $state<{
     candidateID: number;
     conflict: PersonMergeRequiredError;
+    context: DirectoryReviewContextSnapshot;
   } | null>(null);
   lastMerge = $state<DirectoryReviewMergeCompletion | null>(null);
   readonly summaries = new SvelteMap<string, EndpointSummary | 'failed'>();
@@ -79,7 +81,7 @@ export class DirectoryReviewController {
   private lookupPauseMs = 120;
   private lookupTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly onSettled: (result: IdentityDecisionResult) => void;
-  pending = $state<{ candidate: IdentityMatchCandidate; decision: 'accept' | 'reject'; context: DirectoryReviewContextSnapshot }>();
+  pending = $state<{ candidate: IdentityMatchCandidate; decision: 'accept' | 'reject'; context: DirectoryReviewContextSnapshot; notes: string }>();
   readonly pendingDecisions = new SvelteSet<number>();
   private readonly client: APIClient;
   private readonly commit: ReviewCommit;
@@ -100,7 +102,7 @@ export class DirectoryReviewController {
     return this.offset > 0;
   }
   get hasNextPage(): boolean {
-    return this.rows.length === IDENTITY_REVIEW_PAGE_LIMIT;
+    return this.moreRows;
   }
   get apiClient(): APIClient {
     return this.client;
@@ -195,7 +197,7 @@ export class DirectoryReviewController {
     this.retryOffset = undefined;
     try {
       const response = await generatedListIdentityMatchCandidates(
-        { state: state === 'accepted' || state === 'rejected' ? 'accepted,rejected' : 'candidate,conflict', limit: IDENTITY_REVIEW_PAGE_LIMIT, offset: targetOffset },
+        { state: state === 'accepted' || state === 'rejected' ? 'accepted,rejected' : 'candidate,conflict', limit: IDENTITY_REVIEW_PAGE_LIMIT + 1, offset: targetOffset },
         {
           ...this.client,
           signal: abort.signal,
@@ -203,7 +205,8 @@ export class DirectoryReviewController {
       );
       if (!this.ownsPage(abort, generation)) return false;
       if (response.data) {
-        this.rows = response.data.candidates ?? [];
+        this.moreRows = (response.data.candidates?.length ?? 0) > IDENTITY_REVIEW_PAGE_LIMIT;
+        this.rows = (response.data.candidates ?? []).slice(0, IDENTITY_REVIEW_PAGE_LIMIT);
         this.offset = response.data.offset;
         return true;
       }
@@ -264,7 +267,7 @@ export class DirectoryReviewController {
   queueDecision(candidate: IdentityMatchCandidate, decision: 'accept' | 'reject'): void {
     void this.settleDecision();
     this.hidden.add(candidate.id);
-    this.pending = { candidate, decision, context: this.reviewContextSnapshot() };
+    this.pending = { candidate: { ...candidate }, decision, context: this.reviewContextSnapshot(), notes: this.getDecisionDraft(candidate.id) };
   }
   undoDecision(): void {
     if (this.pending) this.hidden.delete(this.pending.candidate.id);
@@ -274,14 +277,10 @@ export class DirectoryReviewController {
     const pending = this.pending;
     if (!pending) return;
     this.pending = undefined;
-    const { candidate, decision, context } = pending;
-    const result = await this.decideIdentity(candidate.id, decision, this.getDecisionDraft(candidate.id), context, candidate.review_token);
-    this.hidden.delete(candidate.id);
-    if (!result.ok && result.kind === 'merge_required') this.mergeRequired = { candidateID: candidate.id, conflict: result.conflict };
-    if (!result.ok && result.kind !== 'merge_required') this.decisionError = result.message;
-    this.onSettled(result);
-    return result;
+    const { candidate, decision, context, notes } = pending;
+    return this.decideIdentity(candidate.id, decision, notes, context, candidate.review_token);
   }
+
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }
   /** Queues the lookups for the cards on the current page. */
   requestSummaries(): void {
@@ -372,7 +371,7 @@ export class DirectoryReviewController {
     context: DirectoryReviewContextSnapshot,
     displayedToken?: string,
   ): Promise<IdentityDecisionResult> {
-    if (!this.isReviewContextCurrent(context)) {
+    if (!displayedToken && !this.isReviewContextCurrent(context)) {
       return { ok: false, kind: 'error', status: 0, message: 'The review context changed.' };
     }
     if (this.disposed || this.pendingDecisions.has(candidateID)) {
@@ -387,15 +386,10 @@ export class DirectoryReviewController {
     this.pendingDecisions.add(candidateID);
     const trimmedNotes = this.getDecisionDraft(candidateID).trim();
     const reviewToken = displayedToken ?? this.rows.find((row) => row.id === candidateID)?.review_token;
-    if (!reviewToken) {
-      this.decisionRequests.delete(candidateID);
-      this.pendingDecisions.delete(candidateID);
-      const message = 'Refresh the review before deciding.';
-      this.decisionError = message;
-      return { ok: false, kind: 'error', status: 0, message };
-    }
-    const body = trimmedNotes ? { review_token: reviewToken, notes: trimmedNotes } : { review_token: reviewToken };
+    let result: IdentityDecisionResult | undefined;
     try {
+      if (!reviewToken) return result = { ok: false, kind: 'error', status: 0, message: 'Refresh the review before deciding.' };
+      const body = trimmedNotes ? { review_token: reviewToken, notes: trimmedNotes } : { review_token: reviewToken };
       const response =
         decision === 'accept'
           ? await generatedAcceptIdentityMatchCandidate({ id: candidateID }, body, {
@@ -409,47 +403,47 @@ export class DirectoryReviewController {
               keepalive: true,
             });
       if (!this.ownsDecision(candidateID, abort)) {
-        return { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
+        return result = { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
       }
       if (response.data) {
         const decidedCandidate = response.data.candidate;
         if (decision === 'accept') this.summaries.clear();
         this.decisionDrafts.delete(candidateID);
-        if (!this.ownsDecisionContext(context)) {
-          if (this.reviewKind === 'identity' && (context.identityState !== this.identityState || context.offset !== this.offset)) await this.loadIdentityPage(this.offset, this.identityState);
-          return { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
+        if (this.ownsDecisionContext(context)) {
+          this.rows = this.rows.map(row => row.id === candidateID ? decidedCandidate : row);
+          this.status = `Identity match ${decidedCandidate.state}.${response.data.cache_state === 'stale' ? ' Identity cache refresh failed.' : ''}`;
         }
-        this.rows = replaceByID(this.rows, decidedCandidate);
-        this.status = `Identity match ${decidedCandidate.state}.${response.data.cache_state === 'stale' ? ' Identity cache refresh failed.' : ''}`;
-        await this.loadIdentityPage(this.offset, this.identityState);
-        return { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
+        if (this.reviewKind === 'identity') await this.loadIdentityPage(this.offset, this.identityState);
+        return result = { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
       }
       const mergeConflict =
         decision === 'accept' && response.response.status === 409 ? validatePersonMergeRequired(response.error) : null;
       if (mergeConflict) {
-        if (this.ownsDecisionContext(context)) this.mergeRequired = { candidateID, conflict: mergeConflict };
-        return { ok: false, kind: 'merge_required', conflict: mergeConflict };
+        if (this.ownsDecisionContext(context)) this.mergeRequired = { candidateID, conflict: mergeConflict, context };
+        return result = { ok: false, kind: 'merge_required', conflict: mergeConflict };
       }
       if (response.response.status === 409 && response.error?.error === 'identity_match_review_stale') {
         if (this.ownsDecisionContext(context)) await this.loadIdentityPage(context.offset, context.identityState);
         const message = 'The match changed. Review the refreshed evidence before deciding.';
-        if (this.ownsDecisionContext(context)) this.decisionError = message;
-        return { ok: false, kind: 'stale', status: 409, message };
+        return result = { ok: false, kind: 'stale', status: 409, message };
       }
       const message = failureMessage(response.error, response.response.status);
-      if (this.ownsDecisionContext(context)) this.decisionError = message;
-      return { ok: false, kind: 'error', status: response.response.status, message };
+      return result = { ok: false, kind: 'error', status: response.response.status, message };
     } catch (cause: unknown) {
       if (!this.ownsDecision(candidateID, abort)) {
-        return { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
+        return result = { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
       }
       const message = failureMessage(cause, 0);
-      if (this.ownsDecisionContext(context)) this.decisionError = message;
-      return { ok: false, kind: 'error', status: 0, message };
+      return result = { ok: false, kind: 'error', status: 0, message };
     } finally {
-      if (this.decisionRequests.get(candidateID) === abort) {
+      if (this.ownsDecision(candidateID, abort)) {
         this.decisionRequests.delete(candidateID);
         this.pendingDecisions.delete(candidateID);
+        this.hidden.delete(candidateID);
+        if (result) {
+          if (!result.ok && result.kind !== 'merge_required') this.decisionError = result.message;
+          this.onSettled(result);
+        }
       }
     }
   }
@@ -474,6 +468,7 @@ export class DirectoryReviewController {
     ++this.pageGeneration;
     this.identityState = identityState;
     this.rows = [];
+    this.moreRows = false;
     this.lookupQueue = [];
     this.offset = 0;
     this.loading = false;
@@ -484,11 +479,6 @@ export class DirectoryReviewController {
     this.mergeRequired = null;
     this.retryOffset = undefined;
   }
-}
-function replaceByID(rows: IdentityMatchCandidate[], replacement: IdentityMatchCandidate): IdentityMatchCandidate[] {
-  return rows.some((row) => row.id === replacement.id)
-    ? rows.map((row) => (row.id === replacement.id ? replacement : row))
-    : [...rows, replacement];
 }
 function failureMessage(error: unknown, status: number): string {
   if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {

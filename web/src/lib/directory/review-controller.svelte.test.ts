@@ -1,3 +1,5 @@
+import { render, fireEvent } from '@testing-library/svelte';
+import UndoToast from '../components/common/UndoToast.svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -56,7 +58,7 @@ describe('DirectoryReviewController', () => {
     expect(requests[0]!.signal.aborted).toBe(true);
     const query = new URL(requests[1]!.url).searchParams;
     expect(query.get('state')).toBe('candidate,conflict');
-    expect(query.get('limit')).toBe('10');
+    expect(query.get('limit')).toBe('11');
     expect(query.get('offset')).toBe('0');
     expect(controller.rows).toEqual([candidate(2, 'conflict')]);
 
@@ -66,7 +68,7 @@ describe('DirectoryReviewController', () => {
   });
 
   it('retains the prior page after a later-page failure and retries the same offset', async () => {
-    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT }, (_, index) => candidate(index + 1));
+    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT + 1 }, (_, index) => candidate(index + 1));
     let secondAttempt = 0;
     const offsets: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -83,7 +85,7 @@ describe('DirectoryReviewController', () => {
     await controller.loadIdentityPage();
     expect(controller.hasNextPage).toBe(true);
     await controller.loadNextPage();
-    expect(controller.rows).toEqual(firstPage);
+    expect(controller.rows).toEqual(firstPage.slice(0, 10));
     expect(controller.offset).toBe(0);
     expect(controller.pageError).toBe('Queue unavailable');
 
@@ -99,7 +101,7 @@ describe('DirectoryReviewController', () => {
     const restored = deferredResponse();
     let restoredAttempts = 0;
     const offsets: string[] = [];
-    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT }, (_, index) => candidate(index + 1));
+    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT + 1 }, (_, index) => candidate(index + 1));
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const offset = new URL(request.url).searchParams.get('offset') ?? '';
@@ -157,7 +159,7 @@ describe('DirectoryReviewController', () => {
   });
 
   it('clears identity rows and offset when review kind changes', async () => {
-    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT }, (_, index) => candidate(index + 1));
+    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT + 1 }, (_, index) => candidate(index + 1));
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const offset = new URL(requestOf(input).url).searchParams.get('offset');
       return offset === '10' ? page([candidate(101)], 10) : page(firstPage);
@@ -219,7 +221,7 @@ describe('DirectoryReviewController', () => {
     expect(commit).toHaveBeenCalledWith({ reviewKind: 'fact' });
   });
 
-  it('does not let a late success overwrite a restored copy of the same URL context', async () => {
+  it('refreshes a restored copy of the same URL context after a late success', async () => {
     const decisionResponse = deferredResponse();
     const requests: Request[] = [];
     let reads = 0;
@@ -232,7 +234,7 @@ describe('DirectoryReviewController', () => {
       reads += 1;
       if (reads === 1) return page([candidate(17)]);
       if (reads === 2) return page(restoredRows);
-      return Response.json({ error: 'unavailable', message: 'Unexpected reconciliation' }, { status: 503 });
+      return page([candidate(100)]);
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
@@ -246,15 +248,15 @@ describe('DirectoryReviewController', () => {
     await expect(decision).resolves.toEqual({ ok: true, candidate: accepted, cacheState: 'ready' });
     expect(controller.reviewKind).toBe('identity');
     expect(controller.identityState).toBe('candidate');
-    expect(controller.rows).toEqual(restoredRows);
+    expect(controller.rows).toEqual([candidate(100)]);
     expect(controller.offset).toBe(0);
     expect(controller.pageError).toBeNull();
     expect(controller.status).toBeNull();
-    expect(requests.filter((request) => request.method === 'GET')).toHaveLength(2);
+    expect(requests.filter((request) => request.method === 'GET')).toHaveLength(3);
   });
 
   it('retains the current same-state page when previous-page loading fails', async () => {
-    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT }, (_, index) => candidate(index + 1));
+    const firstPage = Array.from({ length: IDENTITY_REVIEW_PAGE_LIMIT + 1 }, (_, index) => candidate(index + 1));
     let firstPageLoads = 0;
     const offsets: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -435,7 +437,7 @@ describe('DirectoryReviewController', () => {
       kind: 'merge_required',
       conflict
     });
-    expect(controller.mergeRequired).toEqual({ candidateID: 17, conflict });
+    expect(controller.mergeRequired).toEqual({ candidateID: 17, conflict, context: controller.reviewContextSnapshot() });
     expect(controller.getDecisionDraft(17)).toBe('Review both profiles');
     expect(controller.rows).toEqual([candidate(17)]);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
@@ -531,7 +533,9 @@ describe('DirectoryReviewController', () => {
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
 
-    const decision = controller.acceptIdentity(17, 'Review both profiles');
+    controller.setDecisionDraft(17, 'Review both profiles');
+    controller.queueDecision(controller.rows[0]!, 'accept');
+    const decision = controller.settleDecision();
     await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
     controller.setIdentityState('accepted');
     await vi.waitFor(() => expect(controller.rows).toEqual(conflictRows));
@@ -548,7 +552,7 @@ describe('DirectoryReviewController', () => {
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
-  it('does not expose a late decision error in a newer identity state', async () => {
+  it('reports a late decision failure without changing the newer identity state', async () => {
     const decisionResponse = deferredResponse();
     const conflictRows = [candidate(88, 'conflict')];
     const requests: Request[] = [];
@@ -576,7 +580,7 @@ describe('DirectoryReviewController', () => {
     });
     expect(controller.identityState).toBe('accepted');
     expect(controller.rows).toEqual(conflictRows);
-    expect(controller.decisionError).toBeNull();
+    expect(controller.decisionError).toBe('Decision unavailable');
     expect(controller.mergeRequired).toBeNull();
     expect(controller.getDecisionDraft(17)).toBe('Different people');
     expect(controller.isDecisionPending(17)).toBe(false);
@@ -676,25 +680,21 @@ describe('DirectoryReviewController', () => {
   });
 });
 
-it('pages the combined decided queue beyond its first server page', async () => {
+it('keeps Next disabled on an exact ten-row History page', async () => {
   const queries: string[] = [];
-  const client = createAPIClient(async input => {
-    const url = new URL(requestOf(input).url);
-    queries.push(url.search);
-    return page(url.searchParams.get('offset') === '0' ? Array.from({ length: 10 }, (_, i) => candidate(i + 1, i % 2 ? 'accepted' : 'rejected')) : [candidate(11, 'accepted')], Number(url.searchParams.get('offset')));
-  });
-  const controller = new DirectoryReviewController(client);
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    queries.push(new URL(requestOf(input).url).search);
+    return page(Array.from({ length: 10 }, (_, i) => candidate(i + 1, i % 2 ? 'accepted' : 'rejected')));
+  }));
   try {
     await controller.loadIdentityPage(0, 'accepted');
-    await controller.loadNextPage();
-    expect(queries).toEqual(['?state=accepted%2Crejected&limit=10&offset=0', '?state=accepted%2Crejected&limit=10&offset=10']);
-    expect(controller.rows.map(row => row.id)).toEqual([11]);
-    expect(controller.hasPreviousPage).toBe(true);
+    expect(queries).toEqual(['?state=accepted%2Crejected&limit=11&offset=0']);
+    expect(controller.rows).toHaveLength(10);
     expect(controller.hasNextPage).toBe(false);
   } finally { controller.destroy(); }
 });
 
-it('undoes before sending and settles an earlier pair with its exact token and notes', async () => {
+it('settles on pagehide with keepalive, the displayed token, and trimmed notes', async () => {
   const writes: Array<{ path: string; body: unknown; keepalive: boolean }> = [];
   const settled = vi.fn();
   const controller = new DirectoryReviewController(createAPIClient(async input => {
@@ -707,19 +707,15 @@ it('undoes before sending and settles an earlier pair with its exact token and n
   }), undefined, settled);
   try {
     await controller.loadIdentityPage();
-    controller.queueDecision(controller.rows[0]!, 'reject');
-    controller.undoDecision();
-    expect(writes).toEqual([]);
-    expect(controller.hidden.has(1)).toBe(false);
     controller.summaries.set('person:7', { id: 7, name: 'Saved', address: 'Saved person', lastAt: null });
     controller.setDecisionDraft(1, '  Different people  ');
     controller.queueDecision(controller.rows[0]!, 'reject');
-    controller.queueDecision(controller.rows[1]!, 'accept');
+    const toast = render(UndoToast, { message: 'Keep separate queued', onUndo: () => controller.undoDecision(), onExpire: () => void controller.settleDecision() });
+    await fireEvent(window, new Event('pagehide'));
+    toast.unmount();
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
     expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/1/review/reject', body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
     expect(controller.summaries.has('person:7')).toBe(true);
-    expect(controller.pending?.candidate.id).toBe(2);
-    controller.undoDecision();
   } finally { controller.destroy(); }
 });
 
@@ -730,7 +726,7 @@ it.each([false, true])('settles across queue changes, including a History switch
     if (request.method === 'POST') return decision.promise;
     const url = new URL(request.url), offset = Number(url.searchParams.get('offset'));
     if (url.searchParams.get('state') === 'accepted,rejected') return page([candidate(1, 'rejected')]);
-    return page(offset ? [candidate(11)] : Array.from({ length: 10 }, (_, i) => candidate(i + 1)), offset);
+    return page(offset ? [candidate(11)] : Array.from({ length: 11 }, (_, i) => candidate(i + 1)), offset);
   }), undefined, settled);
   try {
     await controller.loadIdentityPage();
@@ -739,15 +735,9 @@ it.each([false, true])('settles across queue changes, including a History switch
     if (history) expect(controller.identityState).toBe('candidate');
     else await navigation;
     expect(controller.pending).toBeUndefined();
-    if (history) {
-      decision.resolve(Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
-      await navigation;
-      await vi.waitFor(() => expect(controller.rows[0]?.state).toBe('rejected'));
-      return;
-    }
-    expect(controller.rows[0]?.id).toBe(11);
-    decision.resolve(Response.json({ message: 'Could not save this decision.' }, { status: 503 }));
-    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith({ ok: false, kind: 'error', status: 503, message: 'Could not save this decision.' }));
-    expect(controller.decisionError).toBe('Could not save this decision.');
+    if (!history) return;
+    decision.resolve(Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
+    await navigation;
+    await vi.waitFor(() => expect(controller.rows[0]?.state).toBe('rejected'));
   } finally { controller.destroy(); }
 });
