@@ -263,7 +263,7 @@ it('shows a repeated label once, the editor after the list, and the summary befo
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Email: first@example.com' }));
     const input = await screen.findByRole('textbox', { name: /email|contact value/i });
-    expect(screen.queryByText('first@example.com')).toBeNull();
+    expect(screen.getByText('first@example.com').compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   } finally { view.unmount(); controller.destroy(); }
 });
