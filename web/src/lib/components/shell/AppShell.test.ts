@@ -2046,13 +2046,12 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each([{ status: 200, reviews: false }, { status: 201, reviews: false }, { status: 201, reviews: true }])('hands a selected relationship participant to Directory promotion on $status (leave for Reviews=$reviews)', async ({ status, reviews }) => {
+  it.each([200, 201])('hands a selected relationship participant to Directory promotion on %i', async status => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
     }))}`);
     const requests: Request[] = [];
     let promoted = false;
-    let releasePromotion: (() => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
@@ -2075,7 +2074,6 @@ describe('AppShell', () => {
         }] : []
       });
       if (path === '/api/v1/people' && request.method === 'POST') {
-        if (reviews) await new Promise<void>(resolve => { releasePromotion = resolve; });
         promoted = true;
         return Response.json({ id: 42, revision: 1 }, { status });
       }
@@ -2106,18 +2104,6 @@ describe('AppShell', () => {
     expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    if (reviews) {
-      await waitFor(() => expect(releasePromotion).toBeDefined());
-      await fireEvent.click(screen.getByRole('button', { name: 'Reviews' }));
-      await screen.findByRole('main', { name: 'Reviews' });
-      state.commitNavigation({ directoryPersonID: 7 });
-      releasePromotion?.();
-      await waitFor(() => expect(promoted).toBe(true));
-      await tick(); await new Promise(resolve => setTimeout(resolve, 0));
-      expect(state.current).toMatchObject({ workspace: 'directory_review', directoryPersonID: 7 });
-      rendered.unmount(); state.destroy(); return;
-    }
-
     await waitFor(() => expect(state.current.directoryPersonID).toBe(42));
     expect(state.current.workspace).toBe('relationships');
     expect(new URL(window.location.href).searchParams.get('explore')).toContain('directoryPersonID');
@@ -2131,6 +2117,25 @@ describe('AppShell', () => {
 
     rendered.unmount();
     state.destroy();
+  });
+
+  it('leaving People aborts its pending Save before opening Reviews', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:11' }))}`);
+    let pending: Request | undefined;
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+      if (path === '/api/v1/people' && request.method === 'POST') { pending = request; return new Promise<Response>(resolve => request.signal.addEventListener('abort', () => resolve(Response.json({ id: 42, revision: 1 }, { status: 201 })), { once: true })); }
+      if (path === '/api/v1/participants/11') return Response.json({ id: 11, display_label: 'Synthetic Candidate', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z' });
+      return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window); const view = render(AppShell, { client, state });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(pending).toBeDefined());
+      await fireEvent.click(screen.getByRole('button', { name: 'Reviews' }));
+      await screen.findByRole('main', { name: 'Reviews' });
+      expect(pending!.signal.aborted).toBe(true);
+    } finally { view.unmount(); state.destroy(); }
   });
 
   it('renders actionable Directory guidance for a relationship promotion conflict', async () => {

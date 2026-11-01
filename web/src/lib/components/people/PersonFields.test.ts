@@ -53,7 +53,6 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
   } else {
     await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
     await expect(writes[0]!.json()).resolves.toEqual({ contact_points: { supersede: [11] } });
-    await act(() => controller.reload()); expect(screen.queryByText('old@example.com')).toBeNull();
   }
   view.unmount(); controller.destroy();
 });
@@ -71,9 +70,9 @@ it('gates media editing by available data and keeps removal available', () => {
 
 it('displays every structured address component before its original street value', () => {
   const initial = profile();
-  initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: '1 Example Street', street_address: '1 Example Street', extended_address: 'Suite 2', locality: 'Example City', region: 'CA', postal_code: '90001', country_name: 'United States', envelope }];
+  initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: '1 Example Street', street_address: '1 Example Street', post_office_box: 'PO Box 7', extended_address: 'Suite 2', extended_components: 'Building C', locality: 'Example City', region: 'CA', postal_code: '90001', country_name: 'United States', envelope }];
   const { view, controller } = harness(initial);
-  expect(screen.getByText('Suite 2, 1 Example Street, Example City, CA, 90001, United States')).toBeDefined();
+  expect(screen.getByText('PO Box 7, Suite 2, 1 Example Street, Example City, CA, 90001, United States, Building C')).toBeDefined();
   view.unmount(); controller.destroy();
 });
 

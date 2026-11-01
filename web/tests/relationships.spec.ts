@@ -432,31 +432,49 @@ test('domain calendar retries, selects a previous year, and clears date filters'
 
 test('saved people keep durable IDs separate from participants and open profiles with no messages', async ({ page }) => {
   await prepare(page);
-  await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: [
-    { id: 91, display_name: 'Saved Alice', organizations: ['Example Org'], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-91' },
-    { id: 92, display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-92' },
-    { id: 93, display_name: 'Draft Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-93' },
-  ] } }));
-  await page.route('**/api/v1/people/91', route => route.fulfill({ json: { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] } }));
-  await page.route('**/api/v1/people/92', route => route.fulfill({ json: { id: 92, display_name: 'Saved Contact', revision: 1, participant_ids: [] } }));
-  await page.route('**/api/v1/people/93', route => route.fulfill({ json: { id: 93, display_name: 'Draft Contact', revision: 1, participant_ids: [3] } }));
+  const profiles = [
+    { id: 91, participant_ids: [1], display_name: 'Saved Alice', organizations: ['Example Org'], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-91' },
+    { id: 92, participant_ids: [], display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-92' },
+    { id: 93, participant_ids: [3], display_name: 'Draft Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-93' },
+  ];
+  await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
+  for (const person of profiles) {
+    await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
+    await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+    await page.route(`**/api/v1/people/${person.id}/attributes*`, route => route.fulfill({ json: { person_id: person.id, attributes: [] } }));
+    await page.route(`**/api/v1/people/${person.id}/contact-state`, route => route.fulfill({ json: { person_id: person.id, cadence_status: 'unknown', interaction_count: 0 } }));
+    await page.route(`**/api/v1/people/${person.id}/employments`, route => route.fulfill({ json: { employments: [] } }));
+    await page.route(`**/api/v1/people/${person.id}/relationships*`, route => route.fulfill({ json: { relationships: [] } }));
+    await page.route(`**/api/v1/people/${person.id}/network*`, route => route.fulfill({ json: { root_person_id: person.id, depth: 1, nodes: [], edges: [], truncated: false } }));
+  }
   await page.route('**/api/v1/participants/3', route => route.fulfill({ status: 404, json: { error: 'not_found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
   const list = page.getByRole('grid', { name: 'People results' });
   await list.getByText('Saved Alice', { exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
-  expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 91, relationshipTarget: 'cluster:1' });
+  await expect(page.getByRole('heading', { name: 'Saved Alice' })).toBeVisible();
+  await expect.poll(() => exploreHistoryState(page)).toMatchObject({ directoryPersonID: 91, relationshipTarget: 'cluster:1' });
   await list.getByText('Draft Contact', { exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Open in Directory', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Draft Contact', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
   await page.getByRole('radio', { name: 'Domains', exact: true }).click();
   await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
   await page.getByRole('radio', { name: 'People', exact: true }).click();
   await list.getByText('Saved Contact', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Saved Contact' })).toBeVisible();
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92, relationshipTarget: null });
-  await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
-  await expect.poll(async () => (await exploreHistoryState(page)).workspace).toBe('directory');
-  expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92 });
+  await expect(page.getByRole('radio', { name: 'Details', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
+});
+
+test('reloading a saved person deep link opens Details after the profile loads', async ({ page }) => {
+  await prepare(page);
+  const person = { id: 91, display_name: 'Saved Alice', revision: 1, participant_ids: [1] };
+  await page.route('**/api/v1/people/91', route => route.fulfill({ json: person }));
+  await page.route('**/api/v1/people/91/profile', route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 91, relationshipTarget: 'cluster:1' }))}`);
+  await expect(page.getByRole('heading', { name: 'Saved Alice' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Saved Alice' })).toBeVisible();
 });
 
 test('People history and reload restore participant scope without a message query', async ({ page }) => {
@@ -577,7 +595,8 @@ test('missing saved profiles keep Back to People on narrow screens', async ({ pa
   await page.setViewportSize({ width: 640, height: 900 });
   await page.route('**/api/v1/people/999', route => route.fulfill({ status: 404, json: { message: 'Person not found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 999 }))}`);
-  await expect(page.getByRole('alert')).toHaveText('Saved person not found.');
+  await expect(page.getByRole('alert')).toContainText('person: Person not found.');
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Saved person', exact: true })).toBeHidden();
   await page.getByRole('button', { name: 'Back to People', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'People results' })).toBeVisible();
@@ -617,7 +636,7 @@ test('list filters clear hidden selections and each mode offers only supported c
 });
 
 for (const previous of ['Alice', 'no person']) {
-  test(`returning from Directory opens the selected person's messages after ${previous}`, async ({ page }) => {
+  test(`opening a Directory selection shows its messages after ${previous}`, async ({ page }) => {
     await prepare(page);
     const profiles = [
       { id: 91, display_name: 'Alice Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [1], carddav_bindings: [], vcard_uid: 'example-91' },
@@ -626,18 +645,18 @@ for (const previous of ['Alice', 'no person']) {
     await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
     for (const profile of profiles) await page.route(`**/api/v1/people/${profile.id}`, route => route.fulfill({ json: profile }));
     await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
+    for (const person of profiles) await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
     await page.route('**/api/v1/participants/1', route => route.fulfill({ json: { ...alice, profile: { id: 91, display_name: 'Alice Example' } } }));
     await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true }))}`);
     const list = page.getByRole('grid', { name: 'People results' });
     if (previous === 'Alice') {
       await list.getByText('Alice Example', { exact: true }).click();
-      await page.getByRole('radio', { name: 'Details', exact: true }).click();
-      await page.getByRole('button', { name: 'Open in Directory', exact: true }).click();
-    } else await page.getByRole('button', { name: 'Directory', exact: true }).click();
+    }
+    await page.getByRole('button', { name: 'Directory', exact: true }).click();
     await page.getByRole('grid', { name: 'Directory people' }).getByText('Bob Example', { exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'People', exact: true }).click();
+    await page.getByRole('radio', { name: 'Messages', exact: true }).click();
     await expect(list.getByRole('row', { name: /Bob Example/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
     await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
