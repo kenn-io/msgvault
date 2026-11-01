@@ -18,7 +18,7 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 	extractionID := "extraction-synthetic"
 	hash := strings.Repeat("b", 64)
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO document_extraction_profiles
 			(id, fingerprint, provider, endpoint, region, model,
 			 retention_posture, training_posture, allowed_media_types,
@@ -29,7 +29,7 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 		"standard", "opted-out", `["application/pdf"]`, `{}`, true,
 	)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO document_extractions
 			(id, profile_id, canonical_blob_hash, extraction_input_key,
 			 state, local_bytes)
@@ -37,7 +37,7 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 		extractionID, profileID, hash, 128,
 	)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO document_units
 			(extraction_id, unit_index, unit_kind, text, checksum,
 			 char_count, truncated)
@@ -45,7 +45,7 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 		extractionID, "canonical unit text", strings.Repeat("c", 64), 19, false,
 	)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO document_chunks
 			(extraction_id, chunk_key, ordinal, text, heading_path,
 			 first_unit_index, last_unit_index, checksum, char_count)
@@ -53,7 +53,7 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 		extractionID, "quasar invoice total", `[]`, strings.Repeat("d", 64), 20,
 	)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO document_chunk_spans
 			(extraction_id, chunk_key, span_ordinal, unit_index,
 			 start_char, end_char, synthetic)
@@ -64,11 +64,11 @@ func TestDocumentIndexSchemaStoresCanonicalTextAndRebuildableFTS(t *testing.T) {
 
 	assert.Equal(t, 1, documentFTSMatchCount(t, st, "quasar"))
 	var revision int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT revision FROM document_index_state WHERE singleton = ?`), 1).Scan(&revision))
 	assert.Zero(t, revision)
 
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM document_extractions WHERE id = ?`), extractionID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM document_extractions WHERE id = ?`), extractionID)
 	require.NoError(err)
 	assert.Zero(t, documentFTSMatchCount(t, st, "quasar"))
 }
@@ -80,7 +80,7 @@ func TestInitSchemaAddsDocumentRebuildIDToLegacyExtractionTable(t *testing.T) {
 	if st.IsPostgreSQL() {
 		drop += ` CASCADE`
 	}
-	_, err := st.DB().Exec(drop)
+	_, err := st.DB().ExecContext(t.Context(), drop)
 	require.NoError(err)
 
 	require.NoError(st.InitSchema())
@@ -91,14 +91,14 @@ func TestInitSchemaAddsDocumentRebuildIDToLegacyExtractionTable(t *testing.T) {
 		         WHERE table_schema = current_schema()
 		           AND table_name = 'document_extractions' AND column_name = 'rebuild_id'`
 	}
-	require.NoError(st.DB().QueryRow(query).Scan(&columnCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), query).Scan(&columnCount))
 	assert.Equal(t, 1, columnCount)
 }
 
 func TestInitSchemaAddsDocumentTargetProfileToLegacyIndexState(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := st.DB().Exec(`ALTER TABLE document_index_state DROP COLUMN target_profile_id`)
+	_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE document_index_state DROP COLUMN target_profile_id`)
 	require.NoError(err)
 
 	require.NoError(st.InitSchema())
@@ -109,7 +109,7 @@ func TestInitSchemaAddsDocumentTargetProfileToLegacyIndexState(t *testing.T) {
 		         WHERE table_schema = current_schema()
 		           AND table_name = 'document_index_state' AND column_name = 'target_profile_id'`
 	}
-	require.NoError(st.DB().QueryRow(query).Scan(&columnCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), query).Scan(&columnCount))
 	assert.Equal(t, 1, columnCount)
 }
 
@@ -117,7 +117,7 @@ func TestInitSchemaAddsDocumentProviderAccountingToLegacyExtractions(t *testing.
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	for _, column := range []string{"retry_count", "request_count", "provider_latency_ms"} {
-		_, err := st.DB().Exec(`ALTER TABLE document_extractions DROP COLUMN ` + column)
+		_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE document_extractions DROP COLUMN `+column)
 		require.NoError(err)
 	}
 
@@ -130,7 +130,7 @@ func TestInitSchemaAddsDocumentProviderAccountingToLegacyExtractions(t *testing.
 			         WHERE table_schema = current_schema()
 			           AND table_name = 'document_extractions' AND column_name = ?`
 		}
-		require.NoError(st.DB().QueryRow(st.Rebind(query), column).Scan(&columnCount))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), column).Scan(&columnCount))
 		assert.Equal(t, 1, columnCount, column)
 	}
 }
@@ -139,12 +139,12 @@ func documentFTSMatchCount(t *testing.T, st *store.Store, term string) int {
 	t.Helper()
 	var count int
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM document_chunks
 			WHERE search_fts @@ plainto_tsquery('simple', ?)`), term).Scan(&count))
 		return count
 	}
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM document_chunks_fts
 		WHERE document_chunks_fts MATCH ?`, term).Scan(&count))
 	return count
@@ -154,14 +154,14 @@ func TestInitSchemaAddsDocumentDiagnosticsAndInlinePolicy(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	for _, column := range []string{"failure_reason", "failure_detail"} {
-		_, err := st.DB().Exec("ALTER TABLE document_extractions DROP COLUMN " + column)
+		_, err := st.DB().ExecContext(t.Context(), "ALTER TABLE document_extractions DROP COLUMN "+column)
 		require.NoError(err)
 	}
-	_, err := st.DB().Exec("ALTER TABLE document_extraction_profiles DROP COLUMN include_inline")
+	_, err := st.DB().ExecContext(t.Context(), "ALTER TABLE document_extraction_profiles DROP COLUMN include_inline")
 	require.NoError(err)
 	require.NoError(st.InitSchema())
-	_, err = st.DB().Exec("SELECT include_inline FROM document_extraction_profiles")
+	_, err = st.DB().ExecContext(t.Context(), "SELECT include_inline FROM document_extraction_profiles")
 	require.NoError(err)
-	_, err = st.DB().Exec("SELECT failure_reason, failure_detail FROM document_extractions")
+	_, err = st.DB().ExecContext(t.Context(), "SELECT failure_reason, failure_detail FROM document_extractions")
 	require.NoError(err)
 }

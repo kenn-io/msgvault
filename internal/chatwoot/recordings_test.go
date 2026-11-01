@@ -76,7 +76,7 @@ func TestCallRecordingCapAndFormat(t *testing.T) {
 			_, err := importer.Import(t.Context(), opts)
 			require.NoError(err)
 			meetingID := contractArchivedMessageID(t, st, "call:901")
-			refs, err := st.MessageProviderAttachments(meetingID, "chatwoot:")
+			refs, err := st.MessageProviderAttachments(t.Context(), meetingID, "chatwoot:")
 			require.NoError(err)
 			require.Len(refs, 1)
 			for _, ref := range refs {
@@ -93,7 +93,7 @@ func TestCallRecordingCapAndFormat(t *testing.T) {
 			candidates, err := st.ListBeeperMediaCandidates(t.Context(), 0, 100)
 			require.NoError(err)
 			assert.NotEmpty(candidates, "the real stored call reaches shared Docbank discovery")
-			ordinaryRefs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "902"), "chatwoot:")
+			ordinaryRefs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, "902"), "chatwoot:")
 			require.NoError(err)
 			require.Len(ordinaryRefs, 1)
 			for _, ref := range ordinaryRefs {
@@ -136,7 +136,7 @@ func TestRecordingDefaultCapDeclaredBoundary(t *testing.T) {
 			_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, AttachmentsDir: t.TempDir()})
 			require.NoError(err)
 			for _, id := range []string{"901", "call:901"} {
-				refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, id), "chatwoot:")
+				refs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, id), "chatwoot:")
 				require.NoError(err)
 				require.Len(refs, 1)
 				assert.Equal(tc.want, refs["chatwoot:attachment:2001"].State)

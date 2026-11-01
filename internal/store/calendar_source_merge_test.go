@@ -16,7 +16,7 @@ func TestListCalendarOccurrencesSourceMergeArchiveOnly(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	addEvent := func(sourceID int64, providerID, raw string) int64 {
 		id, _ := mergeFixtureMessage(t, st, sourceID, providerID, providerID, fmt.Sprintf("calendar source %d", sourceID), 0)
-		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'calendar_event' WHERE id = ?`), id)
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = 'calendar_event' WHERE id = ?`), id)
 		requirements.NoError(err)
 		requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(raw), "gcal_json"))
 		return id
@@ -50,7 +50,7 @@ func TestListCalendarOccurrencesSourceMergeArchiveOnly(t *testing.T) {
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
 	requirements.NoError(err)
 	var archiveOnly int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM source_merge_archive_only_messages`).Scan(&archiveOnly))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM source_merge_archive_only_messages`).Scan(&archiveOnly))
 	requirements.Equal(3, archiveOnly)
 	after, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 2, 0))
 	requirements.NoError(err)
@@ -62,7 +62,7 @@ func calendarMergeEvent(t *testing.T, st *store.Store, sourceID int64, providerI
 	t.Helper()
 	requirements := require.New(t)
 	id, _ := mergeFixtureMessage(t, st, sourceID, providerID, providerID, fmt.Sprintf("calendar source %d", sourceID), 0)
-	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'calendar_event' WHERE id = ?`), id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = 'calendar_event' WHERE id = ?`), id)
 	requirements.NoError(err)
 	requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(raw), "gcal_json"))
 	return id
@@ -84,7 +84,7 @@ func TestCalendarSourceMergeUniqueEvent(t *testing.T) {
 			}
 			if destination == "deleted duplicate" {
 				deleted := calendarMergeEvent(t, st, into.ID, "unique", raw)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), time.Now(), deleted)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), time.Now(), deleted)
 				requirements.NoError(err)
 			}
 			window := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)

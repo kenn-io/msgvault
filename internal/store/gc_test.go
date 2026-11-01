@@ -23,7 +23,7 @@ func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
 	sourceDeleted := f.NewMessage().WithSourceMessageID("gc-source-deleted").Create(t, f.Store)
 	bothMarkers := f.NewMessage().WithSourceMessageID("gc-both-markers").Create(t, f.Store)
 
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE messages
 		SET deleted_at = CURRENT_TIMESTAMP, delete_batch_id = 'gc-dedup-batch'
 		WHERE id IN (?, ?)
@@ -40,7 +40,7 @@ func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
 	require.NoError(f.Store.UpsertMessageBody(sourceDeleted,
 		sql.NullString{String: largeBody, Valid: true}, sql.NullString{}),
 		"store large body for compaction")
-	_, err = f.Store.DB().Exec(`
+	_, err = f.Store.DB().ExecContext(t.Context(), `
 		INSERT INTO messages_fts (
 			rowid, message_id, subject, body, from_addr, to_addr, cc_addr
 		) VALUES (?, ?, 'gc orphan sentinel', '', '', '', '')
@@ -66,18 +66,19 @@ func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
 		"GC must invalidate caches containing purged messages")
 	assert.ElementsMatch([]int64{active, dedupOnly}, remainingGCMessageIDs(t, f.Store))
 	var staleFTSRows int64
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages_fts WHERE rowid = ?`, sourceDeleted,
 	).Scan(&staleFTSRows), "count stale FTS rows")
 	assert.Zero(staleFTSRows, "GC must remove FTS rows for purged messages")
 
 	var freeBefore int64
-	require.NoError(f.Store.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freeBefore),
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `PRAGMA freelist_count`).Scan(&freeBefore),
 		"read freelist before vacuum")
 	require.Positive(freeBefore, "deleted payload should leave free SQLite pages")
 	require.NoError(f.Store.VacuumContext(t.Context()), "VacuumContext")
 	var freeAfter int64
-	require.NoError(f.Store.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freeAfter),
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `PRAGMA freelist_count`).Scan(&freeAfter),
 		"read freelist after vacuum")
 	assert.Zero(freeAfter, "VACUUM should reclaim free pages")
 }
@@ -115,7 +116,7 @@ func TestExecuteGCRejectsSameCountDifferentPopulation(t *testing.T) {
 	plan, err := f.Store.PlanGCContext(t.Context())
 	require.NoError(err, "PlanGCContext")
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?
 	`), planned)
 	require.NoError(err, "restore originally planned message")
@@ -160,7 +161,7 @@ func TestExecuteGCRecomputesAffectedConversationStats(t *testing.T) {
 	var messageCount int
 	var lastMessageAt sql.NullTime
 	var preview sql.NullString
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT message_count, last_message_at, last_message_preview
 		FROM conversations WHERE id = ?
 	`), f.ConvID).Scan(&messageCount, &lastMessageAt, &preview),
@@ -192,7 +193,7 @@ func TestExecuteGCClearsSurvivingRepliesToSourceDeletedMessages(t *testing.T) {
 	assert.ElementsMatch([]int64{reply}, remainingGCMessageIDs(t, f.Store))
 
 	var replyTo sql.NullInt64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), reply).Scan(&replyTo),
 		"read surviving reply pointer")
 	assert.False(replyTo.Valid, "GC must clear the pointer to the purged parent")
@@ -211,7 +212,7 @@ func TestQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 	})
 	_, err := loops.Done(t.Context(), f.Store, question, nil, now)
 	require.NoError(err)
-	sourceMessageID, err := f.Store.GetMessageSourceID(question)
+	sourceMessageID, err := f.Store.GetMessageSourceID(t.Context(), question)
 	require.NoError(err)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceMessageID))
 	plan, err := f.Store.PlanGCContext(t.Context())
@@ -238,14 +239,14 @@ func newSQLiteGCFixture(t *testing.T) *storetest.Fixture {
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(t, err, "setup source")
-	convID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "default-thread", "Default Thread")
 	require.NoError(t, err, "setup conversation")
 	return &storetest.Fixture{T: t, Store: st, Source: source, ConvID: convID}
 }
 
 func remainingGCMessageIDs(t *testing.T, st *store.Store) []int64 {
 	t.Helper()
-	rows, err := st.DB().Query(`SELECT id FROM messages ORDER BY id`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT id FROM messages ORDER BY id`)
 	require.NoError(t, err, "list remaining messages")
 	defer func() { _ = rows.Close() }()
 	var ids []int64

@@ -63,7 +63,7 @@ func TestRepairMessageLeavesSentAttributionToIdentityDiscovery(t *testing.T) {
 	})
 	require.NoError(err)
 	var sourceIsFromMe, identityIsFromMe bool
-	require.NoError(env.Store.DB().QueryRow(`
+	require.NoError(env.Store.DB().QueryRowContext(t.Context(), `
 		SELECT source_is_from_me, identity_is_from_me
 		FROM messages WHERE id = ?`, internalID).Scan(&sourceIsFromMe, &identityIsFromMe))
 	assert.False(t, sourceIsFromMe,
@@ -90,7 +90,7 @@ func TestRepairMessagePreservesMetadata(t *testing.T) {
 			_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: "gmail-metadata", SourceID: source.ID})
 			require.NoError(err)
 			var encoded string
-			require.NoError(env.Store.DB().QueryRow(`SELECT metadata FROM messages WHERE id = ?`, id).Scan(&encoded))
+			require.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages WHERE id = ?`, id).Scan(&encoded))
 			assert.Equal(t, tc.stored, encoded)
 		})
 	}
@@ -157,9 +157,9 @@ func TestRepairMessageRejectsUndescribedProviderLabelWithoutErasingLabels(t *tes
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	internalID := seedRepairRow(t, env.Store, source.ID, "gmail-a", "thread-a", "old")
-	labelID, err := env.Store.EnsureLabel(source.ID, "OLD", "Old label", "user")
+	labelID, err := env.Store.EnsureLabel(t.Context(), source.ID, "OLD", "Old label", "user")
 	require.NoError(err)
-	_, err = env.Store.DB().Exec(`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`, internalID, labelID)
+	_, err = env.Store.DB().ExecContext(t.Context(), `INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`, internalID, labelID)
 	require.NoError(err)
 	before := readRepairSnapshot(t, env.Store, internalID)
 	raw := repairRaw("gmail-a", "thread-a", "new", "new body", nil)
@@ -222,7 +222,7 @@ func TestRepairMessageStoreFailurePreservesPreexistingMIMEBlob(t *testing.T) {
 		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit,
 	}))
 	attachmentsDir := filepath.Join(env.TmpDir, "attachments")
-	receipt, err := export.StoreAttachmentFileDurable(attachmentsDir, &parsed.Attachments[0])
+	receipt, err := export.StoreAttachmentFileDurable(t.Context(), attachmentsDir, &parsed.Attachments[0])
 	require.NoError(err)
 	require.True(receipt.Created)
 	blobPath := filepath.Join(attachmentsDir, filepath.FromSlash(receipt.StoragePath))
@@ -346,7 +346,7 @@ func TestRepairMessageIdentityRaceLeavesArchiveRowsUnchanged(t *testing.T) {
 	internalID := seedRepairRow(t, env.Store, source.ID, "gmail-a", "thread-a", "old")
 	env.Mock.Messages["gmail-a"] = repairRaw("gmail-a", "thread-a", "new", "new body", nil)
 	racing := &identityRaceAPI{MockAPI: env.Mock, change: func() error {
-		_, err := env.Store.DB().Exec(`UPDATE messages SET source_message_id = 'raced' WHERE id = ?`, internalID)
+		_, err := env.Store.DB().ExecContext(t.Context(), `UPDATE messages SET source_message_id = 'raced' WHERE id = ?`, internalID)
 		return err
 	}}
 	env.Syncer = New(racing, env.Store, nil)
@@ -366,10 +366,11 @@ func TestRepairMessagePreservesConversationParticipants(t *testing.T) {
 	source := env.CreateSource(t)
 	internalID := seedRepairRow(t, env.Store, source.ID, "gmail-a", "thread-a", "old")
 	var conversationID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT conversation_id FROM messages WHERE id = ?`, internalID,
 	).Scan(&conversationID))
-	participants, err := env.Store.EnsureParticipantsBatch([]mime.Address{
+	participants, err := env.Store.EnsureParticipantsBatch(t.Context(), []mime.Address{
 		{Email: "thread-member@example.com", Domain: "example.com"},
 	})
 	require.NoError(err)
@@ -384,7 +385,8 @@ func TestRepairMessagePreservesConversationParticipants(t *testing.T) {
 	require.NoError(err)
 
 	var count int
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`,
 		conversationID,
 	).Scan(&count))
@@ -401,7 +403,7 @@ func TestRepairMessageReplacesOnlyTargetSnapshot(t *testing.T) {
 	siblingID := seedRepairRow(t, env.Store, source.ID, "gmail-b", "thread-b", "sibling")
 	siblingBefore := readRepairSnapshot(t, env.Store, siblingID)
 	require.NoError(env.Store.UpsertMessageRaw(targetID, []byte(siblingBefore.Raw)))
-	_, err := env.Store.DB().Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`, siblingBefore.Body, targetID)
+	_, err := env.Store.DB().ExecContext(t.Context(), `UPDATE message_bodies SET body_text = ? WHERE message_id = ?`, siblingBefore.Body, targetID)
 	require.NoError(err)
 	attachmentsDir := filepath.Join(env.TmpDir, "attachments")
 	env.Syncer = New(env.Mock, env.Store, &Options{AttachmentsDir: attachmentsDir})
@@ -419,7 +421,7 @@ func TestRepairMessageReplacesOnlyTargetSnapshot(t *testing.T) {
 	assert.Equal([]string{"gmail-a"}, env.Mock.GetMessageCalls)
 
 	var attachmentCount int
-	require.NoError(env.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, targetID).Scan(&attachmentCount))
+	require.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE message_id = ?`, targetID).Scan(&attachmentCount))
 	assert.Equal(1, attachmentCount)
 }
 
@@ -439,7 +441,7 @@ func readRepairSnapshot(t *testing.T, st *store.Store, id int64) repairSnapshot 
 	var got repairSnapshot
 	var conversationID int64
 	var conversationType, conversationSourceID, conversationTitle string
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `
 		SELECT m.source_message_id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
 		       c.id, c.conversation_type, COALESCE(c.source_conversation_id, ''), COALESCE(c.title, '')
 		FROM messages m
@@ -453,7 +455,7 @@ func readRepairSnapshot(t *testing.T, st *store.Store, id int64) repairSnapshot 
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(t, err)
 	got.Raw = string(raw)
-	recipients, err := st.DB().Query(`
+	recipients, err := st.DB().QueryContext(t.Context(), `
 		SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, '')
 		FROM message_recipients WHERE message_id = ?
 		ORDER BY recipient_type, participant_id, email_address`, id)
@@ -466,7 +468,7 @@ func readRepairSnapshot(t *testing.T, st *store.Store, id int64) repairSnapshot 
 		got.Recipients = append(got.Recipients, fmt.Sprintf("%s|%d|%s|%s", recipientType, participantID, displayName, emailAddress))
 	}
 	require.NoError(t, recipients.Err())
-	labels, err := st.DB().Query(`
+	labels, err := st.DB().QueryContext(t.Context(), `
 		SELECT l.id, COALESCE(l.source_label_id, ''), l.name, COALESCE(l.label_type, ''), COALESCE(l.system_role, '')
 		FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ? ORDER BY l.id`, id)
@@ -479,7 +481,7 @@ func readRepairSnapshot(t *testing.T, st *store.Store, id int64) repairSnapshot 
 		got.Labels = append(got.Labels, fmt.Sprintf("%d|%s|%s|%s|%s", labelID, sourceLabelID, name, labelType, systemRole))
 	}
 	require.NoError(t, labels.Err())
-	attachments, err := st.DB().Query(`
+	attachments, err := st.DB().QueryContext(t.Context(), `
 		SELECT id, COALESCE(filename, ''), COALESCE(content_hash, ''), storage_path,
 		       COALESCE(source_attachment_id, ''), attachment_role, role_source, COALESCE(source_part_key, '')
 		FROM attachments WHERE message_id = ? ORDER BY id`, id)
@@ -502,7 +504,7 @@ func readRepairSnapshot(t *testing.T, st *store.Store, id int64) repairSnapshot 
 
 func seedRepairRow(t *testing.T, st *store.Store, sourceID int64, sourceMessageID, threadID, subject string) int64 {
 	t.Helper()
-	convID, err := st.EnsureConversation(sourceID, threadID, subject)
+	convID, err := st.EnsureConversation(t.Context(), sourceID, threadID, subject)
 	require.NoError(t, err)
 	raw := testemail.NewMessage().
 		From("sender@example.com").
@@ -512,7 +514,7 @@ func seedRepairRow(t *testing.T, st *store.Store, sourceID int64, sourceMessageI
 		Body(subject + " body").Bytes()
 	parsed, err := mime.Parse(raw)
 	require.NoError(t, err)
-	participants, err := st.EnsureParticipantsBatch([]mime.Address{
+	participants, err := st.EnsureParticipantsBatch(t.Context(), []mime.Address{
 		{Email: "sender@example.com", Domain: "example.com"},
 		{Email: "recipient@example.com", Domain: "example.com"},
 	})

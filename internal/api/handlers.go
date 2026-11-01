@@ -904,7 +904,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var err error
-		scope, err = resolveCLIStatsScope(bindCLIStoreContext(r.Context(), cliStore), account, collection)
+		scope, err = resolveCLIStatsScope(r.Context(), bindCLIStoreContext(r.Context(), cliStore), account, collection)
 		if err != nil {
 			writeAPIHTTPError(w, s.cliScopeError(err))
 			return
@@ -1471,7 +1471,7 @@ func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPEr
 		if apiErr != nil {
 			return filter, apiErr
 		}
-		scope, err := resolveCLIStatsScope(cliStore, account, "")
+		scope, err := resolveCLIStatsScope(r.Context(), cliStore, account, "")
 		if err != nil {
 			return filter, s.cliScopeError(err)
 		}

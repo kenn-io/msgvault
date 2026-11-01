@@ -99,13 +99,13 @@ func TestImporterLinksAttendeeIdentitiesThroughID(t *testing.T) {
 		`{"name":"Pat Example","email":"pat@example.com","phone":"+1 604 555 0100","id":"crm-9"}`))
 	require.NoError(err)
 
-	phone, err := st.EnsureParticipantByPhone("+16045550100", "", "imessage")
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+16045550100", "", "imessage")
 	require.NoError(err)
 	members, err := st.ClusterMembers(email)
 	require.NoError(err)
 	assert.True(slices.Contains(members, phone))
 	var bound int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT person_id FROM person_participants WHERE participant_id = ?`), phone).Scan(&bound))
 	assert.Equal(person.ID, bound)
 }
@@ -118,7 +118,7 @@ func TestImporterArchivesPhoneOnlyAttendee(t *testing.T) {
 	require.NoError(err)
 
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT count(*) FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND p.phone_number = ?`), result.MessageID, "+16045550101").Scan(&count))
 	assert.Equal(t, 1, count)

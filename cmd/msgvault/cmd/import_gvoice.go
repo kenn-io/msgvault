@@ -51,7 +51,7 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 
 	takeoutDir := args[0]
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printGvoiceSummary(summary, startTime)
-			return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+			return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -113,14 +113,14 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
 	if !noDefaultIdentityImportGVoice && strings.HasPrefix(phone, "+") {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, src.ID, phone, phone, "phone-e164", state.logger)
+		confirmDefaultIdentity(ctx, cmd.OutOrStdout(), s, src.ID, phone, phone, "phone-e164", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
 	printGvoiceSummary(summary, startTime)
-	return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+	return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
 }
 
 func buildGvoiceOpts(logger *slog.Logger) ([]gvoice.ClientOption, error) {

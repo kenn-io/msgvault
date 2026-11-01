@@ -101,7 +101,7 @@ func sqlStatementContaining(fragment string) func(slog.Record) bool {
 
 func rosterMembers(t *testing.T, st *store.Store, sourceID int64, chatID string) []int64 {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT participant_id FROM conversation_participants
 		WHERE conversation_id = (
 			SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?
@@ -143,13 +143,13 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			imp, st, closeServer := newTestImporter(t, f)
 			defer closeServer()
 			sourceID := newBeeperTestSource(t, st, "telegram")
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			detail, err := imp.client.GetChat(ctx, chat.ID)
 			require.NoError(err)
 			imp.res.accountID = "telegram"
 			for i := range detail.Participants.Items {
-				_, err := imp.res.resolveUser(&detail.Participants.Items[i].User)
+				_, err := imp.res.resolveUser(t.Context(), &detail.Participants.Items[i].User)
 				require.NoError(err)
 			}
 			_, _, err = imp.obs.services.resolveBridge(ctx, "telegram", "Telegram", "telegram")
@@ -186,7 +186,7 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			observed := 0
 			for _, participant := range detail.Participants.Items {
 				pid := participantForBeeperUser(t, st, participant.ID)
-				observations, err := st.ListParticipantObservationsContext(context.Background(), pid, true)
+				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
 				if len(observations) > 0 {
 					observed++
@@ -198,12 +198,12 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			// skipped by the canceled visit, using the same archived membership.
 			slog.SetDefault(slog.New(slog.DiscardHandler))
 			_, err = NewImporter(st, imp.client).Import(
-				context.Background(), ImportOptions{AccountID: "telegram", NoMedia: true},
+				t.Context(), ImportOptions{AccountID: "telegram", NoMedia: true},
 			)
 			require.NoError(err)
 			for _, participant := range detail.Participants.Items {
 				pid := participantForBeeperUser(t, st, participant.ID)
-				observations, err := st.ListParticipantObservationsContext(context.Background(), pid, true)
+				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
 				assert.NotEmpty(observations, "a resumed import must enrich every member")
 			}
@@ -222,19 +222,19 @@ func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 			sourceID := newBeeperTestSource(t, st, "telegram")
 			imp := NewImporter(st, nil)
 			imp.res.accountID = "telegram"
-			oldID, err := imp.res.resolveUser(&User{ID: "@telegram_old:beeper.local"})
+			oldID, err := imp.res.resolveUser(t.Context(), &User{ID: "@telegram_old:beeper.local"})
 			require.NoError(err)
 			newUsers := []User{{ID: "@telegram_new1:beeper.local"}, {ID: "@telegram_new2:beeper.local"}}
 			participants := make([]Participant, 0, len(newUsers))
 			for i := range newUsers {
-				_, err = imp.res.resolveUser(&newUsers[i])
+				_, err = imp.res.resolveUser(t.Context(), &newUsers[i])
 				require.NoError(err)
 				participants = append(participants, Participant{User: newUsers[i]})
 			}
 			convID, err := st.EnsureConversationWithType(sourceID, "!cancel:example.com", "group", "Members")
 			require.NoError(err)
 			require.NoError(st.EnsureConversationParticipant(convID, oldID, "member"))
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			handler := installCancelOnLog(t, cancel, at, logMessage("sql tx begin"))
 			_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
@@ -270,7 +270,7 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 		user := User{ID: fmt.Sprintf("@telegram_listed%d:beeper.local", i)}
 		participants = append(participants, Participant{User: user})
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	handler := installCancelOnLog(
 		t, cancel, 1, sqlStatementContaining("INTO conversation_participants"),
@@ -297,7 +297,7 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	imp, st, closeServer := newTestImporter(t, f)
 	defer closeServer()
 	sourceID := newBeeperTestSource(t, st, "telegram")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	handler := installCancelOnLog(t, cancel, 0, logMessage(""))
 	_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
@@ -309,7 +309,8 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	assert.Empty(f.requests(), "an already-canceled import must not fetch the roster")
 	assert.Empty(handler.warnings, "an already-canceled import must not attempt archive writes")
 	var count int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT COUNT(*) FROM conversations WHERE source_id = ?"), sourceID,
 	).Scan(&count))
 	assert.Zero(count)
@@ -338,7 +339,7 @@ func TestProcessMessageCancellation(t *testing.T) {
 			case "reaction":
 				message.Type = "REACTION"
 			}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			sum := &ImportSummary{}
 			err = NewImporter(st, nil).processMessage(ctx, &chatScope{
@@ -348,7 +349,7 @@ func TestProcessMessageCancellation(t *testing.T) {
 			assert.Zero(sum.MessagesProcessed)
 			var snippet string
 			var deletedFromSourceAt sql.NullTime
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT snippet, deleted_from_source_at FROM messages
 				WHERE source_id = ? AND source_message_id = ?`), sourceID, "message-1",
 			).Scan(&snippet, &deletedFromSourceAt))

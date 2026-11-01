@@ -21,7 +21,7 @@ func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
 		"inserts invalid UTF-8 bytes into a TEXT column; PostgreSQL rejects them")
 	st := testutil.NewTestStore(t)
 
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		INSERT INTO participants (email_address, display_name)
 		VALUES (?, ?)
 	`, "repair-display@example.com", "Repair\xffName")
@@ -30,14 +30,14 @@ func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
 	require.NoError(err)
 
 	stats := &repairStats{}
-	require.NoError(repairDisplayNames(st, stats, testDiscardLogger()))
+	require.NoError(repairDisplayNames(t.Context(), st, stats, testDiscardLogger()))
 	after, err := st.ParticipantDisplayNameRevision()
 	require.NoError(err)
 	assert.Equal(before+1, after,
 		"the participant repair and its cache revision must commit together")
 
 	var repaired string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT display_name FROM participants
 		WHERE email_address = ?
 	`, "repair-display@example.com").Scan(&repaired))
@@ -55,26 +55,26 @@ func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
 	db := st.DB()
 
 	// Disable foreign keys so we can recreate the labels table
-	_, err := db.Exec("PRAGMA foreign_keys = OFF")
+	_, err := db.ExecContext(t.Context(), "PRAGMA foreign_keys = OFF")
 	require.NoError(err, "disable foreign keys")
 
 	// Drop labels and recreate with TEXT id (not INTEGER PRIMARY KEY).
 	// Scanning a non-numeric TEXT value into int64 triggers a scan error.
-	_, err = db.Exec("DROP TABLE IF EXISTS labels")
+	_, err = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS labels")
 	require.NoError(err, "drop labels")
-	_, err = db.Exec(`CREATE TABLE labels (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE labels (
 		id TEXT, source_id INTEGER, source_label_id TEXT,
 		name TEXT NOT NULL, label_type TEXT, color TEXT
 	)`)
 	require.NoError(err, "create labels")
 
 	// Insert a row with non-numeric id → Scan into int64 will fail
-	_, err = db.Exec(`INSERT INTO labels (id, source_id, source_label_id, name, label_type)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO labels (id, source_id, source_label_id, name, label_type)
 		VALUES ('not-a-number', 1, 'lbl1', 'Test Label', 'user')`)
 	require.NoError(err, "insert bad label")
 
 	stats := &repairStats{}
-	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
+	require.NoError(repairOtherStrings(t.Context(), st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	// Before fix: skippedRows == 0 (scan error silently swallowed)
 	// After fix: skippedRows == 1 (scan error counted)
@@ -90,13 +90,13 @@ func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 
-	_, err := db.Exec("PRAGMA foreign_keys = OFF")
+	_, err := db.ExecContext(t.Context(), "PRAGMA foreign_keys = OFF")
 	require.NoError(err, "disable foreign keys")
 
 	// Drop participants and recreate with TEXT id
-	_, err = db.Exec("DROP TABLE IF EXISTS participants")
+	_, err = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS participants")
 	require.NoError(err, "drop participants")
-	_, err = db.Exec(`CREATE TABLE participants (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE participants (
 		id TEXT, email_address TEXT, phone_number TEXT,
 		display_name TEXT, domain TEXT, canonical_id TEXT,
 		created_at DATETIME, updated_at DATETIME
@@ -104,12 +104,12 @@ func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
 	require.NoError(err, "create participants")
 
 	// Insert a row with non-numeric id → Scan into int64 will fail
-	_, err = db.Exec(`INSERT INTO participants (id, email_address, display_name, domain)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO participants (id, email_address, display_name, domain)
 		VALUES ('bad-id', 'test@example.com', 'Test User', 'example.com')`)
 	require.NoError(err, "insert bad participant")
 
 	stats := &repairStats{}
-	require.NoError(repairDisplayNames(st, stats, testDiscardLogger()), "repairDisplayNames")
+	require.NoError(repairDisplayNames(t.Context(), st, stats, testDiscardLogger()), "repairDisplayNames")
 
 	// Before fix: skippedRows == 0 (scan error silently swallowed)
 	// After fix: skippedRows == 1 (scan error counted)
@@ -124,10 +124,10 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 
 	stats := &repairStats{}
 
-	_, err := repairMessageFields(st, stats, testDiscardLogger())
+	_, err := repairMessageFields(t.Context(), st, stats, testDiscardLogger())
 	require.NoError(err, "repairMessageFields")
-	require.NoError(repairDisplayNames(st, stats, testDiscardLogger()), "repairDisplayNames")
-	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
+	require.NoError(repairDisplayNames(t.Context(), st, stats, testDiscardLogger()), "repairDisplayNames")
+	require.NoError(repairOtherStrings(t.Context(), st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	assert.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
 }
@@ -140,17 +140,17 @@ func TestRepairEncodingPreservesAndReportsInvalidMessageIDs(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 
-	_, err := db.Exec(`INSERT INTO sources
+	_, err := db.ExecContext(t.Context(), `INSERT INTO sources
 		(id, source_type, identifier, created_at, updated_at)
 		VALUES (1, 'test', 'test@example.com', datetime('now'), datetime('now'))`)
 	require.NoError(err, "insert source")
-	_, err = db.Exec(`INSERT INTO conversations
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversations
 		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (1, 1, 'conv-1', 'email_thread', 'title', datetime('now'), datetime('now'))`)
 	require.NoError(err, "insert conversation")
 	messageIDs := []string{"broken-\xff@example.test", "broken-\xfe@example.test", "broken-\uFFFD@example.test"}
 	for i, messageID := range messageIDs {
-		_, err = db.Exec(`INSERT INTO messages
+		_, err = db.ExecContext(t.Context(), `INSERT INTO messages
 			(id, conversation_id, source_id, source_message_id, rfc822_message_id,
 			 message_type, sent_at, size_estimate)
 			VALUES (?, 1, 1, ?, ?, 'email', datetime('now'), 1000)`,
@@ -159,11 +159,11 @@ func TestRepairEncodingPreservesAndReportsInvalidMessageIDs(t *testing.T) {
 	}
 
 	var reembedNeededIDs []int64
-	stderr := captureStderrDuring(t, func() { reembedNeededIDs, err = repairEncoding(st, testDiscardLogger()) })
+	stderr := captureStderrDuring(t, func() { reembedNeededIDs, err = repairEncoding(t.Context(), st, testDiscardLogger()) })
 	require.NoError(err, "repair encoding")
 	for i, messageID := range messageIDs {
 		var got string
-		require.NoError(db.QueryRow(`SELECT rfc822_message_id FROM messages WHERE id = ?`, i+1).Scan(&got))
+		require.NoError(db.QueryRowContext(t.Context(), `SELECT rfc822_message_id FROM messages WHERE id = ?`, i+1).Scan(&got))
 		assert.Equal(messageID, got, "repair must preserve distinct identifiers")
 	}
 	assert.Contains(stderr, "2 RFC 822 Message-ID")
@@ -186,11 +186,13 @@ func TestRepairMessageFields_ReembedNeededIDsAndHiddenTextFlag(t *testing.T) {
 	db := st.DB()
 
 	// Insert a source and conversation so FKs are satisfied.
-	_, err := db.Exec(
+	_, err := db.ExecContext(
+		t.Context(),
 		`INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
 		 VALUES (1, 'test', 'test@example.com', datetime('now'), datetime('now'))`)
 	require.NoError(err, "insert source")
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		 VALUES (1, 1, 'conv-1', 'email_thread', 'title', datetime('now'), datetime('now'))`)
 	require.NoError(err, "insert conversation")
@@ -216,23 +218,25 @@ func TestRepairMessageFields_ReembedNeededIDsAndHiddenTextFlag(t *testing.T) {
 		{50, "clean subject", "clean body", "", "clean snippet"},
 	}
 	for _, ins := range inserts {
-		_, execErr := db.Exec(
+		_, execErr := db.ExecContext(
+			t.Context(),
 			`INSERT INTO messages (id, conversation_id, source_id, source_message_id,
 			 message_type, subject, snippet, sent_at, size_estimate)
 			 VALUES (?, 1, 1, ?, 'email', ?, ?, datetime('now'), 1000)`,
 			ins.id, fmt.Sprintf("src-%d", ins.id), ins.subject, ins.snippet)
 		require.NoError(execErr, "insert message %d", ins.id)
-		_, execErr = db.Exec(
+		_, execErr = db.ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, ?, ?)`,
 			ins.id, ins.bodyText, ins.bodyHTML)
 		require.NoError(execErr, "insert body %d", ins.id)
 	}
 
 	stats := &repairStats{}
-	ids, err := repairMessageFields(st, stats, testDiscardLogger())
+	ids, err := repairMessageFields(t.Context(), st, stats, testDiscardLogger())
 	require.NoError(err, "repairMessageFields")
 	var hidden bool
-	require.NoError(db.QueryRow(`SELECT hidden_text_present FROM messages WHERE id = 30`).Scan(&hidden))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT hidden_text_present FROM messages WHERE id = 30`).Scan(&hidden))
 	assert.True(hidden, "repaired HTML must refresh the stored flag")
 
 	gotSet := map[int64]bool{}
@@ -256,14 +260,16 @@ func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
 	db := st.DB()
 
 	// Insert a source so foreign key constraints are satisfied.
-	_, err := db.Exec(
+	_, err := db.ExecContext(
+		t.Context(),
 		`INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
 		 VALUES (1, 'test', 'test@example.com', datetime('now'), datetime('now'))`,
 	)
 	require.NoError(err, "insert source")
 
 	// Insert conversation with invalid UTF-8 in source_conversation_id.
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		 VALUES (1, 1, ?, 'email_thread', 'valid title', datetime('now'), datetime('now'))`,
 		"conv-\x80\x81\x82",
@@ -271,7 +277,8 @@ func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
 	require.NoError(err, "insert conversation")
 
 	// Insert participant with invalid UTF-8 in email_address and domain.
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO participants (id, email_address, domain, created_at, updated_at)
 		 VALUES (1, ?, ?, datetime('now'), datetime('now'))`,
 		"user\xFE@example.com", "example\xFF.com",
@@ -279,7 +286,7 @@ func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
 	require.NoError(err, "insert participant")
 
 	stats := &repairStats{}
-	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
+	require.NoError(repairOtherStrings(t.Context(), st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	assert.Equal(1, stats.convSourceIDs, "convSourceIDs")
 	assert.Equal(1, stats.emailAddrs, "emailAddrs")
@@ -295,30 +302,30 @@ func TestRepairConversationPreviews_RestoresPreviewStrandedByEarlierRepair(t *te
 
 	broken := strings.Repeat("a", 198) + "\xe2\x80"
 	want := strings.Repeat("a", 198)
-	_, err := db.Exec(`INSERT INTO sources
+	_, err := db.ExecContext(t.Context(), `INSERT INTO sources
 		(id, source_type, identifier, created_at, updated_at)
 		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
 	require.NoError(err, "insert source")
-	_, err = db.Exec(`INSERT INTO conversations
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversations
 		(id, source_id, source_conversation_id, conversation_type, title, last_message_preview, created_at, updated_at)
 		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', ?, datetime('now'), datetime('now'))`,
 		gcal.ConversationType, broken)
 	require.NoError(err, "insert conversation with stranded preview")
-	_, err = db.Exec(`INSERT INTO messages
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages
 		(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
 		VALUES (10, 1, 1, 'repair-10', ?, ?, datetime('now'), 1000)`,
 		gcal.MessageTypeCalendarEvent, want)
 	require.NoError(err, "insert previously repaired message")
 
 	stats := &repairStats{}
-	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "repair stranded conversation preview")
+	require.NoError(repairConversationPreviews(t.Context(), st, stats, testDiscardLogger()), "repair stranded conversation preview")
 	var got string
-	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&got),
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&got),
 		"read repaired conversation preview")
 	assert.Equal(want, got, "preview is rederived from the previously repaired latest message")
 	assert.Equal(1, stats.convPreviews, "convPreviews")
 
-	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "rerun preview repair")
+	require.NoError(repairConversationPreviews(t.Context(), st, stats, testDiscardLogger()), "rerun preview repair")
 	assert.Equal(1, stats.convPreviews, "rerun is idempotent")
 }
 
@@ -331,34 +338,34 @@ func TestRepairConversationPreviews_UsesLatestMessageAfterCollidingRepairs(t *te
 
 	broken := strings.Repeat("c", 198) + "\xe2\x80"
 	calendarBody := strings.Repeat("c", 198) + "\u2014after-boundary"
-	_, err := db.Exec(`INSERT INTO sources
+	_, err := db.ExecContext(t.Context(), `INSERT INTO sources
 		(id, source_type, identifier, created_at, updated_at)
 		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
 	require.NoError(err, "insert source")
-	_, err = db.Exec(`INSERT INTO conversations
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversations
 		(id, source_id, source_conversation_id, conversation_type, title, last_message_preview, created_at, updated_at)
 		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', ?, datetime('now'), datetime('now'))`,
 		gcal.ConversationType, broken)
 	require.NoError(err, "insert conversation")
-	_, err = db.Exec(`INSERT INTO messages
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages
 		(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
 		VALUES (10, 1, 1, 'older-generic', 'email', ?, datetime('now'), 1000),
 		       (20, 1, 1, 'latest-calendar', ?, ?, datetime('now', '+1 minute'), 1000)`,
 		broken, gcal.MessageTypeCalendarEvent, broken)
 	require.NoError(err, "insert colliding damaged snippets")
-	_, err = db.Exec(`INSERT INTO message_bodies (message_id, body_text)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO message_bodies (message_id, body_text)
 		VALUES (10, 'generic body'), (20, ?)`, calendarBody)
 	require.NoError(err, "insert message bodies")
 
 	stats := &repairStats{}
-	_, err = repairMessageFields(st, stats, testDiscardLogger())
+	_, err = repairMessageFields(t.Context(), st, stats, testDiscardLogger())
 	require.NoError(err, "repair colliding message snippets")
-	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "repair conversation preview")
+	require.NoError(repairConversationPreviews(t.Context(), st, stats, testDiscardLogger()), "repair conversation preview")
 
 	var older, latest, preview string
-	require.NoError(db.QueryRow(`SELECT snippet FROM messages WHERE id = 10`).Scan(&older), "read older snippet")
-	require.NoError(db.QueryRow(`SELECT snippet FROM messages WHERE id = 20`).Scan(&latest), "read latest snippet")
-	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&preview),
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE id = 10`).Scan(&older), "read older snippet")
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE id = 20`).Scan(&latest), "read latest snippet")
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&preview),
 		"read conversation preview")
 	assert.Equal(textutil.EnsureUTF8(broken), older, "generic repair keeps its existing behavior")
 	assert.Equal(strings.Repeat("c", 198), latest, "calendar repair uses canonical body")
@@ -372,11 +379,11 @@ func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalB
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 
-	_, err := db.Exec(`INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
 		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now')),
 		       (2, 'gmail', 'alice@example.com', datetime('now'), datetime('now'))`, gcal.SourceType)
 	require.NoError(err, "insert sources")
-	_, err = db.Exec(`INSERT INTO conversations
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversations
 		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (1, 1, 'calendar-conversation', ?, 'Calendar', datetime('now'), datetime('now')),
 		       (2, 2, 'email-conversation', 'email_thread', 'Email', datetime('now'), datetime('now'))`,
@@ -402,30 +409,30 @@ func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalB
 		{70, 1, 1, gcal.MessageTypeCalendarEvent, strings.Repeat("b", 198) + "\xe2\x80", &canonicalBody},
 	}
 	for _, row := range rows {
-		_, execErr := db.Exec(`INSERT INTO messages
+		_, execErr := db.ExecContext(t.Context(), `INSERT INTO messages
 			(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
 			VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1000)`,
 			row.id, row.conversation, row.source, fmt.Sprintf("repair-%d", row.id), row.messageType, row.snippet)
 		require.NoError(execErr, "insert message %d", row.id)
 		if row.body != nil {
-			_, execErr = db.Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, row.id, *row.body)
+			_, execErr = db.ExecContext(t.Context(), `INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, row.id, *row.body)
 			require.NoError(execErr, "insert body %d", row.id)
 		}
 	}
-	_, err = db.Exec(`UPDATE messages SET sent_at = datetime('now', '+1 minute') WHERE id = 10`)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET sent_at = datetime('now', '+1 minute') WHERE id = 10`)
 	require.NoError(err, "make repaired calendar message the conversation's latest")
-	_, err = db.Exec(`UPDATE conversations SET last_message_preview = ? WHERE id = 1`, rows[0].snippet)
+	_, err = db.ExecContext(t.Context(), `UPDATE conversations SET last_message_preview = ? WHERE id = 1`, rows[0].snippet)
 	require.NoError(err, "store copied damaged calendar preview")
-	_, err = db.Exec(`UPDATE conversations SET last_message_preview = 'sibling sentinel' WHERE id = 2`)
+	_, err = db.ExecContext(t.Context(), `UPDATE conversations SET last_message_preview = 'sibling sentinel' WHERE id = 2`)
 	require.NoError(err, "store unrelated conversation preview")
 
 	stats := &repairStats{}
-	reembedNeededIDs, err := repairMessageFields(st, stats, testDiscardLogger())
+	reembedNeededIDs, err := repairMessageFields(t.Context(), st, stats, testDiscardLogger())
 	require.NoError(err, "repair message fields")
-	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "repair copied conversation preview")
+	require.NoError(repairConversationPreviews(t.Context(), st, stats, testDiscardLogger()), "repair copied conversation preview")
 
 	got := make(map[int64]string)
-	resultRows, err := db.Query(`SELECT id, snippet FROM messages WHERE id IN (10, 20, 30, 40, 50, 60, 70)`)
+	resultRows, err := db.QueryContext(t.Context(), `SELECT id, snippet FROM messages WHERE id IN (10, 20, 30, 40, 50, 60, 70)`)
 	require.NoError(err, "query repaired snippets")
 	defer func() { assert.NoError(resultRows.Close()) }()
 	for resultRows.Next() {
@@ -446,11 +453,11 @@ func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalB
 	assert.Equal(textutil.EnsureUTF8(strings.Repeat("b", 198)+"\xe2\x80"), got[70],
 		"200-byte non-prefix calendar snippet retains generic repair")
 	var conversationPreview string
-	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&conversationPreview),
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&conversationPreview),
 		"read repaired conversation preview")
 	assert.Equal(strings.Repeat("a", 198), conversationPreview,
 		"copied conversation preview follows the repaired latest message")
-	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 2`).Scan(&conversationPreview),
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT last_message_preview FROM conversations WHERE id = 2`).Scan(&conversationPreview),
 		"read unrelated conversation preview")
 	assert.Equal("sibling sentinel", conversationPreview,
 		"repair does not overwrite a preview that is not the damaged snippet")
@@ -485,7 +492,8 @@ func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
 			values = append(values, "(?, datetime('now'), datetime('now'))")
 			args = append(args, fmt.Sprintf("user%d\xFE@example.com", i))
 		}
-		_, err := db.Exec(
+		_, err := db.ExecContext(
+			t.Context(),
 			`INSERT INTO participants (email_address, created_at, updated_at) VALUES `+
 				strings.Join(values, ","), args...)
 		require.NoError(err, "seed broken participant emails")
@@ -494,7 +502,7 @@ func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
 	revisionBefore, err := st.AccountIdentityRevision()
 	require.NoError(err)
 	stats := &repairStats{}
-	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
+	require.NoError(repairOtherStrings(t.Context(), st, stats, testDiscardLogger()), "repairOtherStrings")
 	assert.Equal(broken, stats.emailAddrs)
 
 	revisionAfter, err := st.AccountIdentityRevision()
@@ -503,7 +511,8 @@ func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
 		"each committed batch must advance the revision with its rewrite")
 
 	var stillBroken int
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participants
 		 WHERE email_address LIKE '%' || CAST(x'FE' AS TEXT) || '%'`,
 	).Scan(&stillBroken))

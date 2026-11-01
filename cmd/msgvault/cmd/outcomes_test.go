@@ -96,7 +96,7 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 			_, err := st.Store.GetOrCreateSource(tt.sourceType, tt.identifier)
 			require.NoError(err)
 			if tt.sourceType == "plaud" {
-				_, err = registerPlaudAccount(st.Store, tt.identifier, "owner@example.com", "owner@example.com")
+				_, err = registerPlaudAccount(t.Context(), st.Store, tt.identifier, "owner@example.com", "owner@example.com")
 				require.NoError(err)
 			}
 			require.ErrorContains(tt.run(ctx, st.Store), tt.wantError)

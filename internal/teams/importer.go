@@ -65,7 +65,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// opts.Full skips this entirely so every message is re-fetched (repair path).
 	state := NewSyncState()
 	if !opts.Full {
-		if prev, perr := imp.store.GetLastSuccessfulSync(src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
+		if prev, perr := imp.store.GetLastSuccessfulSyncContext(ctx, src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
 			if s, lerr := LoadSyncState(prev.CursorAfter.String); lerr == nil {
 				state = s
 			}
@@ -106,7 +106,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			return sum, err
 		}
 	}
-	if err = imp.store.RecomputeConversationStats(src.ID); err != nil {
+	if err = imp.store.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
 	}
 
@@ -145,7 +145,7 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 	each := imp.store.ForEachTeamsHostedContentBody
 	if opts.OnlyIncomplete {
 		each = func(sourceID int64, fn func(messageID int64, bodyHTML string) error) error {
-			return imp.store.ForEachTeamsIncompleteHostedContentBody(sourceID, opts.MediaPolicy, fn)
+			return imp.store.ForEachTeamsIncompleteHostedContentBody(ctx, sourceID, opts.MediaPolicy, fn)
 		}
 	}
 	resolver := newRosterResolver(imp)
@@ -154,7 +154,7 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 			return cerr
 		}
 		itemOpts := opts
-		membership, convErr := imp.store.AttachmentConversationMembership(messageID)
+		membership, convErr := imp.store.AttachmentConversationMembershipContext(ctx, messageID)
 		if convErr != nil {
 			return convErr
 		}
@@ -167,7 +167,7 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 		}
 		itemOpts.MediaConversation = conversation
 		if imp.downloadInlineImages(ctx, messageID, bodyHTML, itemOpts, sum) {
-			if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+			if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 				sum.Errors++
 			}
 		}
@@ -225,7 +225,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		convID, err := imp.store.EnsureConversationWithType(sourceID, ch.ID, conversationType(ch.ChatType), ch.Topic)
+		convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, ch.ID, conversationType(ch.ChatType), ch.Topic)
 		if err != nil {
 			return err
 		}
@@ -245,7 +245,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				if rerr != nil || pid == 0 {
 					continue
 				}
-				if cerr := imp.store.EnsureConversationParticipant(convID, pid, "member"); cerr != nil {
+				if cerr := imp.store.EnsureConversationParticipantContext(ctx, convID, pid, "member"); cerr != nil {
 					sum.Errors++
 				}
 				toRecips = append(toRecips, recipientRef{ID: pid, Name: m.DisplayName})
@@ -254,7 +254,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			chatComplete = false
 			sum.Errors++
 		}
-		imp.recordRosterOutcome(convID, roster, sum)
+		imp.recordRosterOutcome(ctx, convID, roster, sum)
 		chatOpts := opts
 		chatOpts.MediaConversation = attachmentpolicy.Conversation{
 			Type:             conversationType(ch.ChatType),
@@ -284,7 +284,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			for i := range msgs {
 				ids = append(ids, chatSourceMessageID(ch.ID, msgs[i].ID))
 			}
-			if found, eerr := imp.store.MessageExistsBatch(sourceID, ids); eerr == nil {
+			if found, eerr := imp.store.MessageExistsBatchContext(ctx, sourceID, ids); eerr == nil {
 				preexisting = found
 			}
 		}
@@ -436,16 +436,16 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			}
 			key := team.ID + "/" + ch.ID
 			title := team.DisplayName + " / " + ch.DisplayName
-			convID, err := imp.store.EnsureConversationWithType(sourceID, key, conversationTypeChannel, title)
+			convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, key, conversationTypeChannel, title)
 			if err != nil {
 				return err
 			}
 			for _, pid := range roster.participantIDs {
-				if cerr := imp.store.EnsureConversationParticipant(convID, pid, "member"); cerr != nil {
+				if cerr := imp.store.EnsureConversationParticipantContext(ctx, convID, pid, "member"); cerr != nil {
 					sum.Errors++
 				}
 			}
-			imp.recordRosterOutcome(convID, roster, sum)
+			imp.recordRosterOutcome(ctx, convID, roster, sum)
 
 			prevDelta := state.ChannelDelta(key)
 			var newDelta string
@@ -626,7 +626,7 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			// now in the store, so SetReplyTo will always find the parent regardless
 			// of the order they appeared in the collected batch.
 			for i := range toLink {
-				if serr := imp.store.SetReplyTo(sourceID,
+				if serr := imp.store.SetReplyToContext(ctx, sourceID,
 					channelSourceMessageID(team.ID, ch.ID, toLink[i].ID),
 					channelSourceMessageID(team.ID, ch.ID, toLink[i].ReplyToID)); serr != nil {
 					sum.Errors++
@@ -685,12 +685,12 @@ func (r *memberRoster) policyCount(policy attachmentpolicy.Policy) int {
 // unknown marker when it could not be. Backfill and purge read this record
 // rather than the archived participant rows, which accumulate every member
 // ever seen and therefore never shrink when someone leaves.
-func (imp *Importer) recordRosterOutcome(convID int64, roster *memberRoster, sum *ImportSummary) {
+func (imp *Importer) recordRosterOutcome(ctx context.Context, convID int64, roster *memberRoster, sum *ImportSummary) {
 	var err error
 	if roster.err != nil {
-		err = imp.store.MarkConversationMemberCountUnknown(convID)
+		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
 	} else {
-		err = imp.store.SetConversationMemberCount(convID, roster.memberCount)
+		err = imp.store.SetConversationMemberCountContext(ctx, convID, roster.memberCount)
 	}
 	if err != nil {
 		sum.Errors++
@@ -865,24 +865,24 @@ func (imp *Importer) refreshMembership(
 	resolver *rosterResolver, sum *ImportSummary,
 ) int {
 	unknownMembership := opts.MediaPolicy.MaxParticipants + 1
-	ref, err := imp.store.MessageConversation(messageID)
+	ref, err := imp.store.MessageConversation(ctx, messageID)
 	if err != nil {
 		sum.Errors++
 		return unknownMembership
 	}
 	roster := resolver.forConversation(ctx, ref, sum)
-	imp.recordRosterOutcome(ref.ConversationID, roster, sum)
+	imp.recordRosterOutcome(ctx, ref.ConversationID, roster, sum)
 	if roster.err != nil {
 		return unknownMembership
 	}
 	for _, pid := range roster.participantIDs {
-		if cerr := imp.store.EnsureConversationParticipant(ref.ConversationID, pid, "member"); cerr != nil {
+		if cerr := imp.store.EnsureConversationParticipantContext(ctx, ref.ConversationID, pid, "member"); cerr != nil {
 			sum.Errors++
 		}
 	}
 	// Keep the conversation's own stats in step with the refreshed roster; the
 	// archived record above is what policy evaluates.
-	if rerr := imp.store.RecomputeConversationStatsForMessage(messageID); rerr != nil {
+	if rerr := imp.store.RecomputeConversationStatsForMessageContext(ctx, messageID); rerr != nil {
 		sum.Errors++
 	}
 	return roster.memberCount
@@ -891,11 +891,11 @@ func (imp *Importer) refreshMembership(
 // persistMessage writes a single message via the granular store path.
 // Returns the internal message ID and true if persisted (best-effort; UpsertMessage upserts).
 func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64, sourceMessageID string, gm *ChatMessage, opts ImportOptions, sum *ImportSummary, toRecips []recipientRef) (int64, bool, error) {
-	if err := imp.store.MigrateSourceMessageID(sourceID, convID, gm.ID, sourceMessageID); err != nil {
+	if err := imp.store.MigrateSourceMessageID(ctx, sourceID, convID, gm.ID, sourceMessageID); err != nil {
 		return 0, false, err
 	}
 	if gm.DeletedDateTime != nil {
-		if err := imp.store.MarkMessageDeleted(sourceID, sourceMessageID); err != nil {
+		if err := imp.store.MarkMessageDeletedContext(ctx, sourceID, sourceMessageID); err != nil {
 			sum.Errors++
 		}
 		return 0, false, nil
@@ -911,11 +911,11 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		}
 	}
 	if msg.SenderID.Valid {
-		if err := imp.store.EnsureConversationParticipant(convID, msg.SenderID.Int64, "member"); err != nil {
+		if err := imp.store.EnsureConversationParticipantContext(ctx, convID, msg.SenderID.Int64, "member"); err != nil {
 			sum.Errors++
 		}
 	}
-	messageID, err := imp.store.UpsertMessage(&msg)
+	messageID, err := imp.store.UpsertMessageContext(ctx, &msg)
 	if err != nil {
 		return 0, false, err
 	}
@@ -923,7 +923,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	if gm.Body.ContentType == "html" {
 		bodyHTML = sql.NullString{String: gm.Body.Content, Valid: true}
 	}
-	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, bodyHTML); err != nil {
+	if err := imp.store.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: text, Valid: text != ""}, bodyHTML); err != nil {
 		return 0, false, err
 	}
 	inlineImagesChanged := imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts, sum)
@@ -940,7 +940,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		raw = marshaled
 	}
 	if len(raw) > 0 {
-		if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "teams_json"); err != nil {
+		if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, "teams_json"); err != nil {
 			return 0, false, fmt.Errorf("archive teams message raw: %w", err)
 		}
 	}
@@ -948,7 +948,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	if id := identityOf(gm.From); id != nil {
 		senderName = id.DisplayName
 	}
-	if err := imp.store.UpsertFTS(messageID, msg.Subject.String, text, senderName, "", ""); err != nil {
+	if err := imp.store.UpsertFTSContext(ctx, messageID, msg.Subject.String, text, senderName, "", ""); err != nil {
 		sum.Errors++
 	}
 
@@ -964,7 +964,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 			fromNames = append(fromNames, "")
 		}
 	}
-	if err := imp.store.ReplaceMessageRecipients(messageID, "from", fromIDs, fromNames); err != nil {
+	if err := imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
 		sum.Errors++
 	}
 
@@ -981,7 +981,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 			toNames = append(toNames, r.Name)
 		}
 		toIDs, toNames = dedupRecipients(toIDs, toNames)
-		if err := imp.store.ReplaceMessageRecipients(messageID, "to", toIDs, toNames); err != nil {
+		if err := imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames); err != nil {
 			sum.Errors++
 		}
 	}
@@ -1006,7 +1006,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		mentionNames = append(mentionNames, id.DisplayName)
 	}
 	mentionIDs, mentionNames = dedupRecipients(mentionIDs, mentionNames)
-	if err := imp.store.ReplaceMessageRecipients(messageID, "mention", mentionIDs, mentionNames); err != nil {
+	if err := imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "mention", mentionIDs, mentionNames); err != nil {
 		sum.Errors++
 	}
 
@@ -1022,7 +1022,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 			})
 		}
 	}
-	if err := imp.store.ReplaceReactions(messageID, reactions); err != nil {
+	if err := imp.store.ReplaceReactionsContext(ctx, messageID, reactions); err != nil {
 		sum.Errors++
 	} else {
 		sum.ReactionsAdded += int64(len(reactions))
@@ -1059,7 +1059,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		sum.AttachmentsFound += int64(len(linkAttachments))
 	}
 	if inlineImagesChanged {
-		if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+		if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 			sum.Errors++
 		}
 	}
@@ -1147,13 +1147,13 @@ func hostedFetchPath(baseURL, rawURL string) string {
 func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, bodyHTML string, opts ImportOptions, sum *ImportSummary) bool {
 	raws := hostedRe.FindAllString(bodyHTML, -1)
 	if len(raws) == 0 {
-		if err := imp.store.ReplaceMessageInlineAttachments(messageID, nil, false); err != nil {
+		if err := imp.store.ReplaceMessageInlineAttachments(ctx, messageID, nil, false); err != nil {
 			sum.Errors++
 			return false
 		}
 		return true
 	}
-	existing, err := imp.store.MessageTeamsInlineAttachments(messageID)
+	existing, err := imp.store.MessageTeamsInlineAttachments(ctx, messageID)
 	if err != nil {
 		sum.Errors++
 		return false
@@ -1249,7 +1249,7 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 		})
 		copied++
 	}
-	if err := imp.store.ReplaceMessageInlineAttachments(messageID, refs, !replacementComplete); err != nil {
+	if err := imp.store.ReplaceMessageInlineAttachments(ctx, messageID, refs, !replacementComplete); err != nil {
 		sum.Errors++
 		return false
 	}

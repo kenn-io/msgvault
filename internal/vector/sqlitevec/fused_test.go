@@ -81,7 +81,7 @@ func TestFusedSearch_ReadyAcceleratorReportsUnderfilledWorkCeiling(t *testing.T)
 	generationID := seedAndEmbed(t, b, vectors)
 	installReadyFlatAccelerator(t, b, generationID, 4)
 	b.annWorkCeiling = 32
-	_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
+	_, err := b.mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
 	require.NoError(t, err)
 
 	hits, metadata, err := b.FusedSearch(ctx, vector.FusedRequest{
@@ -112,9 +112,9 @@ func TestFusedSearchReportsExactRetrievalPaths(t *testing.T) {
 				req.Filter.MessageIDs = []int64{1, 2, 3}
 			}
 			if path == "exact-fallback" {
-				_, err := b.db.Exec(`DROP TABLE ` + acceleratorTableName(gen))
+				_, err := b.db.ExecContext(t.Context(), `DROP TABLE `+acceleratorTableName(gen))
 				require.NoError(t, err)
-				_, err = b.db.Exec(`CREATE TABLE ` + acceleratorTableName(gen) + ` (embedding BLOB)`)
+				_, err = b.db.ExecContext(t.Context(), `CREATE TABLE `+acceleratorTableName(gen)+` (embedding BLOB)`)
 				require.NoError(t, err)
 			}
 
@@ -315,7 +315,7 @@ func TestFusedSearch_UnknownGeneration(t *testing.T) {
 // most-relevant messages from the fused signal.
 func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	// Fresh main DB where we control the FTS content density so BM25
 	// produces a known ranking. Message 5 gets the highest rank by
 	// having "meeting" dense in a short doc; 4 is next; 1 is barely
@@ -444,7 +444,7 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	return db
 }
@@ -480,7 +480,7 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	return db
 }
@@ -567,7 +567,7 @@ func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 // the expected subset.
 func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithSchema(t, mainPath)
@@ -658,7 +658,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 
 func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithSchema(t, mainPath)
@@ -733,7 +733,7 @@ func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 
 func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithoutMessageType(t, mainPath)
@@ -784,7 +784,7 @@ func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
 func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main := openFusedMainWithSchema(t, mainPath)

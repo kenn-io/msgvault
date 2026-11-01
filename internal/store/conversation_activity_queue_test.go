@@ -28,6 +28,7 @@ func TestEnsureConversationConflictDoesNotRequeueThread(t *testing.T) {
 	before := activityQueueRevision(t, f.Store, messageID)
 
 	conversationID, err := f.Store.EnsureConversation(
+		t.Context(),
 		f.Source.ID, "default-thread", "Default Thread")
 	require.NoError(err)
 	assert.Equal(f.ConvID, conversationID,
@@ -137,9 +138,10 @@ func TestReplaceConversationParticipantsHandlesHugeMemberships(t *testing.T) {
 			values[index] = "('Member', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
 		}
 		func() {
-			rows, err := f.Store.DB().Query(
-				`INSERT INTO participants (display_name, created_at, updated_at) VALUES ` +
-					strings.Join(values, ",") + ` RETURNING id`)
+			rows, err := f.Store.DB().QueryContext(
+				t.Context(),
+				`INSERT INTO participants (display_name, created_at, updated_at) VALUES `+
+					strings.Join(values, ",")+` RETURNING id`)
 			require.NoError(err, "seed participants")
 			defer func() { require.NoError(rows.Close()) }()
 			for rows.Next() {
@@ -162,7 +164,7 @@ func TestReplaceConversationParticipantsHandlesHugeMemberships(t *testing.T) {
 	require.NoError(f.Store.ReplaceConversationParticipants(f.ConvID, refs[:100]),
 		"shrinking the membership must delete through the JSON set parameter")
 	var remaining int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`),
 		f.ConvID).Scan(&remaining))
 	assert.Equal(100, remaining)
@@ -189,7 +191,7 @@ func TestConversationActivityExpansionBoundsAndRestarts(t *testing.T) {
 	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
 	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
 	var count int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&count))
 	assert.Equal(1, count, "fresh schema installs the membership marker trigger")
 	assert.Equal(firstBefore, activityQueueRevision(t, f.Store, ids[0]))
 	assert.Equal(lastBefore, activityQueueRevision(t, f.Store, ids[1000]))
@@ -200,13 +202,13 @@ func TestConversationActivityExpansionBoundsAndRestarts(t *testing.T) {
 	assert.Equal(firstBefore+1, activityQueueRevision(t, f.Store, ids[0]))
 	assert.Equal(lastBefore, activityQueueRevision(t, f.Store, ids[1000]))
 	var cursor int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
 	assert.Equal(ids[999], cursor)
 
 	// A membership change restarts the chunk already expanded.
 	second := f.EnsureParticipant("second@example.com", "Second", "example.com")
 	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, second, "member"))
-	require.NoError(f.Store.DB().QueryRow(`SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
 	assert.Zero(cursor)
 	expandActivityConversations(t, f.Store)
 	assert.Equal(firstBefore+2, activityQueueRevision(t, f.Store, ids[0]))
@@ -260,7 +262,7 @@ func TestConversationActivityExpansionSkipsSnapshotPersistencePG(t *testing.T) {
 	require.NoError(blocker.Rollback())
 	require.NoError(<-done, "snapshot must commit without a deadlock")
 	var subject string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT subject FROM messages WHERE id = ?`), id).Scan(&subject))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT subject FROM messages WHERE id = ?`), id).Scan(&subject))
 	assert.Equal("after", subject)
 }
 

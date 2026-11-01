@@ -26,7 +26,7 @@ func TestProbeMuesliDatabaseRejectsForeignFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notes.txt")
 	require.NoError(t, os.WriteFile(path, []byte("not sqlite"), 0o600))
 
-	err := probeMuesliDatabase(context.Background(), path)
+	err := probeMuesliDatabase(t.Context(), path)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db_path")
@@ -35,7 +35,7 @@ func TestProbeMuesliDatabaseRejectsForeignFiles(t *testing.T) {
 func TestRunConfiguredMuesliSyncRefusesUnregisteredSource(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
-	err := runConfiguredMuesliSync(context.Background(), st, config.MuesliSource{
+	err := runConfiguredMuesliSync(t.Context(), st, config.MuesliSource{
 		Identifier: "removed", AccountEmail: "you@example.com",
 	}, t.TempDir())
 
@@ -55,7 +55,7 @@ func TestServeScheduledMuesliSyncCompletes(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, raw_transcript TEXT);
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, raw_transcript TEXT);
 		INSERT INTO meetings VALUES (1, 'Planning', '2026-09-01T14:00:00Z', '2026-09-01 14:00:03', 'Synthetic meeting notes')`)
 	require.NoError(err)
 	require.NoError(db.Close())
@@ -85,13 +85,20 @@ func TestServeScheduledMuesliSyncCompletes(t *testing.T) {
 	waitForServeHealth(t, cfg.Server.APIPort, errCh)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.APIPort)
 	client := &http.Client{Timeout: serveLifecycleTestTimeout}
-	response, err := client.Post(baseURL+"/api/v1/sync/mac?source_type=muesli", "application/json", nil)
+	syncRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, baseURL+"/api/v1/sync/mac?source_type=muesli", nil)
+	require.NoError(err)
+	syncRequest.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(syncRequest)
 	require.NoError(err)
 	require.NoError(response.Body.Close())
 	require.Equal(http.StatusAccepted, response.StatusCode)
 	var status api.SourceStatusResponse
 	require.Eventually(func() bool {
-		response, err := client.Get(baseURL + "/api/v1/sources/status?source_type=muesli")
+		statusRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/v1/sources/status?source_type=muesli", nil)
+		if err != nil {
+			return false
+		}
+		response, err := client.Do(statusRequest)
 		if err != nil {
 			return false
 		}

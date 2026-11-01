@@ -107,7 +107,7 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 		"--no-resume",
 		"--checkpoint-interval", "1",
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-mbox")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -118,15 +118,15 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 		messageCount    int
 		attachmentCount int
 	)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount), "count sources")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount), "count sources")
 	require.Equal(1, sourceCount, "sourceCount")
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
 	require.Equal(2, messageCount, "messageCount")
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
 	require.Equal(1, attachmentCount, "attachmentCount")
 
 	var storagePath string
-	require.NoError(st.DB().QueryRow(`SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath), "select storage_path")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath), "select storage_path")
 	require.NotEmpty(storagePath, "storage_path empty")
 	_, err = os.Stat(filepath.Join(tmp, "attachments", filepath.FromSlash(storagePath)))
 	require.NoError(err, "attachment file missing")
@@ -208,7 +208,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 
 	// Attachment storage failures are best-effort: the import
 	// succeeds even though the attachment file can't be written.
-	require.NoError(t, rootCmd.ExecuteContext(context.Background()), "expected success")
+	require.NoError(t, rootCmd.ExecuteContext(t.Context()), "expected success")
 }
 
 func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
@@ -285,7 +285,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 		"--checkpoint-interval", "1",
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	// Set the import command's context to the canceled context directly,
@@ -401,7 +401,7 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 
 	// Pre-import the first message.
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
-	_, err := importer.ImportMbox(context.Background(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
+	_, err := importer.ImportMbox(t.Context(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
 		SourceType:         "hey",
 		Identifier:         "me@hey.com",
 		NoResume:           true,
@@ -454,19 +454,19 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 		"--checkpoint-interval", "1",
 		"--no-attachments",
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox resume")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-mbox resume")
 
 	st2, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st2.Close() })
 
 	var messageCount int
-	require.NoError(st2.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.NoError(st2.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
 	require.Equal(3, messageCount, "messageCount")
 
 	for _, subj := range []string{"One", "Two", "Three"} {
 		var c int
-		err := st2.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c)
+		err := st2.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c)
 		require.NoError(err, "count subject %q", subj)
 		assert.Equal(t, 1, c, "subject %q count", subj)
 	}

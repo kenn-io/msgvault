@@ -75,11 +75,11 @@ func ParseAccountsFlag(raw string) ([]string, error) {
 }
 
 // Create creates a collection after resolving account identifiers to sources.
-func Create(st Store, req CreateRequest) (MutationResult, error) {
+func Create(ctx context.Context, st Store, req CreateRequest) (MutationResult, error) {
 	if strings.TrimSpace(req.Name) == "" {
 		return MutationResult{}, opserr.Invalid(ErrNameRequired)
 	}
-	sourceIDs, err := ResolveAccountList(st, req.Accounts)
+	sourceIDs, err := ResolveAccountList(ctx, st, req.Accounts)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -91,11 +91,11 @@ func Create(st Store, req CreateRequest) (MutationResult, error) {
 }
 
 // AddSources adds resolved account sources to a collection.
-func AddSources(st Store, name string, req SourcesRequest) (MutationResult, error) {
+func AddSources(ctx context.Context, st Store, name string, req SourcesRequest) (MutationResult, error) {
 	if strings.TrimSpace(name) == "" {
 		return MutationResult{}, opserr.Invalid(ErrNameRequired)
 	}
-	sourceIDs, err := ResolveAccountList(st, req.Accounts)
+	sourceIDs, err := ResolveAccountList(ctx, st, req.Accounts)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -106,11 +106,11 @@ func AddSources(st Store, name string, req SourcesRequest) (MutationResult, erro
 }
 
 // RemoveSources removes resolved account sources from a collection.
-func RemoveSources(st Store, name string, req SourcesRequest) (MutationResult, error) {
+func RemoveSources(ctx context.Context, st Store, name string, req SourcesRequest) (MutationResult, error) {
 	if strings.TrimSpace(name) == "" {
 		return MutationResult{}, opserr.Invalid(ErrNameRequired)
 	}
-	sourceIDs, err := ResolveAccountList(st, req.Accounts)
+	sourceIDs, err := ResolveAccountList(ctx, st, req.Accounts)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -132,7 +132,7 @@ func Delete(st Store, name string) (MutationResult, error) {
 }
 
 // ResolveAccountList resolves account tokens or source IDs to source IDs.
-func ResolveAccountList(st Store, accounts []string) ([]int64, error) {
+func ResolveAccountList(ctx context.Context, st Store, accounts []string) ([]int64, error) {
 	var ids []int64
 	for _, raw := range accounts {
 		p := strings.TrimSpace(raw)
@@ -152,7 +152,7 @@ func ResolveAccountList(st Store, accounts []string) ([]int64, error) {
 				}
 			}
 		}
-		scope, err := ResolveAccount(st, p)
+		scope, err := ResolveAccountContext(ctx, st, p)
 		if err != nil {
 			return nil, err
 		}

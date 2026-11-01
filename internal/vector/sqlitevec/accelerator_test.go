@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -15,7 +14,7 @@ import (
 
 func TestReadyAcceleratorFailsClosedAfterLegacyWrite(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-	ctx := context.Background()
+	ctx := t.Context()
 	backend, err := Open(ctx, Options{
 		Path:      filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension: 4,
@@ -30,13 +29,13 @@ func TestReadyAcceleratorFailsClosedAfterLegacyWrite(t *testing.T) {
 	}))
 
 	tableName := acceleratorTableName(generationID)
-	_, err = backend.db.Exec(`CREATE VIRTUAL TABLE ` + tableName + ` USING vec1(embedding)`)
+	_, err = backend.db.ExecContext(t.Context(), `CREATE VIRTUAL TABLE `+tableName+` USING vec1(embedding)`)
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`INSERT INTO `+tableName+`(rowid, embedding)
+	_, err = backend.db.ExecContext(t.Context(), `INSERT INTO `+tableName+`(rowid, embedding)
 		SELECT v.embedding_id, v.embedding
 		FROM vectors_vec_d4 v WHERE v.generation_id = ?`, int64(generationID))
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`INSERT INTO vector_accelerators
+	_, err = backend.db.ExecContext(t.Context(), `INSERT INTO vector_accelerators
 		(generation_id, kind, state, table_name, dimension, indexed_count,
 		 source_revision, started_at, completed_at, model_config, vec1_version)
 		SELECT id, 'vec1_ivf_opq', 'ready', ?, dimension, embedding_count,
@@ -51,9 +50,9 @@ func TestReadyAcceleratorFailsClosedAfterLegacyWrite(t *testing.T) {
 
 	// This is the shape of a write from an older binary: it knows only the
 	// authoritative embeddings/sqlite-vec tables, not vector_accelerators.
-	_, err = backend.db.Exec(`DELETE FROM vectors_vec_d4 WHERE generation_id = ?`, int64(generationID))
+	_, err = backend.db.ExecContext(t.Context(), `DELETE FROM vectors_vec_d4 WHERE generation_id = ?`, int64(generationID))
 	require.NoError(t, err)
-	_, err = backend.db.Exec(`DELETE FROM embeddings WHERE generation_id = ?`, int64(generationID))
+	_, err = backend.db.ExecContext(t.Context(), `DELETE FROM embeddings WHERE generation_id = ?`, int64(generationID))
 	require.NoError(t, err)
 
 	_, ok, err = backend.readyAccelerator(ctx, generationID, 4)

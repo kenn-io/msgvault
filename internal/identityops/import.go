@@ -106,7 +106,7 @@ func Import(
 		return ImportResult{}, opserr.Invalid(err)
 	}
 
-	src, err := ResolveSource(st, req.SourceSelector)
+	src, err := ResolveSource(ctx, st, req.SourceSelector)
 	if err != nil {
 		return ImportResult{}, err
 	}

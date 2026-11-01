@@ -359,7 +359,7 @@ func TestDoclingRangesStoreIntegration(t *testing.T) {
 				var name, path string
 				requirements.NoError(f.Store.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &path))
 				requirements.NoError(f.Store.Close())
-				reopened, err := store.OpenForTest(path)
+				reopened, err := store.OpenForTest(t.Context(), path)
 				requirements.NoError(err)
 				f.Store = reopened
 				t.Cleanup(func() { requirements.NoError(reopened.Close()) })

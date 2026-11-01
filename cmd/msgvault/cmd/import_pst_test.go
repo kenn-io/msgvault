@@ -120,7 +120,7 @@ func TestRunPstPostImportMigrationsConfirmsDefaultIdentityBeforeHardErrorMigrati
 	require.NoError(
 		err, "create source")
 
-	err = runPstPostImportMigrations(io.Discard, st, &importer.PstImportSummary{
+	err = runPstPostImportMigrations(t.Context(), io.Discard, st, &importer.PstImportSummary{
 		SourceID:   src.ID,
 		HardErrors: true,
 	}, "mbox", "archive@example.com", invocationFromContext(testCtx))

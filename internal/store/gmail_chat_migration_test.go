@@ -16,11 +16,11 @@ func TestInitSchemaClassifiesLegacyGmailChatMessages(t *testing.T) {
 
 	gmail, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
-	gmailLabels, err := st.EnsureLabelsBatch(gmail.ID, map[string]store.LabelInfo{
+	gmailLabels, err := st.EnsureLabelsBatch(t.Context(), gmail.ID, map[string]store.LabelInfo{
 		"CHAT": {Name: "CHAT", Type: "system"},
 	})
 	requirements.NoError(err)
-	chatConversation, err := st.EnsureConversation(gmail.ID, "chat-thread", "")
+	chatConversation, err := st.EnsureConversation(t.Context(), gmail.ID, "chat-thread", "")
 	requirements.NoError(err)
 	chatMessage, err := st.UpsertMessage(&store.Message{
 		SourceID: gmail.ID, ConversationID: chatConversation,
@@ -28,7 +28,7 @@ func TestInitSchemaClassifiesLegacyGmailChatMessages(t *testing.T) {
 	})
 	requirements.NoError(err)
 	requirements.NoError(st.ReplaceMessageLabels(chatMessage, []int64{gmailLabels["CHAT"]}))
-	emailConversation, err := st.EnsureConversation(gmail.ID, "email-thread", "")
+	emailConversation, err := st.EnsureConversation(t.Context(), gmail.ID, "email-thread", "")
 	requirements.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{
 		SourceID: gmail.ID, ConversationID: emailConversation,
@@ -38,11 +38,11 @@ func TestInitSchemaClassifiesLegacyGmailChatMessages(t *testing.T) {
 
 	imap, err := st.GetOrCreateSource("imap", "imap@example.com")
 	requirements.NoError(err)
-	imapLabels, err := st.EnsureLabelsBatch(imap.ID, map[string]store.LabelInfo{
+	imapLabels, err := st.EnsureLabelsBatch(t.Context(), imap.ID, map[string]store.LabelInfo{
 		"CHAT": {Name: "CHAT", Type: "user"},
 	})
 	requirements.NoError(err)
-	imapConversation, err := st.EnsureConversation(imap.ID, "imap-thread", "")
+	imapConversation, err := st.EnsureConversation(t.Context(), imap.ID, "imap-thread", "")
 	requirements.NoError(err)
 	imapMessage, err := st.UpsertMessage(&store.Message{
 		SourceID: imap.ID, ConversationID: imapConversation,

@@ -337,7 +337,7 @@ func newIdentityScopeDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
 		}
-		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
+		_, err := db.ExecContext(t.Context(), fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(t, err, "write %s", table.dir)
 	}
 	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir, identityCacheFixtureOptions{})
@@ -349,7 +349,7 @@ func newIdentityScopeDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	return engine

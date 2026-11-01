@@ -41,8 +41,8 @@ func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, er
 }
 
 // GetSourceByTypeAndIdentifier resolves a source by its portable stable tuple.
-func (s *Store) GetSourceByTypeAndIdentifier(sourceType, identifier string) (*Source, error) {
-	row := s.db.QueryRow(`
+func (s *Store) GetSourceByTypeAndIdentifier(ctx context.Context, sourceType, identifier string) (*Source, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE source_type = ? AND identifier = ?
@@ -439,7 +439,7 @@ func (s *Store) removeSourceExec(
 		return err
 	}
 	if s.fts5Available {
-		if _, err := tx.Exec(s.dialect.FTSDeleteSQL(), sourceID); err != nil {
+		if _, err := tx.ExecContext(ctx, s.dialect.FTSDeleteSQL(), sourceID); err != nil {
 			return fmt.Errorf("delete FTS rows: %w", err)
 		}
 	}
@@ -448,7 +448,7 @@ func (s *Store) removeSourceExec(
 	); err != nil {
 		return err
 	}
-	res, err := tx.Exec(`DELETE FROM sources WHERE id = ?`, sourceID)
+	res, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, sourceID)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
 	}

@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -71,7 +70,7 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 				TokenType:   "Bearer",
 			})
 			got, err := fetchTokenProfileEmail(
-				context.Background(),
+				t.Context(),
 				ts,
 				srv.URL,
 				"user@gmail.com",

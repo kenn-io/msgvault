@@ -47,7 +47,7 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 	})
 	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -72,14 +72,14 @@ func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 	require.NoError(err)
 	conv := insertExportMessagesConversation(t, st, source.ID, "conversation", "Test")
 	insertExportMessagesMessage(t, st, source.ID, conv, "message", time.Now().UTC(), "body")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
 	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(alice)
 	require.NoError(err)
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
 
@@ -123,7 +123,7 @@ func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 		{`{"display_name":"  Alice Curated  "}`, "Alice Curated"},
 		{`{"display_name":null}`, "Alice Observed"},
 	} {
-		request := httptest.NewRequest(http.MethodPatch,
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
 			fmt.Sprintf("/api/v1/people/%d", person.ID), strings.NewReader(test.body))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("If-Match", fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision))
@@ -186,14 +186,14 @@ func TestStoreAPIAdapterServesPersonMatchScoringRun(t *testing.T) {
 	require.NoError(err)
 	fingerprint, err := disclosure.Fingerprint()
 	require.NoError(err)
-	consentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/identity/scoring/consent",
+	consentRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/scoring/consent",
 		strings.NewReader(fmt.Sprintf(`{"disclosure_fingerprint":%q}`, fingerprint)))
 	consentRequest.Header.Set("Content-Type", "application/json")
 	consentResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(consentResponse, consentRequest)
 	require.Equal(http.StatusOK, consentResponse.Code, consentResponse.Body.String())
 
-	runRequest := httptest.NewRequest(http.MethodPost, "/api/v1/identity/scoring/run",
+	runRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/scoring/run",
 		strings.NewReader(`{"limit":1}`))
 	runRequest.Header.Set("Content-Type", "application/json")
 	runResponse := httptest.NewRecorder()
@@ -285,7 +285,8 @@ func TestStoreAPIAdapterRecreatesConsentedDocumentSearchConsumer(t *testing.T) {
 	require.NoError(err)
 	assert.True(consumer.ReconciliationComplete)
 	var occurrences int
-	require.NoError(fixture.Store.DB().QueryRow(
+	require.NoError(fixture.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM document_occurrences`,
 	).Scan(&occurrences))
 	assert.Equal(1, occurrences)
@@ -316,7 +317,7 @@ func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T)
 		{"person network", fmt.Sprintf("/api/v1/people/%d/network", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.path, nil)
 			response := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(response, request)
@@ -339,7 +340,7 @@ func TestStoreAPIAdapterServesPersonTracking(t *testing.T) {
 		Config: &config.Config{}, Store: &storeAPIAdapter{store: st},
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(http.MethodPut,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPut,
 		fmt.Sprintf("/api/v1/people/%d/tracking", person.ID),
 		strings.NewReader(`{"tracked":true}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -359,7 +360,7 @@ func TestStoreAPIAdapterServesPersonRelationshipRoutes(t *testing.T) {
 		Store:  &storeAPIAdapter{store: st},
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/relationship-types", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/relationship-types", nil)
 	response := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(response, request)
@@ -391,7 +392,7 @@ func TestStoreAPIAdapterServesOrganizationAndEmploymentRoutes(t *testing.T) {
 		{"employments", fmt.Sprintf("/api/v1/people/%d/employments", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.path, nil)
 			response := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(response, request)
@@ -412,7 +413,7 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 	message := f.CreateMessage("suggestion-wire")
 	require.NoError(f.Store.ReplaceMessageRecipients(message, "to", []int64{member}, []string{"Member Example"}))
 	var attachment int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&attachment))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&attachment))
 	for range 100 {
 		batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 		require.NoError(err)
@@ -424,7 +425,7 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
 	for _, path := range []string{"/api/v1/files/suggest", fmt.Sprintf("/api/v1/people/%d/files/suggest", person.ID)} {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"filename_query":"report.pdf"}`))
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(`{"filename_query":"report.pdf"}`))
 		r.Header.Set("Content-Type", "application/json")
 		srv.Router().ServeHTTP(w, r)
 		require.Equal(200, w.Code, w.Body.String())

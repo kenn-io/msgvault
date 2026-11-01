@@ -226,16 +226,22 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	cfg.Data.DataDir = home
 	st := testutil.NewSQLiteTestStore(t)
 	var dbPath string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT file FROM pragma_database_list WHERE name = 'main'`,
 	).Scan(&dbPath), "find test database path")
 	cfg.Data.DatabaseURL = dbPath
 	refreshErr := errors.New("cache refresh failed")
 	refreshCalls := 0
 	var refreshContextErr error
+	importCtx, cancelImport := context.WithCancel(testCtx)
+	t.Cleanup(cancelImport)
 	oldRunBuild := runScheduledBuildCacheSubprocess
 	runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
 		refreshCalls++
+		// Cancel the import once it has finished; the refresh context must
+		// not inherit that cancellation.
+		cancelImport()
 		refreshContextErr = ctx.Err()
 		return refreshErr
 	}
@@ -267,9 +273,7 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
   <sms`,
 		},
 	}
-	ctx, cancel := context.WithCancel(testCtx)
-	cancel()
-	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, client)
+	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(importCtx, st, src, client)
 	require.Error(err, "runConfiguredSynctechSMSSourceWithStoreDriveClient")
 	assert.Contains(err.Error(), "import backup file", "partial parse error")
 	require.ErrorIs(err, refreshErr, "partial import must preserve the refresh failure")
@@ -288,7 +292,8 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	assert.Equal("failed", failed.Status, "second source import status")
 
 	var unstamped int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND embed_gen IS NULL`),
 		source.ID,
 	).Scan(&unstamped), "count unstamped messages")
@@ -443,7 +448,7 @@ func getSynctechSource(t *testing.T, st *store.Store, ownerPhone string) *store.
 func countSyncRuns(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var got int
-	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&got)
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "count sync runs")
 	return got
 }
@@ -451,7 +456,7 @@ func countSyncRuns(t *testing.T, st *store.Store, sourceID int64) int {
 func getOnlySyncRun(t *testing.T, st *store.Store, sourceID int64) store.SyncRun {
 	t.Helper()
 	var run store.SyncRun
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after
@@ -476,7 +481,7 @@ func getDriveSourceImportItem(t *testing.T, st *store.Store, sourceID int64, pro
 func assertSourceMessageCount(t *testing.T, st *store.Store, sourceID int64, want int) {
 	t.Helper()
 	var got int
-	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&got)
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "count source messages")
 	assert.Equal(t, want, got, "source message count")
 }
@@ -484,7 +489,7 @@ func assertSourceMessageCount(t *testing.T, st *store.Store, sourceID int64, wan
 func assertSourceConversationMessageCount(t *testing.T, st *store.Store, sourceID int64, want int) {
 	t.Helper()
 	var got int
-	err := st.DB().QueryRow(st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "read conversation message_count")
 	assert.Equal(t, want, got, "conversation message_count")
 }

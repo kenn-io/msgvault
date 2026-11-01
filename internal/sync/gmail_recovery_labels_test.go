@@ -124,7 +124,7 @@ func recoveryLabelsEnv(t *testing.T) (*TestEnv, *recoveryLabelsTransport, map[st
 	e.Syncer = New(api, e.Store, nil)
 	_, err := e.Syncer.Full(t.Context(), testEmail)
 	require.NoError(err)
-	source := gmailCoverageSource(t, e)
+	source := gmailCoverageSource(t.Context(), t, e)
 	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"normal1", "normal2", "spam", "trash"})
 	require.NoError(err)
 	require.Len(ids, 4)
@@ -141,7 +141,7 @@ func assertRecoveryLabels(t *testing.T, e *TestEnv, ids map[string]int64, labels
 	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
-	source := gmailCoverageSource(t, e)
+	source := gmailCoverageSource(t.Context(), t, e)
 	for id, want := range labels {
 		actual, err := e.Store.MessageLabelIDsContext(t.Context(), ids[id])
 		require.NoError(err)
@@ -165,7 +165,7 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 			assert := assert.New(t)
 			e, f, ids := recoveryLabelsEnv(t)
 			f.fault = fault
-			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
 			require.NoError(err)
 			require.Zero(summary.Errors)
 			assert.Equal(int64(4), summary.MessagesUpdated)
@@ -174,7 +174,7 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 			reopenAcquisitionStore(t, e)
 			assertRecoveryLabels(t, e, ids, f.labels)
 			assert.Equal(4, f.rawGets, "already archived originals must not be downloaded again")
-			assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 		})
 	}
 }
@@ -195,7 +195,7 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 			for range 2 {
 				ctx, cancel := context.WithCancel(t.Context())
 				f.cancel = cancel
-				_, err := e.Syncer.IncrementalWithHistoryRecovery(ctx, gmailCoverageSource(t, e), nil)
+				_, err := e.Syncer.IncrementalWithHistoryRecovery(ctx, gmailCoverageSource(t.Context(), t, e), nil)
 				cancel()
 				if fault == "cancel" {
 					require.ErrorIs(err, context.Canceled)
@@ -208,8 +208,8 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 				}
 				reopenAcquisitionStore(t, e)
 				e.Syncer = New(api, e.Store, nil)
-				assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
-				prior, err := e.Store.GetLatestCheckpointedSync(gmailCoverageSource(t, e).ID)
+				assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+				prior, err := e.Store.GetLatestCheckpointedSync(gmailCoverageSource(t.Context(), t, e).ID)
 				require.NoError(err)
 				assert.Equal("2000", prior.CursorAfter.String)
 				cp, err := decodeRecoveryCheckpoint(prior.CursorBefore.String)
@@ -217,20 +217,20 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 				assert.Equal(recoveryEnumerate, cp.Phase)
 				assert.Equal("p2", cp.PageToken, "a failed page must be retried")
 				assertRecoveryLabels(t, e, ids, map[string][]string{"trash": {"TRASH"}})
-				debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), gmailCoverageSource(t, e).ID)
+				debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), gmailCoverageSource(t.Context(), t, e).ID)
 				require.NoError(err)
 				assert.Empty(debt, "metadata failures must not trigger RAW acquisition replay")
 			}
 			removeFault()
 			f.fault = ""
-			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
 			require.NoError(err)
 			assert.Zero(summary.Errors)
 			assert.Equal(int64(4), summary.MessagesUpdated)
 			reopenAcquisitionStore(t, e)
 			assertRecoveryLabels(t, e, ids, f.labels)
 			assert.Equal(4, f.rawGets)
-			assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 		})
 	}
 }
@@ -242,10 +242,10 @@ func TestGmailRecoveryLegacyLabelCheckpointRestarts(t *testing.T) {
 			assert := assert.New(t)
 			e, f, ids := recoveryLabelsEnv(t)
 			api := e.Syncer.client
-			source := gmailCoverageSource(t, e)
+			source := gmailCoverageSource(t.Context(), t, e)
 			run, err := e.Store.StartSync(source.ID, "full")
 			require.NoError(err)
-			_, err = e.Store.DB().Exec(e.Store.Rebind("UPDATE sync_runs SET request_fingerprint=? WHERE id=?"),
+			_, err = e.Store.DB().ExecContext(t.Context(), e.Store.Rebind("UPDATE sync_runs SET request_fingerprint=? WHERE id=?"),
 				store.GmailHistoryRecoveryRequestFingerprint+":spam-trash:v1", run)
 			require.NoError(err)
 			token := ""
@@ -273,7 +273,7 @@ func TestGmailRecoveryLabelMessageDisappears(t *testing.T) {
 	assert := assert.New(t)
 	e, f, ids := recoveryLabelsEnv(t)
 	f.fault = "gone"
-	_, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+	_, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
 	require.NoError(err)
 	reopenAcquisitionStore(t, e)
 	// A 404 is not an authoritative empty label set. Presence reconciliation
@@ -282,7 +282,7 @@ func TestGmailRecoveryLabelMessageDisappears(t *testing.T) {
 	assertRecoveryLabels(t, e, ids, f.labels)
 	assertDeletedFromSource(t, e.Store, "trash", true)
 	assert.Equal(4, f.rawGets)
-	assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+	assert.Equal("2001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 }
 
 func TestGmailOrdinaryFullKeepsExistingRawShortcut(t *testing.T) {

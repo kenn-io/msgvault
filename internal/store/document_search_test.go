@@ -81,18 +81,18 @@ func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 	firstParticipant := f.EnsureParticipant("first@example.test", "First", "example.test")
 	secondParticipant := f.EnsureParticipant("second@example.test", "Second", "example.test")
 	var firstAttachmentID, firstMessageID int64
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT id, message_id FROM attachments WHERE content_hash = ?`), hash).
 		Scan(&firstAttachmentID, &firstMessageID))
 	when := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET sender_id = ?, sent_at = ? WHERE id = ?`),
 		firstParticipant, when, firstMessageID)
 	requirements.NoError(err)
 
 	secondMessageID := f.CreateMessage("document-search-other-person")
 	secondAttachmentID := addSearchAttachment(t, f, secondMessageID, hash, "other.pdf", "provider:other")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET sender_id = ?, sent_at = ? WHERE id = ?`),
 		secondParticipant, when, secondMessageID)
 	requirements.NoError(err)
@@ -119,20 +119,20 @@ func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 	}, response.Results[0].PersonProvenance)
 
 	var firstConversationID int64
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT conversation_id FROM messages WHERE id = ?`), firstMessageID).
 		Scan(&firstConversationID))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE conversations SET conversation_type = 'direct_chat' WHERE id = ?`), firstConversationID)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET sender_id = NULL, is_from_me = FALSE WHERE id = ?`), firstMessageID)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`),
 		firstMessageID, secondParticipant)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?)`),
 		firstConversationID, firstParticipant)
 	requirements.NoError(err)
@@ -149,11 +149,11 @@ func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 		"a direct-chat roster member is the inferred recipient when a different sender is known only from the envelope")
 	assertions.Equal([]personscope.Direction{personscope.ToPerson},
 		response.Results[0].PersonProvenance.Directions)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM message_recipients WHERE message_id = ? AND participant_id = ? AND recipient_type = 'from'`),
 		firstMessageID, secondParticipant)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`),
 		firstMessageID, firstParticipant)
 	requirements.NoError(err)
@@ -167,16 +167,16 @@ func TestSearchDocumentsFiltersOwningMessagesByResolvedPerson(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(response.Results,
 		"a person known as the envelope sender cannot also be inferred as the direct recipient")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM message_recipients WHERE message_id = ? AND participant_id = ? AND recipient_type = 'from'`),
 		firstMessageID, firstParticipant)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`),
 		firstMessageID, secondParticipant)
 	requirements.NoError(err)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = ?`), firstConversationID)
 	requirements.NoError(err)
 	response, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
@@ -232,7 +232,7 @@ func TestSearchDocumentsPreservesWinningOccurrenceAndFilenameSignal(t *testing.T
 	assert.Contains([]int64{response.Results[0].AttachmentID, response.Results[1].AttachmentID}, secondAttachmentID)
 	for _, result := range response.Results {
 		var expectedAttachmentID int64
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT id FROM attachments WHERE message_id = ?`), result.MessageID).Scan(&expectedAttachmentID))
 		assert.Equal(expectedAttachmentID, result.AttachmentID,
 			"a hash-level hit must not be broadcast onto a different occurrence")
@@ -293,7 +293,7 @@ func TestDocumentOccurrenceCascadeInvalidatesSearchCursor(t *testing.T) {
 	require.NoError(err)
 	require.NotEmpty(first.NextCursor)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), secondAttachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), secondAttachmentID)
 	require.NoError(err)
 	_, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
 		Query: "nebula", PageSize: 1, Cursor: first.NextCursor,
@@ -319,7 +319,7 @@ func TestDocumentMessageTypeChangeInvalidatesSearchCursor(t *testing.T) {
 	require.NoError(err)
 	require.NotEmpty(first.NextCursor)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = ? WHERE id = ?`), "chat", secondMessageID)
 	require.NoError(err)
 	_, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
@@ -487,7 +487,7 @@ func TestSearchDocumentsFailsClosedOnLiveAuthorityAndInvalidScopes(t *testing.T)
 	response, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "nebula"})
 	require.NoError(err)
 	require.Len(response.Results, 1)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`),
 		response.Results[0].MessageID)
 	require.NoError(err)
@@ -600,7 +600,7 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 	copyAttachmentID := addSearchAttachment(
 		t, f, copyMessageID, claims[0].CanonicalBlobHash, "semantic-copy.pdf", "provider:semantic-copy",
 	)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET sent_at = ? WHERE id = ?`), now, copyMessageID)
 	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), copyAttachmentID, 2)
@@ -657,10 +657,10 @@ func TestResolveDocumentVectorSearchOccurrencesExpandsAndBoundsAfterOccurrenceDe
 
 	participantID := f.EnsureParticipant("semantic@example.test", "Semantic", "example.test")
 	var originalMessageID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT message_id FROM attachments WHERE content_hash = ? AND id <> ?`),
 		claims[0].CanonicalBlobHash, copyAttachmentID).Scan(&originalMessageID))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, originalMessageID)
 	require.NoError(err)
 	personResults, personMore, err := f.Store.ResolveDocumentVectorSearchOccurrences(
@@ -683,10 +683,10 @@ func TestResolveDocumentVectorSearchOccurrencesForCSV(t *testing.T) {
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	publishSearchDocument(t, f, profile, hash, strings.Repeat("界", 400), "semantic-excerpt")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	generation, _, err := f.Store.EnsureDocumentVectorGeneration(t.Context(), store.DocumentVectorGenerationSpec{
@@ -721,7 +721,7 @@ func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T)
 				t.Helper()
 				attachmentID := documentVectorAttachmentID(t, f, claim.CanonicalBlobHash)
 				var messageID int64
-				require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT message_id FROM attachments WHERE id = ?`), attachmentID).Scan(&messageID))
 				require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
 					Filename: "replacement.pdf", MIMEType: "application/pdf", Size: 128,
@@ -736,7 +736,7 @@ func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T)
 			mutate: func(t *testing.T, f *storetest.Fixture, claim store.DocumentVectorChunkClaim) {
 				t.Helper()
 				attachmentID := documentVectorAttachmentID(t, f, claim.CanonicalBlobHash)
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), attachmentID)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), attachmentID)
 				require.NoError(t, err)
 			},
 		},
@@ -746,7 +746,7 @@ func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T)
 				t.Helper()
 				attachmentID := documentVectorAttachmentID(t, f, claim.CanonicalBlobHash)
 				var messageID int64
-				require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT message_id FROM attachments WHERE id = ?`), attachmentID).Scan(&messageID))
 				require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
 					Filename: "inline.pdf", MIMEType: "application/pdf", Size: 128,
@@ -761,10 +761,10 @@ func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T)
 			mutate: func(t *testing.T, f *storetest.Fixture, claim store.DocumentVectorChunkClaim) {
 				t.Helper()
 				var messageID int64
-				require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+				require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 					SELECT message_id FROM document_occurrences WHERE canonical_blob_hash = ?`),
 					claim.CanonicalBlobHash).Scan(&messageID))
-				_, err := f.Store.DB().Exec(f.Store.Rebind(
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 					`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 				require.NoError(t, err)
 			},
@@ -801,7 +801,7 @@ func TestResolveDocumentVectorSearchOccurrencesHidesStaleAuthority(t *testing.T)
 			assert.Empty(results)
 			assert.False(truncated)
 			var publications int
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 				SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ? AND token = ?`),
 				generation.ID, claims[0].Token).Scan(&publications))
 			assert.Equal(1, publications, "authority changes hide but do not erase the token ledger")

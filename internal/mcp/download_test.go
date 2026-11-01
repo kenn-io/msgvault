@@ -38,7 +38,7 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	must.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "download-thread", "Download")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "download-thread", "Download")
 	must.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "download-message", MessageType: "email"})
 	must.NoError(err)

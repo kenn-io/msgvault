@@ -2,7 +2,6 @@ package imessage
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
@@ -59,11 +58,11 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			ctx := context.Background()
+			ctx := t.Context()
 			path, db := testutil.NewIMessageChatDB(t)
-			_, err := db.Exec(`INSERT INTO message (date,text,cache_has_attachments) VALUES (725760000, ?, 1)`, tt.text)
+			_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text,cache_has_attachments) VALUES (725760000, ?, 1)`, tt.text)
 			require.NoError(err)
-			client, err := NewClient(path)
+			client, err := NewClient(t.Context(), path)
 			require.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			st := testutil.NewTestStore(t)
@@ -77,7 +76,7 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			assert.Equal(1, summary.MessagesImported)
 			assert.Zero(summary.Skipped)
 			var id int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
 			ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{tt.term}}, 10)
 			require.NoError(err)
 			assert.Equal(int64(1), total)
@@ -85,9 +84,9 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			if tt.text == nil {
 				return
 			}
-			_, err = st.RebuildFTS(nil)
+			_, err = st.RebuildFTSContext(t.Context(), nil)
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE message SET text = ?`, strings.Repeat("padding ", 20)+"newmarker")
+			_, err = db.ExecContext(t.Context(), `UPDATE message SET text = ?`, strings.Repeat("padding ", 20)+"newmarker")
 			require.NoError(err)
 			_, err = client.Import(ctx, st, src.ID)
 			require.NoError(err)
@@ -105,13 +104,13 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 
 func TestImportPreservesArchivedBodyWhenAttributedBodyCannotBeDecoded(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	path, db := testutil.NewIMessageChatDB(t)
 	const originalBody = "Synthetic archived body oldmarker"
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000, ?)`, originalBody)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000, ?)`, originalBody)
 	require.NoError(err)
 	var logs bytes.Buffer
-	client, err := NewClient(path, WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	client, err := NewClient(t.Context(), path, WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))))
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	st := testutil.NewTestStore(t)
@@ -124,14 +123,14 @@ func TestImportPreservesArchivedBodyWhenAttributedBodyCannotBeDecoded(t *testing
 	require.NoError(err)
 	assert.Equal(1, summary.MessagesImported)
 	var id int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = '1'`), src.ID).Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = '1'`), src.ID).Scan(&id))
 
-	_, err = db.Exec(`UPDATE message SET text = NULL, attributedBody = ? WHERE ROWID = 1`, []byte("not a valid attributed body"))
+	_, err = db.ExecContext(t.Context(), `UPDATE message SET text = NULL, attributedBody = ? WHERE ROWID = 1`, []byte("not a valid attributed body"))
 	require.NoError(err)
 	summary, err = client.Import(ctx, st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, summary.MessagesImported)
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal(originalBody, body)
 	ids, total, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"oldmarker"}}, 10)
@@ -181,10 +180,10 @@ func TestImportFTSFailureContinues(t *testing.T) {
 	testutil.SkipIfPostgres(t, "drops the SQLite FTS5 table")
 	assert, require := assert.New(t), require.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000, 'Synthetic body'), (725760001, 'Subsequent body')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (725760000, 'Synthetic body'), (725760001, 'Subsequent body')`)
 	require.NoError(err)
 	var logs bytes.Buffer
-	client, err := NewClient(path, WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	client, err := NewClient(t.Context(), path, WithImessageLogger(slog.New(slog.NewTextHandler(&logs, nil))))
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	st := testutil.NewTestStore(t)
@@ -193,25 +192,25 @@ func TestImportFTSFailureContinues(t *testing.T) {
 	}
 	src, err := st.GetOrCreateSource("apple_messages", "fixture")
 	require.NoError(err)
-	_, err = st.DB().Exec(`DROP TABLE messages_fts`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE messages_fts`)
 	require.NoError(err)
-	summary, err := client.Import(context.Background(), st, src.ID)
+	summary, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(2, summary.MessagesImported)
 	assert.Zero(summary.Skipped)
 	assert.Contains(logs.String(), "failed to index message for search")
 	var id int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
-	body, err := st.GetMessageBodyText(id)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("Synthetic body", body)
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.NotEmpty(raw)
 	var recipients, labels int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, id).Scan(&recipients))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, id).Scan(&recipients))
 	assert.Equal(2, recipients)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, id).Scan(&labels))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, id).Scan(&labels))
 	assert.Equal(1, labels)
 }
 
@@ -236,11 +235,11 @@ func TestImportInvalidDatesRetainsMessages(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			ctx := context.Background()
+			ctx := t.Context()
 			path, db := testutil.NewIMessageChatDB(t)
-			_, err := db.Exec(`INSERT INTO message (date,text,attributedBody,cache_has_attachments) VALUES (?,?,?,?)`, tt.date, tt.text, tt.attributed, tt.attachments)
+			_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text,attributedBody,cache_has_attachments) VALUES (?,?,?,?)`, tt.date, tt.text, tt.attributed, tt.attachments)
 			require.NoError(err)
-			c, err := NewClient(path)
+			c, err := NewClient(t.Context(), path)
 			require.NoError(err)
 			t.Cleanup(func() { _ = c.Close() })
 			st := testutil.NewTestStore(t)
@@ -260,7 +259,7 @@ func TestImportInvalidDatesRetainsMessages(t *testing.T) {
 				var id int64
 				var sent, internal sql.NullTime
 				var hasAttachments bool
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id,sent_at,internal_date,has_attachments FROM messages WHERE source_id = ? AND source_message_id = '1'`), src.ID).Scan(&id, &sent, &internal, &hasAttachments))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id,sent_at,internal_date,has_attachments FROM messages WHERE source_id = ? AND source_message_id = '1'`), src.ID).Scan(&id, &sent, &internal, &hasAttachments))
 				assert.False(sent.Valid)
 				assert.False(internal.Valid)
 				assert.Equal(tt.attachments != 0, hasAttachments)
@@ -279,24 +278,24 @@ func TestImportInvalidDatesRetainsMessages(t *testing.T) {
 				assert.Equal(tt.date, evidence.Date)
 				assert.Equal(tt.wantBody, evidence.Body)
 				if tt.wantBody != "" {
-					body, err := st.GetMessageBodyText(id)
+					body, err := st.GetMessageBodyText(t.Context(), id)
 					require.NoError(err)
 					assert.Equal(tt.wantBody, body)
 				}
 				var recipients, labels int
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), id).Scan(&recipients))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), id).Scan(&recipients))
 				assert.Equal(2, recipients)
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`), id).Scan(&labels))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`), id).Scan(&labels))
 				assert.Equal(1, labels)
 				if run == 0 {
 					// Reproduce a previously poisoned archive row; an unfiltered rerun must clear it.
 					badDate := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
-					_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ?,internal_date = ? WHERE id = ?`), badDate, badDate, id)
+					_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at = ?,internal_date = ? WHERE id = ?`), badDate, badDate, id)
 					require.NoError(err)
 				}
 			}
 			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&count))
 			assert.Equal(1, count)
 		})
 	}
@@ -306,17 +305,17 @@ func TestImportDateFiltersIgnoreSentinelsInFormatDetection(t *testing.T) {
 	for _, useNano := range []bool{false, true} {
 		t.Run(strconv.FormatBool(useNano), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			ctx := context.Background()
+			ctx := t.Context()
 			path, db := testutil.NewIMessageChatDB(t)
 			dates := []int64{725760000, 757382400, math.MinInt64, math.MaxInt64}
 			if useNano {
 				dates[0], dates[1] = 725760000000000000, 757382400000000000
 			}
 			for _, date := range dates {
-				_, err := db.Exec(`INSERT INTO message (date,text) VALUES (?, 'Synthetic message')`, date)
+				_, err := db.ExecContext(t.Context(), `INSERT INTO message (date,text) VALUES (?, 'Synthetic message')`, date)
 				require.NoError(err)
 			}
-			c, err := NewClient(path,
+			c, err := NewClient(t.Context(), path,
 				WithAfterDate(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
 				WithBeforeDate(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)))
 			require.NoError(err)
@@ -330,7 +329,7 @@ func TestImportDateFiltersIgnoreSentinelsInFormatDetection(t *testing.T) {
 			assert.Equal(1, summary.MessagesImported)
 			var sourceMessageID string
 			var sent, internal sql.NullTime
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_message_id,sent_at,internal_date FROM messages WHERE source_id = ?`), src.ID).Scan(&sourceMessageID, &sent, &internal))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_message_id,sent_at,internal_date FROM messages WHERE source_id = ?`), src.ID).Scan(&sourceMessageID, &sent, &internal))
 			assert.Equal("1", sourceMessageID)
 			want := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 			assert.True(sent.Valid)
@@ -346,10 +345,10 @@ func TestTimestampDetectionWithoutRealPositiveDates(t *testing.T) {
 	for _, dates := range [][]int64{nil, {0, math.MinInt64, math.MaxInt64}} {
 		path, db := testutil.NewIMessageChatDB(t)
 		for _, date := range dates {
-			_, err := db.Exec(`INSERT INTO message (date) VALUES (?)`, date)
+			_, err := db.ExecContext(t.Context(), `INSERT INTO message (date) VALUES (?)`, date)
 			require.NoError(err)
 		}
-		c, err := NewClient(path)
+		c, err := NewClient(t.Context(), path)
 		require.NoError(err)
 		assert.False(c.useNanoseconds)
 		require.NoError(c.Close())
@@ -362,7 +361,7 @@ func TestNewClientDoesNotRequireHomeWhenAttachmentCaptureIsDisabled(t *testing.T
 	}
 	path, _ := testutil.NewIMessageChatDB(t)
 	t.Setenv("HOME", "")
-	client, err := NewClient(path, WithAttachments("", "", attachmentpolicy.Policy{}))
+	client, err := NewClient(t.Context(), path, WithAttachments("", "", attachmentpolicy.Policy{}))
 	require.NoError(t, err)
 	require.NoError(t, client.Close())
 }

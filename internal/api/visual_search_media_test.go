@@ -44,7 +44,7 @@ func TestVisualSearchRequestMediaTypes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server, _ := newTestServerWithMockStore(t)
 			server.SetVisualSearch(&visual.SearchService{})
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/search/attachments/visual", strings.NewReader(tc.body))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", strings.NewReader(tc.body))
 			request.Header.Set("Content-Type", tc.contentType)
 			response := httptest.NewRecorder()
 			server.Router().ServeHTTP(response, request)

@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -18,7 +17,7 @@ import (
 func mergeFixtureMessage(t *testing.T, st *store.Store, sourceID int64, chat, providerID, body string, minute int) (int64, int64) {
 	t.Helper()
 	require := require.New(t)
-	conversation, err := st.EnsureConversation(sourceID, "!"+chat+":example.test", "Example chat")
+	conversation, err := st.EnsureConversation(t.Context(), sourceID, "!"+chat+":example.test", "Example chat")
 	require.NoError(err)
 	sender, err := st.EnsureParticipant("owner@example.test", "Example Owner", "example.test")
 	require.NoError(err)
@@ -60,7 +59,7 @@ func emailMergeFixtureMessage(
 		if !includeEnvelope {
 			envelope = ""
 		}
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients(
 			message_id, participant_id, recipient_type, email_address
 		) VALUES (?, ?, 'to', ?)`), messageID, participant, envelope)
 		require.NoError(t, err)
@@ -99,7 +98,7 @@ func TestMergeSourcesEmailFingerprintRequiresMatchingCompleteRecipients(t *testi
 			require.NoError(err)
 			assert.Equal(test.wantDuplicates, result.DuplicatesHidden)
 			var hidden bool
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`), incoming).Scan(&hidden))
 			assert.Equal(test.wantDuplicates == 1, hidden)
 		})
@@ -128,12 +127,12 @@ func TestMergeSourcesRFC822MatchKeepsHistoryVisibleWhenSurvivorLacksContent(t *t
 			survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", recipients, true)
 			history := emailMergeFixtureMessage(t, st, from.ID, "history-message", recipients, true)
 			for _, messageID := range []int64{survivor, history} {
-				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<complete-match@example.test>", messageID)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<complete-match@example.test>", messageID)
 				require.NoError(err)
 			}
 
 			if test.survivorMissingBody {
-				_, err := st.DB().Exec(st.Rebind(`DELETE FROM message_bodies WHERE message_id = ?`), survivor)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM message_bodies WHERE message_id = ?`), survivor)
 				require.NoError(err)
 			}
 			if test.historyHasMIMERawData {
@@ -147,7 +146,7 @@ func TestMergeSourcesRFC822MatchKeepsHistoryVisibleWhenSurvivorLacksContent(t *t
 			require.NoError(err)
 			assert.Zero(result.DuplicatesHidden)
 			var historyVisible bool
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT deleted_at IS NULL FROM messages WHERE id = ?`), history).Scan(&historyVisible))
 			assert.True(historyVisible, "message content absent from the survivor must remain visible")
 		})
@@ -174,7 +173,7 @@ func TestMergeSourcesArchiveOnlyIMAPMessagesAreNotProviderTargets(t *testing.T) 
 		FromSourceID: from.ID, IntoSourceID: into.ID,
 	})
 	require.NoError(err)
-	providerMatch, err := st.GetMessageIDByRFC822ID(into.ID, "<history@example.test>")
+	providerMatch, err := st.GetMessageIDByRFC822ID(t.Context(), into.ID, "<history@example.test>")
 	require.NoError(err)
 	assert.Zero(providerMatch, "namespaced history must not satisfy a provider RFC822 lookup")
 
@@ -182,7 +181,7 @@ func TestMergeSourcesArchiveOnlyIMAPMessagesAreNotProviderTargets(t *testing.T) 
 	require.NoError(err)
 	assert.Zero(changed, "a complete empty provider snapshot must leave archive-only history untouched")
 	var deletedFromSource sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE id = ?`), messageID).Scan(&deletedFromSource))
 	assert.False(deletedFromSource.Valid)
 }
@@ -200,11 +199,11 @@ func TestMessageIDsWithLabelContextExcludesArchiveOnlyMessages(t *testing.T) {
 	liveID := emailMergeFixtureMessage(t, st, into.ID, "provider-live", recipients, true)
 	historyID := emailMergeFixtureMessage(t, st, from.ID, "provider-history", recipients, true)
 	for _, id := range []int64{liveID, historyID} {
-		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), rfc822MessageID, id)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), rfc822MessageID, id)
 		require.NoError(err)
 	}
 
-	sourceLabelID, err := st.EnsureLabel(from.ID, "Inbox", "Inbox", "system")
+	sourceLabelID, err := st.EnsureLabel(t.Context(), from.ID, "Inbox", "Inbox", "system")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageLabels(historyID, []int64{sourceLabelID}))
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
@@ -213,7 +212,7 @@ func TestMessageIDsWithLabelContextExcludesArchiveOnlyMessages(t *testing.T) {
 	})
 	require.NoError(err)
 
-	labelID, err := st.EnsureLabel(into.ID, "Inbox", "Inbox", "system")
+	labelID, err := st.EnsureLabel(t.Context(), into.ID, "Inbox", "Inbox", "system")
 	require.NoError(err)
 	ids, err := st.MessageIDsWithLabelContext(t.Context(), into.ID, labelID)
 	require.NoError(err)
@@ -229,18 +228,18 @@ func TestRecomputeConversationStatsIncludesProviderDeletedMessages(t *testing.T)
 	live, conversation := mergeFixtureMessage(t, st, source.ID, "stats-room", "live", "live body", 1)
 	hidden, _ := mergeFixtureMessage(t, st, source.ID, "stats-room", "hidden", "hidden body", 2)
 	removed, _ := mergeFixtureMessage(t, st, source.ID, "stats-room", "removed", "removed body", 3)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = 'live preview' WHERE id = ?`), live)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET snippet = 'live preview' WHERE id = ?`), live)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), hidden)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), hidden)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ?, snippet = 'archived preview' WHERE id = ?`), time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), removed)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = ?, snippet = 'archived preview' WHERE id = ?`), time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), removed)
 	require.NoError(err)
 
 	require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), conversation))
 	var messageCount int64
 	var lastMessageAt sql.NullTime
 	var preview sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT message_count, last_message_at, last_message_preview
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count, last_message_at, last_message_preview
 		FROM conversations WHERE id = ?`), conversation).Scan(&messageCount, &lastMessageAt, &preview))
 	assert.Equal(int64(2), messageCount)
 	assert.True(lastMessageAt.Valid)
@@ -252,7 +251,7 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	from, err := st.GetOrCreateSource("beeper", "history-example")
 	require.NoError(err)
 	into, err := st.GetOrCreateSource("beeper", "live-example")
@@ -262,26 +261,26 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	unique, uniqueChat := mergeFixtureMessage(t, st, from.ID, "disjoint", "200", "different", 2)
 	repeated, _ := mergeFixtureMessage(t, st, from.ID, "shared", "101", "overlap", 3)
 	require.NoError(st.AddAccountIdentity(from.ID, "owner@example.test", "manual"))
-	sourceLabel, err := st.EnsureLabel(from.ID, "source-label", "Example label", "user")
+	sourceLabel, err := st.EnsureLabel(t.Context(), from.ID, "source-label", "Example label", "user")
 	require.NoError(err)
-	destLabel, err := st.EnsureLabel(into.ID, "dest-label", "Example label", "user")
+	destLabel, err := st.EnsureLabel(t.Context(), into.ID, "dest-label", "Example label", "user")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageLabels(duplicate, []int64{sourceLabel}))
 	var participant int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM participants WHERE email_address = 'owner@example.test'`).Scan(&participant))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address = 'owner@example.test'`).Scan(&participant))
 	require.NoError(st.EnsureConversationParticipant(oldChat, participant, "member"))
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'to', 'owner@example.test')`), duplicate, participant)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'to', 'owner@example.test')`), duplicate, participant)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO reactions(message_id, participant_id, reaction_type, reaction_value) VALUES (?, ?, 'emoji', 'like')`), duplicate, participant)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO reactions(message_id, participant_id, reaction_type, reaction_value) VALUES (?, ?, 'emoji', 'like')`), duplicate, participant)
 	require.NoError(err)
 	// A stored attachment is complete fingerprint evidence. Historical pending media is separate.
 	for _, id := range []int64{survivor, duplicate} {
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(message_id, storage_path, content_hash, source_attachment_id, attachment_state) VALUES (?, 'ab/synthetic', ?, 'beeper:historical-media', 'stored')`), id, strings.Repeat("a", 64))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO attachments(message_id, storage_path, content_hash, source_attachment_id, attachment_state) VALUES (?, 'ab/synthetic', ?, 'beeper:historical-media', 'stored')`), id, strings.Repeat("a", 64))
 		require.NoError(err)
 	}
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(message_id, storage_path, source_attachment_id, attachment_state) VALUES (?, '', 'beeper:pending-media', 'pending')`), unique)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO attachments(message_id, storage_path, source_attachment_id, attachment_state) VALUES (?, '', 'beeper:pending-media', 'pending')`), unique)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id IN (?, ?, ?)`), time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), duplicate, unique, repeated)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id IN (?, ?, ?)`), time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), duplicate, unique, repeated)
 	require.NoError(err)
 	require.NoError(st.SetArchiveMarker(ctx, store.BeeperReanchorMarkerKey(into.ID), "synthetic anchors"))
 	req := store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID, DryRun: true}
@@ -291,7 +290,7 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	assert.Equal(int64(1), preview.DuplicatesHidden)
 	assert.Zero(preview.AttachmentsCopied, "an existing legacy attachment hash needs no new copy")
 	var sourceID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), unique).Scan(&sourceID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), unique).Scan(&sourceID))
 	assert.Equal(from.ID, sourceID)
 	req.DryRun = false
 	result, err := st.MergeSourcesContext(ctx, req)
@@ -301,7 +300,7 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	for _, id := range []int64{duplicate, unique, repeated} {
 		var providerID string
 		var watermark time.Time
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_id, source_message_id, content_changed_at FROM messages WHERE id = ?`), id).Scan(&sourceID, &providerID, &watermark))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id, source_message_id, content_changed_at FROM messages WHERE id = ?`), id).Scan(&sourceID, &providerID, &watermark))
 		assert.Equal(into.ID, sourceID)
 		assert.Contains(providerID, "msgvault-archive:")
 		assert.Greater(watermark.Year(), 2020, "moving source ownership must reach the change feed")
@@ -310,10 +309,10 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 		assert.Contains(string(raw), "synthetic raw")
 	}
 	var hidden bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`), duplicate).Scan(&hidden))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`), duplicate).Scan(&hidden))
 	assert.True(hidden)
 	var conversationID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), unique).Scan(&conversationID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), unique).Scan(&conversationID))
 	assert.Equal(uniqueChat, conversationID)
 	for _, query := range []string{
 		`SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ` + intString(destLabel),
@@ -322,16 +321,16 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 		`SELECT COUNT(*) FROM attachments WHERE message_id = ?`,
 	} {
 		var count int
-		require.NoError(st.DB().QueryRow(st.Rebind(query), survivor).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), survivor).Scan(&count))
 		assert.Equal(1, count)
 	}
 	var owned bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), unique).Scan(&owned))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), unique).Scan(&owned))
 	assert.True(owned)
 	var roster int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), destChat).Scan(&roster))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), destChat).Scan(&roster))
 	assert.Equal(1, roster)
-	anchors, err := st.ListRecentMessagesForSource(into.ID, 20)
+	anchors, err := st.ListRecentMessagesForSource(t.Context(), into.ID, 20)
 	require.NoError(err)
 	require.Len(anchors, 1)
 	assert.Equal("200", anchors[0].SourceMessageID)
@@ -360,15 +359,15 @@ func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(from.ID, "owner@example.test", "manual"))
 	require.NoError(st.AddAccountIdentity(into.ID, "owner@example.test", "manual"))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE account_identities SET confirmed_at = ? WHERE source_id = ?`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE account_identities SET confirmed_at = ? WHERE source_id = ?`),
 		"2026-01-01 00:00:00", from.ID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE account_identities SET confirmed_at = ? WHERE source_id = ?`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE account_identities SET confirmed_at = ? WHERE source_id = ?`),
 		"2026-01-01 00:00:00.000", into.ID)
 	require.NoError(err)
 
 	var before string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT CAST(confirmed_at AS TEXT) FROM account_identities WHERE source_id = ?`), into.ID).Scan(&before))
 	if !st.IsPostgreSQL() {
 		assert.Equal("2026-01-01 00:00:00.000", before)
@@ -380,7 +379,7 @@ func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {
 	require.NoError(err)
 
 	var after string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT CAST(confirmed_at AS TEXT) FROM account_identities WHERE source_id = ?`), into.ID).Scan(&after))
 	assert.Equal(before, after, "equal confirmation times should not rewrite SQLite's lexical timestamp format")
 }
@@ -403,7 +402,7 @@ func TestMergeSourcesPreservesAmbiguousRepeatedMessages(t *testing.T) {
 	assert.Zero(result.DuplicatesHidden)
 	for _, id := range []int64{left, right} {
 		var live bool
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_at IS NULL FROM messages WHERE id = ?`), id).Scan(&live))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_at IS NULL FROM messages WHERE id = ?`), id).Scan(&live))
 		assert.True(live, "identical content does not prove occurrence identity")
 	}
 }
@@ -416,9 +415,9 @@ func TestMergeSourcesNamespacesIMAPConversationIDs(t *testing.T) {
 	require.NoError(err)
 	into, err := st.GetOrCreateSource("imap", "live@example.test")
 	require.NoError(err)
-	historical, err := st.EnsureConversation(from.ID, "INBOX|42", "Historical")
+	historical, err := st.EnsureConversation(t.Context(), from.ID, "INBOX|42", "Historical")
 	require.NoError(err)
-	current, err := st.EnsureConversation(into.ID, "INBOX|42", "Current")
+	current, err := st.EnsureConversation(t.Context(), into.ID, "INBOX|42", "Current")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{SourceID: from.ID, ConversationID: historical, SourceMessageID: "INBOX|42", MessageType: "email"})
 	require.NoError(err)
@@ -426,11 +425,11 @@ func TestMergeSourcesNamespacesIMAPConversationIDs(t *testing.T) {
 	require.NoError(err)
 	var conversationID int64
 	var archivedID string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id, c.source_conversation_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.source_id = ?`), into.ID).Scan(&conversationID, &archivedID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id, c.source_conversation_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.source_id = ?`), into.ID).Scan(&conversationID, &archivedID))
 	assert.Equal(historical, conversationID)
 	assert.NotEqual(current, conversationID)
 	assert.Contains(archivedID, "msgvault-archive:")
-	future, err := st.EnsureConversation(into.ID, "INBOX|43", "Future")
+	future, err := st.EnsureConversation(t.Context(), into.ID, "INBOX|43", "Future")
 	require.NoError(err)
 	assert.NotEqual(historical, future)
 }
@@ -448,7 +447,7 @@ func TestMergeSourcesPreservesDestinationAttachmentEligibility(t *testing.T) {
 		message, _ := mergeFixtureMessage(
 			t, st, source.ID, "shared", fmt.Sprintf("provider-message-%d", source.ID), "same body", 1)
 		messages = append(messages, message)
-		_, err := st.DB().Exec(st.Rebind(`
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO attachments(message_id, filename, storage_path, content_hash, source_attachment_id, source_part_key, attachment_state)
 			VALUES (?, ?, '', ?, ?, ?, 'pending')
 		`), message, source.Identifier+".txt", strings.Repeat("d", 64), fmt.Sprintf("beeper:receipt:%d", source.ID), fmt.Sprintf("beeper:part:%d", source.ID))
@@ -457,16 +456,16 @@ func TestMergeSourcesPreservesDestinationAttachmentEligibility(t *testing.T) {
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
 	require.NoError(err)
 	var preserved int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments a
 		JOIN source_merge_preserved_attachments spa ON spa.attachment_id = a.id
 		WHERE a.message_id = ? AND a.source_attachment_id = ?
 	`), messages[1], fmt.Sprintf("beeper:receipt:%d", from.ID)).Scan(&preserved))
 	require.Equal(1, preserved, "the destination contains a preserved historical attachment")
 	var state string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_state FROM attachments WHERE message_id = ? AND source_attachment_id = ?`), messages[1], fmt.Sprintf("beeper:receipt:%d", into.ID)).Scan(&state))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_state FROM attachments WHERE message_id = ? AND source_attachment_id = ?`), messages[1], fmt.Sprintf("beeper:receipt:%d", into.ID)).Scan(&state))
 	assert.Equal("pending", state, "original destination media remains fetchable")
-	providerAttachments, err := st.MessageBeeperAttachments(messages[1])
+	providerAttachments, err := st.MessageBeeperAttachments(t.Context(), messages[1])
 	require.NoError(err)
 	assert.Len(providerAttachments, 1)
 	assert.Contains(providerAttachments, fmt.Sprintf("beeper:receipt:%d", into.ID))
@@ -491,7 +490,7 @@ func mergedMIMEAttachmentFixture(
 	for messageID, partKey := range map[int64]string{
 		survivorID: "mime:live", historyID: "mime:history",
 	} {
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO attachments(message_id, filename, mime_type, size, content_hash, storage_path, source_part_key)
 			VALUES (?, 'historical.txt', 'text/plain', 10, ?, ?, ?)
 		`), messageID, hash, hash[:2]+"/"+hash, partKey)
@@ -499,7 +498,7 @@ func mergedMIMEAttachmentFixture(
 	}
 	// The historical occurrence has a different filename, so retaining it
 	// preserves information absent from the live MIME occurrence.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET filename = 'live.txt' WHERE message_id = ?`), survivorID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attachments SET filename = 'live.txt' WHERE message_id = ?`), survivorID)
 	require.NoError(err)
 	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 		FromSourceID: from.ID, IntoSourceID: into.ID,
@@ -507,7 +506,7 @@ func mergedMIMEAttachmentFixture(
 	require.NoError(err)
 	require.Equal(int64(1), result.DuplicatesHidden)
 	var copied int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments a
 		JOIN source_merge_attachments sa ON sa.attachment_id = a.id
 		WHERE a.message_id = ?
@@ -562,7 +561,7 @@ func TestSourceMergeHistoricalMIMEAttachmentsSurviveRefreshAndCleanup(t *testing
 			st, survivorID, identity := mergedMIMEAttachmentFixture(t)
 			test.refresh(t, st, survivorID, identity)
 			var filename string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT a.filename FROM attachments a
 				JOIN source_merge_attachments sa ON sa.attachment_id = a.id
 				WHERE a.message_id = ?
@@ -586,7 +585,7 @@ func TestSourceMergePreservedLegacyMIMEAttachmentSurvivesReplacement(t *testing.
 	hash := strings.Repeat("c", 64)
 	storagePath := hash[:2] + "/" + hash
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments(
 			message_id, filename, mime_type, size, content_hash, storage_path,
 			attachment_role, role_source, source_part_key
@@ -594,7 +593,7 @@ func TestSourceMergePreservedLegacyMIMEAttachmentSurvivesReplacement(t *testing.
 	`), survivorID, hash, storagePath)
 	require.NoError(err)
 	var historyAttachmentID int64
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments(
 			message_id, filename, mime_type, size, content_hash, storage_path,
 			attachment_role, role_source, source_part_key
@@ -611,7 +610,7 @@ func TestSourceMergePreservedLegacyMIMEAttachmentSurvivesReplacement(t *testing.
 
 	var copiedAttachmentID int64
 	var copiedFilename, copiedPartKey, copiedHash, copiedStoragePath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT a.id, a.filename, COALESCE(a.source_part_key, ''), a.content_hash, a.storage_path
 		FROM attachments a
 		JOIN source_merge_attachments sa ON sa.attachment_id = a.id
@@ -656,7 +655,7 @@ func TestSourceMergePreservedLegacyMIMEAttachmentSurvivesReplacement(t *testing.
 	assert.Equal("mime:replacement", currentAttachments[0].SourcePartKey)
 
 	var finalFilename, finalPartKey, finalHash, finalStoragePath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT filename, COALESCE(source_part_key, ''), content_hash, storage_path
 		FROM attachments WHERE id = ?
 	`), copiedAttachmentID).Scan(&finalFilename, &finalPartKey, &finalHash, &finalStoragePath))
@@ -678,18 +677,18 @@ func TestMergeSourcesDoesNotHideLastLiveCopy(t *testing.T) {
 	live, _ := mergeFixtureMessage(t, st, from.ID, "shared", "2", "same", 1)
 	deleted, _ := mergeFixtureMessage(t, st, from.ID, "shared", "3", "deleted", 2)
 	deletedAt := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ?, delete_batch_id = 'original-batch' WHERE id IN (?, ?)`), deletedAt, old, deleted)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ?, delete_batch_id = 'original-batch' WHERE id IN (?, ?)`), deletedAt, old, deleted)
 	require.NoError(err)
-	result, err := st.MergeSourcesContext(context.Background(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
 	require.NoError(err)
 	assert.Zero(result.DuplicatesHidden)
 	var visible bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_at IS NULL FROM messages WHERE id = ?`), live).Scan(&visible))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_at IS NULL FROM messages WHERE id = ?`), live).Scan(&visible))
 	assert.True(visible)
 	for _, id := range []int64{old, deleted} {
 		var batch string
 		var stamp time.Time
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT delete_batch_id, deleted_at FROM messages WHERE id = ?`), id).Scan(&batch, &stamp))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT delete_batch_id, deleted_at FROM messages WHERE id = ?`), id).Scan(&batch, &stamp))
 		assert.Equal("original-batch", batch)
 		assert.Equal(deletedAt, stamp.UTC())
 	}
@@ -729,9 +728,9 @@ func TestMergeSourcesRejectsKnownDifferentBeeperNetworks(t *testing.T) {
 	require.NoError(err)
 	_, fromChat := mergeFixtureMessage(t, st, from.ID, "old-room", "old", "old body", 1)
 	_, intoChat := mergeFixtureMessage(t, st, into.ID, "live-room", "new", "new body", 2)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = ? WHERE id = ?`), `{"network":"signal"}`, fromChat)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET metadata = ? WHERE id = ?`), `{"network":"signal"}`, fromChat)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = ? WHERE id = ?`), `{"network":"whatsapp"}`, intoChat)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET metadata = ? WHERE id = ?`), `{"network":"whatsapp"}`, intoChat)
 	require.NoError(err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID, DryRun: true})
 	require.ErrorIs(err, store.ErrSourceMergeInvalid)
@@ -756,7 +755,7 @@ func TestMergeSourcesAllowsOverlappingBeeperNetworkFamilies(t *testing.T) {
 		{conversationID: intoSignalChat, network: "signal"},
 		{conversationID: intoWhatsAppChat, network: "whatsapp"},
 	} {
-		_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET metadata = ? WHERE id = ?`),
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET metadata = ? WHERE id = ?`),
 			`{"network":"`+item.network+`"}`, item.conversationID)
 		require.NoError(err)
 	}
@@ -768,7 +767,7 @@ func TestMergeSourcesAllowsOverlappingBeeperNetworkFamilies(t *testing.T) {
 	assert.Equal(into.ID, settings.MergedIntoSourceID)
 	for _, conversationID := range []int64{fromChat, intoSignalChat, intoWhatsAppChat} {
 		var sourceID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_id FROM conversations WHERE id = ?`), conversationID).Scan(&sourceID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id FROM conversations WHERE id = ?`), conversationID).Scan(&sourceID))
 		assert.Equal(into.ID, sourceID)
 	}
 }
@@ -815,11 +814,11 @@ func TestMergeSourcesCanConsolidatePreviouslyMergedHistory(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), result.DuplicatesHidden, "stable original conversation identity survives earlier namespacing")
 	var sourceID, original int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), message).Scan(&sourceID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), message).Scan(&sourceID))
 	assert.Equal(third.ID, sourceID)
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT original_source_id FROM source_merge_conversations WHERE conversation_id = ?`), conversation).Scan(&original))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT original_source_id FROM source_merge_conversations WHERE conversation_id = ?`), conversation).Scan(&original))
 	assert.Equal(first.ID, original)
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT original_source_id FROM source_merge_messages WHERE message_id = ?`), message).Scan(&original))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT original_source_id FROM source_merge_messages WHERE message_id = ?`), message).Scan(&original))
 	assert.Equal(first.ID, original)
 }
 
@@ -853,8 +852,8 @@ func TestMergeSourcesSequentialDedupIgnoresPreservedAttachments(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), firstMerge.DuplicatesHidden)
 	var attachmentCount, preservedAttachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageIDs[1]).Scan(&attachmentCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageIDs[1]).Scan(&attachmentCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM source_merge_preserved_attachments spa
 		JOIN attachments a ON a.id = spa.attachment_id WHERE a.message_id = ?
 	`), messageIDs[1]).Scan(&preservedAttachmentCount))
@@ -867,7 +866,7 @@ func TestMergeSourcesSequentialDedupIgnoresPreservedAttachments(t *testing.T) {
 	assert.Equal(int64(1), secondMerge.DuplicatesHidden, "preserved attachment copies do not change the complete payload fingerprint")
 
 	var hidden bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`), messageIDs[1]).Scan(&hidden))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`), messageIDs[1]).Scan(&hidden))
 	assert.True(hidden, "the matched source copy is hidden when both fingerprints agree")
 }
 
@@ -986,7 +985,7 @@ func TestMergeSourcesReconcilesObservationBackedIdentityMatches(t *testing.T) {
 			}
 			assert.Equal(test.wantLink, linkedPair(t, st, left, right))
 			var evidenceCount int
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`), evidence.ID).Scan(&evidenceCount))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`), evidence.ID).Scan(&evidenceCount))
 			assert.Zero(evidenceCount)
 		})
 	}
@@ -1007,13 +1006,13 @@ func TestMergeSourcesRetainsEarlierDuplicateEvidence(t *testing.T) {
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: first.ID, IntoSourceID: second.ID})
 	require.NoError(err)
 	var basis string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT match_basis FROM source_merge_messages WHERE message_id = ?`), hidden).Scan(&basis))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT match_basis FROM source_merge_messages WHERE message_id = ?`), hidden).Scan(&basis))
 	require.NotEmpty(basis)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: second.ID, IntoSourceID: third.ID})
 	require.NoError(err)
 	var keptBasis string
 	var keptSurvivor int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT match_basis, survivor_message_id FROM source_merge_messages WHERE message_id = ?`), hidden).Scan(&keptBasis, &keptSurvivor))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT match_basis, survivor_message_id FROM source_merge_messages WHERE message_id = ?`), hidden).Scan(&keptBasis, &keptSurvivor))
 	assert.Equal(basis, keptBasis)
 	assert.Equal(survivor, keptSurvivor)
 }
@@ -1025,7 +1024,7 @@ func TestRemoveSourcePreservesMergeHistory(t *testing.T) {
 				require := require.New(t)
 				assert := assert.New(t)
 				st := testutil.NewTestStore(t)
-				ctx := context.Background()
+				ctx := t.Context()
 				from, err := st.GetOrCreateSource("beeper", "remove-history-example")
 				require.NoError(err)
 				into, err := st.GetOrCreateSource("beeper", "remove-live-example")
@@ -1043,7 +1042,7 @@ func TestRemoveSourcePreservesMergeHistory(t *testing.T) {
 				}
 				require.ErrorIs(err, store.ErrSourceMergeParticipant)
 				var count int
-				require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&count))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources`).Scan(&count))
 				assert.Equal(2, count)
 			})
 		}
@@ -1060,11 +1059,11 @@ func TestSlackMediaEnumerationExcludesMergedHistory(t *testing.T) {
 	require.NoError(err)
 	add := func(sourceID int64, channel, providerID string) int64 {
 		t.Helper()
-		conversation, err := st.EnsureConversation(sourceID, channel, "Example channel")
+		conversation, err := st.EnsureConversation(t.Context(), sourceID, channel, "Example channel")
 		require.NoError(err)
 		message, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: conversation, SourceMessageID: providerID, MessageType: "slack"})
 		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(message_id, storage_path, source_attachment_id, attachment_state) VALUES (?, '', 'slack:file:EXAMPLE', 'pending')`), message)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO attachments(message_id, storage_path, source_attachment_id, attachment_state) VALUES (?, '', 'slack:file:EXAMPLE', 'pending')`), message)
 		require.NoError(err)
 		return message
 	}
@@ -1092,7 +1091,7 @@ func TestMergeSourcesDoesNotDuplicateEquivalentKeyedAttachments(t *testing.T) {
 	survivor := emailMergeFixtureMessage(t, st, into.ID, "live", []string{"recipient@example.test"}, true)
 	historical := emailMergeFixtureMessage(t, st, from.ID, "historical", []string{"recipient@example.test"}, true)
 	for _, id := range []int64{survivor, historical} {
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(message_id, filename, mime_type, size, content_hash, storage_path, source_part_key)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO attachments(message_id, filename, mime_type, size, content_hash, storage_path, source_part_key)
    VALUES (?, 'report.pdf', 'application/pdf', 123, ?, 'dd/test', 'mime:1')`), id, strings.Repeat("d", 64))
 		require.NoError(err)
 	}
@@ -1104,11 +1103,11 @@ func TestMergeSourcesDoesNotDuplicateEquivalentKeyedAttachments(t *testing.T) {
 	require.NoError(err)
 	assert.Len(message.Attachments, 1)
 	var count, size int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*), SUM(size) FROM attachments WHERE message_id = ?`), survivor).Scan(&count, &size))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*), SUM(size) FROM attachments WHERE message_id = ?`), survivor).Scan(&count, &size))
 	assert.Equal(int64(1), count)
 	assert.Equal(int64(123), size)
 	var auditCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), historical).Scan(&auditCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), historical).Scan(&auditCount))
 	assert.Equal(1, auditCount)
 }
 
@@ -1127,7 +1126,7 @@ func TestMergeSourcesTransfersAcrossBatchBoundaries(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(205), result.MessagesMoved)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages m
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages m
  WHERE m.source_id = ? AND m.deleted_at IS NULL AND EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages a WHERE a.message_id = m.id AND a.original_source_message_id LIKE 'message-%')`), into.ID).Scan(&count))
 	assert.Equal(205, count)

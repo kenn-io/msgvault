@@ -58,7 +58,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 	start := time.Now()
 	sum := &rederive.Summary{}
 
-	src, err := imp.store.GetSourceByID(sourceID)
+	src, err := imp.store.GetSourceByIDContext(ctx, sourceID)
 	if err != nil {
 		return sum, err
 	}
@@ -83,7 +83,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 		if err != nil {
 			return err
 		}
-		if err := imp.store.UpdateSourceSyncConfig(sourceID, string(blob)); err != nil {
+		if err := imp.store.UpdateSourceSyncConfig(ctx, sourceID, string(blob)); err != nil {
 			return err
 		}
 		resume = checkpoint
@@ -101,7 +101,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
-		batch, err := imp.store.ScanArchivedRawMessages(sourceID, rawArchiveFormat, afterID, repairBatchSize)
+		batch, err := imp.store.ScanArchivedRawMessagesContext(ctx, sourceID, rawArchiveFormat, afterID, repairBatchSize)
 		if err != nil {
 			return sum, err
 		}
@@ -116,7 +116,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 			item := &batch[i]
 			sum.MessagesScanned++
 			previousErrors := sum.Errors
-			imp.repairMessage(item, sourceID, sum)
+			imp.repairMessage(ctx, item, sourceID, sum)
 			if sum.Errors > previousErrors {
 				rowFailed = true
 				break
@@ -159,7 +159,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 // repairMessage re-derives one archived message's stored text and attachment
 // classification. Per-message failures are counted rather than fatal: one
 // unreadable payload must not abandon the rest of the archive.
-func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int64, sum *rederive.Summary) {
+func (imp *Importer) repairMessage(ctx context.Context, item *store.ArchivedRawMessage, sourceID int64, sum *rederive.Summary) {
 	var m Message
 	if err := json.Unmarshal(item.RawData, &m); err != nil {
 		sum.Undecodable++
@@ -181,6 +181,7 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 	bodyChanged := item.BodyText != text
 	bodyHTML := MessageHTML(&m)
 	if err := imp.store.UpdateMessageDerivedText(
+		ctx,
 		item.MessageID,
 		sql.NullString{String: text, Valid: text != ""},
 		sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
@@ -209,7 +210,7 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 		}
 	}
 	if len(classifications) == 0 {
-		stored, err := imp.store.MessageBeeperAttachments(item.MessageID)
+		stored, err := imp.store.MessageBeeperAttachments(ctx, item.MessageID)
 		if err != nil {
 			sum.Errors++
 			return
@@ -218,7 +219,7 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 			return
 		}
 	}
-	changed, err := imp.store.SetBeeperAttachmentClassifications(item.MessageID, classifications)
+	changed, err := imp.store.SetBeeperAttachmentClassifications(ctx, item.MessageID, classifications)
 	if err != nil {
 		sum.Errors++
 		return

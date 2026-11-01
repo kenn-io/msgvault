@@ -17,7 +17,7 @@ func TestCacheSnapshotIncrementalSliceParallelReaders(t *testing.T) {
 	source, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(source.Close()) })
-	_, err = source.Exec(`
+	_, err = source.ExecContext(t.Context(), `
 		CREATE TABLE message_recipients (
 			id INTEGER PRIMARY KEY, message_id INTEGER, participant_id INTEGER,
 			recipient_type TEXT
@@ -35,19 +35,19 @@ func TestCacheSnapshotIncrementalSliceParallelReaders(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(duck.Close()) })
 	requireSQLiteScanner(t, duck)
-	snapshot, err := openCacheSourceSnapshot(duck, path)
+	snapshot, err := openCacheSourceSnapshot(t.Context(), duck, path)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(snapshot.Close()) })
 	if snapshot.csvSnapshot {
 		t.Skip("requires the SQLite scanner")
 	}
-	relation, err := snapshot.messageSliceRelation("message_recipients", "message_id", 1, 20001)
+	relation, err := snapshot.messageSliceRelation(t.Context(), "message_recipients", "message_id", 1, 20001)
 	require.NoError(err)
 
 	// The messages export reads the recipient slice in several subqueries.
 	// DuckDB can schedule those readers on different worker threads.
 	var count, leftSum, rightSum, thirdSum int64
-	err = snapshot.DuckDB().QueryRow(fmt.Sprintf(`
+	err = snapshot.DuckDB().QueryRowContext(t.Context(), fmt.Sprintf(`
 		SELECT COUNT(*), SUM(a.participant_id), SUM(b.participant_id), SUM(c.participant_id)
 		FROM %s a
 		JOIN %s b ON a.message_id = b.message_id

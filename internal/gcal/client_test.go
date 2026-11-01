@@ -42,7 +42,7 @@ func TestClient_ListCalendars(t *testing.T) {
 
 	assert := assert.New(t)
 	require := require.New(t)
-	page, err := testClient(t, srv).ListCalendars(context.Background(), "")
+	page, err := testClient(t, srv).ListCalendars(t.Context(), "")
 	require.NoError(err)
 	require.Len(page.Items, 3)
 	assert.Equal("primary", page.Items[0].ID)
@@ -98,7 +98,7 @@ func TestClient_ListEvents_PaginationAndSyncToken(t *testing.T) {
 	defer srv.Close()
 
 	c := testClient(t, srv)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	assert := assert.New(t)
 	require := require.New(t)
@@ -162,7 +162,7 @@ func TestClient_ListEvents_IncrementalParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	page, err := testClient(t, srv).ListEvents(context.Background(), "primary", EventsListParams{
+	page, err := testClient(t, srv).ListEvents(t.Context(), "primary", EventsListParams{
 		SyncToken: "PRIOR_TOKEN", SingleEvents: false, ShowDeleted: true,
 		// These must be dropped because SyncToken is set.
 		TimeMin: "2024-01-01T00:00:00Z", TimeMax: "2024-12-31T00:00:00Z",
@@ -178,7 +178,7 @@ func TestClient_ListEvents_Gone410(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := testClient(t, srv).ListEvents(context.Background(), "primary", EventsListParams{SyncToken: "STALE"})
+	_, err := testClient(t, srv).ListEvents(t.Context(), "primary", EventsListParams{SyncToken: "STALE"})
 	var gone *GoneError
 	require.ErrorAs(t, err, &gone, "expected *GoneError, got %v", err)
 }
@@ -190,7 +190,7 @@ func TestClient_GetEvent_NotFound404(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := testClient(t, srv).GetEvent(context.Background(), "primary", "missing")
+	_, err := testClient(t, srv).GetEvent(t.Context(), "primary", "missing")
 	var nf *NotFoundError
 	require.ErrorAs(t, err, &nf, "expected *NotFoundError, got %v", err)
 }
@@ -208,7 +208,7 @@ func TestClient_Retry429ThenSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	page, err := testClient(t, srv).ListEvents(context.Background(), "primary", EventsListParams{})
+	page, err := testClient(t, srv).ListEvents(t.Context(), "primary", EventsListParams{})
 	require.NoError(t, err)
 	assert.Equal(t, "OK", page.NextSyncToken)
 	assert.GreaterOrEqual(t, calls.Load(), int32(2), "should have retried")
@@ -228,7 +228,7 @@ func TestClient_QuotaForbiddenRetries_PermissionForbiddenTerminal(t *testing.T) 
 		}))
 		defer srv.Close()
 
-		_, err := testClient(t, srv).ListEvents(context.Background(), "primary", EventsListParams{})
+		_, err := testClient(t, srv).ListEvents(t.Context(), "primary", EventsListParams{})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, calls.Load(), int32(2))
 	})
@@ -242,7 +242,7 @@ func TestClient_QuotaForbiddenRetries_PermissionForbiddenTerminal(t *testing.T) 
 		}))
 		defer srv.Close()
 
-		_, err := testClient(t, srv).ListEvents(context.Background(), "primary", EventsListParams{})
+		_, err := testClient(t, srv).ListEvents(t.Context(), "primary", EventsListParams{})
 		require.Error(t, err)
 		assert.Equal(t, int32(1), calls.Load(), "permission error must not retry")
 	})
@@ -255,7 +255,7 @@ func TestClient_ContextCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // already cancelled
 
 	_, err := testClient(t, srv).ListCalendars(ctx, "")

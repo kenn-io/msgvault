@@ -51,7 +51,7 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 	// trigger's WHEN guard yields to explicit writes.
 	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "t1", "")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "t1", "")
 	require.NoError(err, "EnsureConversation")
 	msgID, err := st.UpsertMessage(&Message{
 		SourceID: source.ID, ConversationID: convID,

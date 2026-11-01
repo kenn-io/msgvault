@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,7 +83,8 @@ func TestOrganizationChildTablesCarryTheFullEnvelope(t *testing.T) {
 
 func tableColumns(t *testing.T, st *store.Store, table string) []string {
 	t.Helper()
-	rows, err := st.DB().QueryContext(context.Background(),
+	rows, err := st.DB().QueryContext(
+		t.Context(),
 		"SELECT * FROM "+table+" WHERE 1 = 0")
 	require.NoError(t, err, "describe %s", table)
 	defer func() { _ = rows.Close() }()

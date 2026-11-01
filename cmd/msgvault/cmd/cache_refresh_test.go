@@ -46,7 +46,7 @@ func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
 	requirementsForTest.NoError(err)
 	requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
 
-	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	_, err = buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirementsForTest.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
 	staging, globErr := filepath.Glob(filepath.Join(
 		parent,
@@ -77,6 +77,7 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 		err := runBuildCacheLocalMode(
+			t.Context(),
 			buildCacheModeFull,
 			invocationFromContext(testCtx),
 		)
@@ -95,7 +96,7 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 		tmp := setupTestSQLite(t)
 		dbPath := filepath.Join(tmp, "test.db")
 		analyticsDir := filepath.Join(tmp, "analytics")
-		_, err := buildCache(dbPath, analyticsDir, true)
+		_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 		requirements.NoError(err)
 		before, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 		requirements.NoError(err)
@@ -103,6 +104,7 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 		err = runBuildCacheLocalMode(
+			t.Context(),
 			buildCacheModeDerived,
 			invocationFromContext(testCtx),
 		)
@@ -114,7 +116,7 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 		after, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
 		requirements.NoError(readErr)
 		assertions.Equal(before, after, "failed refresh must preserve the committed marker")
-		_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+		_, err = buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 		requirements.NoError(err, "a normal budget must allow retrying the staged build")
 	})
 }
@@ -125,7 +127,7 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirementsForTest.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirementsForTest.NoError(err)
@@ -133,14 +135,14 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 
 	st, err := store.Open(dbPath)
 	requirementsForTest.NoError(err)
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO conversation_participants (conversation_id, participant_id)
 		VALUES (102, 3)
 	`)
 	requirementsForTest.NoError(err)
 	requirementsForTest.NoError(st.Close())
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirementsForTest.NoError(err)
 	assertionsForTest.True(result.IdentityOnly)
 
@@ -159,13 +161,13 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 		snapshotMessagesDatasetBytes(t, analyticsDir))
 
 	duckDB, err := duckdbutil.Open(
-		context.Background(),
+		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "test-duckdb-tmp")),
 	)
 	requirementsForTest.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var membershipRows int64
-	requirementsForTest.NoError(duckDB.QueryRow(`
+	requirementsForTest.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT count(DISTINCT a.message_id)
 		FROM read_parquet(?, hive_partitioning = true) a
 		JOIN read_parquet(?) cp ON cp.conversation_id = a.conversation_id
@@ -185,11 +187,11 @@ func TestDerivedOnlyRefreshWithNoChangesIsANoOp(t *testing.T) {
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	before := snapshotCacheBytes(t, analyticsDir)
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.True(result.Skipped,
@@ -203,7 +205,7 @@ func TestDerivedOnlyFailurePreservesMarkerAndLeavesDetectableDrift(t *testing.T)
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirementsForTest.NoError(err)
 
 	st, err := store.Open(dbPath)
@@ -218,7 +220,7 @@ func TestDerivedOnlyFailurePreservesMarkerAndLeavesDetectableDrift(t *testing.T)
 	derivedPublishBeforeMarkerHook = func() error { return sentinel }
 	t.Cleanup(func() { derivedPublishBeforeMarkerHook = nil })
 
-	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	_, err = buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirementsForTest.ErrorIs(err, sentinel)
 	afterMarker, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
 	requirementsForTest.NoError(readErr)
@@ -251,7 +253,7 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	t.Cleanup(func() { runDerivedCacheSubprocess = old })
 
 	adapter := &storeAPIAdapter{store: st, analyticsDir: analyticsDir}
-	got, err := adapter.RefreshIdentityDatasets(context.Background())
+	got, err := adapter.RefreshIdentityDatasets(t.Context())
 	requirementsForTest.NoError(err)
 	assert.Equal(t, revision, got)
 }
@@ -278,7 +280,7 @@ func TestDerivedChildEscalatesTypedPreconditionFailureToFullBuild(t *testing.T) 
 	marker, err := json.Marshal(query.CacheSyncState{IdentityRevision: 1})
 	requirements.NoError(err)
 	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
-	requirements.NoError(runDerivedCacheSubprocess(context.Background(), analyticsDir))
+	requirements.NoError(runDerivedCacheSubprocess(t.Context(), analyticsDir))
 	assert.Equal(t,
 		[]buildCacheMode{buildCacheModeDerived, buildCacheModeFull},
 		modes,
@@ -298,7 +300,7 @@ func TestDerivedChildDoesNotEscalateWhenCacheAbsent(t *testing.T) {
 	}
 	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
 
-	err := runDerivedCacheSubprocess(context.Background(), t.TempDir())
+	err := runDerivedCacheSubprocess(t.Context(), t.TempDir())
 	requirements.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
 	assert.Equal(t, []buildCacheMode{buildCacheModeDerived}, modes,
 		"a derived refresh must not create a cache that configuration left absent")
@@ -368,7 +370,7 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	buildCacheBeforeMessagesExportHook = func() error { return sentinel }
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
 
-	err := rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx))
+	err := rebuildCacheAfterWrite(t.Context(), dbPath, invocationFromContext(testCtx))
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "refresh analytics cache")
 }
@@ -438,7 +440,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	}}))
 	require.NoError(st.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "build current-schema cache before repair")
 	initialState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
@@ -447,9 +449,9 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 
 	readCached := func() (string, any) {
 		t.Helper()
-		engine, openErr := query.NewDuckDBEngine(analyticsDir, "", nil)
+		engine, openErr := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 		require.NoError(openErr)
-		result, queryErr := engine.QuerySQL(context.Background(), `
+		result, queryErr := engine.QuerySQL(t.Context(), `
 			SELECT m.snippet, a.attachment_metadata
 			FROM messages m
 			JOIN attachments a ON a.message_id = m.id
@@ -480,7 +482,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	assert.True(staleness.FullRebuild,
 		"an incremental append cannot replace already-cached repaired rows")
 
-	require.NoError(rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx)))
+	require.NoError(rebuildCacheAfterWrite(t.Context(), dbPath, invocationFromContext(testCtx)))
 	assert.Contains(logs.String(), "cache rebuilt")
 	assert.Contains(logs.String(), "exported=")
 	repairedState, err := query.ReadCacheSyncState(analyticsDir)
@@ -530,7 +532,7 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 		RoleSource: store.AttachmentRoleSourceImporterSemantics,
 	}}))
 	require.NoError(st.Close())
-	require.NoError(func() error { _, buildErr := buildCache(dbPath, analyticsDir, true); return buildErr }())
+	require.NoError(func() error { _, buildErr := buildCache(t.Context(), dbPath, analyticsDir, true); return buildErr }())
 
 	st, err = store.Open(dbPath)
 	require.NoError(err)
@@ -553,8 +555,8 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	require.True(staleness.NeedsBuild)
 	assert.True(staleness.HasDerivedDataDrift)
 	assert.True(staleness.FullRebuild)
-	require.NoError(rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx)))
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(rebuildCacheAfterWrite(t.Context(), dbPath, invocationFromContext(testCtx)))
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	result, err := engine.QuerySQL(testCtx, `
 		SELECT m.source_message_id, a.attachment_metadata
@@ -732,12 +734,12 @@ func TestScheduledCacheRefreshHandlesUnsentDrift(t *testing.T) {
 		assert := assert.New(t)
 		f := newUnsentCacheFixture(t)
 		require.NoError(f.store.ReplaceMessageLabels(f.draftID, nil))
-		_, err := f.store.DB().Exec(`UPDATE messages SET is_sent = FALSE WHERE id = ?`, f.draftID)
+		_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET is_sent = FALSE WHERE id = ?`, f.draftID)
 		require.NoError(err)
-		_, err = buildCacheAuto(f.dbPath, f.analytics)
+		_, err = buildCacheAuto(t.Context(), f.dbPath, f.analytics)
 		require.NoError(err)
 
-		_, err = f.store.DB().Exec(`UPDATE messages SET is_sent = TRUE WHERE id = ?`, f.draftID)
+		_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET is_sent = TRUE WHERE id = ?`, f.draftID)
 		require.NoError(err)
 		indexed, err := cacheNeedsBuildForServing(t.Context(), f.dbPath, f.analytics)
 		require.NoError(err)
@@ -763,7 +765,7 @@ func TestScheduledCacheRefreshHandlesUnsentDrift(t *testing.T) {
 			SenderID: sql.NullInt64{Int64: f.aliceID, Valid: true}, SentAt: sql.NullTime{Time: f.sentAt.Add(time.Hour), Valid: true},
 		})
 		require.NoError(err)
-		_, err = f.store.ReconcileMessageLabels(f.draftID, []int64{f.sentLabelID}, true)
+		_, err = f.store.ReconcileMessageLabels(t.Context(), f.draftID, []int64{f.sentLabelID}, true)
 		require.NoError(err)
 
 		var unsentReads atomic.Int64
@@ -779,7 +781,7 @@ func TestScheduledCacheRefreshHandlesUnsentDrift(t *testing.T) {
 		runScheduledBuildCacheSubprocess = func(context.Context) error {
 			builds++
 			preflightReads = unsentReads.Load()
-			_, err := buildCacheScheduled(f.dbPath, f.analytics, 0, time.Now)
+			_, err := buildCacheScheduled(t.Context(), f.dbPath, f.analytics, 0, time.Now)
 			return err
 		}
 		t.Cleanup(func() { runScheduledBuildCacheSubprocess = originalBuild })
@@ -887,7 +889,7 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 
 			db, err := sql.Open("sqlite3", dbPath)
 			requirements.NoError(err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO messages (id, source_id, source_message_id, sent_at)
 				VALUES (1, 1, 'new-message', ?)
 			`, now)
@@ -1023,7 +1025,7 @@ func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) 
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirements.NoError(err)
@@ -1036,7 +1038,8 @@ func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) 
 
 	st, err := store.Open(dbPath)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 102`)
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
@@ -1049,7 +1052,7 @@ func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) 
 	assertions.True(derivedDriftOnly(staleness))
 	assertions.Contains(staleness.Reason, "conversation metadata changed")
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.False(result.Skipped)
@@ -1062,19 +1065,19 @@ func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) 
 		"derived refresh must not rewrite message facts")
 
 	duckDB, err := duckdbutil.Open(
-		context.Background(),
+		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "types-duckdb-tmp")),
 	)
 	requirements.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var conversationsType string
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT conversation_type FROM read_parquet(?) WHERE id = 102
 	`, filepath.Join(analyticsDir, tableConversations, "*.parquet")).Scan(&conversationsType))
 	assertions.Equal("group_chat", conversationsType,
 		"republished conversations dataset must carry the new type")
 	var staleActivityRows int64
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT count(*)
 		FROM read_parquet(?, hive_partitioning = true)
 		WHERE conversation_id = 102 AND conversation_type <> 'group_chat'
@@ -1095,13 +1098,14 @@ func TestConversationTitleDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
 
 	st, err := store.Open(dbPath)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		`UPDATE conversations SET title = 'Updated cache title' WHERE id = 102`)
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
@@ -1113,20 +1117,20 @@ func TestConversationTitleDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 		"title drift without new messages must stay repairable by the derived refresh")
 	assertions.Contains(staleness.Reason, "conversation metadata changed")
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
 		"derived refresh must not rewrite message facts")
 
 	duckDB, err := duckdbutil.Open(
-		context.Background(),
+		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "title-duckdb-tmp")),
 	)
 	requirements.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var title string
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT title FROM read_parquet(?) WHERE id = 102
 	`, filepath.Join(analyticsDir, tableConversations, "*.parquet")).Scan(&title))
 	assertions.Equal("Updated cache title", title)
@@ -1141,18 +1145,18 @@ func TestCSVInvalidConversationTitleKeepsIncrementalCacheFresh(t *testing.T) {
 	analyticsDir := filepath.Join(tmp, "analytics")
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE conversations SET title = CAST(X'4261642080' AS TEXT) WHERE id = 102`)
+	_, err = db.ExecContext(t.Context(), `UPDATE conversations SET title = CAST(X'4261642080' AS TEXT) WHERE id = 102`)
 	require.NoError(err)
 	require.NoError(db.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	fresh := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.False(fresh.NeedsBuild, "unchanged invalid title must match the published snapshot: %s", fresh.Reason)
 
 	db, err = sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at)
 		VALUES (99, 102, 1, 'msg99', '2026-09-23 10:00:00')`)
 	require.NoError(err)
 	require.NoError(db.Close())
@@ -1163,7 +1167,7 @@ func TestCSVInvalidConversationTitleKeepsIncrementalCacheFresh(t *testing.T) {
 
 	db, err = sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE conversations SET title = 'Changed title' WHERE id = 102`)
+	_, err = db.ExecContext(t.Context(), `UPDATE conversations SET title = 'Changed title' WHERE id = 102`)
 	require.NoError(err)
 	require.NoError(db.Close())
 	changed := cacheNeedsBuild(dbPath, analyticsDir)
@@ -1178,12 +1182,12 @@ func TestFullBuildForcedWhenTypeDriftCoincidesWithNewMessages(t *testing.T) {
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 
 	st, err := store.Open(dbPath)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 102;
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet)
 			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview');
@@ -1210,7 +1214,7 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirements.NoError(err)
@@ -1225,7 +1229,7 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 	// The identifier backfill API only fills an empty name. Clear the fixture
 	// value first so the mutation exercises the production write path that must
 	// advance ParticipantDisplayNameRevision without changing the identifier.
-	_, err = st.DB().Exec(`UPDATE participants SET display_name = NULL WHERE id = 1`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE participants SET display_name = NULL WHERE id = 1`)
 	requirements.NoError(err)
 	updatedID, err := st.EnsureParticipantByIdentifier(
 		"email", "alice@example.com", "Alice Updated",
@@ -1242,7 +1246,7 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 	assertions.True(derivedDriftOnly(staleness))
 	assertions.Contains(staleness.Reason, "participant display names changed")
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.False(result.Skipped)
@@ -1257,26 +1261,26 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 		"derived refresh must not rewrite message facts")
 
 	duckDB, err := duckdbutil.Open(
-		context.Background(),
+		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "display-names-duckdb-tmp")),
 	)
 	requirements.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var participantName string
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT display_name FROM read_parquet(?) WHERE id = 1
 	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&participantName))
 	assertions.Equal("Alice Updated", participantName,
 		"republished participants dataset must carry the new display name")
 
 	var displayLabel string
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT display_label FROM read_parquet(?) WHERE canonical_id = 1
 	`, filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&displayLabel))
 	assertions.Equal("Alice Updated", displayLabel,
 		"relationship_people label must use the republished participant name")
 	var searchable bool
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT list_contains(search_values, 'alice updated')
 		FROM read_parquet(?) WHERE canonical_id = 1
 	`, filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&searchable))
@@ -1300,7 +1304,7 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirements.NoError(err)
@@ -1323,7 +1327,7 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 	assertions.True(derivedDriftOnly(staleness))
 	assertions.Contains(staleness.Reason, "participant identifiers changed")
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.False(result.Skipped)
@@ -1336,20 +1340,20 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 		"derived refresh must not rewrite message facts")
 
 	duckDB, err := duckdbutil.Open(
-		context.Background(),
+		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "identifiers-duckdb-tmp")),
 	)
 	requirements.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var mappedParticipant int64
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT participant_id FROM read_parquet(?)
 		WHERE identifier_value = 'carol.alias@example.net'
 	`, filepath.Join(analyticsDir, tableParticipantIdentifiers, "*.parquet")).Scan(&mappedParticipant))
 	assertions.Equal(int64(3), mappedParticipant,
 		"republished participant_identifiers dataset must carry the new mapping")
 	var searchable bool
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT list_contains(search_values, 'carol.alias@example.net')
 		FROM read_parquet(?) WHERE canonical_id = 3
 	`, filepath.Join(
@@ -1373,7 +1377,7 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirements.NoError(err)
@@ -1386,7 +1390,7 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 	// seed the new row directly and let the production identifier write create
 	// the drift watermark. The refresh must publish the row even though it has
 	// no message activity yet.
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO participants (id, email_address, domain, display_name)
 		VALUES (?, ?, ?, ?)
 	`, newParticipantID, "new-cache-participant@example.test", "example.test", "New Cache Participant")
@@ -1405,7 +1409,7 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 	assertions.True(derivedDriftOnly(staleness))
 	assertions.Contains(staleness.Reason, "participant identifiers changed")
 
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.False(result.Skipped)
@@ -1417,13 +1421,13 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 		"derived refresh must not rewrite message facts")
 
 	duckDB, err := duckdbutil.Open(
-		context.Background(),
+		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "new-participant-duckdb-tmp")),
 	)
 	requirements.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var participantName string
-	requirements.NoError(duckDB.QueryRow(`
+	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT display_name FROM read_parquet(?) WHERE id = ?
 	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), newParticipantID).Scan(&participantName))
 	assertions.Equal("New Cache Participant", participantName,
@@ -1445,14 +1449,14 @@ func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *tes
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
 
 	st, err := store.Open(dbPath)
 	requirements.NoError(err)
 	requirements.NoError(st.SetParticipantIdentifier(3, "email", "carol.alias@example.net"))
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet)
 			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview');
 	`)
@@ -1467,7 +1471,7 @@ func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *tes
 		"identifier drift with new messages must stay incremental")
 	assertions.False(derivedDriftOnly(staleness))
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	requirements.NoError(err)
 	assertions.False(result.Skipped)
 	messagesAfter := snapshotMessagesDatasetBytes(t, analyticsDir)
@@ -1497,11 +1501,11 @@ func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T)
 
 	dbPath := cfg.DatabaseDSN()
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	_, err := st.DB().Exec(`INSERT INTO sources
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO sources
 		(id, source_type, identifier, created_at, updated_at)
 		VALUES (1, ?, 'alice@example.com/primary', datetime('now'), datetime('now'))`, gcal.SourceType)
 	require.NoError(err, "insert calendar source")
-	_, err = st.DB().Exec(`INSERT INTO conversations
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO conversations
 		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (1, 1, 'repair-calendar-conversation', ?, 'Calendar', datetime('now'), datetime('now'))`,
 		gcal.ConversationType)
@@ -1509,12 +1513,12 @@ func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T)
 
 	canonicalBody := strings.Repeat("a", 198) + "\u2014after-boundary"
 	brokenSnippet := strings.Repeat("a", 198) + "\xe2\x80"
-	_, err = st.DB().Exec(`INSERT INTO messages
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages
 		(id, conversation_id, source_id, source_message_id, message_type, snippet, sent_at, size_estimate)
 		VALUES (1, 1, 1, ?, ?, ?, datetime('now'), 1000)`,
 		cacheCalendarBoundaryEventID, gcal.MessageTypeCalendarEvent, brokenSnippet)
 	require.NoError(err, "insert damaged calendar message")
-	_, err = st.DB().Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (1, ?)`, canonicalBody)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO message_bodies (message_id, body_text) VALUES (1, ?)`, canonicalBody)
 	require.NoError(err, "insert canonical calendar body")
 	require.NoError(st.Close(), "close fixture store")
 
@@ -1527,7 +1531,7 @@ func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T)
 	require.NoError(err, "reopen repaired store")
 	defer func() { assert.NoError(st.Close()) }()
 	var stored string
-	require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE id = 1`).Scan(&stored),
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE id = 1`).Scan(&stored),
 		"read repaired SQLite snippet")
 	want := strings.Repeat("a", 198)
 	assert.Equal(want, stored, "normal repair stores the canonical preview")
@@ -1553,13 +1557,13 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	requirements.NoError(err)
 	conv := insertExportMessagesConversation(t, st, source.ID, "conversation", "Test")
 	insertExportMessagesMessage(t, st, source.ID, conv, "message", time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC), "body")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
 	requirements.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(alice)
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
 	st = nil
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	requirements.NoError(err)
@@ -1579,7 +1583,7 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	assertions.True(stale.HasPersonDisplayNameDrift)
 	assertions.False(stale.FullRebuild)
 	assertions.True(derivedDriftOnly(stale))
-	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
 	assertions.True(result.IdentityOnly)
 	assertions.False(result.Skipped)
@@ -1589,9 +1593,9 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	assertions.Equal(before.PersonDisplayNameRevision+1, after.PersonDisplayNameRevision)
 	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir))
 	t.Logf("revision before=%s after=%s", before.Revision(), after.Revision())
-	e, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	e, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
-	people, err := e.SearchPeople(context.Background(), query.PersonSearchRequest{Query: name})
+	people, err := e.SearchPeople(t.Context(), query.PersonSearchRequest{Query: name})
 	requirements.NoError(err)
 	requirements.Len(people.Rows, 1)
 	assertions.Equal(name, people.Rows[0].DisplayLabel)
@@ -1613,11 +1617,11 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	requirements.NoError(st.DeletePerson(person.ID, person.Revision))
 	requirements.NoError(st.Close())
 	st = nil
-	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	_, err = buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.NoError(err)
-	e, err = query.NewDuckDBEngine(analyticsDir, "", nil)
+	e, err = query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
-	people, err = e.SearchPeople(context.Background(), query.PersonSearchRequest{Query: name})
+	people, err = e.SearchPeople(t.Context(), query.PersonSearchRequest{Query: name})
 	requirements.NoError(err)
 	assertions.Empty(people.Rows)
 	requirements.NoError(e.Close())
@@ -1629,7 +1633,7 @@ func TestDerivedOnlyStaleSchemaRequiresAndCompletesFullRebuild(t *testing.T) {
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	requirements.NoError(err)
@@ -1640,9 +1644,9 @@ func TestDerivedOnlyStaleSchemaRequiresAndCompletesFullRebuild(t *testing.T) {
 	stale := cacheNeedsBuild(dbPath, analyticsDir)
 	assertions.True(stale.NeedsBuild)
 	assertions.True(stale.FullRebuild)
-	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	_, err = buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
 	requirements.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
-	_, err = buildCache(dbPath, analyticsDir, stale.FullRebuild)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, stale.FullRebuild)
 	requirements.NoError(err)
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	requirements.NoError(err)
@@ -1667,7 +1671,7 @@ func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) (str
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (1, 1, 'new-message', ?)`, now)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (1, 1, 'new-message', ?)`, now)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -1817,9 +1821,10 @@ func TestRebuildAfterSyncHandsOffToRefresher(t *testing.T) {
 	}, nil)
 	oldRefresher := daemonCacheRefresher
 	daemonCacheRefresher = refresher
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		daemonCacheRefresher = oldRefresher
-		require.NoError(t, refresher.Shutdown(context.Background()))
+		require.NoError(t, refresher.Shutdown(context.WithoutCancel(t.Context())))
 	})
 
 	require.NoError(t, rebuildCacheAfterScheduledSync(testCtx, "test-source"))
@@ -1839,13 +1844,14 @@ func TestCacheRefresherShutdownWhileWaitingForBuilderLock(t *testing.T) {
 	require.NoError(err)
 	require.NoError(buildLock.Lock())
 	refresher := newBackgroundCacheRefresher(testCtx, nil, nil)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		require.NoError(buildLock.Unlock())
-		require.NoError(refresher.Shutdown(context.Background()))
+		require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
 	})
 
 	require.True(refresher.Request("sync"))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	assert.NoError(t, refresher.Shutdown(ctx), "shutdown cancels a readiness check blocked behind another builder")
 }

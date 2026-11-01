@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -170,7 +169,7 @@ func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t 
 	b.AddFrom(chat, first, "Shared Name")
 	b.AddConversationParticipant(103, first)
 
-	result, err := b.BuildEngine().SearchPeople(context.Background(), PersonSearchRequest{
+	result, err := b.BuildEngine().SearchPeople(t.Context(), PersonSearchRequest{
 		Query: "Shared Name", Sort: SortSpec{Field: "display_label", Direction: "asc"},
 		Page: PageSpec{Limit: 25},
 	})
@@ -204,7 +203,7 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 	requirements := require.New(t)
 	b, _, alicePrimary, aliceAlias, bob, start := linkedPeopleFixture(t)
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	searched, err := engine.SearchPeople(ctx, PersonSearchRequest{Query: "other.example", Page: PageSpec{Limit: 25}})
 	requirements.NoError(err)
@@ -259,7 +258,7 @@ func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	b.AddTo(draft, carol, "Carol Example")
 	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 	// A date filter takes the logical-entry path instead of the source rollup.
 	after := start.Add(-time.Minute)
 	dateContext := Context{After: &after}
@@ -454,7 +453,7 @@ func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
 	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "Unlabeled activity", SentAt: time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC), MessageType: "matrix"})
 	b.AddFrom(message, person, "")
 
-	result, err := b.BuildEngine().SearchPeople(context.Background(), PersonSearchRequest{Page: PageSpec{Limit: 25}})
+	result, err := b.BuildEngine().SearchPeople(t.Context(), PersonSearchRequest{Page: PageSpec{Limit: 25}})
 	requirements.NoError(err)
 	requirements.Len(result.Rows, 1)
 	assertions.Equal("@user:example.invalid", result.Rows[0].DisplayLabel)
@@ -479,7 +478,7 @@ func TestSearchDomainsSpansSourcesAndModalitiesWithoutOrganizationClaims(t *test
 	b.AddConversationParticipant(202, second)
 	b.AddAttachmentWithMIME(601, chat, 200, "photo.jpg", "image/jpeg")
 
-	result, err := b.BuildEngine().SearchDomains(context.Background(), DomainSearchRequest{
+	result, err := b.BuildEngine().SearchDomains(t.Context(), DomainSearchRequest{
 		Query: "EXAMPLE", Sort: SortSpec{Field: "activity_count", Direction: "desc"}, Page: PageSpec{Limit: 25},
 	})
 	requirements.NoError(err)
@@ -518,7 +517,7 @@ func TestSearchDomainsCountsLinkedAliasesAsOnePerson(t *testing.T) {
 	toBob := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 603, Subject: "To bob", SentAt: when.Add(2 * time.Hour)})
 	b.AddTo(toBob, bob, "Bob Example")
 
-	result, err := b.BuildEngine().SearchDomains(context.Background(), DomainSearchRequest{Page: PageSpec{Limit: 25}})
+	result, err := b.BuildEngine().SearchDomains(t.Context(), DomainSearchRequest{Page: PageSpec{Limit: 25}})
 	requirements.NoError(err)
 	requirements.Len(result.Rows, 1)
 	assertions.Equal("example.com", result.Rows[0].Domain)
@@ -547,7 +546,7 @@ func TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain(t *testing.T) {
 	toWork := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 702, Subject: "To work", SentAt: when.Add(time.Hour)})
 	b.AddTo(toWork, aliceWork, "Alice (Work)")
 
-	result, err := b.BuildEngine().SearchDomains(context.Background(), DomainSearchRequest{
+	result, err := b.BuildEngine().SearchDomains(t.Context(), DomainSearchRequest{
 		Sort: SortSpec{Field: "display_label", Direction: "asc"}, Page: PageSpec{Limit: 25},
 	})
 	requirements.NoError(err)
@@ -570,21 +569,21 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	b.AddFrom(message, person, "Person")
 	engine := b.BuildEngine()
 
-	personResult, err := engine.GetPerson(context.Background(), person, Context{}, nil)
+	personResult, err := engine.GetPerson(t.Context(), person, Context{}, nil)
 	requirements.NoError(err)
 	requirements.NotNil(personResult)
 	assertions.Equal(person, personResult.ID)
 	assertions.Equal("email", personResult.Identifiers[0].Type)
 
-	domainResult, err := engine.GetDomain(context.Background(), "EXAMPLE.COM", Context{})
+	domainResult, err := engine.GetDomain(t.Context(), "EXAMPLE.COM", Context{})
 	requirements.NoError(err)
 	requirements.NotNil(domainResult)
 	assertions.Equal("example.com", domainResult.Domain)
 
-	missingPerson, err := engine.GetPerson(context.Background(), 9999, Context{}, nil)
+	missingPerson, err := engine.GetPerson(t.Context(), 9999, Context{}, nil)
 	requirements.NoError(err)
 	assertions.Nil(missingPerson)
-	missingDomain, err := engine.GetDomain(context.Background(), "missing.example", Context{})
+	missingDomain, err := engine.GetDomain(t.Context(), "missing.example", Context{})
 	requirements.NoError(err)
 	assertions.Nil(missingDomain)
 }
@@ -641,7 +640,7 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t 
 	b.AddConversationParticipant(303, secondary)
 	engine := b.BuildEngine()
 
-	solo, err := engine.GetPerson(context.Background(), primary, Context{}, nil)
+	solo, err := engine.GetPerson(t.Context(), primary, Context{}, nil)
 	requirements.NoError(err)
 	requirements.NotNil(solo)
 	requirements.Len(solo.Identifiers, 1, "without cluster member IDs, identifiers stay scoped to the requested participant")
@@ -650,7 +649,7 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t 
 	assertions.Equal(primaryAt, solo.FirstAt)
 	assertions.Equal(primaryAt, solo.LastAt)
 
-	clustered, err := engine.GetPerson(context.Background(), primary, Context{}, []int64{primary, secondary})
+	clustered, err := engine.GetPerson(t.Context(), primary, Context{}, []int64{primary, secondary})
 	requirements.NoError(err)
 	requirements.NotNil(clustered)
 	requirements.Len(clustered.Identifiers, 2, "with cluster member IDs, identifiers span every member")
@@ -674,7 +673,7 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t 
 
 	// The filtered shape (an analytical context present) must widen the same
 	// way: scoped to the mail source, the alias's mail entry still counts.
-	filtered, err := engine.GetPerson(context.Background(), primary, Context{SourceIDs: []int64{mailSource}}, []int64{primary, secondary})
+	filtered, err := engine.GetPerson(t.Context(), primary, Context{SourceIDs: []int64{mailSource}}, []int64{primary, secondary})
 	requirements.NoError(err)
 	requirements.NotNil(filtered)
 	assertions.Equal(int64(2), filtered.ActivityCount)
@@ -709,7 +708,7 @@ func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
 		b.AddFrom(message, senderID, "")
 	}
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	clustered, err := engine.GetPerson(ctx, primary, Context{}, []int64{primary, alias})
 	requirements.NoError(err)
@@ -759,7 +758,7 @@ func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *tes
 		Mode: SearchFullText, Query: "Included", CandidateMessageIDs: []int64{mailMessage}, LexicalIndexRevision: "fts5:context",
 	}}
 
-	people, err := engine.GetPersonSummary(context.Background(), person, explore, nil)
+	people, err := engine.GetPersonSummary(t.Context(), person, explore, nil)
 	requirements.NoError(err)
 	requirements.Len(people.Rows, 1)
 	assertions.Equal(int64(1), people.Rows[0].ActivityCount)
@@ -768,7 +767,7 @@ func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *tes
 	assertions.Equal([]SourceCount{{SourceType: "gmail", Count: 1}}, people.Rows[0].SourceCounts)
 	assertions.Equal(SearchProvenance{LexicalIndexRevision: "fts5:context"}, people.SearchProvenance)
 
-	domains, err := engine.GetDomainSummary(context.Background(), "EXAMPLE.COM", explore)
+	domains, err := engine.GetDomainSummary(t.Context(), "EXAMPLE.COM", explore)
 	requirements.NoError(err)
 	requirements.Len(domains.Rows, 1)
 	assertions.Equal(int64(1), domains.Rows[0].ActivityCount)
@@ -807,7 +806,7 @@ func TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity(t *testing.
 	b.AddFrom(aliasMail, aliceAlias, "")
 	b.AddAttachmentWithMIME(902, aliasMail, 100, "alias.pdf", "application/pdf")
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 	explore := ExploreRequest{Context: Context{SourceIDs: []int64{mailSource}}}
 
 	clustered, err := engine.GetPersonSummary(ctx, alicePrimary, explore, []int64{alicePrimary, aliceAlias})
@@ -836,9 +835,9 @@ func TestPeopleAndDomainSearchRejectUnboundedOrUnknownSorts(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
 	engine := NewTestDataBuilder(t).BuildEngine()
-	_, err := engine.SearchPeople(context.Background(), PersonSearchRequest{Page: PageSpec{Limit: 501}})
+	_, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Page: PageSpec{Limit: 501}})
 	requirements.ErrorIs(err, ErrInvalidExploreRequest)
-	_, err = engine.SearchDomains(context.Background(), DomainSearchRequest{Sort: SortSpec{Field: "sql", Direction: "asc"}})
+	_, err = engine.SearchDomains(t.Context(), DomainSearchRequest{Sort: SortSpec{Field: "sql", Direction: "asc"}})
 	requirements.ErrorIs(err, ErrInvalidExploreRequest)
 }
 
@@ -867,7 +866,7 @@ func TestSearchPeopleProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 		{name: "hybrid", search: SearchSpec{Mode: SearchHybrid, Query: "Second", CandidateMessageIDs: []int64{secondMessage}, LexicalCandidateMessageIDs: []int64{firstMessage, secondMessage}, LexicalIndexRevision: "fts5:test", VectorGeneration: &generation}, provenance: SearchProvenance{LexicalIndexRevision: "fts5:test", VectorGeneration: &generation}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := engine.SearchPeople(context.Background(), PersonSearchRequest{
+			result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
 				Explore: ExploreRequest{Search: test.search}, Query: "Shared Name", Page: PageSpec{Limit: 25},
 			})
 			requirements.NoError(err)
@@ -877,7 +876,7 @@ func TestSearchPeopleProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 		})
 	}
 
-	empty, err := engine.SearchPeople(context.Background(), PersonSearchRequest{
+	empty, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
 		Explore: ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "none", CandidateMessageIDs: []int64{}, LexicalIndexRevision: "fts5:empty"}},
 		Page:    PageSpec{Limit: 25},
 	})
@@ -899,7 +898,7 @@ func TestSearchDomainsProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 	b.AddFrom(firstMessage, first, "First")
 	b.AddFrom(secondMessage, second, "Second")
 
-	result, err := b.BuildEngine().SearchDomains(context.Background(), DomainSearchRequest{
+	result, err := b.BuildEngine().SearchDomains(t.Context(), DomainSearchRequest{
 		Explore: ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "Second", CandidateMessageIDs: []int64{secondMessage}, LexicalIndexRevision: "fts5:domain"}},
 		Page:    PageSpec{Limit: 25},
 	})
@@ -936,7 +935,7 @@ func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T)
 		b.AddCc(withAlias, alias, "Peer (Work)")
 	}
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	byCanonical, err := engine.GetPersonSummary(ctx, subject,
 		ExploreRequest{Context: Context{ParticipantIDs: []int64{canonical}}}, nil)
@@ -974,7 +973,7 @@ func TestGetDomainSummaryMatchesDomainListPersonCount(t *testing.T) {
 	b.AddConversationParticipant(971, dave)
 
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	list, err := engine.SearchDomains(ctx, DomainSearchRequest{
 		Query: "roster.example", Sort: SortSpec{Field: "activity_count", Direction: "desc"}, Page: PageSpec{Limit: 25},
@@ -1018,7 +1017,7 @@ func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
 		b.AddCc(withAlias, alias, "Peer (Work)")
 	}
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	byCanonical, err := engine.GetDomainSummary(ctx, "target.example",
 		ExploreRequest{Context: Context{ParticipantIDs: []int64{canonical}}})

@@ -99,12 +99,12 @@ func TestImportEmlxDir_RestoredPartialRerunSkipsIngest(t *testing.T) {
 		Identifier: "alice@example.com", NoResume: true,
 		IngestFunc: countingIngest(&calls),
 	}
-	summary, err := ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Equal(int64(1), summary.MessagesAdded)
 	require.Equal(1, calls)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 	storedRaw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	revision, err := st.DerivedDataRevision()
@@ -112,7 +112,7 @@ func TestImportEmlxDir_RestoredPartialRerunSkipsIngest(t *testing.T) {
 
 	for range 2 {
 		calls = 0
-		summary, err = ImportEmlxDir(context.Background(), st, root, opts)
+		summary, err = ImportEmlxDir(t.Context(), st, root, opts)
 		require.NoError(err)
 		require.Zero(summary.Errors)
 		assert.Zero(calls, "rerun must not ingest")
@@ -143,29 +143,29 @@ func TestImportEmlxDir_RestoredPartialFullReconcileRepairsHeaders(t *testing.T) 
 		Identifier: "alice@example.com", NoResume: true,
 		IngestFunc: countingIngest(&calls),
 	}
-	_, err := ImportEmlxDir(context.Background(), st, root, opts)
+	_, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	var messageID int64
 	var rfcID string
-	require.NoError(st.DB().QueryRow(`SELECT id, rfc822_message_id FROM messages`).Scan(&messageID, &rfcID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, rfc822_message_id FROM messages`).Scan(&messageID, &rfcID))
 	require.NotEmpty(rfcID)
-	_, err = st.DB().Exec(`UPDATE messages SET rfc822_message_id = NULL, metadata = NULL WHERE id = ?`, messageID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = NULL, metadata = NULL WHERE id = ?`, messageID)
 	require.NoError(err)
 
 	calls = 0
-	summary, err := ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Zero(summary.Errors)
 	assert.Zero(calls, "rerun must not ingest")
 	assert.Equal(int64(1), summary.MessagesSkipped)
 
 	opts.FullReconcile = true
-	summary, err = ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err = ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Zero(summary.Errors)
 	assert.Equal(1, calls, "full reconciliation completes the target once")
 	var gotID, metadata string
-	require.NoError(st.DB().QueryRow(`SELECT rfc822_message_id, CAST(metadata AS TEXT) FROM messages WHERE id = ?`, messageID).Scan(&gotID, &metadata))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT rfc822_message_id, CAST(metadata AS TEXT) FROM messages WHERE id = ?`, messageID).Scan(&gotID, &metadata))
 	assert.Equal(rfcID, gotID)
 	assert.Contains(metadata, "email_in_reply_to")
 }
@@ -183,7 +183,7 @@ func TestImportEmlxDir_RestoredPartialSecondMailboxAddsLabel(t *testing.T) {
 		Identifier: "alice@example.com", NoResume: true,
 		IngestFunc: countingIngest(&calls),
 	}
-	_, err := ImportEmlxDir(context.Background(), st, root, opts)
+	_, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 
 	otherDir := filepath.Join(root, "Mailboxes", "Other.mbox")
@@ -194,13 +194,13 @@ func TestImportEmlxDir_RestoredPartialSecondMailboxAddsLabel(t *testing.T) {
 	cacheAttachment(t, otherDir, "7", "3", "b.bin", []byte("second cache"))
 
 	calls = 0
-	summary, err := ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Zero(summary.Errors)
 	assert.Zero(calls, "rerun must not ingest")
 	assert.Zero(summary.MessagesUpdated)
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_labels`).Scan(&count))
 	assert.Equal(2, count)
 }
 
@@ -223,17 +223,17 @@ func TestImportEmlxDir_RestoredPartialOverBudgetRerunSkips(t *testing.T) {
 		Identifier: "alice@example.com", NoResume: true,
 		MaxMessageBytes: 2048, IngestFunc: countingIngest(&calls),
 	}
-	summary, err := ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Equal(int64(1), summary.MessagesAdded)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 	storedRaw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	require.Equal(1, bytes.Count(storedRaw, []byte("X-Apple-Content-Length:")))
 
 	calls = 0
-	summary, err = ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err = ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Zero(summary.Errors)
 	assert.Zero(calls, "rerun must not ingest")
@@ -248,7 +248,7 @@ func TestImportEmlxDir_RestoredPartialLabelFailureReingests(t *testing.T) {
 	assert := assert.New(t)
 	st, tmp := openTestStore(t)
 	root := restoredPartialTree(t, tmp)
-	_, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{
+	_, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{
 		Identifier: "alice@example.com", NoResume: true,
 	})
 	require.NoError(err)
@@ -258,12 +258,12 @@ func TestImportEmlxDir_RestoredPartialLabelFailureReingests(t *testing.T) {
 		"7.partial.emlx": partialRaw(nil, "a.bin", "b.bin"),
 	})
 	cacheAttachment(t, otherDir, "7", "2", "a.bin", []byte("first cached"))
-	_, err = st.DB().Exec(`CREATE TRIGGER block_labels BEFORE INSERT ON message_labels
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_labels BEFORE INSERT ON message_labels
 		BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
 	require.NoError(err)
 
 	var labelIDs [][]int64
-	summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{
+	summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{
 		Identifier: "alice@example.com", NoResume: true,
 		IngestFunc: func(
 			_ context.Context, _ *store.Store, _ int64, _, _ string,
@@ -311,7 +311,7 @@ func TestImportEmlxDir_PartialDuplicateRestoreCount(t *testing.T) {
 			for _, c := range tc.caches {
 				cacheAttachment(t, mboxDir, c[0], c[1], names[c[1]], []byte("cached bytes"))
 			}
-			summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{
+			summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{
 				Identifier: "alice@example.com", NoResume: true, IngestFunc: tc.ingest,
 			})
 			require.NoError(err)

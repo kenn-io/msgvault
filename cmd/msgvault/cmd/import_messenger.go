@@ -69,7 +69,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -97,12 +97,12 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run to continue.")
-			return rebuildCacheAfterWrite(dbPath, state)
+			return rebuildCacheAfterWrite(ctx, dbPath, state)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -130,7 +130,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 			importMessengerMe, fbmessenger.Slug(fbmessenger.StripDomain(importMessengerMe)))
 	}
 
-	return rebuildCacheAfterWrite(dbPath, state)
+	return rebuildCacheAfterWrite(ctx, dbPath, state)
 }
 
 func init() {

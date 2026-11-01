@@ -30,7 +30,7 @@ func TestOpenSystemTargetReturnsAfterLauncherStarts(t *testing.T) {
 }
 
 func TestOpenSystemTargetRejectsCanceledContextBeforeStart(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	assert.ErrorIs(t, openSystemTarget(ctx, "document.pdf"), context.Canceled)

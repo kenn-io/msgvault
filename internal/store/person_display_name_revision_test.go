@@ -40,7 +40,7 @@ func TestPersonDisplayNameRevision(t *testing.T) {
 	_, err = f.Store.UpdatePersonDisplayName(person.ID, person.Revision, &name)
 	requirements.ErrorIs(err, store.ErrPersonRevisionConflict)
 	counter(1)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = f.Store.UpdatePersonDisplayNameContext(ctx, updated.ID, updated.Revision, &name)
 	requirements.Error(err)
@@ -57,7 +57,7 @@ func TestPersonDisplayNameRevision(t *testing.T) {
 	updated, err = f.Store.UpdatePersonDisplayName(updated.ID, updated.Revision, &blank)
 	requirements.NoError(err)
 	counter(2)
-	profile, err := f.Store.ApplyPersonProfilePatchContext(context.Background(), updated.ID, updated.Revision, store.PersonProfilePatch{
+	profile, err := f.Store.ApplyPersonProfilePatchContext(t.Context(), updated.ID, updated.Revision, store.PersonProfilePatch{
 		Categories: &store.PersonCategoryPatch{Add: []store.PersonCategoryInput{{OriginalValue: "Test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}}}},
 	})
 	requirements.NoError(err)

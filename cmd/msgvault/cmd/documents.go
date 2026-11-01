@@ -224,14 +224,14 @@ func defaultDocumentsCommandDeps() documentsCommandDeps {
 		validateProbeFixtures: mistral.ValidateProbeFixtures,
 		runCapabilityProbe:    mistral.RunCapabilityProbe,
 		openStore: func(ctx context.Context) (*store.Store, func(), error) {
-			return openWritableStoreAndInitForInvocation(invocationFromContext(ctx))
+			return openWritableStoreAndInitForInvocation(ctx, invocationFromContext(ctx))
 		},
 		runDocumentVector: runConfiguredDocumentVectorGeneration,
 		openInitializedStore: func(ctx context.Context) (*store.Store, func(), error) {
 			return openInitializedStoreForInvocation(ctx, invocationFromContext(ctx))
 		},
 		openAttachments: func(ctx context.Context, st *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
-			return openDocumentAttachments(st, invocationFromContext(ctx))
+			return openDocumentAttachments(ctx, st, invocationFromContext(ctx))
 		},
 		openReadClient: func(ctx context.Context) (documentReadClient, func(), error) {
 			client, _, err := OpenHTTPStore(ctx)
@@ -1475,10 +1475,11 @@ func documentProfileForConfig(
 }
 
 func openDocumentAttachments(
+	ctx context.Context,
 	st *store.Store,
 	state *invocation,
 ) (documentindex.DocumentAttachmentOpener, func() error, error) {
-	state = invocationState(context.Background(), state)
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return nil, nil, errors.New("configuration is unavailable")
 	}

@@ -196,9 +196,9 @@ func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
 // loadResumeState rebuilds the sync state for a source: the last successful
 // run's cursor blob (baseline) merged with the latest interrupted checkpoint,
 // so a resumed run skips already-covered work.
-func (imp *Importer) loadResumeState(sourceID int64) *SyncState {
+func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) *SyncState {
 	state := NewSyncState()
-	if prev, err := imp.store.GetLastSuccessfulSync(sourceID); err == nil && prev != nil && prev.CursorAfter.Valid {
+	if prev, err := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID); err == nil && prev != nil && prev.CursorAfter.Valid {
 		if s, lerr := LoadSyncState(prev.CursorAfter.String); lerr == nil {
 			state = s
 		}
@@ -236,7 +236,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	state := imp.loadResumeState(src.ID)
+	state := imp.loadResumeState(ctx, src.ID)
 	if opts.Full {
 		// Repair path: drop all cursors so every message is re-fetched and
 		// upserted in place — but keep the anchors. Skipping their
@@ -345,7 +345,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	// its first checkpoint (Beeper not running, anchor mismatch), the next run
 	// finds it here instead of losing the previous run's progress — the store
 	// only exposes the newest run's checkpoint.
-	imp.checkpointNow(syncID, state, sum)
+	imp.checkpointNow(ctx, syncID, state, sum)
 
 	// Message IDs are only unique per Beeper installation; verify the anchor
 	// messages still exist unchanged before trusting stored cursors.
@@ -487,7 +487,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			opts.Progress(fmt.Sprintf("chat %d/%d (%s): %d messages", idx+1, total, ch.Network, convCount))
 		}
 		// Flush checkpoint so an interrupted run can resume from this point.
-		imp.checkpoint(syncID, state, sum)
+		imp.checkpoint(ctx, syncID, state, sum)
 		if sum.Stopped {
 			break
 		}
@@ -876,7 +876,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 			// This quiet chat was enumerated only for the probe. With no new
 			// history, its incremental and reconciliation paths have no work.
 			// Cursorless chats still need the empty-chat recovery below.
-			imp.flushReplies(cc, sum)
+			imp.flushReplies(ctx, cc, sum)
 			return sum.MessagesProcessed - before, tailProbeComplete, nil
 		}
 	}
@@ -902,7 +902,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	// backfill has actually archived the parents; until then the pairs ride
 	// along in the checkpointed chat state.
 	if cs.Done {
-		imp.flushReplies(cc, sum)
+		imp.flushReplies(ctx, cc, sum)
 	}
 	return sum.MessagesProcessed - before, tailProbeComplete, nil
 }
@@ -1023,7 +1023,7 @@ func (imp *Importer) ensureConversation(
 			return 0, false, chatMembership{}, err
 		}
 		p := &detail.Participants.Items[i]
-		pid, rerr := imp.res.resolveUser(&p.User)
+		pid, rerr := imp.res.resolveUser(ctx, &p.User)
 		if rerr != nil {
 			return 0, false, chatMembership{}, rerr
 		}
@@ -1182,7 +1182,7 @@ func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *Impo
 		recent.add(pageIDs)
 
 		if len(ids) > 0 {
-			archived, err := imp.store.ArchivedSourceMessageIDs(cc.sourceID, ids)
+			archived, err := imp.store.ArchivedSourceMessageIDs(ctx, cc.sourceID, ids)
 			if err != nil {
 				sum.Errors++
 				clearProbeCursor()
@@ -1380,7 +1380,7 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 		}
 		pages++
 		if pages%checkpointPageInterval == 0 {
-			imp.checkpoint(cc.syncID, state, sum)
+			imp.checkpoint(ctx, cc.syncID, state, sum)
 		}
 		if !page.HasMore {
 			cs.Done = true
@@ -1543,7 +1543,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 		return imp.refreshReactionTarget(ctx, cc, m, sum)
 	}
 	if m.IsDeleted {
-		if err := imp.store.MarkMessageDeleted(cc.sourceID, m.ID); err != nil {
+		if err := imp.store.MarkMessageDeletedContext(ctx, cc.sourceID, m.ID); err != nil {
 			sum.Errors++
 		}
 		sum.MessagesProcessed++
@@ -1595,7 +1595,7 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 		return errRetryPage
 	}
 	if target.IsDeleted {
-		if derr := imp.store.MarkMessageDeleted(cc.sourceID, target.ID); derr != nil {
+		if derr := imp.store.MarkMessageDeletedContext(ctx, cc.sourceID, target.ID); derr != nil {
 			sum.Errors++
 		}
 		return nil
@@ -1616,24 +1616,24 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 // recorded but do not abort the run.
 func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
-	senderPID, err := imp.res.resolveID(m.SenderID, m.SenderName)
+	senderPID, err := imp.res.resolveID(ctx, m.SenderID, m.SenderName)
 	if err != nil {
 		return err
 	}
 	if senderPID != 0 {
 		msg.SenderID = sql.NullInt64{Int64: senderPID, Valid: true}
 		if !cc.membershipComplete {
-			if cerr := imp.store.EnsureConversationParticipant(cc.convID, senderPID, "member"); cerr != nil {
+			if cerr := imp.store.EnsureConversationParticipantContext(ctx, cc.convID, senderPID, "member"); cerr != nil {
 				sum.Errors++
 			}
 		}
 	}
-	messageID, err := imp.store.UpsertMessage(&msg)
+	messageID, err := imp.store.UpsertMessageContext(ctx, &msg)
 	if err != nil {
 		return err
 	}
 	bodyHTML := MessageHTML(m)
-	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}); err != nil {
+	if err := imp.store.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}); err != nil {
 		return err
 	}
 	// Archive the exact original message JSON. m.Raw is captured verbatim at
@@ -1648,14 +1648,14 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 		raw = marshaled
 	}
-	if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "beeper_json"); err != nil {
+	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, "beeper_json"); err != nil {
 		return fmt.Errorf("archive beeper message raw: %w", err)
 	}
-	if err := imp.store.UpsertFTS(messageID, "", text, m.SenderName, "", ""); err != nil {
+	if err := imp.store.UpsertFTSContext(ctx, messageID, "", text, m.SenderName, "", ""); err != nil {
 		sum.Errors++
 	}
 	if m.EditedTimestamp != nil && !m.EditedTimestamp.IsZero() {
-		if err := imp.store.SetMessageEdited(messageID); err != nil {
+		if err := imp.store.SetMessageEditedContext(ctx, messageID); err != nil {
 			sum.Errors++
 		}
 	}
@@ -1669,10 +1669,10 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 	}
 
-	if err := imp.persistMentions(messageID, m, sum); err != nil {
+	if err := imp.persistMentions(ctx, messageID, m, sum); err != nil {
 		return err
 	}
-	if err := imp.persistReactions(messageID, m, sum); err != nil {
+	if err := imp.persistReactions(ctx, messageID, m, sum); err != nil {
 		return err
 	}
 
@@ -1691,14 +1691,14 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 // written: sender attribution lives in messages.sender_id and membership in
 // conversation_participants (WhatsApp-importer precedent), which avoids a
 // messages × group-size row explosion.
-func (imp *Importer) persistMentions(messageID int64, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistMentions(ctx context.Context, messageID int64, m *Message, sum *ImportSummary) error {
 	var ids []int64
 	seen := map[int64]struct{}{}
 	for _, uid := range m.Mentions {
 		if uid == "" || uid == "@room" {
 			continue
 		}
-		pid, err := imp.res.resolveID(uid, "")
+		pid, err := imp.res.resolveID(ctx, uid, "")
 		if err != nil {
 			return err
 		}
@@ -1708,7 +1708,7 @@ func (imp *Importer) persistMentions(messageID int64, m *Message, sum *ImportSum
 		seen[pid] = struct{}{}
 		ids = append(ids, pid)
 	}
-	if err := imp.store.ReplaceMessageRecipients(messageID, "mention", ids, make([]string, len(ids))); err != nil {
+	if err := imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "mention", ids, make([]string, len(ids))); err != nil {
 		sum.Errors++
 	}
 	return nil
@@ -1717,10 +1717,10 @@ func (imp *Importer) persistMentions(messageID int64, m *Message, sum *ImportSum
 // persistReactions replaces the message's reactions from the embedded set.
 // Embedded reactions carry no timestamp; created_at approximates with the
 // target message's timestamp (cosmetic only).
-func (imp *Importer) persistReactions(messageID int64, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistReactions(ctx context.Context, messageID int64, m *Message, sum *ImportSummary) error {
 	reactions := make([]store.ReactionRef, 0, len(m.Reactions))
 	for _, rc := range m.Reactions {
-		pid, err := imp.res.resolveID(rc.ParticipantID, "")
+		pid, err := imp.res.resolveID(ctx, rc.ParticipantID, "")
 		if err != nil {
 			return err
 		}
@@ -1738,7 +1738,7 @@ func (imp *Importer) persistReactions(messageID int64, m *Message, sum *ImportSu
 			CreatedAt:     m.Timestamp,
 		})
 	}
-	if err := imp.store.ReplaceReactions(messageID, reactions); err != nil {
+	if err := imp.store.ReplaceReactionsContext(ctx, messageID, reactions); err != nil {
 		sum.Errors++
 	}
 	return nil
@@ -1747,9 +1747,9 @@ func (imp *Importer) persistReactions(messageID int64, m *Message, sum *ImportSu
 // flushReplies links the chat's buffered reply pairs now that both sides of
 // each pair have been archived. SetReplyTo is idempotent; pairs whose parents
 // are beyond locally-available history resolve to NULL.
-func (imp *Importer) flushReplies(cc *chatScope, sum *ImportSummary) {
+func (imp *Importer) flushReplies(ctx context.Context, cc *chatScope, sum *ImportSummary) {
 	for _, pr := range cc.cs.PendingReplies {
-		if err := imp.store.SetReplyTo(cc.sourceID, pr[0], pr[1]); err != nil {
+		if err := imp.store.SetReplyToContext(ctx, cc.sourceID, pr[0], pr[1]); err != nil {
 			sum.Errors++
 		}
 	}
@@ -1758,17 +1758,18 @@ func (imp *Importer) flushReplies(cc *chatScope, sum *ImportSummary) {
 
 // checkpoint persists the sync state mid-run so an interrupted run resumes.
 // Flushes are throttled — the blob is O(chats) JSON (see checkpointMinInterval).
-func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSummary) {
+func (imp *Importer) checkpoint(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) {
 	if time.Since(imp.lastCheckpoint) < checkpointMinInterval {
 		return
 	}
-	imp.checkpointNow(syncID, state, sum)
+	imp.checkpointNow(ctx, syncID, state, sum)
 }
 
 // checkpointNow persists the sync state unconditionally: for the initial
 // resume-state write and the final counters, which must never be skipped.
-func (imp *Importer) checkpointNow(syncID int64, state *SyncState, sum *ImportSummary) {
-	_ = imp.checkpointNowContext(context.Background(), syncID, state, sum)
+// It ignores cancellation so a stopped run still records where to resume.
+func (imp *Importer) checkpointNow(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) {
+	_ = imp.checkpointNowContext(context.WithoutCancel(ctx), syncID, state, sum)
 }
 
 func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {

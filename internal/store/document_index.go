@@ -167,7 +167,7 @@ func (s *Store) EnsureDocumentExtractionProfile(
 	}
 	var created bool
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		result, execErr := tx.Exec(`
+		result, execErr := tx.ExecContext(ctx, `
 			INSERT INTO document_extraction_profiles
 				(id, fingerprint, provider, endpoint, region, model,
 				 retention_posture, training_posture, allowed_media_types,
@@ -189,7 +189,7 @@ func (s *Store) EnsureDocumentExtractionProfile(
 
 		var stored DocumentExtractionProfile
 		var storedAllowed, storedPolicy string
-		if scanErr := tx.QueryRow(`
+		if scanErr := tx.QueryRowContext(ctx, `
 			SELECT id, fingerprint, provider, endpoint, region, model,
 			       retention_posture, training_posture,
 			       CAST(allowed_media_types AS TEXT), CAST(policy_json AS TEXT), include_inline
@@ -263,7 +263,7 @@ func (s *Store) RecordDocumentProviderConsent(
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		var fingerprint, retention, training string
 		var retired bool
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT fingerprint, retention_posture, training_posture,
 			       retired_at IS NOT NULL
 			FROM document_extraction_profiles WHERE id = ?`, consent.ProfileID).Scan(
@@ -280,7 +280,7 @@ func (s *Store) RecordDocumentProviderConsent(
 		if retired {
 			return errors.New("document provider consent profile is retired")
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO document_provider_consents
 				(profile_id, profile_fingerprint, retention_posture, training_posture)
 			VALUES (?, ?, ?, ?)
@@ -291,7 +291,7 @@ func (s *Store) RecordDocumentProviderConsent(
 			return fmt.Errorf("record document provider consent: %w", err)
 		}
 		var storedFingerprint, storedRetention, storedTraining string
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT profile_fingerprint, retention_posture, training_posture
 			FROM document_provider_consents WHERE profile_id = ?`, consent.ProfileID).Scan(
 			&storedFingerprint, &storedRetention, &storedTraining,
@@ -302,13 +302,13 @@ func (s *Store) RecordDocumentProviderConsent(
 			storedRetention != consent.RetentionPosture || storedTraining != consent.TrainingPosture {
 			return errors.New("document provider consent already records different assertions")
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE document_extraction_profiles SET enabled = TRUE
 			WHERE id = ? AND retired_at IS NULL`, consent.ProfileID); err != nil {
 			return fmt.Errorf("enable consented document extraction profile: %w", err)
 		}
 		var currentTarget sql.NullString
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT target_profile_id FROM document_index_state WHERE singleton = 1`,
 		).Scan(&currentTarget); err != nil {
 			return fmt.Errorf("read target document extraction profile: %w", err)
@@ -317,10 +317,10 @@ func (s *Store) RecordDocumentProviderConsent(
 			return nil
 		}
 		var hasHeads bool
-		if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM document_extraction_heads)`).Scan(&hasHeads); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM document_extraction_heads)`).Scan(&hasHeads); err != nil {
 			return fmt.Errorf("check document heads before selecting target profile: %w", err)
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE document_index_state
 			SET target_profile_id = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE singleton = 1`, consent.ProfileID); err != nil {
@@ -359,6 +359,7 @@ func (s *Store) ReconcileDocumentOccurrence(
 		}
 		if !found || !eligibleDocumentFile(file) {
 			removed, removedOccurrence, err := removeDocumentOccurrenceTx(
+				ctx,
 				tx, attachmentID, sourceSequence,
 			)
 			if err != nil || !removed {
@@ -386,7 +387,7 @@ func (s *Store) ReconcileDocumentOccurrence(
 			RoleSource:        file.RoleSource,
 			SourceSequence:    sourceSequence,
 		}
-		linked, replaced, err := upsertDocumentOccurrenceTx(tx, occurrence)
+		linked, replaced, err := upsertDocumentOccurrenceTx(ctx, tx, occurrence)
 		if err != nil {
 			return err
 		}
@@ -958,7 +959,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 	}
 	result := DocumentDerivativeGCResult{}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		rows, err := tx.Query(`
+		rows, err := tx.QueryContext(ctx, `
 			SELECT e.id, e.state,
 			       CASE WHEN h.extraction_id IS NULL THEN FALSE ELSE TRUE END
 			FROM document_extractions e
@@ -1007,7 +1008,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 		for index := range extractionIDs {
 			args[index] = extractionIDs[index]
 		}
-		deleted, err := tx.Exec(`DELETE FROM document_extractions WHERE id IN (`+
+		deleted, err := tx.ExecContext(ctx, `DELETE FROM document_extractions WHERE id IN (`+
 			documentPlaceholders(len(extractionIDs))+`)`, args...)
 		if err != nil {
 			return fmt.Errorf("delete stale document derivatives: %w", err)
@@ -1036,7 +1037,7 @@ func (s *Store) RetryDocumentExtraction(
 	var changed bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var hasHead bool
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM document_extraction_heads
 				WHERE profile_id = ? AND canonical_blob_hash = ?
@@ -1046,7 +1047,7 @@ func (s *Store) RetryDocumentExtraction(
 		retryScope := ""
 		if hasHead {
 			var activeRebuildFailure bool
-			if err := tx.QueryRow(`
+			if err := tx.QueryRowContext(ctx, `
 				SELECT EXISTS (
 					SELECT 1 FROM document_extractions e
 					JOIN document_extraction_rebuilds r ON r.id = e.rebuild_id
@@ -1062,7 +1063,7 @@ func (s *Store) RetryDocumentExtraction(
 				// uses a route the head cannot cover; the attachment may have
 				// moved on from the failed route by now.
 				var failedReplacementRoute bool
-				if err := tx.QueryRow(`
+				if err := tx.QueryRowContext(ctx, `
 					SELECT EXISTS (
 						SELECT 1 FROM document_extractions e
 						JOIN document_extraction_heads h
@@ -1108,14 +1109,14 @@ func (s *Store) RetryDocumentExtraction(
 			}
 		}
 		var terminalRows int
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*)
 			FROM document_extractions
 			WHERE profile_id = ? AND canonical_blob_hash = ?
 			  AND state = 'terminal'`+retryScope, profileID, canonicalBlobHash).Scan(&terminalRows); err != nil {
 			return fmt.Errorf("count terminal document extractions before retry: %w", err)
 		}
-		result, err := tx.Exec(`
+		result, err := tx.ExecContext(ctx, `
 			UPDATE document_extractions
 			SET state = 'tombstoned', next_retry_at = `+s.dialect.Now()+`,
 			    terminal_reason = NULL, updated_at = CURRENT_TIMESTAMP
@@ -1144,11 +1145,11 @@ func (s *Store) RetireDocumentExtractionProfile(ctx context.Context, profileID s
 	var changed bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var headCount int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM document_extraction_heads WHERE profile_id = ?`,
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_extraction_heads WHERE profile_id = ?`,
 			profileID).Scan(&headCount); err != nil {
 			return fmt.Errorf("count document profile heads before retirement: %w", err)
 		}
-		result, err := tx.Exec(`
+		result, err := tx.ExecContext(ctx, `
 			UPDATE document_extraction_profiles
 			SET enabled = FALSE, retired_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND retired_at IS NULL`, profileID)
@@ -1163,7 +1164,7 @@ func (s *Store) RetireDocumentExtractionProfile(ctx context.Context, profileID s
 		if !changed {
 			return nil
 		}
-		result, err = tx.Exec(`
+		result, err = tx.ExecContext(ctx, `
 			UPDATE document_index_state
 			SET target_profile_id = NULL
 			WHERE singleton = 1 AND target_profile_id = ?`, profileID)
@@ -1191,12 +1192,12 @@ func (s *Store) PurgeDocumentDerivedByHash(
 	}
 	result := DocumentDerivedPurgeResult{}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := tx.QueryRow(`
+		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM document_extraction_heads WHERE canonical_blob_hash = ?`,
 			canonicalBlobHash).Scan(&result.HeadsRemoved); err != nil {
 			return fmt.Errorf("count document heads before purge: %w", err)
 		}
-		deleted, err := tx.Exec(`DELETE FROM document_extractions WHERE canonical_blob_hash = ?`,
+		deleted, err := tx.ExecContext(ctx, `DELETE FROM document_extractions WHERE canonical_blob_hash = ?`,
 			canonicalBlobHash)
 		if err != nil {
 			return fmt.Errorf("purge document derivatives: %w", err)
@@ -1475,10 +1476,11 @@ func documentOccurrenceMediaScopeSQL(
 }
 
 func upsertDocumentOccurrenceTx(
+	ctx context.Context,
 	tx *loggedTx, occurrence DocumentOccurrence,
 ) (bool, *DocumentOccurrence, error) {
 	var existing DocumentOccurrence
-	err := tx.QueryRow(`
+	err := tx.QueryRowContext(ctx, `
 			SELECT occurrence_key, attachment_id, message_id, source_id,
 			       COALESCE(source_part_key, ''), stable_source_part,
 			       canonical_blob_hash, COALESCE(filename, ''), COALESCE(mime_type, ''),
@@ -1496,7 +1498,7 @@ func upsertDocumentOccurrenceTx(
 			if existingSequence >= occurrence.SourceSequence {
 				return false, nil, nil
 			}
-			if _, err := tx.Exec(`
+			if _, err := tx.ExecContext(ctx, `
 					UPDATE document_occurrences
 					SET source_sequence = ?, reconciled_at = CURRENT_TIMESTAMP
 					WHERE occurrence_key = ? AND source_sequence = ?`,
@@ -1516,6 +1518,7 @@ func upsertDocumentOccurrenceTx(
 	}
 	newOccurrence := errors.Is(err, sql.ErrNoRows)
 	attachmentOccurrence, attachmentFound, err := documentOccurrenceByAttachmentTx(
+		ctx,
 		tx, occurrence.AttachmentID,
 	)
 	if err != nil {
@@ -1530,7 +1533,7 @@ func upsertDocumentOccurrenceTx(
 	} else if !newOccurrence && documentOccurrenceEvidenceChanged(existing, occurrence) {
 		replaced = &existing
 	}
-	removedResult, err := tx.Exec(`
+	removedResult, err := tx.ExecContext(ctx, `
 			DELETE FROM document_occurrences
 			WHERE attachment_id = ? AND occurrence_key != ? AND source_sequence <= ?`,
 		occurrence.AttachmentID, occurrence.OccurrenceKey, occurrence.SourceSequence,
@@ -1542,7 +1545,7 @@ func upsertDocumentOccurrenceTx(
 	if err != nil {
 		return false, nil, fmt.Errorf("read replaced document occurrence count: %w", err)
 	}
-	result, err := tx.Exec(`
+	result, err := tx.ExecContext(ctx, `
 			INSERT INTO document_occurrences
 				(occurrence_key, attachment_id, message_id, source_id,
 				 source_part_key, stable_source_part, canonical_blob_hash,
@@ -1590,10 +1593,11 @@ func upsertDocumentOccurrenceTx(
 }
 
 func documentOccurrenceByAttachmentTx(
+	ctx context.Context,
 	tx *loggedTx, attachmentID int64,
 ) (DocumentOccurrence, bool, error) {
 	var occurrence DocumentOccurrence
-	err := tx.QueryRow(`
+	err := tx.QueryRowContext(ctx, `
 		SELECT occurrence_key, attachment_id, message_id, source_id,
 		       COALESCE(source_part_key, ''), stable_source_part,
 		       canonical_blob_hash, COALESCE(filename, ''), COALESCE(mime_type, ''),
@@ -1626,13 +1630,14 @@ func documentOccurrenceEvidenceChanged(old, current DocumentOccurrence) bool {
 }
 
 func removeDocumentOccurrenceTx(
+	ctx context.Context,
 	tx *loggedTx, attachmentID, sourceSequence int64,
 ) (bool, DocumentOccurrence, error) {
-	occurrence, found, err := documentOccurrenceByAttachmentTx(tx, attachmentID)
+	occurrence, found, err := documentOccurrenceByAttachmentTx(ctx, tx, attachmentID)
 	if err != nil || !found || occurrence.SourceSequence > sourceSequence {
 		return false, DocumentOccurrence{}, err
 	}
-	result, err := tx.Exec(`
+	result, err := tx.ExecContext(ctx, `
 			DELETE FROM document_occurrences
 			WHERE attachment_id = ? AND source_sequence <= ?`, attachmentID, sourceSequence)
 	if err != nil {

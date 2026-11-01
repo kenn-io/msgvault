@@ -176,7 +176,7 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 		if write.StoragePath == "" && write.ContentHash == "" {
 			var storagePath, contentHash, state, skipReason string
 			var size int64
-			err := tx.QueryRow(`
+			err := tx.QueryRowContext(ctx, `
 				SELECT storage_path, COALESCE(content_hash, ''), COALESCE(size, 0),
 				       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
 				FROM attachments WHERE message_id = ? AND source_part_key = ?
@@ -220,7 +220,7 @@ func (s *Store) UpsertAttachmentRecordWithStats(
 			return err
 		}
 		if invalidateCache {
-			return s.bumpDerivedDataRevision(tx)
+			return s.bumpDerivedDataRevisionContext(ctx, tx)
 		}
 		return nil
 	})

@@ -41,16 +41,16 @@ func TestStore_FindDuplicatesByRFC822ID(t *testing.T) {
 	idB := newRFC822Message(t, f, "src-b", "rfc822-shared")
 	_ = newRFC822Message(t, f, "src-c", "rfc822-unique")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err, "FindDuplicatesByRFC822ID")
 	require.Len(groups, 1)
 	assert.Equal("rfc822-shared", groups[0].RFC822MessageID, "key")
 	assert.Equal(2, groups[0].Count, "count")
 
-	_, err = f.Store.MergeDuplicates(idA, []int64{idB}, "batch-test")
+	_, err = f.Store.MergeDuplicates(t.Context(), idA, []int64{idB}, "batch-test")
 	require.NoError(err, "MergeDuplicates")
 
-	groups, err = f.Store.FindDuplicatesByRFC822ID()
+	groups, err = f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err, "FindDuplicatesByRFC822ID after merge")
 	assert.Empty(groups, "groups after merge")
 }
@@ -62,7 +62,7 @@ func TestStore_DuplicateGroupsCanonicalizeBracketedRFC822IDs(t *testing.T) {
 	bracketedID := newRFC822Message(t, f, "sync-copy", "<mixed@example.test>")
 	bareID := newRFC822Message(t, f, "backfilled-copy", "mixed@example.test")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 1)
 	assert.Equal("mixed@example.test", groups[0].RFC822MessageID)
@@ -91,7 +91,7 @@ func TestStore_DuplicateGroupsPreserveMalformedRFC822IDs(t *testing.T) {
 	firstID := newRFC822Message(t, f, "malformed-first", malformedID)
 	secondID := newRFC822Message(t, f, "malformed-second", malformedID)
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 1)
 	assert.Equal(malformedID, groups[0].RFC822MessageID)
@@ -147,7 +147,7 @@ func TestStore_DuplicateGroupFetchMatchesWhitespaceDiscoveryGroups(t *testing.T)
 		newRFC822Message(t, f, "bare-second", bareID),
 	}
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 2)
 	groupCounts := make(map[string]int, len(groups))
@@ -194,7 +194,7 @@ func TestStore_DuplicateGroupFetchPreservesInvalidUTF8(t *testing.T) {
 	bareID := newRFC822Message(t, f, "invalid-bare", invalidID)
 	bracketedID := newRFC822Message(t, f, "invalid-bracketed", "<"+invalidID+">")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 1)
 	assert.Equal(invalidID, groups[0].RFC822MessageID)
@@ -221,7 +221,7 @@ func TestStore_DuplicateGroupFetchPreservesEmptyBrackets(t *testing.T) {
 	firstID := newRFC822Message(t, f, "empty-brackets-first", "<>")
 	secondID := newRFC822Message(t, f, "empty-brackets-second", "<>")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 1)
 	assert.Equal("<>", groups[0].RFC822MessageID)
@@ -259,7 +259,7 @@ func TestStore_DuplicateGroupFetchPreservesNonASCIIAndControlEdges(t *testing.T)
 			bareID := newRFC822Message(t, f, tt.name+"-bare", groupID)
 			bracketedID := newRFC822Message(t, f, tt.name+"-bracketed", "<"+groupID+">")
 
-			groups, err := f.Store.FindDuplicatesByRFC822ID()
+			groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 			require.NoError(err)
 			require.Len(groups, 1)
 			assert.Equal(groupID, groups[0].RFC822MessageID)
@@ -293,7 +293,7 @@ func TestStore_DuplicateGroupFetchPreservesEmbeddedNUL(t *testing.T) {
 	bareID := newRFC822Message(t, f, "nul-bare", groupID)
 	bracketedID := newRFC822Message(t, f, "nul-bracketed", "<"+groupID+">")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 1)
 	assert.Equal(groupID, groups[0].RFC822MessageID)
@@ -319,7 +319,7 @@ func TestStore_DuplicateDiscoveryDoesNotTruncateAtEmbeddedNUL(t *testing.T) {
 	newRFC822Message(t, f, "nul-tail-c", "<ab>\x00c>")
 	newRFC822Message(t, f, "nul-tail-d", "<ab>\x00d>")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, groups)
 }
@@ -340,7 +340,7 @@ func TestStore_DuplicateGroupsPreserveNULTailAsOwnKey(t *testing.T) {
 		newRFC822Message(t, f, "nul-tail-second", nulTailID),
 	}
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 2)
 	counts := make(map[string]int, len(groups))
@@ -370,7 +370,7 @@ func TestStore_DuplicateGroupFetchPreservesMultibyteID(t *testing.T) {
 	bareID := newRFC822Message(t, f, "multibyte-bare", groupID)
 	bracketedID := newRFC822Message(t, f, "multibyte-bracketed", "<"+groupID+">")
 
-	groups, err := f.Store.FindDuplicatesByRFC822ID()
+	groups, err := f.Store.FindDuplicatesByRFC822ID(t.Context())
 	require.NoError(err)
 	require.Len(groups, 1)
 	assert.Equal(groupID, groups[0].RFC822MessageID)
@@ -395,8 +395,8 @@ func TestStore_GetDuplicateGroupMessages_SentLabel(t *testing.T) {
 	labels := f.EnsureLabels(
 		map[string]string{"SENT": "Sent", "INBOX": "Inbox"}, "system",
 	)
-	require.NoError(f.Store.LinkMessageLabel(idInbox, labels["INBOX"]), "link INBOX")
-	require.NoError(f.Store.LinkMessageLabel(idSent, labels["SENT"]), "link SENT")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idInbox, labels["INBOX"]), "link INBOX")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idSent, labels["SENT"]), "link SENT")
 
 	rows, err := f.Store.GetDuplicateGroupMessages("rfc822-sent")
 	require.NoError(err, "GetDuplicateGroupMessages")
@@ -427,18 +427,18 @@ func TestStore_MergeDuplicates_UnionsLabels(t *testing.T) {
 	labels := f.EnsureLabels(
 		map[string]string{"INBOX": "Inbox", "IMPORTANT": "Important", "WORK": "Work"}, "user",
 	)
-	require.NoError(f.Store.LinkMessageLabel(idKeep, labels["INBOX"]), "link INBOX to keep")
-	require.NoError(f.Store.LinkMessageLabel(idDrop, labels["IMPORTANT"]), "link IMPORTANT to drop")
-	require.NoError(f.Store.LinkMessageLabel(idDrop, labels["WORK"]), "link WORK to drop")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idKeep, labels["INBOX"]), "link INBOX to keep")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idDrop, labels["IMPORTANT"]), "link IMPORTANT to drop")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idDrop, labels["WORK"]), "link WORK to drop")
 
-	result, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-labels")
+	result, err := f.Store.MergeDuplicates(t.Context(), idKeep, []int64{idDrop}, "batch-labels")
 	require.NoError(err, "MergeDuplicates")
 	assert.Equal(2, result.LabelsTransferred, "labelsTransferred")
 
 	f.AssertLabelCount(idKeep, 3)
 	assertDedupDeleted(t, f.Store, idDrop, true)
 
-	restored, err := f.Store.UndoDedup("batch-labels")
+	restored, err := f.Store.UndoDedup(t.Context(), "batch-labels")
 	require.NoError(err, "UndoDedup")
 	assert.Equal(int64(1), restored, "restored")
 	assertDedupDeleted(t, f.Store, idDrop, false)
@@ -449,7 +449,8 @@ func assertDedupDeleted(
 ) {
 	t.Helper()
 	var deletedAt sql.NullTime
-	err := st.DB().QueryRow(
+	err := st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
 	require.NoError(t, err, "query deleted_at")
@@ -488,7 +489,7 @@ func TestStore_PlanRFC822IDBackfillDoesNotWriteAndSeparatesFailures(t *testing.T
 		"From: alice@example.com\r\nMessage-ID: <planned@example.com>\r\n\r\nBody")))
 	require.NoError(f.Store.UpsertMessageRaw(missingHeaderID, []byte(
 		"From: bob@example.com\r\nSubject: no identifier\r\n\r\nBody")))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
 		 VALUES (?, ?, 'mime', 'zlib')`), malformedID, []byte("not-zlib"))
 	require.NoError(err)
@@ -502,7 +503,8 @@ func TestStore_PlanRFC822IDBackfillDoesNotWriteAndSeparatesFailures(t *testing.T
 
 	for _, messageID := range []int64{validID, malformedID, missingHeaderID, noRawID} {
 		var stored sql.NullString
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), messageID,
 		).Scan(&stored))
 		assert.False(stored.Valid, "message %d must remain unchanged", messageID)
@@ -604,7 +606,7 @@ func TestStore_PlanRFC822IDBackfillExcludesNonMIMEStoredRows(t *testing.T) {
 	messageID := newRFC822Message(t, f, "plan-non-mime", "")
 	require.NoError(f.Store.UpsertMessageRaw(messageID, []byte(
 		"Message-ID: <must-not-derive@example.com>\r\n\r\nNon-MIME source payload")))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE message_raw SET raw_format = ? WHERE message_id = ?`),
 		"imessage_archive", messageID)
 	require.NoError(err)
@@ -636,7 +638,7 @@ func TestStore_RFC822IDBackfillPlanDigestBindsRowsAndRawInput(t *testing.T) {
 	require.Equal(int64(1), replacedRawPlan.Ready)
 	assert.NotEqual(firstPlan.Digest(), replacedRawPlan.Digest())
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "already-set@example.com", firstID)
 	require.NoError(err)
 	secondID := newRFC822Message(t, f, "digest-second", "")
@@ -693,7 +695,7 @@ func TestStore_RFC822IDBackfillRawFingerprintDistinguishesNullCompression(t *tes
 
 	messageID := newRFC822Message(t, f, "compression-null-empty", "")
 	raw := []byte("Message-ID: <compression@example.com>\r\n\r\nBody")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
 		 VALUES (?, ?, 'mime', NULL)`), messageID, raw)
 	require.NoError(err)
@@ -701,7 +703,7 @@ func TestStore_RFC822IDBackfillRawFingerprintDistinguishesNullCompression(t *tes
 	require.NoError(err)
 	require.Equal(int64(1), nullPlan.Ready)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE message_raw SET compression = '' WHERE message_id = ?`), messageID)
 	require.NoError(err)
 	emptyPlan, err := f.Store.PlanRFC822IDBackfill(t.Context(), nil)
@@ -750,7 +752,7 @@ func TestStore_ApplyRFC822IDBackfillRollsBackWhenLaterMessageIsStale(t *testing.
 	f := storetest.New(t)
 
 	firstID, secondID, plan := twoMessageRFC822IDBackfillPlan(t, f, "stale")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "claimed@example.com", secondID)
 	require.NoError(err)
 
@@ -783,7 +785,7 @@ func TestStore_ApplyRFC822IDBackfillProgressOnlyAfterCommit(t *testing.T) {
 	f := storetest.New(t)
 
 	firstID, secondID, plan := twoMessageRFC822IDBackfillPlan(t, f, "progress")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "stale@example.com", secondID)
 	require.NoError(err)
 
@@ -817,7 +819,8 @@ func twoMessageRFC822IDBackfillPlan(
 func storedRFC822ID(t *testing.T, st *store.Store, messageID int64) string {
 	t.Helper()
 	var value sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), messageID,
 	).Scan(&value))
 	return value.String
@@ -835,6 +838,7 @@ func TestStore_CountActiveMessages(t *testing.T) {
 	assert.Equal(int64(2), total, "active")
 
 	_, err = f.Store.MergeDuplicates(
+		t.Context(),
 		newRFC822Message(t, f, "c", "id-c"),
 		[]int64{idB},
 		"batch-count",
@@ -868,7 +872,8 @@ func TestStore_ApplyRFC822IDBackfillParsesFromRawMIME(t *testing.T) {
 	require.Equal(int64(1), updated, "updated")
 
 	var rfc822ID string
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT rfc822_message_id FROM messages WHERE id = ?"), id,
 	).Scan(&rfc822ID)
 	require.NoError(err, "scan rfc822_message_id")
@@ -892,7 +897,7 @@ func TestStore_ApplyRFC822IDBackfillDoesNotOvercountRolledBackBatch(t *testing.T
 	require.NoError(f.Store.UpsertMessageRaw(idA, rawA), "UpsertMessageRaw A")
 	require.NoError(f.Store.UpsertMessageRaw(idB, rawB), "UpsertMessageRaw B")
 
-	_, err := f.Store.DB().Exec(fmt.Sprintf(`
+	_, err := f.Store.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_backfill_second_message
 		BEFORE UPDATE OF rfc822_message_id ON messages
 		WHEN NEW.id = %d
@@ -909,7 +914,7 @@ func TestStore_ApplyRFC822IDBackfillDoesNotOvercountRolledBackBatch(t *testing.T
 	require.Equal(int64(0), updated, "updated after rollback")
 
 	var count int64
-	err = f.Store.DB().QueryRow(`
+	err = f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM messages
 		WHERE rfc822_message_id IS NOT NULL AND rfc822_message_id != ''
 	`).Scan(&count)
@@ -934,6 +939,7 @@ func TestStore_MergeDuplicates_BackfillsRawMIME(t *testing.T) {
 	require.Error(err, "survivor should not have raw MIME before merge")
 
 	result, err := f.Store.MergeDuplicates(
+		t.Context(),
 		idSurvivor, []int64{idDuplicate}, "batch-mime",
 	)
 	require.NoError(err, "MergeDuplicates")
@@ -962,7 +968,8 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 
 	id := newRFC822Message(t, f, "msg-mxid", "rfc822-mxid")
 
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`INSERT INTO message_recipients
 			(message_id, participant_id, recipient_type)
 			VALUES (?, ?, 'from')`),
@@ -991,7 +998,8 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 	pid := f.EnsureParticipant(mxid, "", "")
 
 	id := newRFC822Message(t, f, "msg-mxid-raw", "rfc822-mxid-raw")
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`UPDATE messages
 			SET size_estimate = ?, has_attachments = ?, attachment_count = ?
 			WHERE id = ?`),
@@ -999,7 +1007,8 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 	)
 	require.NoError(err, "set completeness metadata")
 
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`INSERT INTO message_recipients
 			(message_id, participant_id, recipient_type)
 			VALUES (?, ?, 'from')`),
@@ -1013,7 +1022,7 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 		"UpsertMessageRaw",
 	)
 
-	cands, err := f.Store.GetAllRawMIMECandidates()
+	cands, err := f.Store.GetAllRawMIMECandidates(t.Context())
 	require.NoError(err, "GetAllRawMIMECandidates")
 	var got *store.ContentHashCandidate
 	for i := range cands {
@@ -1120,7 +1129,7 @@ func TestStore_GetDuplicateGroupMessagesBatchContext_Canceled(t *testing.T) {
 	newRFC822Message(t, f, "src-a", "rfc822-canceled")
 	newRFC822Message(t, f, "src-b", "rfc822-canceled")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := f.Store.GetDuplicateGroupMessagesBatchContext(
@@ -1170,9 +1179,9 @@ func TestStore_DedupMetadataQuality(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f := storetest.New(t)
-			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
 			require.NoError(err)
-			_, err = f.Store.DB().Exec(f.Store.Rebind(
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 				"UPDATE conversations SET source_conversation_id = ? WHERE id = ?"), tc.thread, f.ConvID)
 			require.NoError(err)
 			id := newRFC822Message(t, f, "src", "quality@example.test")
@@ -1186,7 +1195,7 @@ func TestStore_DedupMetadataQuality(t *testing.T) {
 			require.NoError(err)
 			require.Len(batch["quality@example.test"], 1)
 			assert.Equal(tc.want, batch["quality@example.test"][0].MetadataQuality)
-			raw, err := f.Store.GetAllRawMIMECandidates()
+			raw, err := f.Store.GetAllRawMIMECandidates(t.Context())
 			require.NoError(err)
 			require.Len(raw, 1)
 			assert.Equal(tc.want, raw[0].MetadataQuality)
@@ -1206,9 +1215,9 @@ func TestStore_DedupMetadataQualityRejectsFallbackConversationKeys(t *testing.T)
 			require := require.New(t)
 			assert := assert.New(t)
 			f := storetest.New(t)
-			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
 			require.NoError(err)
-			_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE conversations SET source_conversation_id = ? WHERE id = ?"), tc.key, f.ConvID)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE conversations SET source_conversation_id = ? WHERE id = ?"), tc.key, f.ConvID)
 			require.NoError(err)
 			id := newRFC822Message(t, f, "src", "conversation@example.test")
 			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: Fallback\r\n\r\nBody")))
@@ -1220,7 +1229,7 @@ func TestStore_DedupMetadataQualityRejectsFallbackConversationKeys(t *testing.T)
 			require.NoError(err)
 			require.Len(batch["conversation@example.test"], 1)
 			assert.Equal(1, batch["conversation@example.test"][0].MetadataQuality)
-			raw, err := f.Store.GetAllRawMIMECandidates()
+			raw, err := f.Store.GetAllRawMIMECandidates(t.Context())
 			require.NoError(err)
 			require.Len(raw, 1)
 			assert.Equal(1, raw[0].MetadataQuality)
@@ -1255,11 +1264,11 @@ func TestStore_DedupMetadataQualityMissingFacts(t *testing.T) {
 			}
 			if tc.parent {
 				parent := f.CreateMessage("parent")
-				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET reply_to_message_id = ? WHERE id = ?"), parent, id)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET reply_to_message_id = ? WHERE id = ?"), parent, id)
 				require.NoError(err)
 			}
 			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: Missing facts\r\n\r\nBody")))
-			raw, err := f.Store.GetAllRawMIMECandidates()
+			raw, err := f.Store.GetAllRawMIMECandidates(t.Context())
 			require.NoError(err)
 			require.Len(raw, 1)
 			assert.Equal(t, tc.want, raw[0].MetadataQuality)

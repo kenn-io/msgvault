@@ -26,7 +26,7 @@ func openSystemTarget(ctx context.Context, target string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("start %s: %w", command, err)
 	}
-	cmd := exec.Command(command, args...) //nolint:gosec // fixed command catalog; target is a single argument
+	cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // fixed command catalog; target is a single argument
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", command, err)
 	}

@@ -719,7 +719,7 @@ func (m *Manager) browserFlow(
 	listener := m.callbackListener
 	if listener == nil {
 		var err error
-		listener, err = net.Listen("tcp", callbackAddress)
+		listener, err = (&net.ListenConfig{}).Listen(ctx, "tcp", callbackAddress)
 		if err != nil {
 			return nil, fmt.Errorf("listen for OAuth callback: %w", err)
 		}

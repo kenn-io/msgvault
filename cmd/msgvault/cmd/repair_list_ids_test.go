@@ -32,7 +32,7 @@ func TestRunRepairListIDsLocalDryRunApplyAndNoop(t *testing.T) {
 	t.Cleanup(func() { cfg = savedCfg })
 
 	messageIDs := newListIDRepairArchive(t, cfg)
-	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
 	const pendingMigration = "person_sweep_change_triggers_v5"
 	markListIDRepairMigrationPending(t, pendingMigration, cfg)
@@ -121,9 +121,9 @@ func markListIDRepairMigrationPending(t *testing.T, migration string, configs ..
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migration)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migration)
 	require.NoError(t, err)
 	require.NoError(t, st.Close())
 }
@@ -135,7 +135,7 @@ func listIDRepairMigrationApplied(t *testing.T, migration string, configs ...*co
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
 	applied, err := st.IsMigrationApplied(migration)
 	require.NoError(t, err)
@@ -182,7 +182,7 @@ func newListIDRepairArchive(t *testing.T, configs ...*config.Config) listIDRepai
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, "list-id-repair-thread", "List-Id repair")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "list-id-repair-thread", "List-Id repair")
 	require.NoError(t, err)
 
 	newMessage := func(sourceMessageID string, listID sql.NullString) int64 {
@@ -203,7 +203,7 @@ func newListIDRepairArchive(t *testing.T, configs ...*config.Config) listIDRepai
 	stale := newMessage("list-id-stale", sql.NullString{String: "<stale.example.test>", Valid: true})
 	require.NoError(t, st.UpsertMessageRaw(stale, []byte("Subject: no list\r\n\r\nbody")))
 	undecodable := newMessage("list-id-undecodable", sql.NullString{})
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
 		VALUES (?, ?, 'mime', 'zlib')`), undecodable, []byte("not a zlib stream"))
 	require.NoError(t, err)
@@ -219,11 +219,11 @@ func listIDRepairArchiveValue(t *testing.T, messageID int64, configs ...*config.
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	var value sql.NullString
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT list_id FROM messages WHERE id = ?`), messageID).Scan(&value))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT list_id FROM messages WHERE id = ?`), messageID).Scan(&value))
 	return value
 }
 
@@ -234,7 +234,7 @@ func listIDRepairArchiveRevision(t *testing.T, configs ...*config.Config) int64 
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	revision, err := st.DerivedDataRevision()

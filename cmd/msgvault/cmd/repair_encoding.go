@@ -64,7 +64,7 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 	cfg := state.cfg
 	logger := state.logger
 
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForInvocation(ctx, state)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 		}()
 	}
 
-	reembedNeededIDs, err := repairEncoding(s, logger)
+	reembedNeededIDs, err := repairEncoding(ctx, s, logger)
 	if err != nil {
 		return err
 	}
@@ -112,6 +112,7 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 	var buildErr error
 	if usesAnalyticsCache {
 		_, buildErr = buildCacheLocked(
+			ctx,
 			dbPath,
 			analyticsDir,
 			true,
@@ -120,6 +121,7 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 		)
 	} else {
 		_, buildErr = buildCache(
+			ctx,
 			dbPath,
 			analyticsDir,
 			true,
@@ -218,12 +220,12 @@ func repairLogger(logger *slog.Logger) *slog.Logger {
 // those ids so the scan-and-fill worker re-embeds them and semantic search
 // results don't stay stale against the repaired text. Snippet-only repairs
 // are NOT included because the embedder doesn't read snippet.
-func repairEncoding(s *store.Store, logger *slog.Logger) (reembedNeededIDs []int64, err error) {
+func repairEncoding(ctx context.Context, s *store.Store, logger *slog.Logger) (reembedNeededIDs []int64, err error) {
 	logger = repairLogger(logger)
 	stats := &repairStats{}
 
 	// Repair message text fields
-	reembedNeededIDs, err = repairMessageFields(s, stats, logger)
+	reembedNeededIDs, err = repairMessageFields(ctx, s, stats, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -231,17 +233,17 @@ func repairEncoding(s *store.Store, logger *slog.Logger) (reembedNeededIDs []int
 	// Repair denormalized conversation previews after all message snippets so
 	// each preview is derived once from the final message state. This also
 	// catches previews stranded by a repair run from an older version.
-	if err := repairConversationPreviews(s, stats, logger); err != nil {
+	if err := repairConversationPreviews(ctx, s, stats, logger); err != nil {
 		return nil, err
 	}
 
 	// Repair display names in participants and message_recipients
-	if err := repairDisplayNames(s, stats, logger); err != nil {
+	if err := repairDisplayNames(ctx, s, stats, logger); err != nil {
 		return nil, err
 	}
 
 	// Repair other string fields that could have encoding issues
-	if err := repairOtherStrings(s, stats, logger); err != nil {
+	if err := repairOtherStrings(ctx, s, stats, logger); err != nil {
 		return nil, err
 	}
 
@@ -301,14 +303,14 @@ func repairEncoding(s *store.Store, logger *slog.Logger) (reembedNeededIDs []int
 	return reembedNeededIDs, nil
 }
 
-func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger) (reembedNeededIDs []int64, err error) {
+func repairMessageFields(ctx context.Context, s *store.Store, stats *repairStats, logger *slog.Logger) (reembedNeededIDs []int64, err error) {
 	logger = repairLogger(logger)
 	fmt.Println("Scanning messages for invalid UTF-8...")
 
 	db := s.DB()
 
 	// Query all messages with their raw data
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT m.id, m.message_type, m.subject, m.rfc822_message_id,
 		       mb.body_text, mb.body_html, m.snippet,
 		       mr.raw_data, mr.compression
@@ -337,7 +339,7 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 			return nil
 		}
 
-		tx, err := db.Begin()
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin transaction: %w", err)
 		}
@@ -361,7 +363,7 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 			if len(msgUpdates) > 0 {
 				msgArgs = append(msgArgs, r.id)
 				query := s.Rebind(fmt.Sprintf("UPDATE messages SET %s WHERE id = ?", strings.Join(msgUpdates, ", ")))
-				if _, err := tx.Exec(query, msgArgs...); err != nil {
+				if _, err := tx.ExecContext(ctx, query, msgArgs...); err != nil {
 					if rbErr := tx.Rollback(); rbErr != nil {
 						logger.Warn("rollback failed", "error", rbErr)
 					}
@@ -384,7 +386,7 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 					ON CONFLICT(message_id) DO UPDATE SET
 						body_text = COALESCE(excluded.body_text, message_bodies.body_text),
 						body_html = COALESCE(excluded.body_html, message_bodies.body_html)`)
-				if _, err := tx.Exec(query, r.id, bodyText, bodyHTML); err != nil {
+				if _, err := tx.ExecContext(ctx, query, r.id, bodyText, bodyHTML); err != nil {
 					if rbErr := tx.Rollback(); rbErr != nil {
 						logger.Warn("rollback failed", "error", rbErr)
 					}
@@ -529,7 +531,7 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 
 const participantDisplayNameRepairSQL = "UPDATE participants SET display_name = ? WHERE id = ?"
 
-func repairDisplayNames(s *store.Store, stats *repairStats, logger *slog.Logger) error {
+func repairDisplayNames(ctx context.Context, s *store.Store, stats *repairStats, logger *slog.Logger) error {
 	logger = repairLogger(logger)
 	// Repair display names in both message_recipients and participants tables
 	tables := []struct {
@@ -552,7 +554,7 @@ func repairDisplayNames(s *store.Store, stats *repairStats, logger *slog.Logger)
 	for _, table := range tables {
 		fmt.Printf("Scanning %s display names for invalid UTF-8...\n", table.name)
 
-		totalRepaired, err := repairDisplayNameTable(s, table.name, table.query, table.updateStmt, stats, logger)
+		totalRepaired, err := repairDisplayNameTable(ctx, s, table.name, table.query, table.updateStmt, stats, logger)
 		if err != nil {
 			return err
 		}
@@ -582,7 +584,7 @@ type stringRepair struct {
 // still open deadlocks waiting for the connection the cursor holds.
 const participantEmailRepairSQL = "UPDATE participants SET email_address = ? WHERE id = ?"
 
-func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []stringRepair, logger *slog.Logger) error {
+func applyStringRepairs(ctx context.Context, s *store.Store, updateStmt, tableName string, batch []stringRepair, logger *slog.Logger) error {
 	if updateStmt == participantEmailRepairSQL {
 		// The email is an ownership surface: the store applies the rewrite
 		// and settles attribution plus the identity revisions in ONE
@@ -595,7 +597,7 @@ func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []st
 				EmailAddress:  repair.value,
 			})
 		}
-		return s.RepairParticipantEmailAddresses(repairs)
+		return s.RepairParticipantEmailAddresses(ctx, repairs)
 	}
 	if updateStmt == participantDisplayNameRepairSQL {
 		repairs := make([]store.ParticipantDisplayNameRepair, 0, len(batch))
@@ -605,14 +607,14 @@ func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []st
 				DisplayName:   repair.value,
 			})
 		}
-		return s.RepairParticipantDisplayNames(repairs)
+		return s.RepairParticipantDisplayNames(ctx, repairs)
 	}
-	tx, err := s.DB().Begin()
+	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 
-	stmt, err := tx.Prepare(s.Rebind(updateStmt))
+	stmt, err := tx.PrepareContext(ctx, s.Rebind(updateStmt))
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			logger.Warn("rollback failed", "error", rbErr)
@@ -622,7 +624,7 @@ func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []st
 	defer func() { _ = stmt.Close() }()
 
 	for _, r := range batch {
-		if _, err := stmt.Exec(r.value, r.id); err != nil {
+		if _, err := stmt.ExecContext(ctx, r.value, r.id); err != nil {
 			if rbErr := tx.Rollback(); rbErr != nil {
 				logger.Warn("rollback failed", "error", rbErr)
 			}
@@ -636,7 +638,7 @@ func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []st
 	return nil
 }
 
-func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string, stats *repairStats, logger *slog.Logger) (int, error) {
+func repairDisplayNameTable(ctx context.Context, s *store.Store, tableName, query, updateStmt string, stats *repairStats, logger *slog.Logger) (int, error) {
 	db := s.DB()
 
 	// Read phase: collect repairs, then release the cursor before any write.
@@ -645,7 +647,7 @@ func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string,
 	var repairs []stringRepair
 	scanned := 0
 	if err := func() error {
-		rows, err := db.Query(query)
+		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
 			return fmt.Errorf("query %s: %w", tableName, err)
 		}
@@ -680,7 +682,7 @@ func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string,
 	totalRepaired := 0
 	for start := 0; start < len(repairs); start += batchSize {
 		end := min(start+batchSize, len(repairs))
-		if err := applyStringRepairs(s, updateStmt, tableName, repairs[start:end], logger); err != nil {
+		if err := applyStringRepairs(ctx, s, updateStmt, tableName, repairs[start:end], logger); err != nil {
 			return totalRepaired, err
 		}
 		totalRepaired += end - start
@@ -692,7 +694,7 @@ func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string,
 // repairConversationPreviews recomputes invalid denormalized previews from
 // the final message state. The compare-and-set store update preserves a
 // preview changed after this scan and makes a failed run safe to retry.
-func repairConversationPreviews(s *store.Store, stats *repairStats, logger *slog.Logger) error {
+func repairConversationPreviews(ctx context.Context, s *store.Store, stats *repairStats, logger *slog.Logger) error {
 	logger = repairLogger(logger)
 	fmt.Println("Scanning conversations.last_message_preview for invalid UTF-8...")
 
@@ -701,7 +703,7 @@ func repairConversationPreviews(s *store.Store, stats *repairStats, logger *slog
 		expected string
 	}
 	repairs, err := func() ([]previewRepair, error) {
-		rows, err := s.DB().Query(`SELECT id, last_message_preview
+		rows, err := s.DB().QueryContext(ctx, `SELECT id, last_message_preview
 			FROM conversations WHERE last_message_preview IS NOT NULL`)
 		if err != nil {
 			return nil, fmt.Errorf("query conversation previews: %w", err)
@@ -732,7 +734,7 @@ func repairConversationPreviews(s *store.Store, stats *repairStats, logger *slog
 
 	repaired := 0
 	for _, repair := range repairs {
-		updated, err := s.RecomputeConversationPreviewIfMatches(repair.id, repair.expected)
+		updated, err := s.RecomputeConversationPreviewIfMatches(ctx, repair.id, repair.expected)
 		if err != nil {
 			return err
 		}
@@ -748,7 +750,7 @@ func repairConversationPreviews(s *store.Store, stats *repairStats, logger *slog
 }
 
 // repairOtherStrings repairs other string fields that could have encoding issues.
-func repairOtherStrings(s *store.Store, stats *repairStats, logger *slog.Logger) error {
+func repairOtherStrings(ctx context.Context, s *store.Store, stats *repairStats, logger *slog.Logger) error {
 	logger = repairLogger(logger)
 	// Tables and columns to repair
 	tables := []struct {
@@ -806,6 +808,7 @@ func repairOtherStrings(s *store.Store, stats *repairStats, logger *slog.Logger)
 		fmt.Printf("Scanning %s.%s for invalid UTF-8...\n", table.name, table.column)
 
 		totalRepaired, err := repairOtherStringColumn(
+			ctx,
 			s, table.name, table.column, table.query, table.updateStmt,
 			table.counter, stats, logger,
 		)
@@ -829,7 +832,7 @@ func repairOtherStrings(s *store.Store, stats *repairStats, logger *slog.Logger)
 // applyStringRepairs (see the participantEmailRepairSQL special case), so a
 // committed batch never depends on later batches or a follow-up step.
 // It returns the number of rows repaired.
-func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStmt string, counter *int, stats *repairStats, logger *slog.Logger) (int, error) {
+func repairOtherStringColumn(ctx context.Context, s *store.Store, tableName, column, query, updateStmt string, counter *int, stats *repairStats, logger *slog.Logger) (int, error) {
 	db := s.DB()
 
 	// Read phase: collect repairs, then release the cursor before any write
@@ -837,7 +840,7 @@ func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStm
 	var repairs []stringRepair
 	scanned := 0
 	if err := func() error {
-		rows, err := db.Query(query)
+		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
 			return fmt.Errorf("query %s: %w", tableName, err)
 		}
@@ -872,7 +875,7 @@ func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStm
 	totalRepaired := 0
 	for start := 0; start < len(repairs); start += batchSize {
 		end := min(start+batchSize, len(repairs))
-		if err := applyStringRepairs(s, updateStmt, tableName, repairs[start:end], logger); err != nil {
+		if err := applyStringRepairs(ctx, s, updateStmt, tableName, repairs[start:end], logger); err != nil {
 			return totalRepaired, err
 		}
 		totalRepaired += end - start

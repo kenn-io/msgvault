@@ -165,7 +165,7 @@ func createWhatsAppIdentityFixture(t *testing.T, recoverable, hardError bool) st
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE ZWACHATSESSION (
 			Z_PK INTEGER PRIMARY KEY,
 			ZCONTACTJID TEXT,
@@ -192,7 +192,7 @@ func createWhatsAppIdentityFixture(t *testing.T, recoverable, hardError bool) st
 	`)
 	require.NoError(t, err)
 	if !hardError {
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			CREATE TABLE ZWAGROUPMEMBER (
 				Z_PK INTEGER PRIMARY KEY,
 				ZCHATSESSION INTEGER,
@@ -204,7 +204,7 @@ func createWhatsAppIdentityFixture(t *testing.T, recoverable, hardError bool) st
 		`)
 		require.NoError(t, err)
 		if recoverable {
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO ZWAMESSAGE VALUES
 					(2, 1, NULL, 'duplicate-message', 0, 700000001, 'duplicate one', 0,
 					 '15555550101@s.whatsapp.net'),
@@ -223,7 +223,7 @@ func createWhatsAppUnknownDatabaseFixture(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "unknown.sqlite")
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+	_, err = db.ExecContext(t.Context(), "CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	return path

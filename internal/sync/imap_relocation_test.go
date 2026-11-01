@@ -99,7 +99,8 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 	require.NoError(firstClient.Close())
 
 	var initialID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`,
 		"Brouillons|1",
 	).Scan(&initialID))
@@ -186,14 +187,16 @@ func TestIMAPPartialRelocationMergesLabelsAndRefreshesContent(t *testing.T) {
 	require.NoError(firstClient.Close())
 
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
-	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	source, err := env.Store.GetSourceByIdentifier(t.Context(), testEmail)
 	require.NoError(err)
-	archiveLabelID, err := env.Store.EnsureLabel(source.ID, "Archive", "Archive", "user")
+	archiveLabelID, err := env.Store.EnsureLabel(t.Context(), source.ID, "Archive", "Archive", "user")
 	require.NoError(err)
-	_, err = env.Store.DB().Exec(
+	_, err = env.Store.DB().ExecContext(
+		t.Context(),
 		`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`,
 		internalID, archiveLabelID)
 	require.NoError(err)
@@ -246,7 +249,8 @@ func TestIMAPDeferredRelocationPreservesLabelsUntilFinalization(t *testing.T) {
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
 
@@ -305,7 +309,8 @@ func TestIMAPPreferredAllMailAdoptionPreservesSnapshot(t *testing.T) {
 	require.NoError(firstClient.Close())
 
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "INBOX|1",
 	).Scan(&internalID))
 	require.NoError(env.Store.UpsertAttachmentRecord(t.Context(), internalID, store.AttachmentWrite{
@@ -338,7 +343,8 @@ func TestIMAPPreferredAllMailAdoptionPreservesSnapshot(t *testing.T) {
 	assert.ElementsMatch([]string{"old.bin", "provider.bin"}, filenames)
 	assert.True(message.HasAttachments)
 	var providerCount int
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM attachments WHERE message_id = ? AND source_attachment_id = ?`,
 		internalID, "provider:1",
 	).Scan(&providerCount))
@@ -354,7 +360,8 @@ func TestIMAPPreferredAllMailAdoptionPreservesSnapshot(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(total, "the unverified copy must not reach the search index")
 	var attachmentCount int
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT attachment_count FROM messages WHERE id = ?`, internalID,
 	).Scan(&attachmentCount))
 	assert.Equal(2, attachmentCount)
@@ -387,7 +394,8 @@ func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
 	before, err := env.Store.GetMessage(internalID)
@@ -400,7 +408,7 @@ func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
 
 	testutil.AppendIMAPRawMessage(t, user, "Envoyes", finalRaw)
 	testutil.ExpungeIMAPMessage(t, addr, "Brouillons", imapv2.UID(1))
-	_, err = env.Store.DB().Exec(fmt.Sprintf(`
+	_, err = env.Store.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_imap_relocation
 		BEFORE UPDATE ON messages
 		WHEN OLD.id = %d AND NEW.source_message_id = 'Envoyes|1'
@@ -408,7 +416,10 @@ func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
 			SELECT RAISE(ABORT, 'relocation unavailable');
 		END`, internalID))
 	require.NoError(err)
-	t.Cleanup(func() { _, _ = env.Store.DB().Exec(`DROP TRIGGER IF EXISTS fail_imap_relocation`) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() {
+		_, _ = env.Store.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_imap_relocation`)
+	})
 
 	acknowledged := make(map[string]imapclient.FolderState)
 	failedClient := newSyncTestIMAPClient(t, addr, imapclient.WithFolderStateSave(
@@ -437,7 +448,7 @@ func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
 	assert.FileExists(blobPath, "failed relocation retains a published CAS blob")
 	require.NoError(failedClient.Close())
 
-	_, err = env.Store.DB().Exec(`DROP TRIGGER fail_imap_relocation`)
+	_, err = env.Store.DB().ExecContext(t.Context(), `DROP TRIGGER fail_imap_relocation`)
 	require.NoError(err)
 	retryClient := newSyncTestIMAPClient(t, addr)
 	env.Syncer = New(retryClient, env.Store, opts)
@@ -480,7 +491,8 @@ func TestIMAPRelocationRecoversMalformedSentSnapshot(t *testing.T) {
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
 	before, err := env.Store.GetMessage(internalID)
@@ -532,7 +544,8 @@ func TestIMAPRelocationWithoutAttachmentsDirPreservesSnapshotAndRetries(t *testi
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
 
@@ -634,7 +647,8 @@ func TestIMAPRelocationArchivesRemoteImages(t *testing.T) {
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
 	refs, err := env.Store.MessageRemoteImages(internalID)
@@ -720,7 +734,8 @@ func TestIMAPRelocationUntrustedDestinationSkipsRemoteImages(t *testing.T) {
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "Brouillons|1",
 	).Scan(&internalID))
 
@@ -783,7 +798,8 @@ func TestIMAPPreferredAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) {
 	assertSummary(t, runFullSync(t, env), WantSummary{Added: new(int64(1))})
 	require.NoError(firstClient.Close())
 	var internalID int64
-	require.NoError(env.Store.DB().QueryRow(
+	require.NoError(env.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "INBOX|1",
 	).Scan(&internalID))
 
@@ -791,7 +807,7 @@ func TestIMAPPreferredAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) {
 	// the same call as the rekey; the trigger fails every label write for the
 	// guarded row.
 	testutil.AppendIMAPRawMessage(t, user, "All Mail", raw)
-	_, triggerErr := env.Store.DB().Exec(fmt.Sprintf(`
+	_, triggerErr := env.Store.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_preferred_labels_insert
 		BEFORE INSERT ON message_labels
 		WHEN NEW.message_id = %d
@@ -799,7 +815,7 @@ func TestIMAPPreferredAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) {
 			SELECT RAISE(ABORT, 'preferred label write unavailable');
 		END`, internalID))
 	require.NoError(triggerErr)
-	_, triggerErr = env.Store.DB().Exec(fmt.Sprintf(`
+	_, triggerErr = env.Store.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_preferred_labels_delete
 		BEFORE DELETE ON message_labels
 		WHEN OLD.message_id = %d
@@ -807,9 +823,10 @@ func TestIMAPPreferredAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) {
 			SELECT RAISE(ABORT, 'preferred label write unavailable');
 		END`, internalID))
 	require.NoError(triggerErr)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = env.Store.DB().Exec(`DROP TRIGGER IF EXISTS fail_preferred_labels_insert`)
-		_, _ = env.Store.DB().Exec(`DROP TRIGGER IF EXISTS fail_preferred_labels_delete`)
+		_, _ = env.Store.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_preferred_labels_insert`)
+		_, _ = env.Store.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_preferred_labels_delete`)
 	})
 
 	immediateClient := &immediateLabelIMAPClient{Client: newSyncTestIMAPClient(t, addr).Client}
@@ -826,9 +843,9 @@ func TestIMAPPreferredAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) {
 	assert.Contains(message.BodyText, "atomicword")
 
 	// Removing the fault lets the retry adopt key and labels together.
-	_, err = env.Store.DB().Exec(`DROP TRIGGER fail_preferred_labels_insert`)
+	_, err = env.Store.DB().ExecContext(t.Context(), `DROP TRIGGER fail_preferred_labels_insert`)
 	require.NoError(err)
-	_, err = env.Store.DB().Exec(`DROP TRIGGER fail_preferred_labels_delete`)
+	_, err = env.Store.DB().ExecContext(t.Context(), `DROP TRIGGER fail_preferred_labels_delete`)
 	require.NoError(err)
 	retryClient := &immediateLabelIMAPClient{Client: newSyncTestIMAPClient(t, addr).Client}
 	env.Syncer = New(retryClient, env.Store, opts)

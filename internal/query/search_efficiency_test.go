@@ -19,7 +19,7 @@ func observedSearchEngine(t *testing.T) (*SQLiteEngine, *sqlobserve.Observer) {
 	db, observer := sqlobserve.Open(t, nil)
 	schema, err := os.ReadFile("../store/schema.sql")
 	require.NoError(t, err)
-	_, err = db.Exec(string(schema))
+	_, err = db.ExecContext(t.Context(), string(schema))
 	require.NoError(t, err)
 	fixture := &dbtest.TestDB{DB: db, T: t}
 	fixture.SeedStandardDataSet()

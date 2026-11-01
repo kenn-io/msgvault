@@ -94,7 +94,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	summary.SourceID = source.ID
 	cp := telegramCheckpoint{Version: checkpointVersion, RootDir: root, ExportSize: info.Size(), ExportModTime: info.ModTime().UnixNano()}
 	if !opts.NoResume {
-		prev, err := st.GetLatestCheckpointedSyncByType(source.ID, syncType)
+		prev, err := st.GetLatestCheckpointedSyncByType(ctx, source.ID, syncType)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return summary, err
 		}
@@ -132,7 +132,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else if summary.LimitReached && checkpoint != nil {
-			retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(syncID, checkpoint))
+			retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(ctx, syncID, checkpoint))
 		} else {
 			retErr = errors.Join(retErr, st.CompleteSyncContext(cleanup, syncID, ""))
 		}

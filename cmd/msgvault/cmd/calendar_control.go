@@ -318,11 +318,11 @@ func (a *storeAPIAdapter) ControlCalendar(ctx context.Context, request calcontro
 	if err := calcontrol.AuthorizeSourceRequest(*source, request, grant); err != nil {
 		return nil, setupError(err)
 	}
-	existing, err := a.store.GetSourcesByTypeAndAccount(sourceTypeCalendar, source.Email)
+	existing, err := a.store.GetSourcesByTypeAndAccountContext(ctx, sourceTypeCalendar, source.Email)
 	if err != nil {
 		return nil, setupError(fmt.Errorf("%w: load calendar OAuth binding: %w", calcontrol.ErrInternal, err))
 	}
-	appDecision, err := calendarSyncOAuthAppDecision(a.store, source.Email, existing, source.OAuthApp, source.OAuthApp != "")
+	appDecision, err := calendarSyncOAuthAppDecision(ctx, a.store, source.Email, existing, source.OAuthApp, source.OAuthApp != "")
 	if err != nil {
 		return nil, setupError(fmt.Errorf("%w: resolve calendar OAuth binding: %w", calcontrol.ErrInternal, err))
 	}

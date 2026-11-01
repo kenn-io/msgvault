@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -23,7 +22,8 @@ import (
 func backfillLedgerMarked(t *testing.T, db *sql.DB) bool {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = ?`,
 		embedGenBackfillMigration).Scan(&n))
 
@@ -52,7 +52,7 @@ func TestBackfillEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
@@ -68,7 +68,7 @@ func TestBackfillEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
 	require.NoError(
 		s.InitSchema(), "InitSchema")
 
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -99,11 +99,11 @@ VALUES (1, 1, 1, 'm1', 'email');
 	// Simulate the pre-upgrade state: embed_gen NULL everywhere, ledger
 	// cleared. A WRITE-path Open here would stamp embed_gen and mark the
 	// ledger; a READ-only Open must do neither.
-	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL`)
+	_, err = s.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL`)
 	require.NoError(
 		err, "reset embed_gen")
 
-	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	_, err = s.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
 	require.NoError(
 		err, "clear ledger")
 
@@ -134,7 +134,7 @@ VALUES (1, 1, 1, 'm1', 'email');
 		False(backfillLedgerMarked(t, ro.DB()),
 			"read-only Open must NOT mark the backfill ledger")
 	var v sql.NullInt64
-	require.NoError(ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
+	require.NoError(ro.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
 	assert.False(v.Valid, "read-only Open must NOT stamp embed_gen")
 }
 
@@ -162,7 +162,7 @@ func TestResetOrphanedEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
@@ -178,7 +178,7 @@ func TestResetOrphanedEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
 	require.NoError(
 		s.InitSchema(), "InitSchema")
 
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen)
@@ -214,7 +214,7 @@ VALUES (1, 1, 1, 'm1', 'email', 99);
 
 	// The orphaned stamp must be PRESERVED: a read-only Open writes nothing.
 	var v sql.NullInt64
-	require.NoError(ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
+	require.NoError(ro.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
 	assert.True(v.Valid, "read-only Open must NOT reset the orphaned embed_gen")
 	assert.Equal(int64(99), v.Int64, "orphaned stamp unchanged under read-only Open")
 	diagnostics, err := ro.ReadEmbeddingDiagnostics(ctx, 99)
@@ -257,7 +257,7 @@ func TestResetOrphanedEmbedGen_ClearsOrphanedDiagnostics(t *testing.T) {
 	recreated, err := b.CreateGeneration(ctx, "model", 4, "model:4")
 	require.NoError(err)
 	assert.Equal(gen, recreated)
-	_, err = s.DB().Exec(`DROP TABLE embedding_diagnostics`)
+	_, err = s.DB().ExecContext(t.Context(), `DROP TABLE embedding_diagnostics`)
 	require.NoError(err)
 	require.NoError(b.Close())
 	b, err = Open(ctx, Options{Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB()})

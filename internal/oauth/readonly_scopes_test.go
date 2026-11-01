@@ -317,7 +317,7 @@ func TestAuthorize_NarrowedRequestPersistsNarrowedGrant(t *testing.T) {
 		}), nil
 	}
 
-	require.NoError(mgr.Authorize(context.Background(), email), "Authorize")
+	require.NoError(mgr.Authorize(t.Context(), email), "Authorize")
 
 	assert.ElementsMatch(narrowed, mgr.GrantedScopes(t.Context(), email),
 		"stored grant must be exactly what was requested")
@@ -351,7 +351,7 @@ func TestAuthorize_StillRejectsUnderDeliveredScopes(t *testing.T) {
 		return token.WithExtra(map[string]any{"scope": ScopeGmailReadonly}), nil
 	}
 
-	err := mgr.Authorize(context.Background(), email)
+	err := mgr.Authorize(t.Context(), email)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing required OAuth scopes")

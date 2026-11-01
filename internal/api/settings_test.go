@@ -1521,7 +1521,7 @@ func performSettingsRequest(
 	apiKey string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:12345"
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")

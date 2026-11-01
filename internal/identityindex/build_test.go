@@ -59,7 +59,7 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 	assertions := assert.New(t)
 	root, db := writeRelationshipBaseFixture(t, false)
 
-	result, err := Build(context.Background(), db, BuildOptions{
+	result, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -84,7 +84,7 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 	assertions.NotEmpty(result.ConversationParticipantsFingerprint)
 
 	var direct, conversation, author, owner bool
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT is_direct, is_conversation_member, is_author, is_owner
 		FROM `+testExpandedActivity(root, root)+`
 		WHERE canonical_id = 2
@@ -95,7 +95,7 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 	assertions.False(author)
 	assertions.False(owner)
 
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT is_direct, is_conversation_member
 		FROM `+testExpandedActivity(root, root)+`
 		WHERE canonical_id = 4
@@ -130,7 +130,7 @@ func TestBuildChunksRelationshipActivityByOccurrenceYear(t *testing.T) {
 
 	recordingDB := &relationshipActivityCopyRecorder{sqlExecutor: db}
 	activityProgressCalls := 0
-	_, err := Build(context.Background(), recordingDB, BuildOptions{
+	_, err := Build(t.Context(), recordingDB, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -154,7 +154,7 @@ func TestBuildChunksRelationshipActivityByOccurrenceYear(t *testing.T) {
 		assertions.FileExists(shard)
 
 		var minYear, maxYear int64
-		requirements.NoError(db.QueryRow(`
+		requirements.NoError(db.QueryRowContext(t.Context(), `
 			SELECT min(occurred_year), max(occurred_year)
 			FROM read_parquet(?, hive_partitioning=false)
 		`, shard).Scan(&minYear, &maxYear))
@@ -169,7 +169,7 @@ func TestBuildEmptyArchivePublishesSchemaCorrectActivityShard(t *testing.T) {
 	assertions := assert.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -220,7 +220,7 @@ func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
 		) AS t(conversation_id, participant_id)
 		WHERE false`)
 
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -236,14 +236,14 @@ func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
 	) + `
 		SELECT anchor_message_id, is_from_me, attachment_count
 		FROM logical_units`
-	requirements.NoError(db.QueryRow(query).
+	requirements.NoError(db.QueryRowContext(t.Context(), query).
 		Scan(&anchorMessageID, &isFromMe, &attachmentCount))
 	assertions.Equal(int64(101), anchorMessageID)
 	assertions.True(isFromMe)
 	assertions.Equal(int64(3), attachmentCount)
 
 	var sentinelRows int64
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT count(*)
 		FROM read_parquet(?, hive_partitioning=true, union_by_name=true)
 		WHERE message_id = 101 AND canonical_id IS NULL
@@ -255,7 +255,7 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: committedRoot,
 		OutputRoot:     committedRoot,
@@ -266,7 +266,7 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 20)
 	// Incremental exports replace the roster with a complete snapshot. Keep
 	// the older conversation in this synthetic staged base as well.
-	_, err = db.Exec(`CREATE TEMP TABLE staged_roster AS
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE staged_roster AS
 		SELECT * FROM read_parquet(?) UNION
 		SELECT * FROM read_parquet(?)`,
 		relationshipParquetGlob(committedRoot, "conversation_participants"),
@@ -274,7 +274,7 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, stagedRoot, "conversation_participants",
 		"SELECT * FROM staged_roster")
-	result, err := Build(context.Background(), db, BuildOptions{
+	result, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeIncremental,
 		CommittedRoot:  committedRoot,
 		StagedBaseRoot: stagedRoot,
@@ -291,7 +291,7 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 	))
 	assertions.Equal(int64(2), result.Stats.TotalMessages)
 	var activityCount int64
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 2
 	`, relationshipParquetGlob(stagedRoot, DatasetPeople)).Scan(&activityCount))
 	assertions.Equal(int64(2), activityCount)
@@ -321,7 +321,7 @@ func assertIncrementalDatasetsMatchFullBuild(
 		}
 		writeRelationshipParquet(t, db, fullRoot, dataset, query)
 	}
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: fullRoot, OutputRoot: fullRoot,
 		EffectiveAt: effectiveAt,
 	})
@@ -336,10 +336,10 @@ func assertIncrementalDatasetsMatchFullBuild(
 			full := "read_parquet('" +
 				quoteSQLString(relationshipParquetGlob(fullRoot, dataset)) + "')"
 			var differences int64
-			err := db.QueryRow(`SELECT count(*) FROM (
-				(SELECT * FROM ` + incremental + ` EXCEPT ALL SELECT * FROM ` + full + `)
+			err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM (
+				(SELECT * FROM `+incremental+` EXCEPT ALL SELECT * FROM `+full+`)
 				UNION ALL
-				(SELECT * FROM ` + full + ` EXCEPT ALL SELECT * FROM ` + incremental + `)
+				(SELECT * FROM `+full+` EXCEPT ALL SELECT * FROM `+incremental+`)
 			)`).Scan(&differences)
 			require.NoError(t, err)
 			assert.Zero(t, differences)
@@ -364,14 +364,14 @@ func assertIncrementalContributionsMatchFullReduction(
 	} {
 		t.Run(check.name+" contributions match full reduction", func(t *testing.T) {
 			expectedTable := "expected_" + check.name
-			_, err := db.Exec("CREATE TEMP TABLE " + expectedTable + " AS " + check.expected)
+			_, err := db.ExecContext(t.Context(), "CREATE TEMP TABLE "+expectedTable+" AS "+check.expected)
 			require.NoError(t, err)
 			actual := "read_parquet('" + quoteSQLString(relationshipParquetGlob(stagedRoot, check.dataset)) + "')"
 			var differences int64
-			err = db.QueryRow(`SELECT count(*) FROM (
-				(SELECT * FROM ` + actual + ` EXCEPT ALL SELECT * FROM ` + expectedTable + `)
+			err = db.QueryRowContext(t.Context(), `SELECT count(*) FROM (
+				(SELECT * FROM `+actual+` EXCEPT ALL SELECT * FROM `+expectedTable+`)
 				UNION ALL
-				(SELECT * FROM ` + expectedTable + ` EXCEPT ALL SELECT * FROM ` + actual + `)
+				(SELECT * FROM `+expectedTable+` EXCEPT ALL SELECT * FROM `+actual+`)
 			)`).Scan(&differences)
 			require.NoError(t, err)
 			assert.Zero(t, differences)
@@ -404,7 +404,7 @@ func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testi
 			committedRoot, db := writeRelationshipBaseFixture(t, false)
 			setChatRelationshipFixture(t, db, committedRoot, 100, tc.committedYear)
 			effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
-			_, err := Build(context.Background(), db, BuildOptions{
+			_, err := Build(t.Context(), db, BuildOptions{
 				Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
 				EffectiveAt: effectiveAt,
 			})
@@ -413,7 +413,7 @@ func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testi
 			stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
 			rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 10)
 			setChatRelationshipFixture(t, stagedDB, stagedRoot, 200, tc.stagedYear)
-			_, err = Build(context.Background(), db, BuildOptions{
+			_, err = Build(t.Context(), db, BuildOptions{
 				Mode: ModeIncremental, CommittedRoot: committedRoot,
 				StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
 				EffectiveAt: effectiveAt,
@@ -428,7 +428,7 @@ func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testi
 func TestBuildIncrementalRecomputesNewlyEligibleOldTemperatureFacts(t *testing.T) {
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
 	setChatRelationshipFixture(t, db, committedRoot, 100, 2026)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
 		EffectiveAt: time.Date(2025, 7, 21, 10, 30, 0, 0, time.UTC),
 	})
@@ -438,7 +438,7 @@ func TestBuildIncrementalRecomputesNewlyEligibleOldTemperatureFacts(t *testing.T
 	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 201, 10)
 	setChatRelationshipFixture(t, stagedDB, stagedRoot, 201, 2027)
 	effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
-	_, err = Build(context.Background(), db, BuildOptions{
+	_, err = Build(t.Context(), db, BuildOptions{
 		Mode: ModeIncremental, CommittedRoot: committedRoot,
 		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
 		EffectiveAt: effectiveAt,
@@ -465,7 +465,7 @@ func TestBuildIncrementalChatInheritsParticipantlessHistory(t *testing.T) {
 		       'chat'::VARCHAR AS message_type, false AS is_from_me,
 		       2026::INTEGER AS year, 7::INTEGER AS month`)
 	effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
 		EffectiveAt: effectiveAt,
 	})
@@ -476,7 +476,7 @@ func TestBuildIncrementalChatInheritsParticipantlessHistory(t *testing.T) {
 	setChatRelationshipFixture(t, stagedDB, stagedRoot, 200, 2027)
 	replaceRelationshipParquet(t, stagedDB, stagedRoot, "conversation_participants", `
 		SELECT 0::BIGINT AS conversation_id, 0::BIGINT AS participant_id WHERE false`)
-	_, err = Build(context.Background(), db, BuildOptions{
+	_, err = Build(t.Context(), db, BuildOptions{
 		Mode: ModeIncremental, CommittedRoot: committedRoot,
 		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
 		EffectiveAt: effectiveAt,
@@ -510,7 +510,7 @@ func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: committedRoot,
 		OutputRoot:     committedRoot,
@@ -524,7 +524,7 @@ func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.
 			(3::BIGINT, 2::BIGINT),
 			(4::BIGINT, 2::BIGINT)
 		) AS t(participant_id, canonical_id)`)
-	result, err := Build(context.Background(), db, BuildOptions{
+	result, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeIndexOnly,
 		CommittedRoot:  committedRoot,
 		StagedBaseRoot: stagedRoot,
@@ -533,7 +533,7 @@ func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.
 	requirements.NoError(err)
 
 	var memberIDs string
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT CAST(to_json(member_ids) AS VARCHAR)
 		FROM read_parquet(?) WHERE canonical_id = 2
 	`, relationshipParquetGlob(stagedRoot, DatasetPeople)).Scan(&memberIDs))
@@ -544,13 +544,13 @@ func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.
 
 func TestBuildPeopleDirectoryPublishesTypedCompletionPrimitives(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 	})
 	require.NoError(t, err)
 
 	var primitivesJSON string
-	err = db.QueryRow(`
+	err = db.QueryRowContext(t.Context(), `
 		SELECT CAST(to_json(search_primitives) AS VARCHAR)
 		FROM read_parquet(?) WHERE canonical_id = 2
 	`, relationshipParquetGlob(root, DatasetPeople)).Scan(&primitivesJSON)
@@ -591,7 +591,7 @@ func TestBuildPeoplePublishesMessageGrainRelationshipTemperatures(t *testing.T) 
 		) AS t(message_id, participant_id, recipient_type, display_name)`)
 
 	effectiveAt := time.Date(2026, time.July, 22, 12, 34, 56, 0, time.UTC)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 		EffectiveAt: effectiveAt,
 	})
@@ -601,7 +601,7 @@ func TestBuildPeoplePublishesMessageGrainRelationshipTemperatures(t *testing.T) 
 	var rank, population, annualRank, annualPopulation int64
 	var rawScore, annualRaw, sentSignal, receivedVolume float64
 	var effectiveDate, effectiveTimestamp time.Time
-	err = db.QueryRow(`
+	err = db.QueryRowContext(t.Context(), `
 		SELECT p.current_temperature, p.current_temperature_rank,
 		       p.current_temperature_population, p.current_raw_score,
 		       p.temperature_effective_date, p.temperature_effective_at,
@@ -678,7 +678,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 		) AS t(message_id, participant_id, recipient_type, display_name)`)
 
 	effectiveAt := time.Date(2026, time.July, 22, 12, 34, 56, 0, time.UTC)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 		EffectiveAt: effectiveAt,
 	})
@@ -686,7 +686,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 
 	var annualYears string
 	var current, currentPopulation, peakYear int
-	require.NoError(db.QueryRow(`
+	require.NoError(db.QueryRowContext(t.Context(), `
 		SELECT CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR),
 		       current_temperature, current_temperature_population, peak_year
 		FROM read_parquet(?) WHERE canonical_id = 2
@@ -701,7 +701,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 	var annualTemperature int
 	var annualRank, annualPopulation int64
 	var annualRaw, sentSignal, receivedVolume float64
-	require.NoError(db.QueryRow(`
+	require.NoError(db.QueryRowContext(t.Context(), `
 		SELECT annual.item.temperature, annual.item.rank, annual.item.population,
 		       annual.item.raw_score, annual.item.sent_signal,
 		       annual.item.received_volume
@@ -720,7 +720,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 	assert.InDelta(1.0, receivedVolume, 0)
 
 	var annualCount, canonical4Population, canonical4Peak, canonical4PeakYear, firstYear int
-	require.NoError(db.QueryRow(`
+	require.NoError(db.QueryRowContext(t.Context(), `
 		SELECT len(annual_temperatures), current_temperature_population,
 		       peak_temperature, peak_year, year(first_at)
 		FROM read_parquet(?) WHERE canonical_id = 4
@@ -735,7 +735,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 	assert.Equal(1904, firstYear)
 
 	var dailyCount int
-	require.NoError(db.QueryRow(`
+	require.NoError(db.QueryRowContext(t.Context(), `
 		SELECT count(*)
 		FROM read_parquet(?)
 		WHERE canonical_id = 2 AND event_date = DATE '1899-12-29'
@@ -745,7 +745,7 @@ func TestBuildPeopleSkipsPreEpochYearsInAnnualTemperatures(t *testing.T) {
 
 func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -761,7 +761,7 @@ func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 		SELECT * EXCLUDE (occurred_year), occurred_year
 		FROM read_parquet('`+source+`', hive_partitioning=true, union_by_name=true)`)
 
-	err = Validate(context.Background(), db, ValidationOptions{
+	err = Validate(t.Context(), db, ValidationOptions{
 		OutputRoot:             root,
 		RequiredOutputDatasets: RequiredDatasets,
 	})
@@ -770,7 +770,7 @@ func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 
 func TestValidateRejectsInvalidRelationshipTemperatureSummary(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 	})
 	require.NoError(t, err)
@@ -781,7 +781,7 @@ func TestValidateRejectsInvalidRelationshipTemperatureSummary(t *testing.T) {
 		SELECT * REPLACE (101::INTEGER AS current_temperature)
 		FROM read_parquet('`+source+`')`)
 
-	err = Validate(context.Background(), db, ValidationOptions{
+	err = Validate(t.Context(), db, ValidationOptions{
 		OutputRoot:             root,
 		RequiredOutputDatasets: RequiredDatasets,
 	})
@@ -790,7 +790,7 @@ func TestValidateRejectsInvalidRelationshipTemperatureSummary(t *testing.T) {
 
 func TestValidateRejectsPreEpochAnnualTemperature(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 	})
 	require.NoError(t, err)
@@ -822,7 +822,7 @@ func TestValidateRejectsPreEpochAnnualTemperature(t *testing.T) {
 		FROM read_parquet('`+source+`')
 	`)
 
-	err = Validate(context.Background(), db, ValidationOptions{
+	err = Validate(t.Context(), db, ValidationOptions{
 		OutputRoot:             root,
 		RequiredOutputDatasets: RequiredDatasets,
 	})
@@ -833,7 +833,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 	tb.Helper()
 	root := tb.TempDir()
 	db, err := duckdbutil.Open(
-		context.Background(),
+		tb.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(root, "duckdb-tmp")),
 	)
 	require.NoError(tb, err)
@@ -978,7 +978,7 @@ func writeRelationshipParquet(
 	directory := filepath.Join(root, dataset)
 	require.NoError(tb, os.MkdirAll(directory, 0o755))
 	path := filepath.Join(directory, dataset+".parquet")
-	_, err := db.Exec(fmt.Sprintf(
+	_, err := db.ExecContext(tb.Context(), fmt.Sprintf(
 		"COPY (%s) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')",
 		query,
 		strings.ReplaceAll(path, "'", "''"),
@@ -997,7 +997,7 @@ func relationshipParquetCount(
 		query = "SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true)"
 	}
 	var count int64
-	require.NoError(t, db.QueryRow(query, relationshipParquetGlob(root, dataset)).
+	require.NoError(t, db.QueryRowContext(t.Context(), query, relationshipParquetGlob(root, dataset)).
 		Scan(&count), dataset)
 	return count
 }
@@ -1023,17 +1023,17 @@ func TestBuildPeopleCuratedNamePreservesObservedPrimitives(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	root, db := writeRelationshipBaseFixture(t, false)
-	ctx := context.Background()
+	ctx := t.Context()
 	opts := BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root}
 	_, err := Build(ctx, db, opts)
 	requirements.NoError(err)
-	_, err = db.Exec(`CREATE TEMP TABLE observed_directory AS SELECT * FROM read_parquet(?)`, relationshipParquetGlob(root, DatasetPeople))
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE observed_directory AS SELECT * FROM read_parquet(?)`, relationshipParquetGlob(root, DatasetPeople))
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "person_display_names", `SELECT 3::BIGINT AS participant_id, 10::BIGINT AS person_id, 'Alice Curated'::VARCHAR AS display_name`)
 	_, err = Build(ctx, db, opts)
 	requirements.NoError(err)
 	var retained, curated bool
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
   SELECT list_has_all(current.search_values, observed.search_values)
          AND list_has_all(current.search_primitives, observed.search_primitives),
          list_contains(current.search_values, 'alice curated')
@@ -1044,7 +1044,7 @@ func TestBuildPeopleCuratedNamePreservesObservedPrimitives(t *testing.T) {
 	assertions.True(curated)
 	var participantID int64
 	var source, name string
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
   SELECT primitive.participant_id, primitive.source, primitive.display_value
   FROM (SELECT unnest(search_primitives) AS primitive FROM read_parquet(?) WHERE canonical_id = 2)
   WHERE primitive.source = 'person'

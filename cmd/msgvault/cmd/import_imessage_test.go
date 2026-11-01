@@ -47,7 +47,7 @@ func TestBuildImessageOptsWiresAttachmentCapture(t *testing.T) {
 
 			opts, err := buildImessageOpts(slog.Default(), archive, messagesRoot, tc.noAttachments, config.IMessageConfig{}.MediaPolicy())
 			requirements.NoError(err)
-			client, err := imessage.NewClient(chatPath, opts...)
+			client, err := imessage.NewClient(t.Context(), chatPath, opts...)
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = client.Close() })
 			_, err = client.Import(t.Context(), s, src.ID)
@@ -260,7 +260,7 @@ func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
 			home := t.TempDir()
 			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.toml), 0o600))
 			chatPath, chat := testutil.NewIMessageAttachmentChatDB(t)
-			_, err := chat.Exec(`UPDATE attachment SET total_bytes=?`, 2<<20)
+			_, err := chat.ExecContext(t.Context(), `UPDATE attachment SET total_bytes=?`, 2<<20)
 			require.NoError(err)
 			root := t.TempDir()
 			require.NoError(os.MkdirAll(filepath.Join(root, "Attachments"), 0o700))
@@ -274,7 +274,7 @@ func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
 			src, err := resolveImessageSource(st)
 			require.NoError(err)
 			var messageID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), src.ID, "1").Scan(&messageID))
 			refs, err := st.MessageIMessageAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)

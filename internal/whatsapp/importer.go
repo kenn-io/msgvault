@@ -43,7 +43,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	}
 	defer func() { _ = waDB.Close() }()
 
-	kind, err := detectDatabaseKind(waDB)
+	kind, err := detectDatabaseKind(ctx, waDB)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 	// Keep the detailed Android schema checks for compatibility with the
 	// existing importer error handling.
-	if err := verifyWhatsAppDB(waDB); err != nil {
+	if err := verifyWhatsAppDB(ctx, waDB); err != nil {
 		return nil, err
 	}
 
@@ -67,7 +67,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	}
 
 	if opts.DisplayName != "" {
-		_ = imp.store.UpdateSourceDisplayName(source.ID, opts.DisplayName)
+		_ = imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, opts.DisplayName)
 	}
 	summary.SourceID = source.ID
 
@@ -93,7 +93,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	imp.progress.OnStart()
 
 	// Create participant for the phone owner (self).
-	selfParticipantID, err := imp.store.EnsureParticipantByPhone(opts.Phone, opts.DisplayName, "whatsapp")
+	selfParticipantID, err := imp.store.EnsureParticipantByPhone(ctx, opts.Phone, opts.DisplayName, "whatsapp")
 	if err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("ensure self participant: %w", err)
@@ -101,14 +101,14 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	summary.Participants++
 
 	// Fetch all chats from WhatsApp DB.
-	chats, err := fetchChats(waDB)
+	chats, err := fetchChats(ctx, waDB)
 	if err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("fetch chats: %w", err)
 	}
 
 	// Load lid → phone mapping for resolving "lid" senders.
-	lidMap, err := fetchLidMap(waDB)
+	lidMap, err := fetchLidMap(ctx, waDB)
 	if err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("fetch lid map: %w", err)
@@ -144,7 +144,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 		// Map chat to conversation.
 		sourceConvID, convType, title := mapConversation(chat)
-		conversationID, err := imp.store.EnsureConversationWithType(source.ID, sourceConvID, convType, title)
+		conversationID, err := imp.store.EnsureConversationWithTypeContext(ctx, source.ID, sourceConvID, convType, title)
 		if err != nil {
 			summary.Errors++
 			imp.progress.OnError(fmt.Errorf("ensure conversation %s: %w", sourceConvID, err))
@@ -157,20 +157,20 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 		// (e.g. lid:..., broadcast) — normalizePhone returns "" for those.
 		if !isGroupChat(chat) && chat.User != "" {
 			if phone := normalizePhone(chat.User, chat.Server); phone != "" {
-				if participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp"); err != nil {
+				if participantID, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp"); err != nil {
 					summary.Errors++
 					imp.progress.OnError(fmt.Errorf("ensure participant %s: %w", phone, err))
 				} else {
 					summary.Participants++
-					_ = imp.store.EnsureConversationParticipant(conversationID, participantID, "member")
-					_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
+					_ = imp.store.EnsureConversationParticipantContext(ctx, conversationID, participantID, "member")
+					_ = imp.store.EnsureConversationParticipantContext(ctx, conversationID, selfParticipantID, "member")
 				}
 			}
 		}
 
 		// For group chats: add all group participants.
 		if isGroupChat(chat) {
-			members, err := fetchGroupParticipants(waDB, chat.RawString)
+			members, err := fetchGroupParticipants(ctx, waDB, chat.RawString)
 			if err != nil {
 				summary.Errors++
 				imp.progress.OnError(fmt.Errorf("fetch group participants for %s: %w", sourceConvID, err))
@@ -180,14 +180,14 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					if phone == "" {
 						continue // Non-phone JID — skip.
 					}
-					participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
+					participantID, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp")
 					if err != nil {
 						summary.Errors++
 						continue
 					}
 					summary.Participants++
 					role := mapGroupRole(member.Admin)
-					_ = imp.store.EnsureConversationParticipant(conversationID, participantID, role)
+					_ = imp.store.EnsureConversationParticipantContext(ctx, conversationID, participantID, role)
 				}
 			}
 		}
@@ -219,7 +219,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 				}
 			}
 
-			messages, err := fetchMessages(waDB, chat.RowID, afterID, remaining)
+			messages, err := fetchMessages(ctx, waDB, chat.RowID, afterID, remaining)
 			if err != nil {
 				summary.Errors++
 				imp.progress.OnError(fmt.Errorf("fetch messages for chat %s after %d: %w", sourceConvID, afterID, err))
@@ -237,21 +237,21 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 			}
 
 			// Batch-fetch media, reactions, and quotes.
-			mediaMap, err := fetchMedia(waDB, msgRowIDs)
+			mediaMap, err := fetchMedia(ctx, waDB, msgRowIDs)
 			if err != nil {
 				summary.Errors++
 				imp.progress.OnError(fmt.Errorf("fetch media: %w", err))
 				mediaMap = make(map[int64]waMedia)
 			}
 
-			reactionMap, err := fetchReactions(waDB, msgRowIDs)
+			reactionMap, err := fetchReactions(ctx, waDB, msgRowIDs)
 			if err != nil {
 				summary.Errors++
 				imp.progress.OnError(fmt.Errorf("fetch reactions: %w", err))
 				reactionMap = make(map[int64][]waReaction)
 			}
 
-			quotedMap, err := fetchQuotedMessages(waDB, msgRowIDs)
+			quotedMap, err := fetchQuotedMessages(ctx, waDB, msgRowIDs)
 			if err != nil {
 				summary.Errors++
 				imp.progress.OnError(fmt.Errorf("fetch quoted messages: %w", err))
@@ -285,7 +285,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					// validation despite not being real phone numbers.
 					phone := resolveLidSender(waMsg.SenderJIDRowID, waMsg.SenderServer.String, lidMap)
 					if phone != "" {
-						pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
+						pid, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp")
 						if err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("ensure sender participant %s: %w", phone, err))
@@ -296,7 +296,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 				} else if waMsg.SenderUser.Valid && waMsg.SenderUser.String != "" {
 					phone := normalizePhone(waMsg.SenderUser.String, waMsg.SenderServer.String)
 					if phone != "" {
-						pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
+						pid, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp")
 						if err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("ensure sender participant %s: %w", phone, err))
@@ -308,7 +308,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					// In a direct chat, the other person is the sender.
 					phone := normalizePhone(chat.User, chat.Server)
 					if phone != "" {
-						pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
+						pid, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp")
 						if err == nil {
 							senderID = sql.NullInt64{Int64: pid, Valid: true}
 						}
@@ -322,7 +322,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 				// Build and upsert the message.
 				msg := mapMessage(waMsg, conversationID, source.ID, senderID)
-				messageID, err := imp.store.UpsertMessage(&msg)
+				messageID, err := imp.store.UpsertMessageContext(ctx, &msg)
 				if err != nil {
 					summary.Errors++
 					imp.progress.OnError(fmt.Errorf("upsert message %s: %w", waMsg.KeyID, err))
@@ -353,13 +353,13 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					}
 				}
 				if bodyText.Valid {
-					_ = imp.store.UpsertMessageBody(messageID, bodyText, sql.NullString{})
+					_ = imp.store.UpsertMessageBodyContext(ctx, messageID, bodyText, sql.NullString{})
 				}
 
 				// Store raw JSON for re-parsing.
 				rawJSON, err := json.Marshal(waMsg, json.Deterministic(true))
 				if err == nil {
-					_ = imp.store.UpsertMessageRawWithFormat(messageID, rawJSON, "whatsapp_json")
+					_ = imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, rawJSON, "whatsapp_json")
 				}
 
 				// Handle media/attachments.
@@ -367,7 +367,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					summary.AttachmentsFound++
 					mediaType := mapMediaType(waMsg.MessageType)
 
-					storagePath, contentHash, storedSize := imp.handleMediaFile(media, opts)
+					storagePath, contentHash, storedSize := imp.handleMediaFile(ctx, media, opts)
 					if storagePath != "" {
 						summary.MediaCopied++
 					}
@@ -414,12 +414,13 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 						// Only clear if the message has no pre-existing attachment rows
 						// (a previous import with --media-dir may have created them).
 						var existingCount int
-						_ = imp.store.DB().QueryRow(
+						_ = imp.store.DB().QueryRowContext(
+							ctx,
 							imp.store.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"),
 							messageID,
 						).Scan(&existingCount)
 						if existingCount == 0 {
-							_ = imp.store.RecomputeMessageAttachmentStats(messageID)
+							_ = imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID)
 						}
 					}
 
@@ -441,7 +442,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 							syncErr = err
 							return nil, fmt.Errorf("link reply: %w", err)
 						}
-					} else if dbMsgID, lookupErr := imp.lookupMessageByKeyID(source.ID, quoted.QuotedKeyID); lookupErr == nil && dbMsgID > 0 {
+					} else if dbMsgID, lookupErr := imp.lookupMessageByKeyID(ctx, source.ID, quoted.QuotedKeyID); lookupErr == nil && dbMsgID > 0 {
 						// Found in DB from a previous import run or another chat.
 						if err := imp.setReplyTo(ctx, messageID, dbMsgID); err != nil {
 							syncErr = err
@@ -465,7 +466,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 							if phone == "" {
 								continue
 							}
-							pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
+							pid, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp")
 							if err != nil {
 								summary.Errors++
 								continue
@@ -476,7 +477,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 							if phone == "" {
 								continue // Non-phone JID — skip reaction.
 							}
-							pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
+							pid, err := imp.store.EnsureParticipantByPhone(ctx, phone, "", "whatsapp")
 							if err != nil {
 								summary.Errors++
 								continue
@@ -488,7 +489,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 						}
 
 						createdAt := time.Unix(r.Timestamp/1000, 0).UTC()
-						if err := imp.store.UpsertReaction(messageID, reactorID, reactionTypeEmoji, reactionValue, createdAt); err != nil {
+						if err := imp.store.UpsertReaction(ctx, messageID, reactorID, reactionTypeEmoji, reactionValue, createdAt); err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("upsert reaction: %w", err))
 						} else {
@@ -507,7 +508,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					} else if waMsg.SenderUser.Valid {
 						senderAddr = normalizePhone(waMsg.SenderUser.String, waMsg.SenderServer.String)
 					}
-					if err := imp.store.UpsertFTS(messageID, "", bodyText.String, senderAddr, "", ""); err != nil {
+					if err := imp.store.UpsertFTSContext(ctx, messageID, "", bodyText.String, senderAddr, "", ""); err != nil {
 						summary.Errors++
 						imp.progress.OnError(fmt.Errorf("upsert FTS: %w", err))
 					}
@@ -533,16 +534,16 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 		// participant. Covers groups where group_participants is empty (newer
 		// WhatsApp versions) and any senders discovered via lid resolution.
 		for pid := range chatSenderIDs {
-			_ = imp.store.EnsureConversationParticipant(conversationID, pid, "member")
+			_ = imp.store.EnsureConversationParticipantContext(ctx, conversationID, pid, "member")
 		}
 		// Always include self as participant.
-		_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
+		_ = imp.store.EnsureConversationParticipantContext(ctx, conversationID, selfParticipantID, "member")
 
 		imp.progress.OnChatComplete(chat.RawString, chatAdded)
 	}
 
 	// Update denormalised conversation counts for the WhatsApp source.
-	if err := imp.store.RecomputeConversationStats(source.ID); err != nil {
+	if err := imp.store.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
 		imp.progress.OnError(fmt.Errorf("recompute conversation stats: %w", err))
 	}
 
@@ -555,7 +556,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 // handleMediaFile attempts to find and copy a media file to content-addressed storage.
 // Returns (storagePath, contentHash, storedSize). All are empty or zero if the
 // file is not found.
-func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string, string, int64) {
+func (imp *Importer) handleMediaFile(ctx context.Context, media waMedia, opts ImportOptions) (string, string, int64) {
 	if opts.MediaDir == "" || opts.AttachmentsDir == "" || !media.FilePath.Valid || media.FilePath.String == "" {
 		return "", "", 0
 	}
@@ -615,6 +616,7 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 	}
 
 	relStoragePath, contentHash, storedSize, err := export.StoreAttachmentFromPath(
+		ctx,
 		opts.AttachmentsDir, fullPath, maxSize)
 	if err != nil {
 		// contentHash is non-empty when hashing succeeded but storage failed;
@@ -646,9 +648,10 @@ func (imp *Importer) updateAttachmentMetadata(
 
 // lookupMessageByKeyID looks up a previously imported message by its WhatsApp key_id.
 // Returns 0 if not found.
-func (imp *Importer) lookupMessageByKeyID(sourceID int64, keyID string) (int64, error) {
+func (imp *Importer) lookupMessageByKeyID(ctx context.Context, sourceID int64, keyID string) (int64, error) {
 	var msgID int64
-	err := imp.store.DB().QueryRow(
+	err := imp.store.DB().QueryRowContext(
+		ctx,
 		imp.store.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		sourceID, keyID,
 	).Scan(&msgID)
@@ -664,10 +667,10 @@ func (imp *Importer) setReplyTo(ctx context.Context, messageID, replyToID int64)
 }
 
 // verifyWhatsAppDB checks that the database looks like a WhatsApp msgstore.db.
-func verifyWhatsAppDB(db *sql.DB) error {
+func verifyWhatsAppDB(ctx context.Context, db *sql.DB) error {
 	// Check for the 'message' table with expected columns.
 	var count int
-	err := db.QueryRow(`
+	err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'message'
 	`).Scan(&count)
@@ -679,7 +682,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 	}
 
 	// Check for the 'jid' table.
-	err = db.QueryRow(`
+	err = db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'jid'
 	`).Scan(&count)
@@ -691,7 +694,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 	}
 
 	// Check for the 'chat' table.
-	err = db.QueryRow(`
+	err = db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'chat'
 	`).Scan(&count)

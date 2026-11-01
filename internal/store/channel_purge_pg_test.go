@@ -20,7 +20,7 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 			require.NoError(err)
 			retained, err := st.GetOrCreateSource("discord", "retained-guild")
 			require.NoError(err)
-			removedConversation, err := st.EnsureConversation(removed.ID, "removed-channel", "Removed")
+			removedConversation, err := st.EnsureConversation(t.Context(), removed.ID, "removed-channel", "Removed")
 			require.NoError(err)
 			runID, err := st.StartSync(retained.ID, "full")
 			require.NoError(err)
@@ -104,13 +104,13 @@ func TestChannelPurgeLetsOtherSourceSyncFinish(t *testing.T) {
 			require.NoError(err)
 			retained, err := st.GetOrCreateSource("discord", "retained-guild")
 			require.NoError(err)
-			conversation, err := st.EnsureConversation(removed.ID, "removed-channel", "Removed")
+			conversation, err := st.EnsureConversation(t.Context(), removed.ID, "removed-channel", "Removed")
 			require.NoError(err)
 			var runID int64
 			if operation == "fail operation" {
 				_, err = st.CreateSyncOperation(retained.ID, "retained-operation")
 				require.NoError(err)
-				runID, err = st.StartSyncOperation(retained.ID, "retained-operation")
+				runID, err = st.StartSyncOperation(t.Context(), retained.ID, "retained-operation")
 			} else {
 				runID, err = st.StartSync(retained.ID, "full")
 			}
@@ -169,7 +169,7 @@ func TestChannelPurgeLetsOtherSourceSyncFinish(t *testing.T) {
 				case "fail and clear cursor":
 					err = st.FailSyncAndClearSourceCursorContext(ctx, runID, retained.ID, "expired cursor")
 				case "fail operation":
-					err = st.FinishSyncOperation("retained-operation", SyncStatusFailed)
+					err = st.FinishSyncOperation(t.Context(), "retained-operation", SyncStatusFailed)
 				case "scoped source write":
 					err = st.ScopedToSync(retained.ID, runID).UpdateSourceDisplayNameContext(ctx, retained.ID, "Renamed")
 				}

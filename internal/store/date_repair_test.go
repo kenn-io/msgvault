@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -62,7 +61,8 @@ func TestMessageDateRepairsListAndApplyCandidates(t *testing.T) {
 	} {
 		var got time.Time
 		require.NoError(
-			f.Store.DB().QueryRow(
+			f.Store.DB().QueryRowContext(
+				t.Context(),
 				f.Store.Rebind("SELECT sent_at FROM messages WHERE id = ?"),
 				id,
 			).Scan(&got),
@@ -107,7 +107,8 @@ func TestMessageDateRepairsCompareOffsetTimestampsByInstant(t *testing.T) {
 			WithSourceMessageID(tc.sourceID).
 			WithSentAt(lower).
 			Create(t, f.Store)
-		_, err := f.Store.DB().Exec(
+		_, err := f.Store.DB().ExecContext(
+			t.Context(),
 			f.Store.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"),
 			tc.sentAt,
 			id,
@@ -141,7 +142,8 @@ func TestMessageDateRepairsCompareOffsetTimestampsByInstant(t *testing.T) {
 	var validSentAt time.Time
 	var validLastModified string
 	require.NoError(
-		f.Store.DB().QueryRow(
+		f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind(`
 				SELECT sent_at, CAST(last_modified AS TEXT)
 				FROM messages
@@ -160,7 +162,8 @@ func TestMessageDateRepairsCompareOffsetTimestampsByInstant(t *testing.T) {
 
 	var unchangedSentAt time.Time
 	require.NoError(
-		f.Store.DB().QueryRow(
+		f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind("SELECT sent_at FROM messages WHERE id = ?"),
 			ids[0],
 		).Scan(&unchangedSentAt),
@@ -192,7 +195,8 @@ func TestApplyMessageDateRepairsRejectsChangedRowsAtomically(t *testing.T) {
 	require.Len(candidates, 2)
 
 	concurrentSentAt := time.Date(1972, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`
 			UPDATE messages
 			SET sent_at = ?, last_modified = ?
@@ -204,7 +208,7 @@ func TestApplyMessageDateRepairsRejectsChangedRowsAtomically(t *testing.T) {
 	)
 	require.NoError(err)
 
-	err = f.Store.ApplyMessageDateRepairs(context.Background(), []store.MessageDateRepair{
+	err = f.Store.ApplyMessageDateRepairs(t.Context(), []store.MessageDateRepair{
 		{
 			ID:                     firstID,
 			SentAt:                 time.Date(2007, 1, 2, 0, 0, 0, 0, time.UTC),
@@ -220,7 +224,8 @@ func TestApplyMessageDateRepairsRejectsChangedRowsAtomically(t *testing.T) {
 
 	var sentAt sql.NullTime
 	require.NoError(
-		f.Store.DB().QueryRow(
+		f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind("SELECT sent_at FROM messages WHERE id = ?"),
 			firstID,
 		).Scan(&sentAt),
@@ -230,7 +235,8 @@ func TestApplyMessageDateRepairsRejectsChangedRowsAtomically(t *testing.T) {
 	assert.Equal(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), sentAt.Time.UTC())
 
 	require.NoError(
-		f.Store.DB().QueryRow(
+		f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind("SELECT sent_at FROM messages WHERE id = ?"),
 			changedID,
 		).Scan(&sentAt),

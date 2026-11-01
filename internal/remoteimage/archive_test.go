@@ -30,7 +30,7 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("eml", "user@example.com")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(src.ID, "thread", "Images")
+	conversation, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Images")
 	require.NoError(err)
 	original := `<p>Receipt</p><img src="http://images.example/a?tracking=secret"><img src="http://images.example/a?tracking=secret"><img src="http://images.example/b"><img src="http://images.example/missing"><img src="cid:original">`
 	raw := []byte("original MIME bytes")
@@ -62,11 +62,11 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, network, strings.TrimPrefix(upstream.URL, "http://"))
 	}
 	dir := t.TempDir()
-	legacyBytes, err := export.StoreAttachmentFileDurable(dir, &mime.Attachment{ContentType: "image/png", Content: image})
+	legacyBytes, err := export.StoreAttachmentFileDurable(t.Context(), dir, &mime.Attachment{ContentType: "image/png", Content: image})
 	require.NoError(err)
-	require.NoError(st.UpsertAttachment(id, "receipt.png", "image/png", legacyBytes.StoragePath, legacyBytes.ContentHash, len(image)))
+	require.NoError(st.UpsertAttachment(t.Context(), id, "receipt.png", "image/png", legacyBytes.StoragePath, legacyBytes.ContentHash, len(image)))
 	var legacyID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), id).Scan(&legacyID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), id).Scan(&legacyID))
 	legacy, err := st.GetFileMetadata(t.Context(), legacyID)
 	require.NoError(err)
 	require.NotNil(legacy)
@@ -93,7 +93,7 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	assert.Contains(rendered, `src="http://images.example/missing"`)
 	assert.Contains(rendered, `src="cid:original"`)
 	// Attachment rows can persist before the separate statistics update.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET attachment_count = 0, has_attachments = FALSE WHERE id = ?`), id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET attachment_count = 0, has_attachments = FALSE WHERE id = ?`), id)
 	require.NoError(err)
 	result = f.Archive(t.Context(), st, dir, id, original)
 	assert.Zero(result.Downloaded)
@@ -106,7 +106,7 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	assert.Equal(original, saved.BodyHTML)
 	assert.True(saved.HasAttachments, "reusing archived images must repair the attachment flag")
 	var storedAttachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&storedAttachmentCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&storedAttachmentCount))
 	assert.Equal(3, storedAttachmentCount, "reusing archived images must recount all attachment occurrences")
 	savedRaw, err := st.GetMessageRaw(id)
 	require.NoError(err)
@@ -115,7 +115,7 @@ func TestArchivePersistsDistinctURLIdentitiesAndReusesBytes(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(legacy, preservedLegacy, "remote image downloads must not relabel a MIME attachment with identical bytes")
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), id).Scan(&attachmentCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), id).Scan(&attachmentCount))
 	assert.Equal(3, attachmentCount, "the MIME part and both remote URL occurrences must coexist after retry")
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
@@ -152,7 +152,7 @@ func TestArchiveBoundsNetworkRequestsByCountAndBytes(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("eml", "user@example.com")
 			require.NoError(err)
-			conv, err := st.EnsureConversation(src.ID, "thread", "Images")
+			conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Images")
 			require.NoError(err)
 			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email"}})
 			require.NoError(err)
@@ -190,7 +190,7 @@ func TestBackfillHonorsSourceAndLimitAndSkipsNonEmail(t *testing.T) {
 	for _, source := range []string{"one@example.com", "two@example.com"} {
 		src, err := st.GetOrCreateSource("eml", source)
 		require.NoError(err)
-		conv, err := st.EnsureConversation(src.ID, "thread", "Empty")
+		conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Empty")
 		require.NoError(err)
 		for i, kind := range []string{"email", "email", "slack"} {
 			_, err := st.PersistMessage(&store.MessagePersistData{
@@ -242,7 +242,7 @@ func TestArchiveJPEGContentTypes(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("eml", "user@example.com")
 			require.NoError(err)
-			conv, err := st.EnsureConversation(src.ID, "thread", "Images")
+			conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Images")
 			require.NoError(err)
 			id, err := st.PersistMessage(&store.MessagePersistData{
 				Message: &store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email"},

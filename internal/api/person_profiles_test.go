@@ -846,7 +846,7 @@ func semanticPersonSearchRequest(
 	t *testing.T, srv *Server, body []byte, apiKey string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, peoplePath+"/search", bytes.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, peoplePath+"/search", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		request.Header.Set("X-Api-Key", apiKey)
@@ -860,7 +860,7 @@ func personRequest(
 	t *testing.T, srv *Server, method, path string, body []byte, ifMatch string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

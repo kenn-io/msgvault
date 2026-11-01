@@ -132,11 +132,11 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	assert.True(gcMessageExists(t, backups[0], deletedID),
 		"backup must capture the source-deleted row before purge")
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err, "open compacted archive")
 	defer func() { _ = st.Close() }()
 	var freelist int64
-	require.NoError(st.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist),
+	require.NoError(st.DB().QueryRowContext(t.Context(), `PRAGMA freelist_count`).Scan(&freelist),
 		"read compacted freelist")
 	assert.Zero(freelist)
 }
@@ -216,7 +216,7 @@ func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64, tes
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("gmail", "gc@example.test")
 	require.NoError(err, "GetOrCreateSource")
-	conversationID, err := st.EnsureConversation(source.ID, "gc-thread", "GC")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "gc-thread", "GC")
 	require.NoError(err, "EnsureConversation")
 	insert := func(sourceMessageID string) int64 {
 		id, insertErr := st.UpsertMessage(&store.Message{
@@ -233,7 +233,7 @@ func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64, tes
 	dedupID = insert("gc-command-dedup")
 	require.NoError(st.MarkMessageDeleted(source.ID, "gc-command-deleted"),
 		"MarkMessageDeleted")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET deleted_at = CURRENT_TIMESTAMP, delete_batch_id = 'gc-command-batch'
 		WHERE id = ?
@@ -262,10 +262,10 @@ func seedGCLooseBlob(t *testing.T, cfg *config.Config, messageID int64, hash str
 
 func seedGCAttachmentRow(t *testing.T, cfg *config.Config, messageID int64, hash string) {
 	t.Helper()
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err, "open store for attachment seed")
 	defer func() { _ = st.Close() }()
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments (message_id, filename, content_hash, storage_path)
 		VALUES (?, ?, ?, ?)
 	`), messageID, "blob.bin", hash, hash[:2]+"/"+hash)
@@ -274,11 +274,11 @@ func seedGCAttachmentRow(t *testing.T, cfg *config.Config, messageID int64, hash
 
 func gcMessageExists(t *testing.T, dbPath string, messageID int64) bool {
 	t.Helper()
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(t, err, "open GC archive")
 	defer func() { _ = st.Close() }()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE id = ?`), messageID).Scan(&count),
 		"count GC message")
 	return count == 1

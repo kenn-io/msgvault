@@ -46,9 +46,9 @@ func newE2EFixture(t *testing.T) *e2eFixture {
 	require.NoError(err, "GetOrCreateSource A")
 	srcB, err := st.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "GetOrCreateSource B")
-	convA, err := st.EnsureConversation(srcA.ID, "thread-A", "Thread A")
+	convA, err := st.EnsureConversation(t.Context(), srcA.ID, "thread-A", "Thread A")
 	require.NoError(err, "EnsureConversation A")
-	convB, err := st.EnsureConversation(srcB.ID, "thread-B", "Thread B")
+	convB, err := st.EnsureConversation(t.Context(), srcB.ID, "thread-B", "Thread B")
 	require.NoError(err, "EnsureConversation B")
 
 	f := &e2eFixture{
@@ -102,7 +102,7 @@ func (f *e2eFixture) upsertAttachment(gmailID, filename, storagePath, contentHas
 	f.t.Helper()
 	msgID, ok := f.msgIDs[gmailID]
 	require.Truef(f.t, ok, "upsertAttachment: unknown gmail ID %q", gmailID)
-	err := f.store.UpsertAttachment(msgID, filename, "application/pdf",
+	err := f.store.UpsertAttachment(f.t.Context(), msgID, filename, "application/pdf",
 		storagePath, contentHash, 100)
 	require.NoErrorf(f.t, err, "UpsertAttachment(%s, %s)", gmailID, filename)
 }
@@ -155,7 +155,7 @@ func TestExecutor_E2E_TrashOnlyMarksTargetSource(t *testing.T) {
 	manifest := tc.CreateManifest("trash-source-a",
 		[]string{"msg-a1", "msg-a2", "msg-a3"})
 
-	err := tc.Exec.Execute(context.Background(), manifest.ID, &ExecuteOptions{
+	err := tc.Exec.Execute(t.Context(), manifest.ID, &ExecuteOptions{
 		Method:    MethodTrash,
 		BatchSize: 100,
 		Resume:    true,
@@ -181,15 +181,15 @@ func TestExecutor_E2E_VersionTwoScopesDuplicateRemoteID(t *testing.T) {
 		execute func(*e2eContext, string) error
 	}{
 		{name: "trash", execute: func(tc *e2eContext, id string) error {
-			return tc.Exec.Execute(context.Background(), id, DefaultExecuteOptions())
+			return tc.Exec.Execute(t.Context(), id, DefaultExecuteOptions())
 		}},
 		{name: "permanent", execute: func(tc *e2eContext, id string) error {
 			opts := DefaultExecuteOptions()
 			opts.Method = MethodDelete
-			return tc.Exec.Execute(context.Background(), id, opts)
+			return tc.Exec.Execute(t.Context(), id, opts)
 		}},
 		{name: "batch", execute: func(tc *e2eContext, id string) error {
-			return tc.Exec.ExecuteBatch(context.Background(), id)
+			return tc.Exec.ExecuteBatch(t.Context(), id)
 		}},
 	}
 	for _, tt := range tests {
@@ -236,7 +236,7 @@ func TestExecutor_E2E_MissingVersionTwoSourceMakesNoRemoteCall(t *testing.T) {
 	})
 	require.NoError(tc.Mgr.SaveManifest(manifest))
 
-	err := tc.Exec.Execute(context.Background(), manifest.ID, DefaultExecuteOptions())
+	err := tc.Exec.Execute(t.Context(), manifest.ID, DefaultExecuteOptions())
 	require.ErrorContains(err, "resolve manifest source")
 	assert.Empty(tc.MockAPI.TrashCalls)
 	assert.Empty(tc.MockAPI.DeleteCalls)
@@ -253,7 +253,7 @@ func TestExecutor_E2E_PermanentDeletePreservesArchive(t *testing.T) {
 	manifest := tc.CreateManifest("delete-a1-a2",
 		[]string{"msg-a1", "msg-a2"})
 
-	err := tc.Exec.Execute(context.Background(), manifest.ID, &ExecuteOptions{
+	err := tc.Exec.Execute(t.Context(), manifest.ID, &ExecuteOptions{
 		Method:    MethodDelete,
 		BatchSize: 100,
 		Resume:    true,
@@ -283,7 +283,7 @@ func TestExecutor_E2E_BatchDeleteMarksDBAcrossSources(t *testing.T) {
 	manifest := tc.CreateManifest("batch-cross-source",
 		[]string{"msg-a1", "msg-b1"})
 
-	err := tc.Exec.ExecuteBatch(context.Background(), manifest.ID)
+	err := tc.Exec.ExecuteBatch(t.Context(), manifest.ID)
 	require.NoError(t, err, "ExecuteBatch")
 
 	// Both sources see one of their messages soft-deleted.
@@ -307,7 +307,7 @@ func TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile(t *testi
 	// Permanently delete msg-a1 (shared hash) and msg-a2 (unique to A).
 	manifest := tc.CreateManifest("perm-delete-a1-a2",
 		[]string{"msg-a1", "msg-a2"})
-	err := tc.Exec.Execute(context.Background(), manifest.ID, &ExecuteOptions{
+	err := tc.Exec.Execute(t.Context(), manifest.ID, &ExecuteOptions{
 		Method:    MethodDelete,
 		BatchSize: 100,
 		Resume:    true,

@@ -105,7 +105,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)
-	participantMap, err := st.EnsureParticipantsBatch(allAddresses)
+	participantMap, err := st.EnsureParticipantsBatch(ctx, allAddresses)
 	if err != nil {
 		return fmt.Errorf("ensure participants: %w", err)
 	}
@@ -133,6 +133,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		convSubject = "(no subject)"
 	}
 	conversationID, err := st.EnsureConversation(
+		ctx,
 		sourceID, threadID, convSubject,
 	)
 	if err != nil {
@@ -218,6 +219,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	for i := range parsed.Attachments {
 		att := &parsed.Attachments[i]
 		if err := storeAttachment(
+			ctx,
 			st, attachmentsDir, messageID, att, strict,
 		); err != nil {
 			incomplete(fmt.Errorf("store attachment: %w", err))
@@ -232,7 +234,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	// Correct attachment count if disk storage filtered some out
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
-		if err := st.DB().QueryRow(
+		if err := st.DB().QueryRowContext(
+			ctx,
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
@@ -241,7 +244,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 				"message", messageID, "error", err,
 			)
 		} else if storedCount != attachmentCount {
-			if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+			if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 				incomplete(fmt.Errorf("attachment metadata: %w", err))
 				log.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err,
@@ -262,7 +265,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		fromAddr := joinEmails(parsed.From)
 		toAddrs := joinEmails(parsed.To)
 		ccAddrs := joinEmails(parsed.Cc)
-		if err := st.UpsertFTS(
+		if err := st.UpsertFTSContext(
+			ctx,
 			messageID, subject, bodyText,
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {
@@ -362,6 +366,7 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 }
 
 func storeAttachment(
+	ctx context.Context,
 	st *store.Store, attachmentsDir string,
 	messageID int64, att *mime.Attachment, includeEmpty bool,
 ) error {
@@ -376,7 +381,7 @@ func storeAttachment(
 	role, roleSource := store.AttachmentRoleFromMIME(
 		att.Disposition, att.IsInline, att.ContentID,
 	)
-	return st.UpsertAttachmentRecord(context.Background(), messageID, store.AttachmentWrite{
+	return st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
 		Filename:      att.Filename,
 		MIMEType:      att.ContentType,
 		StoragePath:   storagePath,

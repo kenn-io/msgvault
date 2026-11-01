@@ -23,6 +23,7 @@ func TestReconcilerBootstrapAndReplayConvergeOnCurrentOccurrences(t *testing.T) 
 	unknownMessage := f.CreateMessage("document-reconcile-unknown")
 	unknownHash := strings.Repeat("b", 64)
 	require.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		unknownMessage, "unknown.pdf", "application/pdf",
 		unknownHash[:2]+"/"+unknownHash, unknownHash, 64,
 	))
@@ -212,9 +213,10 @@ func TestSQLiteOccurrenceReconciliationReadsAfterWriterSlot(t *testing.T) {
 	holder, err := f.Store.DB().Conn(t.Context())
 	require.NoError(err)
 	held := true
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if held {
-			_, _ = holder.ExecContext(context.Background(), "ROLLBACK")
+			_, _ = holder.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK")
 		}
 		_ = holder.Close()
 	})
@@ -281,9 +283,10 @@ func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.
 	require.NoError(err)
 	lockName := "msgvault.document_occurrence.attachment:" + strconv.FormatInt(attachmentID, 10)
 	held := true
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if held {
-			_, _ = holder.ExecContext(context.Background(), f.Store.Rebind(`
+			_, _ = holder.ExecContext(context.WithoutCancel(t.Context()), f.Store.Rebind(`
 				SELECT pg_advisory_unlock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
 		}
 		_ = holder.Close()

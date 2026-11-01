@@ -382,7 +382,7 @@ func newEmbeddingMetadataTestDBFileAt(t *testing.T, path string) string {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 CREATE TABLE index_generations (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	model TEXT NOT NULL,
@@ -399,7 +399,7 @@ CREATE TABLE index_generations (
 	require.NoError(t, err)
 
 	fp := newTestConfigForFingerprint("").Vector.GenerationFingerprint()
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 INSERT INTO index_generations
 	(id, model, dimension, fingerprint, started_at, seeded_at, completed_at, activated_at, state, message_count)
 VALUES
@@ -416,7 +416,7 @@ VALUES
 func seedMainDBWithLiveMessage(t *testing.T, dataDir string) {
 	t.Helper()
 	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES (1, 1, 1, 'm1', 'email', NULL);
@@ -427,7 +427,7 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 func seedMainDBWithScopedFullCoverageMessages(t *testing.T, dataDir string) {
 	t.Helper()
 	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dataDir, "msgvault.db"))
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES
