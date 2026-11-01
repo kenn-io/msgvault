@@ -255,21 +255,12 @@ func writeTaskLinkError(w http.ResponseWriter, err error) {
 	}
 }
 
-type archiveUIDReader interface {
-	ArchiveUID() (string, error)
-	ArchiveRevision() (string, error)
-}
-
-func (s *Server) resolveTaskMessageIdentity(_ context.Context, message *APIMessage) (tasklinks.MessageIdentity, error) {
-	archive, ok := s.store.(archiveUIDReader)
+func (s *Server) resolveTaskMessageIdentity(ctx context.Context, message *APIMessage) (tasklinks.MessageIdentity, error) {
+	archive, ok := s.store.(ArchiveIdentifier)
 	if !ok {
 		return tasklinks.MessageIdentity{}, errors.New("archive identity unavailable")
 	}
-	uid, err := archive.ArchiveUID()
-	if err != nil {
-		return tasklinks.MessageIdentity{}, err
-	}
-	revision, err := archive.ArchiveRevision()
+	uid, err := archive.ArchiveUIDContext(ctx)
 	if err != nil {
 		return tasklinks.MessageIdentity{}, err
 	}
@@ -291,9 +282,7 @@ func (s *Server) resolveTaskMessageIdentity(_ context.Context, message *APIMessa
 	if sourceType == "" {
 		return tasklinks.MessageIdentity{}, fmt.Errorf("source %d not found", message.SourceID)
 	}
-	return tasklinks.MessageIdentity{ArchiveUID: uid, ArchiveRevision: revision, MessageID: message.ID, ConversationID: message.ConversationID,
+	return tasklinks.MessageIdentity{ArchiveUID: uid, ArchiveRevision: store.ArchiveRevisionV1, MessageID: message.ID, ConversationID: message.ConversationID,
 		Subject: message.Subject, From: message.From, SentAt: message.SentAt, SourceType: sourceType,
 		SourceIdentifier: identifier, SourceMessageID: message.SourceMessageID}, nil
 }
-
-var _ archiveUIDReader = (*store.Store)(nil)
