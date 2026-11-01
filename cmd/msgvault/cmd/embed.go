@@ -111,7 +111,7 @@ func runEmbeddingsBuildLocal(cmd *cobra.Command) error {
 	if !cfg.Vector.Enabled {
 		return errors.New("vector search not enabled; add [vector] enabled=true to config.toml first")
 	}
-	if cfg.Vector.Embeddings.Endpoint == "" || cfg.Vector.Embeddings.Model == "" {
+	if (!cfg.Vector.Embeddings.LocalOnly && cfg.Vector.Embeddings.Endpoint == "") || cfg.Vector.Embeddings.Model == "" {
 		return errors.New("[vector.embeddings] endpoint and model are required")
 	}
 	return runEmbed(cmd)
@@ -140,7 +140,7 @@ func embeddingsForwardEnv(state *invocation) map[string]string {
 	}
 	cfg := state.cfg
 	name := cfg.Vector.Embeddings.APIKeyEnv
-	if name == "" {
+	if cfg.Vector.Embeddings.LocalOnly || name == "" {
 		return nil
 	}
 	value := os.Getenv(name)

@@ -55,6 +55,13 @@ func configuredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.D
 	if cfg == nil || !cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		return store.DocumentVectorGenerationSpec{}, errors.New("document embeddings are not configured")
 	}
+	resolved := *cfg
+	var err error
+	resolved.Vector, err = resolveLocalVectorConfig(ctx, cfg.Vector)
+	if err != nil {
+		return store.DocumentVectorGenerationSpec{}, err
+	}
+	cfg = &resolved
 	if err := cfg.Vector.Embeddings.Validate(); err != nil {
 		return store.DocumentVectorGenerationSpec{}, fmt.Errorf("document embedding config: %w", err)
 	}
@@ -87,7 +94,11 @@ func configuredDocumentVectorConsentSpec(spec store.DocumentVectorGenerationSpec
 	if purpose == "query_embedding" {
 		fingerprint = vectordocument.QueryEgressFingerprint
 	}
-	egressFingerprint, err := fingerprint(spec.TargetExtractionProfileID, state.cfg.Vector)
+	vecCfg, err := resolveLocalVectorConfig(context.Background(), state.cfg.Vector)
+	if err != nil {
+		return store.DocumentVectorConsentSpec{}, err
+	}
+	egressFingerprint, err := fingerprint(spec.TargetExtractionProfileID, vecCfg)
 	if err != nil {
 		return store.DocumentVectorConsentSpec{}, err
 	}
@@ -183,7 +194,13 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 	if state == nil || state.cfg == nil {
 		return
 	}
-	cfg := state.cfg
+	resolved := *state.cfg
+	vecCfg, err := resolveLocalVectorConfig(context.Background(), resolved.Vector)
+	if err != nil {
+		return
+	}
+	resolved.Vector = vecCfg
+	cfg := &resolved
 	authentication := "no authentication environment variable configured"
 	if cfg.Vector.Embeddings.APIKeyEnv != "" {
 		authentication = "environment variable " + cfg.Vector.Embeddings.APIKeyEnv

@@ -520,10 +520,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 	var embeddingAPIKey string
 	if vecCfg.Enabled {
-		embeddingAPIKey, err = resolveProviderCredentialFromSnapshot(
-			credentialSnapshot, providercredentials.VectorEmbeddingsID,
-			vecCfg.Embeddings.Endpoint, vecCfg.Embeddings.APIKeyEnv,
-		)
+		embeddingAPIKey, err = resolveTextEmbeddingCredential(credentialSnapshot, vecCfg)
 		if err != nil {
 			return nil, fmt.Errorf("resolve text embedding credential: %w", err)
 		}

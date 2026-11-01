@@ -785,3 +785,13 @@ include_animated_gifs = true
 	require.Error(err)
 	require.Contains(err.Error(), "include_animated_gifs")
 }
+
+func TestEmbeddingsConfigLocalEndpointValidation(t *testing.T) {
+	cfg := EmbeddingsConfig{Model: "nomic-embed-text", Dimension: 768, LocalOnly: true, BatchSize: 32, Timeout: time.Second}
+	require.NoError(t, cfg.Validate())
+	cfg.LocalOnly = false
+	require.ErrorContains(t, cfg.Validate(), "endpoint: required")
+	cfg.LocalOnly = true
+	cfg.Endpoint = "invalid"
+	require.ErrorContains(t, cfg.Validate(), "http or https")
+}

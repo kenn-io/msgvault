@@ -176,6 +176,7 @@ func (m MultimodalConfig) ImageQueriesEnabled() bool {
 // EmbeddingsConfig configures the external embedding endpoint used to convert
 // message text into vectors.
 type EmbeddingsConfig struct {
+	LocalOnly      bool               `toml:"local_only"`
 	APIFormat      EmbeddingAPIFormat `toml:"api_format"`
 	Endpoint       string             `toml:"endpoint"`
 	APIKeyEnv      string             `toml:"api_key_env"`
@@ -213,21 +214,23 @@ func (e EmbeddingsConfig) Validate() error {
 		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
 			APIFormatVoyageContextual, "voyage-context-4", e.Model)
 	}
-	if e.Endpoint == "" {
-		return errors.New("vector.embeddings.endpoint: required")
-	}
-	u, err := url.Parse(e.Endpoint)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return errors.New("vector.embeddings.endpoint: must be an http or https URL with a host")
-	}
-	if u.User != nil {
-		return errors.New("vector.embeddings.endpoint: must not contain credentials")
-	}
-	if u.RawQuery != "" {
-		return errors.New("vector.embeddings.endpoint: must not contain a query")
-	}
-	if u.Fragment != "" {
-		return errors.New("vector.embeddings.endpoint: must not contain a fragment")
+	if !e.LocalOnly || e.Endpoint != "" {
+		if e.Endpoint == "" {
+			return errors.New("vector.embeddings.endpoint: required")
+		}
+		u, err := url.Parse(e.Endpoint)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return errors.New("vector.embeddings.endpoint: must be an http or https URL with a host")
+		}
+		if u.User != nil {
+			return errors.New("vector.embeddings.endpoint: must not contain credentials")
+		}
+		if u.RawQuery != "" {
+			return errors.New("vector.embeddings.endpoint: must not contain a query")
+		}
+		if u.Fragment != "" {
+			return errors.New("vector.embeddings.endpoint: must not contain a fragment")
+		}
 	}
 	if e.Model == "" {
 		return fmt.Errorf("vector.embeddings.model: required (the index generation fingerprint is %q, which is ambiguous without a model name)", e.Fingerprint())
@@ -571,7 +574,8 @@ func (c *Config) Validate() error {
 	if err := c.Embeddings.Validate(); err != nil {
 		return err
 	}
-	if c.People.Enabled {
+	// Local consent needs the live destination; runtime validates after discovery.
+	if c.People.Enabled && (!c.Embeddings.LocalOnly || c.Embeddings.Endpoint != "") {
 		if _, err := c.SemanticPersonEmbeddingProfile(); err != nil {
 			return err
 		}

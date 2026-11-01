@@ -20,6 +20,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -48,6 +49,7 @@ const (
 
 // setupProvidersOptions are the command flags.
 type setupProvidersOptions struct {
+	localEmbeddings        bool
 	yes                    bool
 	dryRun                 bool
 	jsonOutput             bool
@@ -84,6 +86,8 @@ type setupProvidersDeps struct {
 	remoteConfigured  func() bool
 	isTerminal        func(*cobra.Command) bool
 	probeOllama       func(context.Context, string) ollamaProbeResult
+	embeddingEndpoint func(context.Context, embedlocal.Options) (string, error)
+	installEmbeddings func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
 	consentState      func(context.Context, *config.Config) *setupConsentState
 	daemonAlive       func(context.Context, *config.Config) bool
 	personProvider    func() personProviderCommandDeps
@@ -143,10 +147,12 @@ func defaultSetupProvidersDeps(contexts ...context.Context) setupProvidersDeps {
 		loadConfig: func(snapshot config.ConfigFile) (*config.Config, error) {
 			return nil, errors.New("configuration is unavailable")
 		},
-		remoteConfigured: func() bool { return false },
-		isTerminal:       commandStdinIsTerminal,
-		probeOllama:      probeOllamaServer,
-		consentState:     readSetupConsentState,
+		remoteConfigured:  func() bool { return false },
+		isTerminal:        commandStdinIsTerminal,
+		probeOllama:       probeOllamaServer,
+		embeddingEndpoint: embedlocal.Endpoint,
+		installEmbeddings: embedlocal.Install,
+		consentState:      readSetupConsentState,
 		daemonAlive: func(ctx context.Context, loaded *config.Config) bool {
 			return findAnyDaemonRuntimeContext(ctx, loaded.Data.DataDir) != nil
 		},
@@ -227,6 +233,9 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 // the local Ollama server offers, which probe manifests are already written,
 // and which vector backend the archive selects.
 type setupDetection struct {
+	localEmbeddings     bool
+	embeddingEndpoint   string
+	embeddingError      error
 	configKeys          toml.MetaData
 	voyageKey           bool
 	mistralKey          bool
@@ -244,13 +253,14 @@ type setupDetection struct {
 	backendUnavailable  string
 }
 
-func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps) setupDetection {
+func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps, options setupProvidersOptions) setupDetection {
 	env := setupEnvironment{lookupEnv: deps.lookupEnv, fileExists: deps.fileExists}
 	detection := setupDetection{
 		voyageKey:     env.hasEnv(setupVoyageKeyEnv),
 		mistralKeyEnv: loaded.Attachments.Documents.APIKeyEnv,
 		openAIKey:     env.hasEnv(setupOpenAIKeyEnv),
 	}
+	detection.localEmbeddings = options.localEmbeddings
 	detection.mistralKey = env.hasEnv(detection.mistralKeyEnv)
 	detection.backend, detection.backendUnavailable = setupVectorBackend(loaded)
 	// A disabled lane retains operator settings. Validate those settings and
@@ -292,21 +302,30 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		detection.ollamaEndpoint = server + "/v1"
 		detection.ollamaLoopback = embeddingProviderName(server) == "local"
 	}
+	if detection.localEmbeddings || needsLocalText {
+		dir, err := localEmbeddingsDir()
+		if err != nil {
+			detection.embeddingError = fmt.Errorf("local embedding directory: %w", err)
+		} else {
+			detection.embeddingEndpoint, detection.embeddingError = deps.embeddingEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: detection.localEmbeddings})
+		}
+	}
 	return detection
 }
 
 // setupLanePlan is one lane's decision. The edits and next steps are
 // attached so the plan can be printed before anything is written.
 type setupLanePlan struct {
-	Lane     string `json:"lane"`
-	Label    string `json:"label"`
-	Action   string `json:"action"`
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Reason   string `json:"reason"`
-	Gate     string `json:"consent_gate,omitempty"`
-	edits    []config.TableEdit
-	next     []string
+	Lane         string `json:"lane"`
+	Label        string `json:"label"`
+	Action       string `json:"action"`
+	Provider     string `json:"provider,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Reason       string `json:"reason"`
+	Gate         string `json:"consent_gate,omitempty"`
+	installLocal bool
+	edits        []config.TableEdit
+	next         []string
 }
 
 // setupInferencePlan onboards one people-sweep provider profile through the
@@ -505,13 +524,17 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 	lane := setupLanePlan{Lane: laneTextSearch, Label: "Text search"}
 	embeddings := loaded.Vector.Embeddings
 	switch {
-	case loaded.Vector.Enabled:
+	case loaded.Vector.Enabled && !detection.localEmbeddings:
 		lane.Action = planActionKeep
 		lane.Provider = embeddingProviderName(embeddings.Endpoint)
 		lane.Model = embeddings.Model
 		lane.Reason = "already configured; switching the embedding policy requires `msgvault embeddings build --full-rebuild`"
+		if !embeddings.LocalOnly && embeddings.Model == setupOllamaTextModel && embeddingProviderName(embeddings.Endpoint) == "local" {
+			lane.Reason = "switch to the shared local server with `msgvault setup providers --local-embeddings`; a matching Nomic recipe keeps the message index"
+			lane.next = []string{"msgvault setup providers --local-embeddings"}
+		}
 		return lane
-	case embeddings.Endpoint != "" || embeddings.Model != "":
+	case !detection.localEmbeddings && (embeddings.LocalOnly || embeddings.Endpoint != "" || embeddings.Model != ""):
 		lane.Action = planActionSkip
 		lane.Reason = "configured but disabled; set [vector] enabled = true to turn it on"
 		return lane
@@ -522,7 +545,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 	}
 	vectorEdit := config.TableEdit{Path: []string{tomlTableVector}, Values: map[string]any{"enabled": true, "backend": detection.backend}}
 	switch {
-	case detection.voyageKey:
+	case detection.voyageKey && !detection.localEmbeddings:
 		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionEnable, "voyage", setupVoyageTextModel, gateVoyage
 		lane.Reason = "contextual embeddings: chats embed as conversation windows, meetings as turn-aware chunks, email on the same generation"
 		lane.edits = append([]config.TableEdit{vectorEdit, {
@@ -532,7 +555,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 				"api_key_env": setupVoyageKeyEnv, "model": setupVoyageTextModel, "dimension": setupVoyageTextDim,
 			},
 		}}, setupScheduleEdits(detection.configKeys, "embed")...)
-	case detection.openAIKey:
+	case detection.openAIKey && !detection.localEmbeddings:
 		lane.Action, lane.Provider, lane.Model, lane.Gate = planActionEnable, "openai", setupOpenAITextModel, gateOpenAI
 		lane.Reason = "per-message vectors; no conversation-window context and no visual lane, both are Voyage-only"
 		lane.edits = append([]config.TableEdit{vectorEdit, {
@@ -542,34 +565,35 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 				"api_key_env": setupOpenAIKeyEnv, "model": setupOpenAITextModel, "dimension": setupOpenAITextDim,
 			},
 		}}, setupScheduleEdits(detection.configKeys, "embed")...)
-	case detection.ollama.Reachable && !detection.ollamaLoopback:
-		// A reachable server that is not on this machine would receive
-		// message text without a credential or a disclosure; only the operator
-		// may configure that, explicitly, in [vector.embeddings].
-		lane.Action = planActionSkip
-		lane.Reason = "Ollama at " + detection.ollamaEndpoint + " is not loopback; setup only selects a local server, configure [vector.embeddings] explicitly to send text off this machine"
-		return lane
-	case detection.ollama.Reachable && detection.ollama.hasModel(setupOllamaTextModel):
+	default:
+		if detection.embeddingError != nil && !errors.Is(detection.embeddingError, embedlocal.ErrNotFound) {
+			lane.Action, lane.Reason = planActionPending, detection.embeddingError.Error()
+			return lane
+		}
+		localOnly := detection.localEmbeddings || detection.embeddingEndpoint != "http://127.0.0.1:11434/v1"
+		lane.installLocal = localOnly
+		endpoint := detection.embeddingEndpoint
+		if localOnly {
+			endpoint = ""
+		}
 		lane.Action, lane.Provider, lane.Model = planActionEnable, "local", setupOllamaTextModel
-		lane.Reason = "local Ollama embeddings; message text stays on this machine"
+		lane.Reason = "local embeddings; message text stays on this machine"
+		if loaded.Vector.Enabled {
+			if embeddings.Model == setupOllamaTextModel {
+				lane.Reason += "; keeps the message index when its Nomic recipe matches"
+			} else {
+				lane.Reason += "; different model: run `msgvault embeddings build --full-rebuild --yes`"
+			}
+		}
 		lane.edits = append([]config.TableEdit{vectorEdit, {
 			Path: []string{tomlTableVector, "embeddings"},
 			Values: map[string]any{
-				"api_format": "openai", "endpoint": detection.ollamaEndpoint,
-				"api_key_env": "",
-				"model":       setupOllamaTextModel, "dimension": setupOllamaTextDim,
+				"api_format": "openai", "local_only": localOnly, "endpoint": endpoint, "api_key_env": "",
+				"model": setupOllamaTextModel, "dimension": setupOllamaTextDim,
 				"document_prefix": setupOllamaDocPrefix, "query_prefix": setupOllamaQueryPrefix,
 				"max_input_chars": setupOllamaMaxInput,
 			},
 		}}, setupScheduleEdits(detection.configKeys, "embed")...)
-	case detection.ollama.Reachable:
-		lane.Action = planActionSkip
-		lane.Reason = "Ollama is reachable but has no " + setupOllamaTextModel + "; run `ollama pull " + setupOllamaTextModel + "` or set " + setupVoyageKeyEnv
-		return lane
-	default:
-		lane.Action = planActionSkip
-		lane.Reason = "no embedding provider: set " + setupVoyageKeyEnv + " (recommended) or " + setupOpenAIKeyEnv + ", or run Ollama with " + setupOllamaTextModel
-		return lane
 	}
 	lane.next = []string{"msgvault embeddings build --yes"}
 	return lane
@@ -946,7 +970,7 @@ func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
                    is present
   MISTRAL_API_KEY  document attachment extraction, plus document vectors when a
                    text lane is on
-  (no keys)        a local Ollama server at [chat].server when it is reachable
+  (no keys)        Ollama with nomic-embed-text, or the shared local embedding server
 
 Choose a hosted people inference provider with --provider openai, openrouter,
 or venice. Supply --model, a credential source, retention and training
@@ -974,6 +998,7 @@ The people sweep can send archive excerpts and infer personal attributes.
 		},
 	}
 	flags := command.Flags()
+	flags.BoolVar(&options.localEmbeddings, "local-embeddings", false, "Switch text search to the shared local embedding server")
 	flags.BoolVar(&options.yes, "yes", false, "Accept every provider disclosure without prompting")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "Print the plan and the current lane report without writing anything")
 	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
@@ -1042,7 +1067,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	if deps.now != nil {
 		now = deps.now()
 	}
-	detection := detectSetupProviders(ctx, loaded, deps)
+	detection := detectSetupProviders(ctx, loaded, deps, options)
 	detection.configKeys = keys
 	plan := planSetupProviders(loaded, detection, options, now)
 	out := command.OutOrStdout()
@@ -1093,6 +1118,35 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		}
 	}
 
+	for _, lane := range plan.Lanes {
+		if !lane.installLocal || lane.Action != planActionEnable {
+			continue
+		}
+		dir, err := localEmbeddingsDir()
+		if err != nil {
+			return fmt.Errorf("local embedding directory: %w", err)
+		}
+		_, err = deps.installEmbeddings(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
+			if !options.jsonOutput {
+				_, _ = fmt.Fprintf(out, "Download approximately %d bytes for local embeddings.\n", size)
+			}
+			if options.yes {
+				return true, nil
+			}
+			if deps.isTerminal == nil || !deps.isTerminal(command) || options.jsonOutput {
+				return false, errors.New("local embedding download needs confirmation; re-run with --yes")
+			}
+			_, _ = fmt.Fprint(out, "Download? [y/N]: ")
+			answer, err := bufio.NewReader(command.InOrStdin()).ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return false, fmt.Errorf("read download consent: %w", err)
+			}
+			return isYesAnswer(strings.ToLower(strings.TrimSpace(answer))), nil
+		}})
+		if err != nil {
+			return err
+		}
+	}
 	if err := applySetupProvidersPlan(command, deps, before, &plan, options.jsonOutput); err != nil {
 		return err
 	}

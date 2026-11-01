@@ -109,7 +109,11 @@ go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
 ## Enable
 
-Use `msgvault setup providers` to select defaults, or add a `[vector]` block
+Use `msgvault setup providers` to select defaults. Without a hosted key, setup uses Ollama with `nomic-embed-text` or offers the shared local server. It asks once before downloading missing model and runtime files.
+
+Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. Extracted-document vectors keep their separate endpoint identity, and people consent stays tied to the actual destination. After a local server restart changes its port, document vectors may need rebuilding and their consents and person-search consent may need renewal.
+
+For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.
 
 Guided Ollama setup uses a conservative `max_input_chars = 2000`, leaving

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
@@ -187,6 +188,15 @@ func ensureEmbedScopeResolved(ctx context.Context, state *invocation) error {
 // leaving the supplied config untouched. Setup and the daemon must use the
 // same resolution when comparing generation fingerprints.
 func resolvedVectorConfig(ctx context.Context, s *store.Store, vecCfg vector.Config) (vector.Config, error) {
+	vecCfg, err := resolvedVectorScopes(ctx, s, vecCfg)
+	if err != nil {
+		return vector.Config{}, err
+	}
+	return resolveLocalVectorConfig(ctx, vecCfg)
+}
+
+// resolvedVectorScopes resolves account scopes without starting a provider.
+func resolvedVectorScopes(ctx context.Context, s *store.Store, vecCfg vector.Config) (vector.Config, error) {
 	// Each scope resolves only for its enabled lane: a stale account in a
 	// disabled lane's scope must not block the enabled lane from starting.
 	if vecCfg.Enabled && len(vecCfg.Embed.Scope.Accounts) > 0 {
@@ -215,7 +225,7 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 	}
 	cfg := state.cfg
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 && len(cfg.Vector.Multimodal.Scope.Accounts) == 0 {
-		return cfg.Vector, nil
+		return resolveLocalVectorConfig(context.Background(), cfg.Vector)
 	}
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
@@ -223,4 +233,35 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 	}
 	defer func() { _ = s.Close() }()
 	return resolvedVectorConfig(context.Background(), s, cfg.Vector)
+}
+
+var localEmbeddingsDir = embedlocal.DefaultDir
+
+// resolveLocalVectorConfig resolves transport without changing message identity.
+// Only setup can approve downloads; runtime reuses an installed server.
+func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Config, error) {
+	if !cfg.Embeddings.LocalOnly {
+		return cfg, nil
+	}
+	dir, err := localEmbeddingsDir()
+	if err != nil {
+		return vector.Config{}, fmt.Errorf("local embedding directory: %w", err)
+	}
+	endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
+	if errors.Is(err, embedlocal.ErrNotFound) {
+		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir})
+		if installErr != nil {
+			return vector.Config{}, fmt.Errorf("local embeddings need setup: run msgvault setup providers --local-embeddings: %w", installErr)
+		}
+		endpoint, err = embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
+	}
+	if err != nil {
+		return vector.Config{}, fmt.Errorf("resolve local embeddings: %w", err)
+	}
+	cfg.Embeddings.Endpoint = endpoint
+	cfg.Embeddings.APIKeyEnv = ""
+	if err := cfg.Validate(); err != nil {
+		return vector.Config{}, err
+	}
+	return cfg, nil
 }

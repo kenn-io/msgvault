@@ -1971,6 +1971,10 @@ func currentPersonSemanticProviderProfile(
 	if !config.Enabled || !config.People.Enabled {
 		return vector.SemanticPersonEmbeddingProfile{}, vector.ErrSemanticPersonEmbeddingsDisabled
 	}
+	config, err := resolveLocalVectorConfig(context.Background(), config)
+	if err != nil {
+		return vector.SemanticPersonEmbeddingProfile{}, err
+	}
 	return config.SemanticPersonEmbeddingProfile()
 }
 
@@ -1983,6 +1987,10 @@ func configuredPersonSemanticProviderProfile(
 		)
 	}
 	config := deps.vectorConfig()
+	config, err := resolveLocalVectorConfig(context.Background(), config)
+	if err != nil {
+		return vector.SemanticPersonEmbeddingProfile{}, err
+	}
 	return config.SemanticPersonEmbeddingProfile()
 }
 

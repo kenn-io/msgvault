@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/documentindex"
@@ -234,6 +235,17 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 // hide the others.
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
 	state := &setupConsentState{}
+	resolved := *cfg
+	if cfg.Vector.Embeddings.LocalOnly {
+		dir, dirErr := localEmbeddingsDir()
+		if dirErr == nil {
+			if endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true}); err == nil {
+				resolved.Vector.Embeddings.Endpoint = endpoint
+				resolved.Vector.Embeddings.APIKeyEnv = ""
+			}
+		}
+	}
+	cfg = &resolved
 	if cfg.Vector.Enabled && cfg.Attachments.Documents.Index.Embeddings.Enabled {
 		if target, err := st.GetDocumentVectorTargetProfileID(ctx); err == nil {
 			if fingerprint, err := vectordocument.EgressFingerprint(target, cfg.Vector); err == nil {
@@ -289,7 +301,7 @@ func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store
 	if !cfg.Vector.Multimodal.Enabled {
 		return false
 	}
-	vecCfg, err := resolvedVectorConfig(ctx, st, cfg.Vector)
+	vecCfg, err := resolvedVectorScopes(ctx, st, cfg.Vector)
 	if err != nil {
 		return false
 	}
@@ -379,6 +391,9 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	if cfg.Vector.Enabled {
 		lane.State = laneStateOn
 		lane.Provider = embeddingProviderName(embeddings.Endpoint)
+		if embeddings.LocalOnly {
+			lane.Provider = "local"
+		}
 		lane.Model = embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		if embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
@@ -390,7 +405,9 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			lane.State = laneStatePending
 			lane.Reason += "; " + unavailable
 		}
-		env.reportVectorCredential(&lane, providercredentials.VectorEmbeddingsID, embeddings.Endpoint, embeddings.APIKeyEnv)
+		if !embeddings.LocalOnly {
+			env.reportVectorCredential(&lane, providercredentials.VectorEmbeddingsID, embeddings.Endpoint, embeddings.APIKeyEnv)
+		}
 		return lane
 	}
 	lane.State = laneStateOff
@@ -402,8 +419,7 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Reason = "an embedding key is present but the lane is not configured"
 		lane.Next = []string{"msgvault setup providers"}
 	default:
-		lane.Reason = "no embedding provider; set " + setupVoyageKeyEnv + " (recommended) or " +
-			setupOpenAIKeyEnv + ", or run Ollama with " + setupOllamaTextModel + ", then run `msgvault setup providers`"
+		lane.Reason = "run `msgvault setup providers` to enable text search"
 	}
 	return lane
 }
