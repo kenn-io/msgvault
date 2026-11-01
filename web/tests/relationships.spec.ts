@@ -1,3 +1,4 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { setKitTheme } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
@@ -73,6 +74,8 @@ const imageFile = {
 };
 
 async function prepare(page: Page, personFileBodies: Record<string, unknown>[] = []) {
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));
@@ -188,7 +191,7 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
 test('person attachment gallery preserves directions and Media state across source-message history', async ({ page }) => {
   const personFileBodies: Record<string, unknown>[] = [];
   await prepare(page, personFileBodies);
-  await page.goto('/');
+  await page.goto('/?workspace=relationships');
 
   const list = page.getByRole('grid', { name: 'Relationship results' });
   await list.getByText('Alice Example').click();
@@ -214,7 +217,7 @@ test('person attachment gallery preserves directions and Media state across sour
   const viewer = page.getByRole('dialog', { name: 'View photo.png' });
   await expect(viewer).toBeVisible();
   await viewer.getByRole('button', { name: 'Open containing item' }).click();
-  await expect(page.getByRole('heading', { level: 1, name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Messages' })).toBeVisible();
   await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
 
   await page.goBack();
@@ -289,7 +292,7 @@ test('clicking a relationship label preserves keyboard navigation and one grid t
   await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
     canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
   } }));
-  await page.goto('/');
+  await page.goto('/?workspace=relationships');
   const grid = page.getByRole('grid', { name: 'Relationship results' });
   await grid.getByText('Alice Example', { exact: true }).click();
   await expect(grid).toBeFocused();
@@ -316,7 +319,7 @@ test('clicking a relationship checkbox keeps keyboard selection in the grid', as
           received_from_them: 1, sent_count: 1, sent_to_them: 1 } }
     ], total_count: 2, cache_revision: 'cache-relationships', identity_revision: 1
   } }));
-  await page.goto('/');
+  await page.goto('/?workspace=relationships');
   const grid = page.getByRole('grid', { name: 'Relationship results' });
   await grid.getByRole('row', { name: /Alice Example/ }).hover();
   await grid.getByRole('checkbox', { name: 'Select Alice Example' }).click();
@@ -329,7 +332,7 @@ test('clicking a relationship checkbox keeps keyboard selection in the grid', as
 
 test('relationship labels disclose on hover and identity hues retain text contrast', async ({ page }) => {
   await prepare(page);
-  await page.goto('/');
+  await page.goto('/?workspace=relationships');
   const name = page.getByRole('grid', { name: 'Relationship results' }).locator('.kit-tooltip-trigger').first();
   await name.hover();
   await expect(page.getByRole('tooltip')).toHaveText('Alice Example');

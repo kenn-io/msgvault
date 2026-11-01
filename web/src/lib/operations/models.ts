@@ -24,14 +24,7 @@ export type OperationStatusResponse = GeneratedOperationStatusResponse;
 export type OperationState = GeneratedOperationState;
 export type OperationUnavailableKind = GeneratedOperationUnavailableKind;
 
-export type OperationsURLState = Pick<ExploreURLState,
-  | 'operationLane'
-  | 'operationKind'
-  | 'operationState'
-  | 'operationStartedFrom'
-  | 'operationStartedBefore'
-  | 'operationRunID'
-  | 'operationStatus'>;
+export type OperationsURLState = Pick<ExploreURLState, 'operationLane' | 'operationKind' | 'operationState' | 'operationStartedFrom' | 'operationStartedBefore' | 'operationRunID' | 'operationStatus'>;
 
 export interface OperationStatusLane {
   readonly lane: OperationLane;
@@ -47,9 +40,6 @@ export interface OperationsSnapshot {
   readonly nextCursor: string | null;
   readonly statusReadable: boolean;
   readonly historyReadable: boolean;
-  /** Epoch ms of the last successful status load, from page one or a status refresh. */
-  readonly statusUpdatedAt: number | null;
-  readonly statusRefreshing: boolean;
   readonly initialLoading: boolean;
   readonly backgroundLoading: boolean;
   readonly paging: boolean;
