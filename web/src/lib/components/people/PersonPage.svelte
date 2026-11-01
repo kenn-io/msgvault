@@ -44,8 +44,7 @@
   let saving = $state(false);
   let mergeOpen = $state(false);
   let staleLink = $state<{ a: number; b: number }>();
-  let linkError = $state('');
-  $effect(() => { void target; staleLink = undefined; linkError = ''; mergeOpen = false; });
+  $effect(() => { void target; staleLink = undefined; mergeOpen = false; });
   function linked(a: number, b: number, result: import('../../relationships/controller.svelte').LinkOutcome): void {
     if (result.ok) staleLink = result.cacheState === 'stale' ? { a, b } : undefined;
   }
@@ -53,7 +52,7 @@
     if (!staleLink) return;
     const { a, b } = staleLink;
     const result = await controller.linkParticipants(a, b);
-    if (result.ok) linked(a, b, result); else linkError = result.message;
+    if (result.ok) linked(a, b, result);
   }
   async function savePerson(): Promise<void> {
     if (!person || saving) return;
@@ -95,7 +94,7 @@
 {/snippet}
 
 <section class="person-page" role="group" aria-label="Person page">
-  {#if staleLink}<div class="summary-error" role="alert">Identity saved; the cache refresh failed.<Button label="Retry" onclick={() => void retryLink()} />{linkError}</div>{/if}
+  {#if staleLink}<div class="summary-error" role="alert">Identity saved; the cache refresh failed.<Button label="Retry" onclick={() => void retryLink()} /></div>{/if}
   {#if durablePersonID !== null || (detail && !controller.detailMissing)}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}

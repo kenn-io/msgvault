@@ -371,12 +371,12 @@
     },
   );
   async function reconcileIdentity(): Promise<void> {
-    await Promise.all([identityChanged(false), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
   }
-  async function identityChanged(refreshReviews = true): Promise<void> {
+  async function identityChanged(): Promise<void> {
     await Promise.all([
       shellData.refreshDuplicates(),
-      ...(refreshReviews ? [directoryReviewController.invalidate(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates)] : []),
+      directoryReviewController.invalidate(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates),
     ]);
   }
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
@@ -1517,7 +1517,7 @@
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
-    onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, merge.context, success); }}
+    onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
 {#if directoryReviewController.pending}

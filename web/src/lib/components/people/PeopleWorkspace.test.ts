@@ -266,8 +266,7 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   const directory = new DirectoryController(client);
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const onOpenDirectoryPerson = vi.fn();
-  const props = { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
+  const props = { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   const view = render(PeopleWorkspace, { props });
   try {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
@@ -559,6 +558,7 @@ it.each([false, true])('keeps the split receipt visible after source binding cha
     await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
+    expect(onDuplicatesChanged).toHaveBeenCalled();
     if (savedEntry) expect(state.current.relationshipTarget).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

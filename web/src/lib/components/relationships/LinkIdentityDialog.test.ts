@@ -148,9 +148,9 @@ describe('LinkIdentityDialog', () => {
     expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true);
   });
 
-  it('closes silently on an ok/ready outcome', async () => {
+  it.each(['ready', 'stale'] as const)('closes silently on an ok/%s outcome', async cacheState => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState }));
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
@@ -160,26 +160,15 @@ describe('LinkIdentityDialog', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('closes on an ok/stale outcome too, leaving the banner to the header', async () => {
+  it.each([['already_linked', 'nope', 'Already linked — these two are treated as the same person.'], ['error', 'Request failed (500)', 'Request failed (500)']] as const)('shows %s inline and stays open', async (code, message, expected) => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'stale' }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code, message }));
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-  });
-
-  it('shows an inline already_linked error and stays open', async () => {
-    const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'nope' }));
-    renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
+    expect((await screen.findByRole('alert')).textContent).toContain(expected);
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -202,18 +191,6 @@ describe('LinkIdentityDialog', () => {
 
     await waitFor(() => expect(onMergeRequired).toHaveBeenCalledWith(conflict));
     expect(onConfirm).toHaveBeenCalledOnce();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('shows the outcome message inline for invalid/error outcomes and stays open', async () => {
-    const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'error', message: 'Request failed (500)' }));
-    renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
     expect(onClose).not.toHaveBeenCalled();
   });
 
