@@ -14,7 +14,9 @@ describe('ProfileHistoryDialog', () => {
   it('loads the generated history endpoint and renders only superseded profile rows plus observations', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [] });
       return Response.json({
         person: person(),
         names: [
@@ -52,7 +54,7 @@ describe('ProfileHistoryDialog', () => {
     expect(screen.getByText('Service: slack · Scope: workspace / workspace-a')).toBeDefined();
     expect(screen.getByText('Service: slack · Scope: workspace / workspace-b')).toBeDefined();
     expect(screen.getByText('Service: email')).toBeDefined();
-    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/people/7/profile/history');
+    expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
   it('keeps the dialog open and reports a failed history read', async () => {
@@ -62,7 +64,7 @@ describe('ProfileHistoryDialog', () => {
 
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('history unavailable');
+    expect((await screen.findAllByRole('alert')).map((node) => node.textContent).join(' ')).toContain('history unavailable');
     expect(screen.getByRole('dialog', { name: 'Profile history' })).toBeDefined();
   });
 });

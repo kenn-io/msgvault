@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
   import {
     getEmbeddingStatus as generatedGetEmbeddingStatus,
     getSettings as generatedGetSettings,
@@ -600,6 +601,8 @@
           {:else}
             <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
+        {:else if activeId === 'people'}
+          <PeopleCatalogSettings {client} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {onStatusChange}

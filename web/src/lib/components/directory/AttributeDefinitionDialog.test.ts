@@ -156,7 +156,7 @@ describe('AttributeDefinitionDialog', () => {
     else expect(body).not.toHaveProperty('record_target');
   });
 
-  it('sends trimmed labeled text choices and max length with multi-select cardinality', async () => {
+  it('sends trimmed labeled text choices with multi-select cardinality', async () => {
     const requests: Request[] = [];
     const created = definition({ cardinality: 'multi', field_type: 'multiselect', is_sensitive: false });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -171,7 +171,6 @@ describe('AttributeDefinitionDialog', () => {
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Preferred channel' } });
     await chooseSelectOption(screen.getByLabelText('Cardinality'), 'Multiple values');
     await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: ' email | Email\n phone | Phone ' } });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: ' 32 ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await waitFor(() => expect(requests).toHaveLength(2));
 
@@ -183,7 +182,6 @@ describe('AttributeDefinitionDialog', () => {
           { value: 'email', label: 'Email' },
           { value: 'phone', label: 'Phone' },
         ],
-        max_length: 32,
       },
     });
   });
@@ -240,84 +238,7 @@ describe('AttributeDefinitionDialog', () => {
     expect(body).not.toHaveProperty('options');
   });
 
-  it.each([
-    ['-1', 'Maximum length must be a positive whole number'],
-    ['1.5', 'Maximum length must be a positive whole number'],
-  ])('rejects invalid text maximum length %s before issuing a request', async (limit, message) => {
-    const fetchFn = vi.fn<typeof fetch>();
-    render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Limited text' } });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: limit } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    expect(screen.getByRole('alert').textContent).toContain(message);
-    expect(fetchFn).not.toHaveBeenCalled();
-  });
-
-  it('treats zero text maximum length as unset', async () => {
-    const requests: Request[] = [];
-    const created = definition({ field_type: 'text', options: undefined, is_sensitive: false });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST'
-        ? Response.json(created, { status: 201 })
-        : Response.json({ definitions: [created] });
-    });
-    render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unlimited text' } });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '0' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await waitFor(() => expect(requests).toHaveLength(2));
-    const body = (await requests[0]!.clone().json()) as Record<string, unknown>;
-    expect(body).not.toHaveProperty('options');
-  });
-
-  it.each([
-    ['ordinary text', 'email', '4'],
-    ['surrounding Go space', '  email  ', '4'],
-    ['astral code points', '😀😀', '1'],
-    ['NEL boundaries', '\u0085ab\u0085', '1'],
-    ['BOM content boundaries', '\uFEFFa\uFEFF', '2'],
-  ])('blocks a text choice over max_length after canonical normalization: %s', async (_case, choice, limit) => {
-    const created = definition({ field_type: 'select', is_sensitive: false });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      return request.method === 'POST'
-        ? Response.json(created, { status: 201 })
-        : Response.json({ definitions: [created] });
-    });
-    render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Limited choice' } });
-    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: choice } });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: limit } });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-
-    expect(screen.getByRole('alert').textContent).toContain(`Each text choice must be ${limit} characters or fewer.`);
-    expect(fetchFn).not.toHaveBeenCalled();
-  });
-
-  it('revalidates a text-choice length error when max_length or value type changes', async () => {
-    const fetchFn = vi.fn<typeof fetch>();
-    render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Limited choice' } });
-    await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: 'email' } });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '4' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    expect(screen.getByRole('alert').textContent).toContain('Each text choice must be 4 characters or fewer.');
-
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '5' } });
-    expect(screen.queryByRole('alert')).toBeNull();
-
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '4' } });
-    expect(screen.getByRole('alert').textContent).toContain('Each text choice must be 4 characters or fewer.');
-
-    await chooseSelectOption(screen.getByLabelText('Value type'), 'JSON');
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(fetchFn).not.toHaveBeenCalled();
-  });
-
-  it('creates, refetches, and saves a canonical text choice exactly at max_length through AttributeEditor', async () => {
+  it('creates, refetches, and saves a canonical text choice through AttributeEditor', async () => {
     const canonicalChoice = '😀\uFEFF';
     const created = definition({
       id: 74,
@@ -326,7 +247,7 @@ describe('AttributeDefinitionDialog', () => {
       label: 'Limited choice',
       field_type: 'select',
       is_sensitive: false,
-      options: { max_length: 2, choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] },
+      options: { choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] },
     });
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -357,7 +278,6 @@ describe('AttributeDefinitionDialog', () => {
     await fireEvent.input(screen.getByLabelText('Choices'), {
       target: { value: `\u0085${canonicalChoice}\u0085 | Astral plus BOM` },
     });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '2' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
     await screen.findByRole('status');
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -373,7 +293,7 @@ describe('AttributeDefinitionDialog', () => {
       .clone()
       .json();
     expect(definitionBody).toMatchObject({
-      options: { max_length: 2, choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] },
+      options: { choices: [{ value: canonicalChoice, label: 'Astral plus BOM' }] },
     });
     await expect(
       requests
@@ -518,10 +438,8 @@ describe('AttributeDefinitionDialog', () => {
     });
     render(AttributeDefinitionDialog, { controller: controller(fetchFn), onClose: vi.fn() });
     await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Boundary count' } });
-    await fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '5' } });
     await chooseSelectOption(screen.getByLabelText('Value type'), 'Integer');
     expect(screen.queryByLabelText('Maximum length')).toBeNull();
-    await fireEvent.input(screen.getByLabelText('Unit'), { target: { value: 'items' } });
     await fireEvent.input(screen.getByLabelText('Choices'), { target: { value: '1 | One' } });
     expect(screen.queryByLabelText('Unit')).toBeNull();
 
@@ -691,8 +609,8 @@ describe('AttributeDefinitionDialog', () => {
     expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload Directory' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'GET')).toHaveLength(4));
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'GET').map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/attribute-definitions']));
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
     expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
   });
@@ -795,7 +713,7 @@ describe('AttributeDefinitionDialog', () => {
     expect(profile.createdDefinition).toBeNull();
     expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Reload Directory' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Reload fields' })).toBeDefined();
 
     const retryBody = {
       object_type: 'person',
@@ -809,8 +727,8 @@ describe('AttributeDefinitionDialog', () => {
     await expect(profile.createDefinition(retryBody)).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload Directory' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'GET')).toHaveLength(5));
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'GET').map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/attribute-definitions', '/api/v1/attribute-definitions']));
     expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
     expect(profile.createdDefinition).toBeNull();
   });
@@ -951,60 +869,6 @@ describe('AttributeDefinitionDialog', () => {
     },
   );
 
-  it.each([
-    {
-      option: 'Text',
-      slug: 'short_note',
-      options: { max_length: 5 },
-      fill: async () => fireEvent.input(screen.getByLabelText('Maximum length'), { target: { value: '5' } }),
-      visible: '0 / 5 characters.',
-    },
-    {
-      option: 'Integer',
-      slug: 'duration_days',
-      options: { unit: 'days' },
-      fill: async () => fireEvent.input(screen.getByLabelText('Unit'), { target: { value: 'days' } }),
-      visible: 'days',
-    },
-  ])(
-    'makes a created $option option visible in the production editor',
-    async ({ option, slug, options, fill, visible }) => {
-      const created = definition({
-        universal_id: `created-${slug}`,
-        slug,
-        label: 'Option field',
-        value_type: option === 'Text' ? 'text' : 'integer',
-        field_type: option === 'Text' ? 'text' : 'duration',
-        is_sensitive: false,
-        options,
-      });
-      const unrelated = definition({
-        id: 8,
-        universal_id: 'unrelated-empty',
-        slug: 'unrelated_empty',
-        label: 'Unrelated empty field',
-        is_sensitive: false,
-      });
-      const fetchFn = vi.fn<typeof fetch>(async (input) => {
-        const request = input instanceof Request ? input : new Request(input);
-        return request.method === 'POST'
-          ? Response.json(created, { status: 201 })
-          : Response.json({ definitions: [unrelated, created] });
-      });
-      render(AttributeSection, { controller: controller(fetchFn, [unrelated]) });
-      await fireEvent.click(screen.getByRole('button', { name: 'Create attribute field' }));
-      await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Option field' } });
-      await chooseSelectOption(screen.getByLabelText('Value type'), option);
-      await fill();
-      await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-      await screen.findByRole('status');
-      await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-      expect(screen.queryByRole('heading', { name: 'Unrelated empty field' })).toBeNull();
-      await fireEvent.click(screen.getByRole('button', { name: 'Add Option field value' }));
-
-      expect(screen.getByRole('form', { name: 'Add Option field value' }).textContent).toContain(visible);
-    },
-  );
 
   it('refreshes definitions without replacing the selected attribute draft and makes the new field immediately usable', async () => {
     const existing = definition({

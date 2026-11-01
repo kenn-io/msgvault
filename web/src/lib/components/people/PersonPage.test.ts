@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
+import { DirectoryController } from '../../directory/controller.svelte';
 import { createAPIClient } from '../../api/client';
 import { RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
 import type { RelationshipCalendar } from '../../relationships/models';
@@ -21,7 +22,7 @@ it('forwards visual search setup from files for a person', async () => {
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
   const onConfigureVisualSearch = vi.fn();
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: true, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onConfigureVisualSearch } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: true, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onConfigureVisualSearch } });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Set up' }));
     expect(onConfigureVisualSearch).toHaveBeenCalledTimes(1);
@@ -39,7 +40,7 @@ it('refreshes the open person after linking and profile reconciliation', async (
   const client = createAPIClient(async input => { const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname; return routes[path]?.(request) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] }); });
   const controller = new RelationshipsController(client, () => 'UTC'); const predicate = { filters: [], presentation: 'table' as const };
   await controller.openTarget('cluster:1', predicate, false);
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByText('Original message');
     await controller.linkParticipants(1, 2);
@@ -74,7 +75,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const props = { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  const props = { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   const view = render(PersonPage, { props });
   try {
     await fireEvent.click((await screen.findAllByRole('button', { name: '1 message on Jul 18, 2026' }))[0]);
@@ -108,7 +109,7 @@ it('reports a filtered summary failure while retaining the loaded person', async
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', predicate, false);
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByRole('heading', { name: 'Alice Example' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
@@ -129,7 +130,7 @@ it('keeps a stale identity mutation retry across Details and Messages', async ()
   });
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const view = render(PersonPage, { props: { client, controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
@@ -150,7 +151,7 @@ it('keeps Back to People available after an observed person fails to load', asyn
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
   const onBack = vi.fn();
-  const view = render(PersonPage, { props: { client, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context), onBack } });
+  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context), onBack } });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Back to People' }));
     expect(onBack).toHaveBeenCalledOnce();

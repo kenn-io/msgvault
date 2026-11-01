@@ -65,6 +65,7 @@ export class DirectoryController {
   promotionResult = $state<DirectoryPromotionResult | null>(null);
   private readonly client: APIClient;
   private readonly commit: DirectoryCommit;
+  private readonly onWrite: () => void;
   private pageAbort: AbortController | undefined;
   private detailAbort: AbortController | undefined;
   private promotionAbort: AbortController | undefined;
@@ -72,15 +73,16 @@ export class DirectoryController {
   private detailGeneration = 0;
   private promotionGeneration = 0;
   private seenCursors = new Set<string>();
-  constructor(client: APIClient, commit: DirectoryCommit = () => undefined) {
+  constructor(client: APIClient, commit: DirectoryCommit = () => undefined, onWrite: () => void = () => undefined) {
     this.client = client;
     this.commit = commit;
+    this.onWrite = onWrite;
   }
   /**
    * Applies Directory URL state. History restoration always starts a new page
    * one request because no cursor or accumulated rows belong to a URL entry.
    */
-  applyURLState(state: DirectoryURLState, historyRestoration = false): void {
+  applyURLState(state: DirectoryURLState, historyRestoration = false, loadSelection = true): void {
     const filtersChanged =
       this.query !== state.directoryQuery ||
       this.contactState !== state.directoryContactState ||
@@ -94,7 +96,7 @@ export class DirectoryController {
     // The initial restoration can equal the controller's empty defaults; it
     // still needs page one, just like a back/forward restoration does.
     if (filtersChanged || this.pageGeneration === 0 || historyRestoration) void this.loadFirstPage();
-    if (this.selectedPersonID !== state.directoryPersonID) {
+    if (loadSelection && this.selectedPersonID !== state.directoryPersonID) {
       void this.loadSelection(state.directoryPersonID, false);
     }
   }
@@ -331,7 +333,7 @@ export class DirectoryController {
       signal,
     });
   }
-  private async loadSelection(personID: number | null, shouldCommit: boolean): Promise<void> {
+  async loadSelection(personID: number | null, shouldCommit = false): Promise<void> {
     this.detailAbort?.abort();
     ++this.detailGeneration;
     if (personID === null) {
@@ -352,7 +354,7 @@ export class DirectoryController {
     // Employments, relationships and the network belong to the entity
     // controller; the read bundle never duplicates those requests.
     this.entity = new DirectoryEntityController(this.client, personID, {
-      onDirectoryChange: () => this.refreshLoadedPagesAfterSummaryWrite(personID, {}),
+      onDirectoryChange: async () => { await this.refreshLoadedPagesAfterSummaryWrite(personID, {}); this.onWrite(); },
     });
     void this.entity.load();
     this.detailAbort = controller;
@@ -411,7 +413,7 @@ export class DirectoryController {
         this.entity = null;
         this.selectedPersonID = null;
         this.detail = null;
-        this.commit({ directoryPersonID: null }, 'push');
+        if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
         return;
       }
       const bundle: DirectoryReadBundle = { etags: {}, errors: {} };
@@ -461,6 +463,7 @@ export class DirectoryController {
     overlay: DirectorySummaryOverlay,
     refreshDirectory = false,
   ): Promise<void> {
+    this.onWrite();
     const { update } = overlay;
     const filteredCategoryChanged = update?.categories !== undefined && this.category.trim() !== '';
     if (refreshDirectory || filteredCategoryChanged) {
@@ -474,6 +477,7 @@ export class DirectoryController {
     );
   }
   private removeDeletedPerson(personID: number): void {
+    this.onWrite();
     this.rows = this.rows.filter((row) => row.id !== personID);
     if (this.selectedPersonID !== personID) return;
     this.detailAbort?.abort();

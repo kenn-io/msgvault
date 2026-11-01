@@ -13,7 +13,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    return routes[path]?.(request) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/network') ? Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
@@ -156,7 +156,7 @@ it('resetting People filters commits one complete navigation', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('opening a saved person reads its profile once and leaves Directory sections lazy', async () => {
+it('opening a saved person reads its profile once and opens Details', async () => {
   const paths: string[] = [];
   const profile = { id: 91, display_name: 'Saved Example', participant_ids: [], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
   const client = createAPIClient(async input => {
@@ -165,6 +165,7 @@ it('opening a saved person reads its profile once and leaves Directory sections 
     paths.push(path);
     if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
     if (path === '/api/v1/people/91') return Response.json(profile);
+    if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
   const state = new ExploreState(null);
@@ -177,7 +178,8 @@ it('opening a saved person reads its profile once and leaves Directory sections 
     await screen.findByRole('heading', { name: 'Saved Example' });
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     expect(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
-    expect(paths.filter(path => path.startsWith('/api/v1/people/91/'))).toEqual([]);
+    expect(paths).toContain('/api/v1/people/91/profile');
+    expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -219,7 +221,8 @@ it("passes the saved person's durable ID to Files when the first binding is draf
     if (path === '/api/v1/participants/1') return Response.json({ error: 'not_found' }, { status: 404 });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
     if (path === '/api/v1/participants/1/files/search') return Response.json({ files: [first], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
-    if (path === '/api/v1/people/91/files/search') return Response.json({ files: [second], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/people/91/files/search') return Response.json({ files: draftOnly ? [second] : [first, second], total_count: draftOnly ? 1 : 2, cache_revision: 'cache-1', search_provenance: {} });
+    if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
   const state = new ExploreState(null);
@@ -274,7 +277,7 @@ it('refreshes the Saved list after merging profiles from Details', async () => {
     view = render(PeopleWorkspace, { props });
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
     await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic One'));
-    await waitFor(() => expect(props.onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
+    await waitFor(() => expect(props.onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: null, relationshipFiles: false }));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -294,9 +297,9 @@ it.each([false, true])('offers Retry without the previous person page when a Dir
   let view = render(PeopleWorkspace, { props });
   try {
     await fireEvent.click(await screen.findByText('Synthetic One'));
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: 'cluster:1', relationshipFiles: false }));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ directoryPersonID: 7, relationshipTarget: null, relationshipFiles: false }));
     await view.rerender({ urlState: state.current });
-    await screen.findByRole('heading', { name: 'Alice Example' });
+    await screen.findByRole('heading', { name: 'Synthetic One' });
     if (remount) { state.commitNavigation({ workspace: 'directory' }); view.unmount(); }
     state.commitNavigation({ directoryPersonID: 9 });
     state.commitNavigation({ workspace: 'relationships' });
@@ -323,7 +326,7 @@ it('loads a saved person deep link before showing its person page', async () => 
     await screen.findByText('Loading person…');
     expect(screen.queryByRole('group', { name: 'Person page' })).toBeNull();
     release(Response.json(profile(7, 1, [1])));
-    await screen.findByRole('heading', { name: 'Alice Example' });
+    await screen.findByRole('heading', { name: 'Synthetic One' });
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
@@ -350,6 +353,6 @@ it('ignores a completed saved profile lookup after an observed person supersedes
     await view.rerender(props());
     await act(async () => { release(Response.json(saved)); await pending; await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(state.current).toMatchObject({ directoryPersonID: null, relationshipTarget: 'cluster:1' });
-    expect(onNavigate.mock.calls).toEqual([[{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
+    expect(onNavigate.mock.calls).toEqual([[{ directoryPersonID: 92, relationshipTarget: null, relationshipFiles: false }], [{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
