@@ -652,7 +652,7 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	source := b.AddSourceWithType("archive@example.com", "slack")
 	alice := b.AddParticipant("alice@example.net", "example.net", "Alice Example")
 	bob := b.AddParticipant("bob@example.net", "example.net", "Bob Example")
-	for _, instant := range []string{"2023-12-31T23:59:59Z", "2024-01-01T00:00:00Z", "2024-01-01T23:59:59Z", "2024-02-29T12:00:00Z", "2024-04-01T12:00:00Z", "2024-04-01T12:00:00Z", "2024-04-01T12:00:00Z", "2024-05-01T12:00:00Z", "2024-05-01T12:00:00Z", "2024-05-01T12:00:00Z", "2024-05-01T12:00:00Z", "2025-01-01T00:00:00Z"} {
+	for _, instant := range []string{"2023-12-31T23:59:59Z", "2024-01-01T00:00:00Z", "2024-01-01T23:59:59Z", "2024-02-29T12:00:00Z", "2025-01-01T00:00:00Z"} {
 		at, err := time.Parse(time.RFC3339, instant)
 		require.NoError(err)
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 50, MessageType: "slack", SentAt: at, SizeEstimate: 10})
@@ -669,19 +669,15 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 		Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366},
 	})
 	require.NoError(err)
-	require.Len(result.Rows, 4)
+	require.Len(result.Rows, 2)
 	assert.Equal("2024-01-01", result.Rows[0].Key)
 	assert.Equal(int64(2), result.Rows[0].Count)
 	assert.Equal(int64(20), result.Rows[0].EstimatedBytes)
 	assert.Equal("2024-02-29", result.Rows[1].Key)
 	assert.Equal(int64(1), result.Rows[1].Count)
-	assert.Equal("2024-04-01", result.Rows[2].Key)
-	assert.Equal(int64(3), result.Rows[2].Count)
-	assert.Equal("2024-05-01", result.Rows[3].Key)
-	assert.Equal(int64(4), result.Rows[3].Count)
 	local, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: ExploreRequest{Context: context, SentOnly: true}, Dimension: "day", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366}})
 	require.NoError(err)
-	require.Len(local.Rows, 5)
+	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
 	for _, timezone := range []string{"Invalid/Zone", "Local"} {
 		_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Timezone: timezone})

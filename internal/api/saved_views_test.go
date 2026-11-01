@@ -158,13 +158,13 @@ func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {
 	assertions.Equal("Canonical state preserved", decodeSavedView(t, unchanged).Name)
 }
 
-func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
+func TestSavedViewsAPIReturnsBadRequestForInvalidGrouping(t *testing.T) {
 	t.Parallel()
 	srv := newSavedViewTestServer(t)
 	session := loginSavedViewSession(t, srv)
 
 	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["arbitrary"]},"schema_version":1}`),
+		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["sender"]},"schema_version":1}`),
 		session.mutationHeaders())
 	assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
 

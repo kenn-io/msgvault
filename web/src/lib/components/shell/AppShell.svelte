@@ -37,7 +37,7 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { ExploreLoader } from '../../explore/loader.svelte';
+  import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
@@ -274,6 +274,8 @@
     exploreState.closeOperationHistory();
   }
   let displayOpen = $state(false);
+  let personMessages = $state<MessagesTable>();
+  const messageDisplayState = $derived(personMessages?.state ?? (exploreState.current.workspace === 'everything' ? exploreState : undefined));
   let resultsWidth = $state(0);
   const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
@@ -891,15 +893,14 @@
     focusGrid();
   }
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
-    const selector =
-      kind === 'filters'
-        ? exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
-        : kind === 'grouping'
-          ? '[data-group-picker] button'
-          : '[data-sort-menu] button';
-    const control = document.querySelector<HTMLButtonElement>(selector);
+    const selector = { filters: 'button[aria-label="Filter"], button[aria-label="Filters"]', grouping: '[data-group-picker] button', sort: '[data-sort-menu] button' }[kind];
+    const control = (document.querySelector('.everything-workspace') ?? document).querySelector<HTMLButtonElement>(selector);
     control?.focus();
     control?.click();
+  }
+  function changeMessageColumns(columns: ExploreURLState['columns']): void {
+    if (personMessages) personMessages.state.replaceTransient({ columns });
+    else replaceTransient({ columns });
   }
   function fixedSortNotice(): void {
     sortNotice = exploreState.current.groupingChain.length > 0
@@ -909,12 +910,12 @@
         : 'Messages is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
-  function navigateReader(delta: number): void {
-    if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
-    const index = loader.rows.findIndex((row) => row.key === exploreState.current.selectedRow);
+  function navigateReader(delta: number, { state, loader: { rows }, openRow: open }: MessagesTable = personMessages ?? { state: exploreState, loader, openRow }): void {
+    if (!state.current.selectedRow || rows.length === 0) return;
+    const index = rows.findIndex((row) => row.key === state.current.selectedRow);
     if (index < 0) return;
-    const next = loader.rows[Math.max(0, Math.min(loader.rows.length - 1, index + delta))];
-    if (next && next.key !== exploreState.current.selectedRow) openRow(next);
+    const next = rows[Math.max(0, Math.min(rows.length - 1, index + delta))];
+    if (next && next.key !== state.current.selectedRow) open(next);
   }
   function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined, init: KeyboardEventInit = {}): void {
     const resolvedKey = key ?? event?.key;
@@ -1236,8 +1237,8 @@
           onThemeChange={(theme) => appearance.setTemporary({ theme })}
           onDensityChange={(density) => appearance.setTemporary({ density })}
           onUseDefaults={() => appearance.clearTemporary()}
-          columns={exploreState.current.workspace === 'everything' && exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0 ? exploreState.current.columns : undefined}
-          onColumnsChange={(columns) => replaceTransient({ columns })}
+          columns={messageDisplayState?.current.presentation === 'table' && messageDisplayState.current.groupingChain.length === 0 ? messageDisplayState.current.columns : undefined}
+          onColumnsChange={changeMessageColumns}
           readerPosition={exploreState.current.workspace === 'everything' && resultsWidth >= 960 ? readerPosition.value : undefined}
           onReaderPositionChange={(value) => readerPosition.set(value)}
         />
@@ -1263,6 +1264,7 @@
         <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
         <PeopleWorkspace
+          onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
           reviews={directoryReviewController}

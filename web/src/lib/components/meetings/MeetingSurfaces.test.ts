@@ -99,7 +99,7 @@ describe('meeting panel surfaces', () => {
     view.unmount(); state.destroy();
   });
 
-  it.each(['table', 'groups'])('exposes meeting activity for %s with its complete predicate and loaded authority', async (presentation) => {
+  it.each(['table', 'groups'])('exposes meeting-filtered Everything %s with the complete predicate and loaded authority', async (presentation) => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
     const client = createAPIClient(async (input) => {

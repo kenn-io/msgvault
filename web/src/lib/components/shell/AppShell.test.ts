@@ -1727,6 +1727,57 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it.each(['reader next', 'Display columns', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/participants/1') return Response.json({
+        id: 1, display_label: 'Example Person', identifiers: [], activity_count: 2, file_count: 0,
+        source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
+      });
+      if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
+        rows: [1, 2].map(id => ({ ...entry(id), conversation_id: id, anchor_message_id: id })), total_count: 2
+      }));
+      if (path === '/api/v1/relationships/1/calendar') return Response.json({
+        participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
+        annual: [], days: [], cache_revision: 'cache-1', identity_revision: 1, score_version: 1,
+        effective_date: '2026-07-18', scoring_timezone: 'UTC'
+      });
+      if (/\/conversations\/[12]$/.test(path)) {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ id, messages: [{ id, conversation_id: id, subject: `Synthetic subject ${id}`,
+          sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
+          body: `Reader body ${id}`, snippet: `Reader body ${id}`, attachments: [] }],
+          anchor_id: id, total: 1, has_before: false, has_after: false });
+      }
+      return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await within(grid).findByText('Synthetic subject 1');
+      if (control === 'reader next') {
+        await fireEvent.click(within(grid).getByText('Synthetic subject 1'));
+        await screen.findByText('Reader body 1');
+        grid.focus();
+        await fireEvent.keyDown(grid, { key: 'l' });
+        await screen.findByText('Reader body 2');
+      } else if (control === 'Display columns') {
+        expect(within(grid).queryByRole('columnheader', { name: 'Size' })).toBeNull();
+        await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+        await fireEvent.click(await screen.findByRole('menuitem', { name: 'Size' }));
+        expect(await within(grid).findByRole('columnheader', { name: 'Size' })).toBeDefined();
+      } else {
+        grid.focus();
+        await fireEvent.keyDown(grid, { key: 'f' });
+        const dialog = await screen.findByRole('dialog', { name: 'Filter' });
+        expect(within(dialog).getByLabelText('From')).toBeDefined();
+      }
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
   it('re-opens the hub target when the predicate changes but the target string does not', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:1'

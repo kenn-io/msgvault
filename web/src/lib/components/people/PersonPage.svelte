@@ -4,6 +4,7 @@
   import type { DirectoryController } from '../../directory/controller.svelte';
   import PersonDetails from './PersonDetails.svelte';
   import PersonRecordActions from '../directory/PersonRecordActions.svelte';
+  import type { MessagesTable } from '../../explore/loader.svelte';
   import type { MeetingRef } from '../../api/generated/models';
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
@@ -20,7 +21,7 @@
   let { client, directory, onRecordDeleted, onSplitCommitted, onIdentityChanged, onOpenCardDAVConflict, onOpenCardDAVSettings, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings, sweepConfigured,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, personFilePresentation = 'files', personFileDirections = ['from_person'],
-    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange,
+    onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange, onMessagesTableChange,
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; directory: DirectoryController; onIdentityChanged?: () => void; onRecordDeleted?: (personID: number) => void; onSplitCommitted?: (context: import('../../directory/person-merge-history-controller.svelte').PersonSplitCommittedContext) => void | Promise<void>; onOpenCardDAVConflict?: (id: number) => void; onOpenCardDAVSettings?: () => void; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
@@ -32,6 +33,7 @@
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
       details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
       onFiltersChange: (filters: ExploreFilter[]) => void;
+      onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
   const context = $derived(contextPredicate(predicate));
   const domain = $derived(target?.startsWith('domain:') ? target.slice(7) : undefined);
@@ -145,7 +147,7 @@
         {#if filesOpen}
           {@render files()}
         {:else}
-          <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
+          <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} {onMessagesTableChange} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
         {/if}
       {/key}
     {/if}

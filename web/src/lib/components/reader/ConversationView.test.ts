@@ -1,3 +1,4 @@
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +13,8 @@ afterEach(() => { vi.useRealTimers(); });
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
   const path = new URL((input as Request).url).pathname;
   if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
-  if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'disabled', complete: false, tasks: [], outbound_metadata: {} });
+  const lookup = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
+  if (lookup) return Response.json(disabledTaskLookup(Number(lookup[1])));
   return fetchFn(input, init);
 }, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
@@ -136,7 +138,11 @@ describe('ConversationView', () => {
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
   });
 
-  it.each(['disabled', 'unreachable'])('shares pending Tasks probes and one %s notice while preserving cached links', async (state) => {
+  it.each([
+    { state: 'disabled', cached: true },
+    { state: 'unreachable', cached: true },
+    { state: 'unreachable', cached: false },
+  ])('shares pending Tasks probes and one $state notice with cached=$cached', async ({ state, cached }) => {
     const lookedUp: number[] = [];
     let releaseStatus!: () => void;
     const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
@@ -147,7 +153,7 @@ describe('ConversationView', () => {
         return Response.json({ state, message: state === 'disabled' ? 'Task integration is disabled.' : 'Task service is unreachable.' });
       }
       const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
-      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: state === 'unreachable' ? 'unavailable' : state, complete: false, tasks: [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }], outbound_metadata: {} }); }
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: state === 'unreachable' ? 'unavailable' : state, complete: false, tasks: cached ? [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] : [], outbound_metadata: {} }); }
       return Response.json({
         id: 7, anchor_id: 2, messages: [message(1), message(2)],
         has_before: false, has_after: false, total: 2
@@ -167,62 +173,32 @@ describe('ConversationView', () => {
     if (state === 'disabled') await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
     else expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
     expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
-    expect(await screen.findByText('Linked task 1')).toBeDefined();
-    expect(await screen.findByText('Linked task 2')).toBeDefined();
+    if (cached) {
+      expect(await screen.findByText('Linked task 1')).toBeDefined();
+      expect(await screen.findByText('Linked task 2')).toBeDefined();
+    } else {
+      expect(screen.getAllByRole('heading', { name: /^Tasks$/ })).toHaveLength(1);
+      expect(within(screen.getByRole('article', { name: 'Message 1' })).getByRole('button', { name: 'Open Settings' })).toBeDefined();
+    }
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     if (state === 'disabled') expect(await screen.findByRole('button', { name: 'Set up' })).toBeDefined();
-    expect(screen.getByText('Linked task 2')).toBeDefined();
+    if (cached) expect(screen.getByText('Linked task 2')).toBeDefined();
     view.unmount();
   });
 
-  it('shows one Tasks section when the service is unreachable and neither email has cached links', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
-      if (/^\/api\/v1\/messages\/\d+\/tasks$/.test(path)) return Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} });
-      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
-    });
-    render(ConversationView, { client: createCaptureClient(fetchFn, telemetryEvents, telemetryRequests), conversationId: 7, anchorId: 1 });
-    await screen.findByRole('button', { name: 'Open Settings' });
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
-    await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/messages/2/tasks'))).toHaveLength(1));
-    await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
-    expect(screen.getAllByRole('heading', { name: /^Tasks$/ })).toHaveLength(1);
-    expect(within(screen.getByRole('article', { name: 'Message 1' })).getByRole('button', { name: 'Open Settings' })).toBeDefined();
-  });
-
-  it('updates every card when Tasks recovers from unreachable to ready', async () => {
-    let statusCalls = 0;
-    const client = createCaptureClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) return Response.json({ state: ++statusCalls === 1 ? 'unreachable' : 'ready', message: 'Task service is unreachable.' });
-      const lookup = /messages\/(\d+)\/tasks$/.exec(path);
-      if (lookup) return Response.json({ state: lookup[1] === '1' ? 'unavailable' : 'ready', complete: false, tasks: [{ id: `task-${lookup[1]}`, title: `Linked task ${lookup[1]}` }], outbound_metadata: {} });
-      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
-    }, telemetryEvents, telemetryRequests);
-    render(ConversationView, { client, conversationId: 7, anchorId: 1 });
-    await screen.findByText('Linked task 1');
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
-    await screen.findByText('Linked task 2');
-    const owner = within(screen.getByRole('article', { name: 'Message 1' }));
-    expect(screen.getByText('Linked task 1')).toBeDefined();
-    expect(statusCalls).toBe(2);
-    expect(screen.queryByText('Task integration unreachable: Task service is unreachable.')).toBeNull();
-    expect(owner.getByText('The task service is unavailable; safe cached links may be shown.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Unlink Linked task 2' })).toHaveProperty('disabled', false);
-  });
-
-  it.each(['HTTP 500', 'rejected fetch'])('disables every card and keeps cached links after a failed latest status probe: %s', async (failure) => {
+  it.each(['ready', 'HTTP 500', 'rejected fetch'])('updates every card after the latest Tasks status probe returns %s', async (latest) => {
+    const recovered = latest === 'ready';
     let statusCalls = 0;
     const client = createCaptureClient(async (input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/tasks/status')) {
-        if (++statusCalls === 1) return Response.json({ state: 'ready', project: 'example' });
-        if (failure === 'rejected fetch') throw new Error('Tasks status could not be read.');
+        if (++statusCalls === 1) return Response.json({ state: recovered ? 'unreachable' : 'ready', project: 'example', message: 'Task service is unreachable.' });
+        if (latest === 'ready') return Response.json({ state: 'ready', project: 'example' });
+        if (latest === 'rejected fetch') throw new Error('Tasks status could not be read.');
         return Response.json({ message: 'Tasks status could not be read.' }, { status: 500 });
       }
       const lookup = /messages\/(\d+)\/tasks$/.exec(path);
-      if (lookup) return Response.json({ state: 'ready', complete: true, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }], outbound_metadata: {} });
+      if (lookup) return Response.json({ state: recovered && lookup[1] === '1' ? 'unavailable' : 'ready', complete: !recovered, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }], outbound_metadata: {} });
       return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
     }, telemetryEvents, telemetryRequests);
     render(ConversationView, { client, conversationId: 7, anchorId: 1 });
@@ -232,11 +208,17 @@ describe('ConversationView', () => {
     expect(screen.getByText('Cached task 1')).toBeDefined();
     expect(statusCalls).toBe(2);
     const owner = within(screen.getByRole('article', { name: 'Message 1' }));
-    expect(owner.getByRole('alert').textContent).toContain('Tasks status could not be read.');
-    expect(screen.getAllByRole('button', { name: 'Open Settings' })).toHaveLength(1);
-    expect(owner.getByRole('button', { name: 'Open Settings' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Unlink Cached task 1' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Unlink Cached task 2' })).toHaveProperty('disabled', true);
+    if (recovered) {
+      expect(screen.queryByText('Task integration unreachable: Task service is unreachable.')).toBeNull();
+      expect(owner.getByText('The task service is unavailable; safe cached links may be shown.')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Unlink Cached task 2' })).toHaveProperty('disabled', false);
+    } else {
+      expect(owner.getByRole('alert').textContent).toContain('Tasks status could not be read.');
+      expect(screen.getAllByRole('button', { name: 'Open Settings' })).toHaveLength(1);
+      expect(owner.getByRole('button', { name: 'Open Settings' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Unlink Cached task 1' })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Unlink Cached task 2' })).toHaveProperty('disabled', true);
+    }
   });
 
   it('retries rejected and unreachable Tasks status when creating a task', async () => {
