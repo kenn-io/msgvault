@@ -1070,18 +1070,18 @@ describe('relationships workspace state', () => {
     const state: ExploreURLState = {
       ...defaultExploreURLState,
       workspace: 'relationships',
-      relationshipFacet: 'domains',
-      relationshipTarget: 'domain:example.com',
+      relationshipFacet: 'people',
+      relationshipTarget: 'cluster:91',
       relationshipShowAll: true,
-      relationshipFiles: true
+      relationshipFiles: true, relationshipSaved: true, relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91
     };
 
     expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({
       workspace: 'relationships',
-      relationshipFacet: 'domains',
-      relationshipTarget: 'domain:example.com',
+      relationshipFacet: 'people',
+      relationshipTarget: 'cluster:91',
       relationshipShowAll: true,
-      relationshipFiles: true
+      relationshipFiles: true, relationshipSaved: true, relationshipSort: 'recent', directoryCategory: 'Friends', directoryLastContactAfter: '2024-01-01', directoryPersonID: 91
     });
   });
 
@@ -1883,5 +1883,19 @@ it.each(['close', 'back'] as const)('returns Past runs to its opening page throu
   await previous;
   expect(state.current.workspace).toBe('files');
   expect(state.current.operationHistory).toBe(false);
+  state.destroy();
+});
+
+it('keeps embedded person navigation detached from shell history', () => {
+  window.history.replaceState({ marker: 'outer' }, '', '/?workspace=relationships');
+  const address = window.location.href;
+  const state = new ExploreState(null);
+  state.commitNavigation({ filters: [{ dimension: 'participant', values: ['42'] }] });
+  state.commitNavigation({ selectedRow: 'message:9' });
+  state.commitSearch('notes', 'full_text');
+  expect(state.current.query).toBe('notes');
+  expect(state.current.filters).toEqual([{ dimension: 'participant', values: ['42'] }]);
+  expect(window.location.href).toBe(address);
+  expect(window.history.state).toEqual({ marker: 'outer' });
   state.destroy();
 });

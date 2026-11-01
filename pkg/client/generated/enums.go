@@ -737,6 +737,7 @@ func (e ExploreFilterDimension) Validate() error {
 type ExploreGroupDimension string
 
 const (
+	ExploreGroupDimensionDay         ExploreGroupDimension = "day"
 	ExploreGroupDimensionDomain      ExploreGroupDimension = "domain"
 	ExploreGroupDimensionKind        ExploreGroupDimension = "kind"
 	ExploreGroupDimensionMailingList ExploreGroupDimension = "mailing_list"
@@ -750,10 +751,30 @@ const (
 // Validate checks if the ExploreGroupDimension value is valid
 func (e ExploreGroupDimension) Validate() error {
 	switch e {
-	case ExploreGroupDimensionDomain, ExploreGroupDimensionKind, ExploreGroupDimensionMailingList, ExploreGroupDimensionMessageType, ExploreGroupDimensionMonth, ExploreGroupDimensionParticipant, ExploreGroupDimensionSource, ExploreGroupDimensionYear:
+	case ExploreGroupDimensionDay, ExploreGroupDimensionDomain, ExploreGroupDimensionKind, ExploreGroupDimensionMailingList, ExploreGroupDimensionMessageType, ExploreGroupDimensionMonth, ExploreGroupDimensionParticipant, ExploreGroupDimensionSource, ExploreGroupDimensionYear:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreGroupDimension value, got: %v", e))
+	}
+}
+
+type ExploreGroupRowLevel string
+
+const (
+	ExploreGroupRowLevelFirstQuartile  ExploreGroupRowLevel = "FIRST_QUARTILE"
+	ExploreGroupRowLevelFourthQuartile ExploreGroupRowLevel = "FOURTH_QUARTILE"
+	ExploreGroupRowLevelNone           ExploreGroupRowLevel = "NONE"
+	ExploreGroupRowLevelSecondQuartile ExploreGroupRowLevel = "SECOND_QUARTILE"
+	ExploreGroupRowLevelThirdQuartile  ExploreGroupRowLevel = "THIRD_QUARTILE"
+)
+
+// Validate checks if the ExploreGroupRowLevel value is valid
+func (e ExploreGroupRowLevel) Validate() error {
+	switch e {
+	case ExploreGroupRowLevelFirstQuartile, ExploreGroupRowLevelFourthQuartile, ExploreGroupRowLevelNone, ExploreGroupRowLevelSecondQuartile, ExploreGroupRowLevelThirdQuartile:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreGroupRowLevel value, got: %v", e))
 	}
 }
 

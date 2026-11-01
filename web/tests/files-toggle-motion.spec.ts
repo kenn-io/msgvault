@@ -6,15 +6,16 @@ test('Files view switch settles its colors immediately with reduced motion', asy
   await installMixedArchive(page);
   await page.goto('/');
   await selectWorkspace(page, 'People');
-  await page.getByRole('grid', { name: 'Relationship results' }).getByText('Archive Person').click();
-  const files = page.getByRole('radio', { name: 'Files 1' });
+  await page.getByRole('grid', { name: 'People results' }).getByText('Archive Person').click();
+  const tabs = page.getByRole('radiogroup', { name: 'Person tabs' });
+  const files = tabs.getByRole('radio', { name: 'Files', exact: true });
   await files.click();
   await expect(files).toHaveAttribute('aria-checked', 'true');
 
   // Switching back to Messages is the segmented-control analogue of the old
   // toggle-off: measure the newly selected segment's colors in the same
   // frame to prove reduced motion settles them immediately.
-  const messages = page.getByRole('radio', { name: 'Messages' });
+  const messages = tabs.getByRole('radio', { name: 'Messages' });
   const colors = await messages.evaluate(async (segment) => {
     const snapshot = () => ({
       foreground: getComputedStyle(segment).color,
