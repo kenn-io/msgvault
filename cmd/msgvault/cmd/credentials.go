@@ -199,7 +199,7 @@ func importCredentialEnvironment(cmd *cobra.Command, cfg *config.Config) error {
 			kept++
 			continue
 		}
-		if entry.environment == "" {
+		if entry.environment == "" || entry.id == providercredentials.VectorEmbeddingsID && cfg.Vector.Embeddings.LocalOnly {
 			continue
 		}
 		key, ok := os.LookupEnv(entry.environment)

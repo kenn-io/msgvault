@@ -1338,8 +1338,8 @@ func writeSetupProvidersResult(
 	return nil
 }
 
-// setupFollowUps orders the commands that finish what setup started: restart
-// a running daemon first so it loads the new lanes, then consents and builds.
+// setupFollowUps orders consent before restart so startup loads the consented
+// document search service, then builds indexes with the new configuration.
 func setupFollowUps(ctx context.Context, deps setupProvidersDeps, loaded *config.Config, plan *setupProvidersPlan, applied bool) []string {
 	var steps []string
 	seen := map[string]bool{}
@@ -1368,11 +1368,11 @@ func setupFollowUps(ctx context.Context, deps setupProvidersDeps, loaded *config
 
 func followUpRank(step string) int {
 	switch {
-	case step == "msgvault daemon restart":
-		return 0
 	case strings.Contains(step, " probe"):
-		return 1
+		return 0
 	case strings.Contains(step, " consent"):
+		return 1
+	case step == "msgvault daemon restart":
 		return 2
 	case strings.Contains(step, "setup providers"):
 		return 3

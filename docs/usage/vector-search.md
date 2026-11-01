@@ -48,9 +48,11 @@ the provider keys you have, start with
 
 ## Prerequisites
 
-1. **A running embedding endpoint.** msgvault does
-   not host a model. Point it at a local, self-hosted, or hosted
-   endpoint that you trust. Common local options include [Ollama](https://ollama.com),
+1. **An embedding provider.** Run `msgvault setup providers --local-embeddings`
+   to install and start the shared local server after confirming any missing
+   downloads. This works without a running endpoint. You can also point msgvault
+   at a running local, self-hosted, or hosted endpoint that you trust.
+   Common local options include [Ollama](https://ollama.com),
    [llama.cpp's `server`](https://github.com/ggerganov/llama.cpp/tree/master/examples/server),
    and [LM Studio](https://lmstudio.ai). On an Apple Silicon Mac,
    [`afm`](https://github.com/scouzi1966/maclocal-api) is another option

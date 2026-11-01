@@ -2117,7 +2117,7 @@ Top-level toggle and backend marker for semantic/hybrid search. SQLite vector se
 
 #### `[vector.embeddings]`
 
-Text embeddings use a configured endpoint or the shared local `kennembed` server. Run `msgvault setup providers --local-embeddings` to install the local server after confirming any missing downloads. Local requests ignore saved and environment API keys. Hosted endpoints receive the text being embedded.
+Text embeddings use a configured endpoint or the shared local `kennembed` server. Run `msgvault setup providers --local-embeddings` to install the local server after confirming any missing downloads. Local requests ignore saved and environment API keys. Local and self-hosted endpoints keep text on your machine or network. Hosted endpoints receive the text being embedded.
 
 | Key | Default | Description |
 |---|---|---|

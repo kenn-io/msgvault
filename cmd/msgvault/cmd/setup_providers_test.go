@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1826,9 +1827,21 @@ enabled = true
 					assert.NotContains(result.FollowUps, step)
 				}
 			}
-			if result.Applied {
-				require.NotEmpty(result.FollowUps)
-				assert.Equal("msgvault daemon restart", result.FollowUps[0])
+			if tc.wantRecovery {
+				// Startup creates document search only when query consent exists.
+				// One restart must load that consent before either index builds.
+				previous := -1
+				for _, step := range []string{
+					"msgvault documents vectors consent --yes",
+					"msgvault documents vectors consent --purpose queries --yes",
+					"msgvault daemon restart",
+					"msgvault documents vectors build",
+				} {
+					index := slices.Index(result.FollowUps, step)
+					require.Greater(index, previous, "%s must follow consent and precede builds: %v", step, result.FollowUps)
+					previous = index
+				}
+				assert.Equal(1, strings.Count(output.String(), "msgvault daemon restart"))
 			}
 			if tc.fail {
 				assert.Equal(laneStateOn, findLane(t, result.Report, laneTextSearch).State)
