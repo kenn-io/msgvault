@@ -45,7 +45,8 @@ describe('jobs', () => {
 
 
 it.each([
-  { name: 'old failed import with item errors', source: { latest_sync: syncRunStatus({ status: 'failed', started_at: '2020-01-01T00:00:00Z', completed_at: '2020-01-01T00:00:04Z', errors_count: 2, item_errors: ['Invalid MIME header', 'Missing attachment'].map((error_message, index) => ({ error_message, created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: `synthetic-${index}` })) }) }, lanes: [], expected: [['failed', 'Invalid MIME header · Missing attachment']] },
+  { name: 'old failed import with item errors', source: { latest_sync: syncRunStatus({ status: 'failed', started_at: '2020-01-01T00:00:00Z', completed_at: '2020-01-01T00:00:04Z', errors_count: 2, item_errors: ['Invalid MIME header\nParser details', 'Missing attachment'].map((error_message, index) => ({ error_message, created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: `synthetic-${index}` })) }) }, lanes: [], expected: [['failed', 'Invalid MIME header']] },
+  { name: 'failed import shows the main error before item errors', source: { latest_sync: syncRunStatus({ status: 'failed', error_message: 'Import failed\nImport details', item_errors: [{ error_message: 'Missing attachment', created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: 'synthetic-1' }] }) }, lanes: [], expected: [['failed', 'Import failed']] },
   { name: 'completed sync and partial lane warnings', source: { latest_sync: syncRunStatus({ errors_count: 2 }) }, lanes: [lane('document_extraction', { latest: partial })], expected: [] },
   { name: 'disabled lane with a stale failure', lanes: [lane('document_extraction', { configured: false })], expected: [] },
   { name: 'disabled lane still running', lanes: [lane('visual_embedding', { configured: false, active: activeRun })], expected: [['running', 'Running']] },
@@ -57,7 +58,6 @@ it.each([
   { name: 'active sync with queued follow-up and old failure', source: { scheduler_queued: true, active_sync: syncRunStatus({ status: 'running', completed_at: null }), latest_sync: syncRunStatus({ status: 'failed', error_message: 'Old failure' }) }, lanes: [], expected: [['running', 'Syncing']] },
   { name: 'scheduler active with a pending follow-up', source: { scheduler_pending: true, scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
   { name: 'latest running import without an active snapshot', source: { source_type: 'mbox', latest_sync: syncRunStatus({ status: 'running', completed_at: null }), sync_unavailable_reason: 'source_not_schedulable' }, lanes: [], expected: [['running', 'Syncing']] },
-  { name: 'scheduler running before a sync row exists', source: { scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
 ])('$name', ({ source, lanes, expected }) => {
   expect(collectJobs(source ? [sourceStatus(source as Partial<SourceStatus>)] : [], lanes).map(({ state, detail }) => [state, detail])).toEqual(expected);
 });

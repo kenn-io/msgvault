@@ -55,7 +55,7 @@ test('grid shortcuts pressed outside the grid still move the active row', async 
   await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-2$/);
 });
 
-test('desktop saved-view deletion keeps keyboard focus on Undo', async ({ page }) => {
+test('desktop saved-view deletion keeps keyboard focus through Undo', async ({ page }) => {
   const saved = { id: 3, name: 'Project notes', revision: 1, schema_version: 2,
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [] } };
@@ -73,6 +73,7 @@ test('desktop saved-view deletion keeps keyboard focus on Undo', async ({ page }
   await page.keyboard.press('Enter');
   await expect(row).toBeVisible();
   await expect(undo).toBeHidden();
+  await expect(row).toBeFocused();
 });
 
 test('Settings Overview Details closes back to Overview with a status title', async ({ page }) => {

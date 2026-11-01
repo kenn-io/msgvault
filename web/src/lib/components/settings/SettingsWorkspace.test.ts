@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
 import { OperationsController } from '../../operations/controller.svelte';
-import { lane, lanes } from '../../../test/operations';
+import { embeddingStatus, lane, lanes, visualStatus } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 type Setting = Record<string, unknown>;
@@ -89,7 +89,7 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
   const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
-    const body = request.method === 'GET' || request.method === 'DELETE' ? undefined : await request.clone().json();
+    const body = request.body ? await request.clone().json() : undefined;
     seen.push({ method: request.method, path, query: new URL(request.url).search, ifMatch: request.headers.get('If-Match'), body });
     const custom = await extra?.(request);
     if (custom) return custom;
@@ -253,6 +253,41 @@ it('blocks reload only while Settings has unsaved drafts', async () => {
   const discarded = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(discarded);
   expect(discarded.defaultPrevented).toBe(false);
+});
+
+it('refreshes shared Contacts status after saving a disabled account', async () => {
+  let enabled = true;
+  const status = () => ({
+    configured: true, available: true, credential_configured: true, enabled,
+    scheduled: false, schedule: '',
+    account: { base_url: 'https://contacts.example.test/', username: 'user@example.com' }
+  });
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), async request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/operations/status') {
+      return Response.json({ lanes: lanes(lane('carddav_sync', { configured: enabled })) });
+    }
+    if (path === '/api/v1/carddav/connections') {
+      return Response.json({ connections: [{ connection: 'default', status: status() }] });
+    }
+    if (path === '/api/v1/carddav/status') return Response.json(status());
+    if (path === '/api/v1/carddav/account' && request.method === 'PUT') {
+      const body = await request.json();
+      enabled = body.enabled;
+      return Response.json({ ...body, books: 0 });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
+  const contacts = (await screen.findByText('Contacts', { selector: '.row__name' })).closest('li')!;
+  expect(within(contacts).getByText('On')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+  await waitFor(() => expect(screen.getByLabelText('Username')).toHaveProperty('value', 'user@example.com'));
+  await fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save CardDAV account' }));
+  await screen.findByText('CardDAV account saved. Found 0 address books.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  const updatedContacts = (await screen.findByText('Contacts', { selector: '.row__name' })).closest('li')!;
+  await waitFor(() => expect(within(updatedContacts).getByText('Off')).toBeDefined());
 });
 
 it('keeps a failed Overview action error on Overview', async () => {
@@ -573,6 +608,189 @@ it('keeps edited People search details visible when switching the feature off', 
   await waitFor(() => expect(screen.queryByLabelText('How long the provider keeps data')).toBeNull());
 });
 
+it.each(['ordinary settings', 'enrichment provider'] as const)('refreshes People profiles after saving %s while People lookups stays open', async (save) => {
+  let revision = '"s1"';
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider] });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' || path.endsWith('/person-enrichment/providers/primary')) {
+      if (request.method !== 'GET') revision = '"s2"';
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await screen.findByText('model-one');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  if (save === 'ordinary settings') {
+    await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  } else {
+    await fireEvent.input(screen.getByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
+  }
+  await screen.findByText('model-two');
+  expect(screen.queryByLabelText('I confirm this exact disclosure')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(seen.filter(request => request.path.endsWith('/check')).map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
+});
+
+it('refreshes People profiles and revision after a shared-settings conflict while People lookups stays open', async () => {
+  let revision = '"s1"';
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') {
+      if (request.method === 'PATCH') return Response.json({ message: 'Config changed' }, { status: 412 });
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await screen.findByText('model-one');
+  revision = '"s2"';
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('The settings changed on disk. The latest are loaded. Review your changes and save again.');
+  await screen.findByText('model-two');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(seen.find(request => request.path.endsWith('/check'))?.ifMatch).toBe('"s2"');
+});
+
+it.each(['save', 'create'] as const)('refreshes People profiles, checks, and revision after an enrichment provider %s conflict', async (action) => {
+  let revision = '"s1"';
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider] });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') return Response.json(doc, { headers: { ETag: revision } });
+    if (path.includes('/person-enrichment/providers/') && request.method === 'PUT') return Response.json({ message: 'Config changed' }, { status: 412 });
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await screen.findByText('model-one');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  revision = '"s2"';
+  if (action === 'save') {
+    await fireEvent.input(screen.getByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save primary provider' }));
+    await screen.findByText('The settings changed on disk. The latest are loaded. Review this provider and save again.');
+  } else {
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Exa' }));
+    await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: 'secondary' } });
+    await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
+    await screen.findByText('The settings changed on disk. The latest are loaded. Try again.');
+  }
+  await screen.findByText('model-two');
+  expect(screen.queryByLabelText('I confirm this exact disclosure')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await screen.findByLabelText('I confirm this exact disclosure');
+  expect(seen.filter(request => request.path.endsWith('/check')).map(request => request.ifMatch)).toEqual(['"s1"', '"s2"']);
+});
+
+it('selects a refreshed People profile after saving Server settings and returning', async () => {
+  let revision = '"s1"';
+  let consented = false;
+  let selected = false;
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') {
+      if (request.method === 'PATCH') revision = '"s2"';
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      if (path.endsWith('/consent')) consented = true;
+      if (path.endsWith('/select')) selected = true;
+      return Response.json({
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', consent_active: consented }],
+        configured_enabled: selected, running_enabled: false, pending_restart: selected,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await screen.findByText('model-one');
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  await screen.findByText('model-two');
+  await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
+  await fireEvent.click(await screen.findByLabelText('I confirm this exact disclosure'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Grant consent' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Select and enable' })).toHaveProperty('disabled', false));
+  await fireEvent.click(screen.getByRole('button', { name: 'Select and enable' }));
+  await waitFor(() => expect(selected).toBe(true));
+  expect(seen.find(request => request.path.endsWith('/select'))?.ifMatch).toBe('"s2"');
+  expect(screen.queryByText('People sweep settings changed on disk. Reload and review your changes before trying again.')).toBeNull();
+});
+
+it('keeps People profile removal tied to the displayed revision after a shared-settings conflict reload', async () => {
+  let revision = '"s1"';
+  let removed = false;
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings' && request.method === 'GET') return Response.json(doc, { headers: { ETag: revision } });
+    if (path === '/api/v1/settings' && request.method === 'PATCH') return Response.json({ message: 'Config changed' }, { status: 412 });
+    if (path.includes('/settings/people-inference')) {
+      if (request.method === 'DELETE') {
+        if (request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
+        removed = true;
+      }
+      return Response.json({
+        profiles: removed ? [{ ...inferenceProfile, name: 'backup' }] : [
+          { ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two' },
+          { ...inferenceProfile, name: 'backup' },
+        ], configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await screen.findByText('model-one');
+  revision = '"s2"';
+  await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
+  await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('The settings changed on disk. The latest are loaded. Review your changes and save again.');
+  await fireEvent.click(screen.getByRole('button', { name: 'People lookups' }));
+  await screen.findByText('model-two');
+  await fireEvent.click(screen.getByRole('button', { name: 'Remove profile' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
+  await waitFor(() => expect(seen.find(request => request.method === 'DELETE')).toBeDefined());
+  expect(seen.find(request => request.method === 'DELETE')?.ifMatch).toBe('"s2"');
+  expect(removed).toBe(true);
+});
+
 it('refreshes the shared config revision when creating a profile succeeds before its key fails', async () => {
   let revision = '"s1"';
   let created = false;
@@ -626,6 +844,47 @@ it('shows unavailable message coverage after a failed initial read', async () =>
   expect(await within(row).findByText('Unavailable')).toBeDefined();
 });
 
+it('marks failed coverage refreshes unavailable without hiding Overview', async () => {
+  let coverageReads = 0;
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('message_embedding')) });
+    if (request.url.includes('/search/coverage')) {
+      return ++coverageReads === 1
+        ? Response.json({ eligible_count: 10, embedded_count: 0, percentage: 0, cache_revision: 'cache-1', status: 'unavailable', actions: ['build_index'] })
+        : Response.json({ error: 'vector_generation_changed' }, { status: 503 });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
+  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  const features = screen.getByRole('list', { name: 'Features' });
+  const row = within(features).getByText('Message search').closest('li')!;
+  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
+  expect(within(row).getByText('Unavailable')).toBeDefined();
+  expect(within(features).getByText('Source sync')).toBeDefined();
+});
+
+it.each([
+  { name: 'Message search', kind: 'message_embedding' as const, path: '/embeddings/status', status: { ...embeddingStatus, current: 2, pending: 8 } },
+  { name: 'Visual search', kind: 'visual_embedding' as const, path: '/multimodal/status', status: { ...visualStatus, current: 2 } },
+])('clears $name progress when a refresh fails over the network', async ({ name, kind, path, status }) => {
+  let reads = 0;
+  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane(kind, { active: { id: 'run-1', kind, lane: lane(kind).lane, state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } })) });
+    if (request.url.endsWith(path)) {
+      if (++reads > 1) throw new TypeError('Failed to fetch');
+      return Response.json(status);
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange });
+  await screen.findByRole('list', { name: 'Features' });
+  const row = screen.getByText(name).closest('li')!;
+  await within(row).findByText('Building 2 of 10');
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  expect(await within(row).findByText('Running')).toBeDefined();
+  expect(within(row).queryByText('Building 2 of 10')).toBeNull();
+});
+
 it('refreshes a pending message rebuild and keeps Contacts available', async () => {
   let building = false;
   let reads = 0;
@@ -660,14 +919,4 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
     finish(new Response('{"type":"complete"}\n'));
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
-});
-
-it('routes Overview document extraction Details to live document status', async () => {
-  const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
-    if (new URL(request.url).pathname.endsWith('/operations/status')) return Response.json({ lanes: [lane('document_extraction', { lane: 'documents' })] });
-  });
-  const onOpenStatus = vi.fn();
-  render(SettingsWorkspace, { client, operationsController, onStatusChange, onOpenStatus });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Details, Document extraction' }));
-  expect(onOpenStatus).toHaveBeenCalledWith('getDocumentIndexStatus');
 });
