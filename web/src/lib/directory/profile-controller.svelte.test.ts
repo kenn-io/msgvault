@@ -56,7 +56,7 @@ describe('DirectoryProfileController', () => {
     expect(controller.draft).toBeNull();
   });
 
-  it('preserves structured drafts and a typed conflict until an explicit reload', async () => {
+  it('reloads a conflicted draft, recovers attribute and contact-state errors, and publishes refreshed detail', async () => {
     let attributesUnavailable = true;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

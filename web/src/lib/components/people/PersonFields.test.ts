@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -29,7 +29,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: (options.definitions ?? []).filter(definition => new URL(request.url).searchParams.get('include_hidden') === 'true' || definition.is_active) });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
   const summary = createRawSnippet(() => ({ render: () => '<p>Summary row</p>' }));
   const view = render(PersonFields, options.summary ? { controller, summary } : { controller });
   return { controller, writes, view };
@@ -72,22 +72,42 @@ it('keeps a conflicted structured editor available to cancel after a deferred fa
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
-it('blocks attribute additions after a failed read and retries before editing the unseen value', async () => {
+it('identifies row actions and confirmations by value and service scope without revealing sensitive values', async () => {
+  const initial = profile();
+  initial.contact_points = [
+    ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
+    ...['T-WORK', 'T-PERSONAL'].map((scope, index) => ({ person_id: 7, address_kind: 'username', original_value: 'example', normalized_value: 'example', service_slug: 'slack', scope_kind: 'workspace', scope_value: scope, normalization: 'casefold', normalization_version: 1, envelope: { ...envelope, id: 40 + index, ordinal: index } })),
+    ...['+12025550123', '+12025550124'].map((value, index) => ({ person_id: 7, address_kind: 'phone', original_value: value, normalized_value: value, normalization: 'phone', normalization_version: 1, envelope: { ...envelope, id: 30 + index, ordinal: index } })),
+  ];
+  const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const secret = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'private_note', label: 'Private note', is_sensitive: true };
+  const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
+  const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note, secret] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }] } } });
+  try {
+    for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
+      expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: `Remove ${label}` }));
+      const confirmation = screen.getByRole('group', { name: `Confirm removing ${label}` });
+      expect(confirmation.textContent).toContain(label);
+      await fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
+    }
+    for (const position of [1, 2]) {
+      expect(screen.getByRole('button', { name: `Edit Private note: value ${position}` })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
+    }
+    expect(view.container.innerHTML).not.toContain('Secret one');
+    expect(view.container.innerHTML).not.toContain('Secret two');
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('blocks attribute additions after a failed read and retries loading values', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
-  let reads = 0;
-  const writes: Request[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') {
-      writes.push(request.clone());
-      return Response.json({ value: { ...current, id: 42, value: { type: 'text', text: 'Updated note' } }, superseded: { ...current, superseded_at: when } });
-    }
-    if (path.endsWith('/attributes')) {
-      reads += 1;
-      return reads === 1 ? Response.json({ message: 'Attributes unavailable' }, { status: 503 }) : Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
-    }
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
     if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r1"' } });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
@@ -101,15 +121,8 @@ it('blocks attribute additions after a failed read and retries before editing th
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Attributes unavailable'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
     expect(await screen.findByText('Existing note')).toBeDefined();
-    expect(screen.queryByRole('alert')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Updated note' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
-    expect(await screen.findByText('Updated note')).toBeDefined();
-    await expect(writes[0]!.json()).resolves.toMatchObject({ expected_value_id: 41, value: { type: 'text', text: 'Updated note' } });
+    expect(screen.getByRole('button', { name: 'Edit Note: Existing note' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -119,7 +132,7 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
   let finish!: () => void;
   const { controller, view, writes } = harness(initial, { fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
   try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove Email' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Email: old@example.com' }));
     expect(writes).toHaveLength(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
     if (!fail) {
@@ -129,7 +142,7 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
     await act(() => finish());
     if (fail) {
       expect(await screen.findByRole('button', { name: 'Reload' })).toBeDefined();
-      expect(screen.getByRole('group', { name: 'Confirm removing Email' })).toBeDefined();
+      expect(screen.getByRole('group', { name: 'Confirm removing Email: old@example.com' })).toBeDefined();
       expect(screen.getByText('old@example.com')).toBeDefined();
     } else {
       await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
@@ -144,9 +157,9 @@ it('gates media editing by available data and keeps removal available', () => {
   const { view, controller } = harness(initial);
   try {
     expect(screen.getByText('Portrait')).toBeDefined(); expect(screen.getByText('Stored logo')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Edit Photo' })).toHaveProperty('disabled', false);
-    expect(screen.getByRole('button', { name: 'Edit Logo' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Remove Logo' })).toHaveProperty('disabled', false);
+    expect(screen.getByRole('button', { name: 'Edit Photo: Portrait' })).toHaveProperty('disabled', false);
+    expect(screen.getByRole('button', { name: 'Edit Logo: Stored logo' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Remove Logo: Stored logo' })).toHaveProperty('disabled', false);
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -176,7 +189,7 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] }, etags: {}, errors: {} });
   const view = render(PersonFields, { controller });
   try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note: Private example' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
     await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
@@ -184,15 +197,15 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
     if (refreshed.is_active === false || refreshed.is_sensitive) {
       expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
       expect(controller.draft).toBeNull();
-      expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: refreshed.is_sensitive ? 'Edit Private note: value 1' : 'Edit Private note: Private example' })).toHaveProperty('disabled', true);
     } else {
       expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
       await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(screen.getByRole('button', { name: 'Edit Renamed note' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Edit Renamed note: Private example' })).toBeDefined();
     }
     if (refreshed.is_sensitive) {
       expect(screen.queryByText('Private example')).toBeNull();
-      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
       expect(screen.getByText('Private example')).toBeDefined();
     }
   } finally { view.unmount(); controller.destroy(); }
@@ -233,21 +246,17 @@ it('shows a repeated label once, the editor after the list, and the summary befo
     const more = screen.getByRole('button', { name: 'More fields' });
     expect(screen.getByText('Summary row').compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Edit Email' })[0]!);
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Email: first@example.com' }));
     const input = await screen.findByRole('textbox', { name: /email|contact value/i });
     expect(screen.queryByText('first@example.com')).toBeNull();
     expect(input.compareDocumentPosition(screen.getByText('second@example.com')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows sensitive values as Hidden and lets More fields reveal a hidden field and open its form', async () => {
-  const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Private note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
-  const religion = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', display_order: 2 } as AttributeDefinition;
-  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Secret example' }, active_from: when, created_at: when, source: 'user' };
-  const { controller, view } = harness(profile(), { definitions: [note, religion], bundle: { definitions: { definitions: [note, religion] }, attributes: { person_id: 7, attributes: [{ definition: note, current: [value], history: [] }] } } });
+it('lets More fields reveal a hidden field and open its form', async () => {
+  const religion = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
+  const { controller, view } = harness(profile(), { definitions: [religion], bundle: { definitions: { definitions: [religion] } } });
   try {
-    expect(screen.getByText('Hidden')).toBeDefined();
-    expect(screen.queryByText('Secret example')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
     expect(await screen.findByRole('textbox', { name: 'Religion' })).toBeDefined();

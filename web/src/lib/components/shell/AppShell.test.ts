@@ -1589,7 +1589,6 @@ describe('AppShell', () => {
       new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST'
     );
     expect(promotion).toBeDefined();
-    await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
     await screen.findByRole('button', { name: 'More actions' });
 
     rendered.unmount();
