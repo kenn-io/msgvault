@@ -1,11 +1,11 @@
 import { disabledTaskLookup } from '../tasks/fixtures.test-support';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, onTestFinished, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import MessagePage from './MessagePage.svelte';
 
-it('restores the initiating message after participant navigation and a Back reload', async () => {
+it.each([41, 42])('restores initiating message %i after participant navigation and a Back reload', async (initiatingMessageID) => {
   window.history.replaceState({ existing: 'preserved' }, '', '/messages/42');
   onTestFinished(() => window.history.replaceState(null, '', '/'));
   const messages = [41, 42].map(id => ({
@@ -32,7 +32,7 @@ it('restores the initiating message after participant navigation and a Back relo
   await screen.findByText('Body 42');
   await fireEvent.click(screen.getByRole('button', { name: /Expand message 41/ }));
   await screen.findByText('Body 41');
-  await fireEvent.click(screen.getAllByRole('button', { name: 'Sender Example' })[0]!);
+  await fireEvent.click(within(screen.getByRole('article', { name: `Message ${initiatingMessageID}` })).getByRole('button', { name: 'Sender Example' }));
   expect(onOpenPerson).toHaveBeenCalledWith(11);
   view.unmount();
 
@@ -40,7 +40,7 @@ it('restores the initiating message after participant navigation and a Back relo
   await waitFor(() => expect(window.location.pathname).toBe('/messages/42'));
   expect(window.history.state).toMatchObject({ existing: 'preserved' });
   render(MessagePage, { client, messageID: 42, onOpenPerson });
-  expect(await screen.findByText('Body 41')).toBeTruthy();
+  expect(await screen.findByText(`Body ${initiatingMessageID}`)).toBeTruthy();
 });
 
 it('reports a displayed linked message loading failure', async () => {
