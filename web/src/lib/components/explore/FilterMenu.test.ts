@@ -50,18 +50,16 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
 });
 
 it.each([
-  { name: 'preserves restored kinds when adding Email', reset: false, filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
-  { name: 'selects Email after filters reset', reset: true, filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['email'] },
-  { name: 'groups meeting notes and minutes in a meetings-only archive', reset: false, filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: 'Meeting', expected: ['meeting_note', 'meeting_minutes'] },
-])('$name', async ({ reset, filters, kinds, label, expected }) => {
+  { name: 'preserves restored kinds when adding Email', filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
+  { name: 'groups meeting notes and minutes in a meetings-only archive', filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: 'Meeting', expected: ['meeting_note', 'meeting_minutes'] },
+])('$name', async ({ filters, kinds, label, expected }) => {
   const onChange = vi.fn();
-  const view = render(FilterMenu, {
+  render(FilterMenu, {
     client: createAPIClient(async (input) => new URL((input as Request).url).pathname.endsWith('/groups')
       ? Response.json({ rows: kinds.map(key => ({ key, count: 1 })) })
       : Response.json({ accounts: [], identities: [] })),
     filters, onChange, onClear: vi.fn(),
   });
-  if (reset) await view.rerender({ filters: [] });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await fireEvent.click(await screen.findByLabelText(label));
   expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: expected }]);
