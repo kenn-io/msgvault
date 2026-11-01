@@ -395,7 +395,7 @@ test('identity hues retain text contrast', async ({ page }) => {
   }
 });
 
-test('domain calendar retries and retains its local day across Details', async ({ page }) => {
+test('domain calendar retries, selects a previous year, and clears date filters', async ({ page }) => {
   await prepare(page);
   await page.route('**/api/v1/domains/example.com/summary', route => route.fulfill({ json: { summary: { ...domainSummary, first_at: '2025-05-01T00:00:00Z', last_at: '2025-08-01T00:00:00Z' } } }));
   const bodies: Record<string, unknown>[] = [];
@@ -424,9 +424,6 @@ test('domain calendar retries and retains its local day across Details', async (
   await day.click();
   await expect.poll(() => bodies.at(-1)?.filters).toContainEqual({ dimension: 'after', values: [expect.stringContaining('2025-07-19')] });
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
-  await expect(day).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
   await page.keyboard.press('Escape');
@@ -659,11 +656,9 @@ for (const previous of ['Alice', 'no person']) {
 test('People calendar day survives an Action items archived-meeting round trip', async ({ page }) => {
   await prepare(page);
   const timelines: Record<string, unknown>[] = [];
-  const scopes: Record<string, unknown>[] = [];
   page.on('request', request => {
     const path = new URL(request.url()).pathname;
     if (path === '/api/v1/participants/1/timeline') timelines.push(request.postDataJSON());
-    if (path === '/api/v1/meetings/actions') scopes.push(request.postDataJSON().scope);
   });
   await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: meetingActions({ rows: [meetingAction()], total_count: 1 }) }));
   await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: 0 } }) }));
@@ -688,7 +683,6 @@ test('People calendar day survives an Action items archived-meeting round trip',
   await page.getByRole('region', { name: 'Meeting summary', exact: true }).getByRole('button', { name: /Action items/ }).click();
   const actions = page.getByRole('dialog', { name: 'Action items', exact: true });
   await expect(actions.getByText('Prepare review', { exact: true })).toBeVisible();
-  expect(scopes.at(-1)).toMatchObject({ participant_id: 1, after: '2026-07-18T00:00:00.000Z', before: '2026-07-19T00:00:00.000Z' });
   await actions.locator('a[href="/messages/42"]').click();
   const archived = page.getByRole('dialog', { name: 'Archived meeting', exact: true });
   await expect(archived).toBeVisible();

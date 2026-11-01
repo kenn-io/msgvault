@@ -354,9 +354,11 @@ func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *test
 	assert.ElementsMatch([]int64{alias, other}, fast.Rows[0].ParticipantIDs)
 	profile, err := profileDomainPopulation(t, engine, request)
 	require.NoError(err)
+	matchedOperators := 0
 	var check func(domainPopulationProfile)
 	check = func(operator domainPopulationProfile) {
 		if strings.Contains(fmt.Sprint(operator.ExtraInfo["Aggregates"]), "list(") {
+			matchedOperators++
 			assert.LessOrEqual(operator.IntermediateRows, int64(1), "participant lists must be enriched only for the selected page")
 		}
 		for _, child := range operator.Children {
@@ -364,4 +366,5 @@ func TestExploreParticipantPopulationKeepsMembershipAndBoundedEnrichment(t *test
 		}
 	}
 	check(profile)
+	require.Positive(matchedOperators, "profile must include participant list enrichment")
 }
