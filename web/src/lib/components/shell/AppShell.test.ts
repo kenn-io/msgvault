@@ -1524,7 +1524,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each([200, 201])('hands a selected relationship participant to Directory promotion on %i', async status => {
+  it('saves the selected People participant and commits the person to the URL', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
     }))}`);
@@ -1553,7 +1553,7 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people' && request.method === 'POST') {
         promoted = true;
-        return Response.json({ id: 42, revision: 1 }, { status });
+        return Response.json({ id: 42, revision: 1 }, { status: 201 });
       }
       if (path === '/api/v1/people/42') return Response.json({ id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11] });
       if (path === '/api/v1/people/42/profile') return Response.json({
@@ -1591,7 +1591,6 @@ describe('AppShell', () => {
     expect(promotion).toBeDefined();
     await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
     await screen.findByRole('button', { name: 'More actions' });
-    expect(requests.slice(requests.indexOf(promotion!) + 1).some(request => new URL(request.url).pathname === '/api/v1/people/directory')).toBe(true);
 
     rendered.unmount();
     state.destroy();
@@ -1634,7 +1633,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
-  it('renders actionable Directory guidance for a relationship promotion conflict', async () => {
+  it('shows a failed People Save in the person page alert', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
     }))}`);

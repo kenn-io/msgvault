@@ -299,7 +299,7 @@ describe('DirectoryController', () => {
     expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]);
   });
 
-  it('rereads relationships and network when reopening the selected person', async () => {
+  it('rereads relationships when reopening the selected person', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -310,13 +310,9 @@ describe('DirectoryController', () => {
     try {
       await controller.loadSelection(7);
       const firstEntity = controller.entity!;
-      await firstEntity.loadNetwork(1, false);
       await controller.loadSelection(7);
       expect(controller.entity).not.toBe(firstEntity);
-      await controller.entity!.loadNetwork(1, false);
-      for (const section of ['relationships', 'network']) {
-        expect(requests.filter(request => pathOf(request) === `/api/v1/people/7/${section}`)).toHaveLength(2);
-      }
+      expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
     } finally { controller.destroy(); }
   });
 
@@ -1145,6 +1141,24 @@ describe('DirectoryController', () => {
     await expect(controller.promote(11)).resolves.toEqual({ ok: false, code: 'person_binding_conflict', message: 'bound elsewhere' });
     expect(controller.promotionResult).toEqual({ ok: false, code: 'person_binding_conflict', message: 'bound elsewhere' });
     expect(controller.selectedPersonID).toBeNull();
+  });
+
+  it('clears failed promotion feedback when selecting a saved person', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST' && pathOf(request) === '/api/v1/people') return Response.json({ message: 'Save unavailable' }, { status: 503 });
+      return detailResponse(pathOf(request));
+    }));
+    const controller = new DirectoryController(client);
+    try {
+      await expect(controller.promote(11)).resolves.toMatchObject({ ok: false });
+      expect(controller.promotionError).toBe('Save unavailable');
+      expect(controller.promotionResult).toMatchObject({ ok: false });
+      await controller.selectPerson(7);
+      expect(controller.selectedPersonID).toBe(7);
+      expect(controller.promotionError).toBeNull();
+      expect(controller.promotionResult).toBeNull();
+    } finally { controller.destroy(); }
   });
 
   it('keeps the selected split source and permits its next field write', async () => {

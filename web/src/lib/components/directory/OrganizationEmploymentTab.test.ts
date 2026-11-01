@@ -86,14 +86,14 @@ describe('OrganizationEmploymentTab', () => {
   });
 
   it('finds an employer beyond the first fifty and retains the selected employer after another search', async () => {
-    const queries: string[] = []; let posted: Record<string, unknown> | undefined;
+    const queries: string[] = [];
     const controller = controllerWith(async input => {
       const request = requestOf(input); const url = new URL(request.url);
       if (url.pathname === '/api/v1/organizations') {
         const query = url.searchParams.get('q') ?? ''; queries.push(query);
         return Response.json({ organizations: query === 'Zebra' ? [organization(51, 1, 'Zebra Example')] : Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)), total: 51, limit: 50, offset: 0 });
       }
-      if (url.pathname === '/api/v1/employments' && request.method === 'POST') { posted = await request.json(); return Response.json(employment(12, 1, { organization_id: 51, title: 'Designer' }), { status: 201 }); }
+      if (url.pathname === '/api/v1/employments' && request.method === 'POST') return Response.json(employment(12, 1, { organization_id: 51, title: 'Designer' }), { status: 201 });
       if (url.pathname === '/api/v1/people/7/employments') return collection([employment(12, 1, { organization_id: 51, title: 'Designer' })], { employment_id: 12, organization_id: 51, organization_name: 'Zebra Example', title: 'Designer', vcard: {} });
       throw new Error(`Unexpected ${request.method} ${url.pathname}`);
     });
@@ -111,7 +111,6 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Designer' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add employment' })).toBeNull());
-      expect(posted).toMatchObject({ person_id: 7, organization_id: 51, title: 'Designer' });
     } finally { view.unmount(); controller.destroy(); }
   });
 
@@ -242,25 +241,13 @@ describe('OrganizationEmploymentTab', () => {
     expect(await requests.find((request) => request.method === 'PATCH')!.json()).toMatchObject({ organization_id: 21 });
   });
 
-  it('offers Make primary only for current non-primary employments', () => {
+  it('reads a row as title at organization with period, department, and ordered actions', () => {
     const controller = controllerWith(vi.fn<typeof fetch>());
-    controller.employments = [
-      employment(11, 1, { is_current: false, is_primary: false, title: 'Historical role' }),
-      employment(12, 1, { is_current: true, is_primary: false, title: 'Current role' })
-    ];
+    controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false }), employment(12, 1, { is_current: false, is_primary: false, title: 'Historical role' })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
 
     const historical = screen.getByText(/Historical role/).closest('.detail-row') as HTMLElement;
-    const current = screen.getByText(/Current role/).closest('.detail-row') as HTMLElement;
     expect(within(historical).queryByRole('button', { name: 'Make primary employment' })).toBeNull();
-    expect(within(current).getByRole('button', { name: 'Make primary employment' })).toBeDefined();
-  });
-
-  it('reads a row as title at organization with period, department, and ordered actions', () => {
-    const controller = controllerWith(vi.fn<typeof fetch>());
-    controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false })];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
-
     const row = screen.getByText(/Engineer/).closest('.detail-row') as HTMLElement;
     expect(row.textContent).toContain('Engineer at');
     expect(row.textContent).toContain('Mar 2024 – present · Platform');

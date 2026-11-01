@@ -17,7 +17,6 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') return Response.json({ message: 'Unable to save field.' }, { status: 503 });
     if (request.method === 'PATCH') {
       writes.push(request.clone()); await options.wait;
       if (options.fail) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
@@ -35,6 +34,84 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   const view = render(PersonFields, options.summary ? { controller, summary } : { controller });
   return { controller, writes, view };
 }
+
+it('keeps a conflicted structured editor available to cancel after a deferred failed reload', async () => {
+  let releaseReload!: (response: Response) => void;
+  const pendingReload = new Promise<Response>(resolve => releaseReload = resolve);
+  const initial = profile();
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
+    if (path.endsWith('/profile')) return pendingReload;
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+    return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const view = render(PersonFields, { controller });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+12025550123' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save contact point' }));
+    await screen.findByRole('button', { name: 'Reload profile' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload profile' }));
+    expect(controller.reloadPending).toBe(true);
+    const cancel = screen.getByRole('button', { name: /^Cancel$/ });
+    await fireEvent.click(cancel);
+    expect(screen.getByDisplayValue('+12025550123')).toBeDefined();
+    await act(() => releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })));
+    await waitFor(() => expect(controller.reloadPending).toBe(false));
+    expect(controller.conflict).not.toBeNull();
+    await fireEvent.click(cancel);
+    expect(screen.queryByDisplayValue('+12025550123')).toBeNull();
+    expect(controller.draft).toBeNull();
+    expect(controller.conflict).toBeNull();
+    expect(controller.canWriteProfile).toBe(true);
+  } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
+});
+
+it('blocks attribute additions after a failed read and retries before editing the unseen value', async () => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const current = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Existing note' }, active_from: when, created_at: when, source: 'user' };
+  let reads = 0;
+  const writes: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') {
+      writes.push(request.clone());
+      return Response.json({ value: { ...current, id: 42, value: { type: 'text', text: 'Updated note' } }, superseded: { ...current, superseded_at: when } });
+    }
+    if (path.endsWith('/attributes')) {
+      reads += 1;
+      return reads === 1 ? Response.json({ message: 'Attributes unavailable' }, { status: 503 }) : Response.json({ person_id: 7, attributes: [{ definition, current: [current], history: [] }] });
+    }
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
+    if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r1"' } });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
+    if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: { attributes: 'Attributes unavailable' } });
+  const view = render(PersonFields, { controller });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Attributes unavailable'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
+    expect(await screen.findByText('Existing note')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Updated note' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    expect(await screen.findByText('Updated note')).toBeDefined();
+    await expect(writes[0]!.json()).resolves.toMatchObject({ expected_value_id: 41, value: { type: 'text', text: 'Updated note' } });
+  } finally { view.unmount(); controller.destroy(); }
+});
 
 it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
   const initial = profile();
@@ -63,7 +140,7 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
 
 it('gates media editing by available data and keeps removal available', () => {
   const initial = profile();
-  initial.media = [{ person_id: 7, media_kind: 'photo', original_value: 'Portrait', uri: 'https://example.com/photo.png', has_data: false, envelope }, { person_id: 7, media_kind: 'logo', original_value: 'Stored logo', has_data: true, envelope: { ...envelope, id: 12 } }];
+  initial.media = [{ person_id: 7, media_kind: 'photo', original_value: 'Portrait', uri: 'https://example.com/photo.png', has_data: false, envelope }, { person_id: 7, media_kind: 'logo', original_value: 'Stored logo', has_data: true, content_hash: 'a'.repeat(64), envelope: { ...envelope, id: 12 } }];
   const { view, controller } = harness(initial);
   try {
     expect(screen.getByText('Portrait')).toBeDefined(); expect(screen.getByText('Stored logo')).toBeDefined();
@@ -82,56 +159,48 @@ it('displays every structured address component before its original street value
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('keeps a field draft across a definition rename', async () => {
+it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
+  { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' } },
+  { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false } },
+  { name: 'sensitive field closes the draft and conceals the value', refreshed: { label: 'Private note', is_sensitive: true } },
+])('joins refreshed field settings into an open draft: $name', async ({ refreshed }) => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
-  const { controller, view } = harness(profile(), options);
-  try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
-    await act(() => controller.reloadDefinitions());
-    expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-it('closes a field draft when refreshed settings restrict editing', async () => {
-  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
-  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
-  const { controller, view } = harness(profile(), options);
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people/7/attributes/note' && request.method === 'PUT') return Response.json({ message: 'Unable to save field.' }, { status: 503 });
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [{ ...definition, revision: 2, ...refreshed }] });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] }, etags: {}, errors: {} });
+  const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
     await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
-    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, is_active: false, revision: 3 };
     await act(() => controller.reloadDefinitions());
-    expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
-    expect(controller.draft).toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-it('conceals a field that becomes sensitive until revealed', async () => {
-  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
-  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
-  const { controller, view } = harness(profile(), options);
-  try {
-    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, revision: 2 };
-    await act(() => controller.reloadDefinitions());
-    expect(screen.queryByText('Private example')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
-    expect(screen.getByText('Private example')).toBeDefined();
+    if (refreshed.is_active === false || refreshed.is_sensitive) {
+      expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
+      expect(controller.draft).toBeNull();
+      expect(screen.getByRole('button', { name: 'Edit Private note' })).toHaveProperty('disabled', true);
+    } else {
+      expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.getByRole('button', { name: 'Edit Renamed note' })).toBeDefined();
+    }
+    if (refreshed.is_sensitive) {
+      expect(screen.queryByText('Private example')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note' }));
+      expect(screen.getByText('Private example')).toBeDefined();
+    }
   } finally { view.unmount(); controller.destroy(); }
 });
 
 it('reloads field choices when More fields opens', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
-  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
-  const { controller, view } = harness(profile(), options);
+  const { controller, view } = harness(profile(), { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [] } } });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect(await screen.findByRole('menuitem', { name: 'Favorite color' })).toBeDefined();

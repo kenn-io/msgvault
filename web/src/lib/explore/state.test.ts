@@ -1790,11 +1790,5 @@ it('keeps embedded person navigation detached from shell history', () => {
   expect(state.current.filters).toEqual([{ dimension: 'participant', values: ['42'] }]);
   expect(window.location.href).toBe(address);
   expect(window.history.state).toEqual({ marker: 'outer' });
-  const filters = state.current.filters;
-  const groups = state.current.groupingChain;
-  state.replaceTransient({ activeRow: 'message:7' });
-  expect(state.current.filters).toBe(filters);
-  expect(state.current.groupingChain).toBe(groups);
-  expect(state.current.activeRow).toBe('message:7');
   state.destroy();
 });

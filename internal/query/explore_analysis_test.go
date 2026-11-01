@@ -675,9 +675,16 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	assert.Equal(int64(20), result.Rows[0].EstimatedBytes)
 	assert.Equal("2024-02-29", result.Rows[1].Key)
 	assert.Equal(int64(1), result.Rows[1].Count)
-	assert.Equal("SECOND_QUARTILE", string(result.Rows[0].Level))
+	assert.Equal("2024-04-01", result.Rows[2].Key)
+	assert.Equal(int64(3), result.Rows[2].Count)
+	assert.Equal("2024-05-01", result.Rows[3].Key)
+	assert.Equal(int64(4), result.Rows[3].Count)
 	local, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: ExploreRequest{Context: context, SentOnly: true}, Dimension: "day", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366}})
 	require.NoError(err)
 	require.Len(local.Rows, 5)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
+	for _, timezone := range []string{"Invalid/Zone", "Local"} {
+		_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Timezone: timezone})
+		require.ErrorContains(err, "invalid timezone")
+	}
 }

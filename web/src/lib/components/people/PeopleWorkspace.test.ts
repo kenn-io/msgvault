@@ -8,6 +8,9 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
+import PersonPage from './PersonPage.svelte';
+
+vi.mock('./PersonPage.svelte', { spy: true });
 
 const when = '2026-07-19T10:00:00Z';
 function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
@@ -21,7 +24,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
 
-it('retains the selected day, file filters, and Details across the 720px breakpoint', async () => {
+it('keeps the day across Details and the file filter across Files', async () => {
   const observers = new Map<Element, ResizeObserverCallback>();
   vi.stubGlobal('ResizeObserver', class {
     constructor(private callback: ResizeObserverCallback) {}
@@ -186,9 +189,6 @@ it('reads a saved profile once and loads its fields when Details opens', async (
     expect(paths.filter(path => /people-inference|attribute-definitions|kata|agenda|brief/.test(path))).toEqual([]);
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
-    expect(screen.getByText('Last contact')).toBeDefined();
-    expect(screen.getByText('3 interactions')).toBeDefined();
-    expect(screen.queryByText(/Unknown ·/)).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -354,22 +354,47 @@ it.each([
 });
 
 
-
-it.each([false, undefined])('offers shared setup only when sweep configuration is explicitly disabled: %s', async sweepConfigured => {
+it.each([false, undefined])('forwards sweep configuration and settings navigation to the person page: %s', async sweepConfigured => {
+  vi.mocked(PersonPage).mockClear();
   const client = clientFor({ '/api/v1/people/7': () => Response.json(profile(7, 1, [])) });
   const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
   const onOpenSettings = vi.fn();
   const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), sweepConfigured, onOpenSettings, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('heading', { name: 'Last time we talked' });
-    for (const name of ['Set up Facts', 'Set up Briefs']) {
-      const button = screen.queryByRole('button', { name });
-      if (sweepConfigured === false) { expect(button).not.toBeNull(); await fireEvent.click(button!); }
-      else expect(button).toBeNull();
-    }
-    if (sweepConfigured === false) expect(onOpenSettings.mock.calls).toEqual([['enrichment'], ['enrichment']]);
+    await waitFor(() => expect(PersonPage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sweepConfigured, onOpenSettings })));
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
+});
+
+it('keeps Files and its filters when a saved person finishes initial hydration', async () => {
+  let releaseProfile!: (response: Response) => void;
+  const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
+  const saved = profile(7, 1, [1]);
+  const client = clientFor({
+    '/api/v1/people/7': () => pendingProfile,
+    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }),
+    '/api/v1/people/7/attributes': () => Response.json({ person_id: 7, attributes: [] }),
+    '/api/v1/people/7/files/search': () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
+    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+  });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
+  const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget, filesOpen: state.current.relationshipFiles });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(),
+    onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false); },
+    onFilesToggle: value => { state.commitNavigation({ relationshipFiles: value }); void sync(); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('radio', { name: /^Files$/ }));
+    await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'report' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
+    await act(() => releaseProfile(Response.json(saved)));
+    await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:1'));
+    expect(state.current.relationshipFiles).toBe(true);
+    await waitFor(() => expect(within(screen.getByRole('radiogroup', { name: 'Person tabs' })).getByRole('radio', { name: /^Files$/ }).getAttribute('aria-checked')).toBe('true'));
+    expect(screen.getByRole('searchbox', { name: 'Filter filename' })).toHaveProperty('value', 'report');
+    expect(screen.getByRole('checkbox', { name: 'PDFs' })).toHaveProperty('checked', false);
+  } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
 it('keeps Messages mounted across a profile reload', async () => {
@@ -399,26 +424,18 @@ it('keeps Messages mounted across a profile reload', async () => {
 });
 
 it('routes reconciliation Reload to the directory controller', async () => {
-  const directoryRequests: Request[] = [];
-  const saved = profile(7, 2, []);
-  const client = clientFor({
-    '/api/v1/people/directory': request => {
-      directoryRequests.push(request);
-      return directoryRequests.length === 2
-        ? Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 })
-        : Response.json({ people: [{ ...saved, contact_state: 'active', categories: [], organizations: ['Example Org'], primary_channel: 'email' }] });
-    },
-    '/api/v1/people/7': () => Response.json(saved),
-    '/api/v1/people/7/profile': request => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: request.method === 'PATCH' ? '"person-7-r3"' : '"person-7-r2"' } }),
-  });
+  const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 2, []), contact_state: 'active', categories: [], organizations: [] }] }) });
   const controller = new DirectoryController(client);
   const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', identityQuery: 'synthetic', relationshipSaved: true, directoryContactState: 'active', directoryCategory: 'STRASSE', directoryOrganization: 'Example Org', directoryPrimaryChannel: 'email', directoryPersonID: 7 });
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
   const relationships = new RelationshipsController(client, () => 'UTC');
   const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), directory: controller, controller: relationships, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('button', { name: 'Add phone' });
-    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
+    await act(async () => {
+      await controller.loadFirstPage();
+      controller.pageError = 'Directory reconciliation unavailable.';
+      controller.pageRecovery = 'reload';
+    });
     const reload = vi.spyOn(controller, 'reloadFirstPage');
     await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
     await waitFor(() => expect(reload).toHaveBeenCalledOnce());

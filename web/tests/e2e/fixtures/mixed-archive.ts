@@ -447,40 +447,38 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
       },
     }),
   );
-  await page.route('**/api/v1/people/42/network*', (route) =>
-    route.fulfill({
-      json: {
-        root_person_id: 42,
-        depth: Number(new URL(route.request().url()).searchParams.get('depth') ?? 1),
-        truncated: false,
-        nodes: [
-          { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
-          { id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 1 },
-          { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 },
-        ],
-        edges: [
-          {
-            id: 'relationship:31',
-            kind: 'relationship',
-            source_node_id: 'person:42',
-            target_node_id: 'person:43',
-            relationship_type_slug: 'colleague',
-            label: 'works with',
-          },
-          {
-            id: 'relationship:32', kind: 'relationship', source_node_id: 'person:42', target_node_id: 'person:43', relationship_type_slug: 'mentor', label: 'mentors',
-          },
-          {
-            id: 'employment:41',
-            kind: 'employment',
-            source_node_id: 'person:43',
-            target_node_id: 'organization:21',
-            label: 'Engineer',
-          },
-        ],
-      },
-    }),
-  );
+  await page.route('**/api/v1/people/42/network*', (route) => {
+    const depth = Number(new URL(route.request().url()).searchParams.get('depth') ?? 1);
+    const nodes = [
+      { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
+      { id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 1 },
+      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 },
+    ].filter(node => node.hop <= depth);
+    const ids = new Set(nodes.map(node => node.id));
+    return route.fulfill({ json: {
+      root_person_id: 42, depth, truncated: false, nodes,
+      edges: [
+        {
+          id: 'relationship:31',
+          kind: 'relationship',
+          source_node_id: 'person:42',
+          target_node_id: 'person:43',
+          relationship_type_slug: 'colleague',
+          label: 'works with',
+        },
+        {
+          id: 'relationship:32', kind: 'relationship', source_node_id: 'person:42', target_node_id: 'person:43', relationship_type_slug: 'mentor', label: 'mentors',
+        },
+        {
+          id: 'employment:41',
+          kind: 'employment',
+          source_node_id: 'person:43',
+          target_node_id: 'organization:21',
+          label: 'Engineer',
+        },
+      ].filter(edge => ids.has(edge.source_node_id) && ids.has(edge.target_node_id)),
+    } });
+  });
   await page.route('**/api/v1/relationship-types', (route) => route.fulfill({ json: { relationship_types: [] } }));
   await page.route('**/api/v1/people/42/days*', (route) =>
     route.fulfill({

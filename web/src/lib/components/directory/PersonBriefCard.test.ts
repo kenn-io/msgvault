@@ -297,7 +297,10 @@ describe('PersonBriefCard', () => {
       if (request.method === 'PUT') { writes.push(await request.json()); return Response.json(enrollment(false)); }
       return archive(request);
     });
-    render(PersonBriefCard, { client, personID: 7, onSetUp: vi.fn() });
+    const onOpenSettings = vi.fn();
+    render(PersonBriefCard, { client, personID: 7, onSetUp: () => onOpenSettings('enrichment') });
+    await fireEvent.click(screen.getByRole('button', { name: 'Set up Briefs' }));
+    expect(onOpenSettings).toHaveBeenCalledWith('enrichment');
     await screen.findByRole('button', { name: sentenceTexts[0] });
     await fireEvent.click(screen.getByRole('switch', { name: 'Enroll this person in briefs' }));
     await waitFor(() => expect(writes).toEqual([{ enrolled: false, track: false }]));
@@ -335,7 +338,7 @@ describe('PersonBriefCard', () => {
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
-      else await waitFor(() => expect(screen.queryByText('No brief yet.')).toBeNull());
+      else await waitFor(() => expect(toggle.checked).toBe(false));
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.

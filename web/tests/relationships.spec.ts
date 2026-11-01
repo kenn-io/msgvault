@@ -1,7 +1,7 @@
 import { stubOperationStatus } from './kit-ui';
 import { setKitTheme } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
-import { meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
+import { meetingAction, meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { exploreHistoryState } from './explore-state';
 
 const when = '2026-07-19T10:00:00Z';
@@ -411,7 +411,7 @@ test('identity hues retain text contrast', async ({ page }) => {
   }
 });
 
-test('domain calendar retries and retains its local day across Details', async ({ page }) => {
+test('domain calendar retries, selects a previous year, and clears date filters', async ({ page }) => {
   await prepare(page);
   await page.route('**/api/v1/domains/example.com/summary', route => route.fulfill({ json: { summary: { ...domainSummary, first_at: '2025-05-01T00:00:00Z', last_at: '2025-08-01T00:00:00Z' } } }));
   const bodies: Record<string, unknown>[] = [];
@@ -427,7 +427,7 @@ test('domain calendar retries and retains its local day across Details', async (
     if (body.grouping?.[0] !== 'day') return route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'cache-domain', search_provenance: {} } });
     if (++attempts === 1) return route.fulfill({ status: 500, json: { message: 'Could not load activity.' } });
     return route.fulfill({ json: { rows: [...Array.from({ length: 7 }, (_, i) => ({ key: `${body.filters[1].values[0].slice(0, 4)}-01-0${i + 1}`, count: 1, level: 'FIRST_QUARTILE' })), { key: `${body.filters[1].values[0].slice(0, 4)}-07-19`, label: 'Jul 19', count: 3, estimated_bytes: 30, latest_at: when, level: 'FOURTH_QUARTILE' }, { key: `${body.filters[1].values[0].slice(0, 4)}-08-01`, count: 10, level: 'FOURTH_QUARTILE' }],
-      total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
+      total_count: 9, cache_revision: 'cache-domain', search_provenance: {} } });
   });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', filters: [{ dimension: 'source', values: ['1'] }] }))}`);
   await page.getByRole('radio', { name: 'Domains', exact: true }).click();
@@ -440,9 +440,6 @@ test('domain calendar retries and retains its local day across Details', async (
   await day.click();
   await expect.poll(() => bodies.at(-1)?.filters).toContainEqual({ dimension: 'after', values: [expect.stringContaining('2025-07-19')] });
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
-  await expect(day).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
   await page.keyboard.press('Escape');
@@ -679,6 +676,48 @@ for (const previous of ['Alice', 'no person']) {
   });
 }
 
+test('People calendar day survives an Action items archived-meeting round trip', async ({ page }) => {
+  await prepare(page);
+  const timelines: Record<string, unknown>[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/v1/participants/1/timeline') timelines.push(request.postDataJSON());
+  });
+  await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: meetingActions({ rows: [meetingAction()], total_count: 1 }) }));
+  await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: 0 } }) }));
+  await page.route('**/api/v1/messages/42', route => route.fulfill({ json: {
+    id: 42, conversation_id: 8, subject: 'Archived review', message_type: 'meeting_transcript',
+    from: 'Alice Example', to: [], sent_at: '2026-07-18T10:00:00Z', body: 'Review transcript', attachments: []
+  } }));
+  await page.route('**/api/v1/conversations/8**', route => route.fulfill({ json: {
+    id: 8, anchor_id: 42, has_before: false, has_after: false, total: 1,
+    messages: [{ id: 42, conversation_id: 8, subject: 'Archived review', message_type: 'meeting_transcript', from: 'Alice Example', to: [], sent_at: '2026-07-18T10:00:00Z', body: 'Review transcript', attachments: [] }]
+  } }));
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const day = page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true });
+  await day.click();
+  await expect(day).toHaveAttribute('aria-pressed', 'true');
+  const filters = [
+    { dimension: 'after', values: ['2026-07-18T00:00:00.000Z'] },
+    { dimension: 'before', values: ['2026-07-19T00:00:00.000Z'] }
+  ];
+  await expect.poll(() => timelines.at(-1)?.filters).toEqual(filters);
+  await page.getByRole('region', { name: 'Meeting summary', exact: true }).getByRole('button', { name: /Action items/ }).click();
+  const actions = page.getByRole('dialog', { name: 'Action items', exact: true });
+  await expect(actions.getByText('Prepare review', { exact: true })).toBeVisible();
+  await actions.locator('a[href="/messages/42"]').click();
+  const archived = page.getByRole('dialog', { name: 'Archived meeting', exact: true });
+  await expect(archived).toBeVisible();
+  await expect(archived.getByText('Review transcript', { exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(archived).toBeHidden();
+  await expect(day).toHaveAttribute('aria-pressed', 'true');
+  await expect(actions).toBeVisible();
+  await expect.poll(() => timelines.at(-1)?.filters).toEqual(filters);
+  await expect(actions.getByText('Prepare review', { exact: true })).toBeVisible();
+});
+
 test('Back clears a later calendar day before restoring the same person reader', async ({ page }) => {
   await prepare(page);
   await page.route('**/api/v1/participants/1/timeline', route => route.fulfill({ json: { rows: timelineRows.map(row => row.key === 'message:1' ? { ...row, conversation_id: 21 } : row), total_count: 2 } }));
@@ -711,6 +750,60 @@ test('Back clears a later calendar day before restoring the same person reader',
   await page.goForward();
   await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
 });
+
+test('Back restores the reader between People entries with identical filters and different days', async ({ page }) => {
+  await prepare(page);
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const day = page.getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true });
+  await day.click();
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
+  await grid.getByText('Team Chat').click();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
+  await expect(reading.getByText('Latest chat message')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).click();
+  await page.getByRole('option', { name: 'Name', exact: true }).click();
+  await page.getByRole('button', { name: 'No messages on Jul 19, 2026' }).filter({ visible: true }).click();
+  await expect(reading).toBeHidden();
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
+  await page.goBack();
+  await expect(day).toHaveAttribute('aria-pressed', 'true');
+  await expect(reading.getByText('Latest chat message')).toBeVisible();
+  expect(await page.evaluate(() => window.history.state.relationshipReader?.anchor)).toBe(500);
+});
+
+for (const kind of ['person', 'domain'] as const) {
+  test(`Back restores the selected older year for a People ${kind}`, async ({ page }) => {
+    await prepare(page);
+    await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
+    await page.route('**/api/v1/conversations/70**', route => route.fulfill({ json: {
+      id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
+      messages: [{ id: 500, conversation_id: 70, subject: 'Team Chat', message_type: 'chat', from: 'Bob Example', from_participant_id: 2, to: [], sent_at: '2025-07-18T20:00:00Z', body: 'Older chat message', attachments: [] }]
+    } }));
+    await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2025-01-01T00:00:00Z' } }));
+    await page.route('**/api/v1/domains/example.com/timeline', route => route.fulfill({ json: { rows: timelineRows, total_count: 2 } }));
+    await page.route('**/api/v1/explore/groups', route => {
+      const year = route.request().postDataJSON().filters.find((filter: { dimension: string }) => filter.dimension === 'after').values[0].slice(0, 4);
+      return route.fulfill({ json: { rows: [{ key: `${year}-07-18`, count: 2, level: 'FIRST_QUARTILE' }], total_count: 1 } });
+    });
+    await page.goto('/?workspace=relationships');
+    if (kind === 'domain') await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+    await page.getByRole('grid', { name: 'People results' }).getByText(kind === 'person' ? 'Alice Example' : 'example.com', { exact: true }).click();
+    const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+    await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
+    const day = calendar.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true });
+    await day.click();
+    const grid = page.getByRole('grid', { name: 'Messages results' });
+    await expect(grid).toHaveAttribute('aria-busy', 'false');
+    await grid.getByText('Team Chat').click();
+    await page.getByRole('complementary', { name: 'Reading pane: Team Chat' }).getByRole('button', { name: 'Bob Example', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+    await page.goBack();
+    await expect(calendar.getByText('2025', { exact: true })).toBeVisible();
+    await expect(day).toHaveAttribute('aria-pressed', 'true');
+  });
+}
 
 test('People list keys stay in that grid while Messages is open', async ({ page }) => {
   await prepare(page);
