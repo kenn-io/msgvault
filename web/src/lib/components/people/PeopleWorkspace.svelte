@@ -14,6 +14,7 @@
   import PageHeader from '../shell/PageHeader.svelte';
   import PeopleList, { type PeopleRow } from './PeopleList.svelte';
   import PersonPage from './PersonPage.svelte';
+  import { RELATIONSHIP_DAY_HISTORY_KEY, relationshipDayHistory } from '../../relationships/reader-history';
   import type { ComponentProps } from 'svelte';
 
   type PageProps = Omit<ComponentProps<typeof PersonPage>, 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
@@ -34,8 +35,9 @@
   let filenameQuery = $state('');
   let mimeFamilies = $state<FileMIMEFamily[]>([]);
   const target = $derived(page.target);
-  // Back can replace navigation while keeping the same target value.
-  $effect(() => { void page.target; untrack(() => selectedDate = null); });
+  // Each history entry keeps its own day: Back restores that entry's day, even for the same target.
+  $effect(() => { void page.target; untrack(() => selectedDate = relationshipDayHistory(window.history.state, 'relationships', page.target)); });
+  $effect(() => { const target = untrack(() => page.target); window.history.replaceState({ ...window.history.state, [RELATIONSHIP_DAY_HISTORY_KEY]: selectedDate && target ? { target, date: selectedDate } : undefined }, ''); });
   $effect(() => { void target; untrack(() => { domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
