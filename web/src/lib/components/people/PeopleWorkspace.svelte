@@ -66,7 +66,7 @@
   onMount(() => {
     const observer = new ResizeObserver(([entry]) => narrow = (entry?.contentRect.width ?? 1200) < 720);
     if (root) observer.observe(root);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); directory.resetForPromotion(); };
   });
   const rows = $derived.by((): PeopleRow[] => directoryMode ? directory.rows.map((person) => ({
     key: `person:${person.id}`, label: person.display_name || `Person ${person.id}`, detail: person.organizations.join(', '), lastAt: person.last_contact_at ?? '', saved: true, domain: false,
@@ -206,7 +206,7 @@
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); void controller.loadList(page.predicate); }}
-    onSplitCommitted={async (context) => { await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
+    onSplitCommitted={async (context) => { onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
 {/snippet}

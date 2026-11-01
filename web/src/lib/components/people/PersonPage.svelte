@@ -75,10 +75,17 @@
 {/snippet}
 
 <section class="person-page" role="group" aria-label="Person page">
+  {#if durablePersonID !== null || (detail && !controller.detailMissing)}
+    <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
+      {#snippet actions()}
+        {#if profileID !== null && savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}
+        {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
+      {/snippet}
+    </PersonHeader>
+  {/if}
   {#if controller.timelineLoading && !detail && durablePersonID === null}
     <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   {:else if durablePersonID !== null && (!detail || controller.detailMissing)}
-    <PersonHeader {name} {onBack} onOpenDetails={() => details = true}>{#snippet actions()}{#if savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={durablePersonID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}{/if}{/snippet}</PersonHeader>
     {#if controller.timelineLoading}<p role="status">Loading…</p>{/if}
     {#if controller.timelineError}<div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>{/if}
     <div class="tabs"><SegmentedControl ariaLabel="Person tabs" value={filesOpen && !details ? 'files' : 'details'} options={[{ value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]} onchange={(value) => { details = value === 'details'; onFilesToggle(value === 'files'); }} /></div>
@@ -91,12 +98,6 @@
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
     {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
   {:else}
-    <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
-      {#snippet actions()}
-        {#if profileID !== null && savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}
-        {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
-      {/snippet}
-    </PersonHeader>
     {#if directory.promotionError}<p role="alert">{directory.promotionError}<Button label="Retry Save" onclick={() => void savePerson()} /></p>{/if}
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>

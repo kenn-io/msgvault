@@ -1967,12 +1967,13 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each([200, 201])('hands a selected relationship participant to Directory promotion on %i', async (status) => {
+  it.each([{ status: 200, reviews: false }, { status: 201, reviews: false }, { status: 201, reviews: true }])('hands a selected relationship participant to Directory promotion on $status (leave for Reviews=$reviews)', async ({ status, reviews }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
     }))}`);
     const requests: Request[] = [];
     let promoted = false;
+    let releasePromotion: (() => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
@@ -1995,6 +1996,7 @@ describe('AppShell', () => {
         }] : []
       });
       if (path === '/api/v1/people' && request.method === 'POST') {
+        if (reviews) await new Promise<void>(resolve => { releasePromotion = resolve; });
         promoted = true;
         return Response.json({ id: 42, revision: 1 }, { status });
       }
@@ -2024,6 +2026,18 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    if (reviews) {
+      await waitFor(() => expect(releasePromotion).toBeDefined());
+      await fireEvent.click(screen.getByRole('button', { name: 'Reviews' }));
+      await screen.findByRole('main', { name: 'Reviews' });
+      state.commitNavigation({ directoryPersonID: 7 });
+      releasePromotion?.();
+      await waitFor(() => expect(promoted).toBe(true));
+      await tick(); await new Promise(resolve => setTimeout(resolve, 0));
+      expect(state.current).toMatchObject({ workspace: 'directory_review', directoryPersonID: 7 });
+      rendered.unmount(); state.destroy(); return;
+    }
 
     await waitFor(() => expect(state.current.directoryPersonID).toBe(42));
     expect(state.current.workspace).toBe('relationships');

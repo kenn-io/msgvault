@@ -583,24 +583,34 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('clears former participant activity when a split leaves the selected saved profile unbound', async () => {
+it.each([true, false])('keeps the split receipt visible after its source loses the displayed binding (saved entry=%s)', async savedEntry => {
   let split = false;
-  const saved = () => profile(7, split ? 2 : 1, split ? [] : [1]);
+  const saved = () => profile(7, split ? 5 : 4, split ? [] : [1]);
+  const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 3, absorbed_revision_before: 2, survivor_revision_after: 4, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };
   const client = clientFor({
     '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
     '/api/v1/people/7/profile': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${saved().revision}"` } }),
+    '/api/v1/people/7/profile/history': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }),
+    '/api/v1/people/7/merges': () => Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }] }),
+    '/api/v1/person-merges/41': () => Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] }),
+    '/api/v1/people/7/split': () => { split = true; return Response.json({ source_person: saved(), new_person: profile(9, 1, [1]), split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'synthetic-9', source_revision_before: 4, source_revision_after: 5, exact_reversal: false, actor: 'web', created_at: when }, exact_reversal: false, ambiguous_rows: [{ table_name: 'person_names', original_row_key: 'synthetic-row', action: 'ambiguous' }], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }); },
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: split ? profile(9, 1, [1]) : saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7, relationshipTarget: 'cluster:1' });
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: savedEntry ? 7 : null, relationshipTarget: 'cluster:1' });
   await controller.openTarget('cluster:1', {}, false);
-  const onReplaceNavigation = vi.fn();
-  const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget })); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await waitFor(() => expect(directory.profile).not.toBeNull());
-    split = true;
-    await act(() => directory.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 }));
-    await waitFor(() => expect(onReplaceNavigation).toHaveBeenCalledWith({ relationshipTarget: null, relationshipFiles: false }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Split merged profile' }));
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Participant 1' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /I confirm splitting/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
+    await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
+    expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
+    expect(state.current.relationshipTarget).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
