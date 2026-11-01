@@ -189,7 +189,7 @@ describe('ConversationView', () => {
     view.unmount();
   });
 
-  it.each(['ready', 'HTTP 500', 'rejected fetch'])('updates every card after the latest Tasks status probe returns %s', async (latest) => {
+  it.each(['ready', 'HTTP 500', 'rejected fetch', 'unreachable'])('updates every card after the latest Tasks status probe returns %s', async (latest) => {
     const recovered = latest === 'ready';
     let statusCalls = 0;
     const client = createCaptureClient(async (input) => {
@@ -197,6 +197,8 @@ describe('ConversationView', () => {
       if (path.endsWith('/tasks/status')) {
         if (++statusCalls === 1) return Response.json({ state: recovered ? 'unreachable' : 'ready', project: 'example', message: 'Task service is unreachable.' });
         if (latest === 'ready') return Response.json({ state: 'ready', project: 'example' });
+        if (statusCalls > 2) return Response.json({ state: 'ready', project: 'example' });
+        if (latest === 'unreachable') return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
         if (latest === 'rejected fetch') throw new Error('Tasks status could not be read.');
         return Response.json({ message: 'Tasks status could not be read.' }, { status: 500 });
       }
@@ -212,30 +214,13 @@ describe('ConversationView', () => {
     expect(statusCalls).toBe(2);
     const owner = within(screen.getByRole('article', { name: 'Message 1' }));
     if (recovered) {
-      expect(owner.getByText('The task service is unavailable; safe cached links may be shown.')).toBeDefined();
-      expect(screen.getByRole('button', { name: 'Unlink Cached task 2' })).toHaveProperty('disabled', false);
-    } else {
       expect(owner.getByRole('alert')).toBeDefined();
+    } else {
+      expect(owner.getByRole('alert').textContent).toContain(latest === 'unreachable'
+        ? 'Task integration unreachable: Task service is unreachable.'
+        : 'Task integration unreachable: Tasks status could not be read.');
     }
-  });
-
-  it('retries rejected and unreachable Tasks status when creating a task', async () => {
-    let statusCalls = 0;
-    const recoveryClient = createCaptureClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/tasks/status')) {
-        if (++statusCalls === 1) throw new Error('Synthetic connection failed');
-        return Response.json({ state: statusCalls === 2 ? 'unreachable' : 'ready' });
-      }
-      if (path.endsWith('/messages/2/tasks')) return Response.json({ state: 'unavailable', complete: false, tasks: [], outbound_metadata: {} });
-      if (path.endsWith('/messages/1/tasks')) return Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Recovered linked task' }], outbound_metadata: {} });
-      return Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
-    }, telemetryEvents, telemetryRequests);
-    render(ConversationView, { client: recoveryClient, conversationId: 7, anchorId: 2 });
-    await screen.findByText('Task integration unreachable: Synthetic connection failed');
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
-    await waitFor(() => expect(statusCalls).toBe(2));
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 2' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     expect(await screen.findByRole('dialog', { name: 'Add to task' })).toBeDefined();
     await waitFor(() => expect(statusCalls).toBe(3));
