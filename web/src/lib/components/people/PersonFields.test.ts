@@ -19,7 +19,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     if (request.method === 'PUT' && options.conflictAttributes) return Response.json({ error: 'attribute_value_conflict', message: 'Changed elsewhere', current_value_id: 42 }, { status: 409 });
     if (request.method === 'PATCH') {
       writes.push(request.clone()); await options.wait;
-      if (options.fail) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 412 });
+      if (options.fail) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
       const body = await request.json();
       if (body.contact_points) stored = { ...stored, contact_points: (body.contact_points.add ?? []).map((point: object) => ({ ...point, person_id: 7, envelope: { ...envelope, id: 12 } })) };
       return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });

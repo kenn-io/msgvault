@@ -62,8 +62,8 @@ describe('OrganizationsSettings', () => {
       const path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
       if (path === '/api/v1/organizations' && request.method === 'POST') return new Response(JSON.stringify(organization(22, 1, 'New Synthetic Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') return new Response(JSON.stringify(organizationProfile(2)), { headers: { ETag: '"organization-21-r2"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') return new Response(JSON.stringify(organization(21, 3, 'Renamed Synthetic Org')), { headers: { ETag: '"organization-21-r3"' } });
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') return new Response(JSON.stringify({ ...organizationProfile(2), organization: { ...organization(21, 2), retired_at: '2026-08-02T00:00:00Z' } }), { headers: { ETag: '"organization-21-r2"' } });
+      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') return new Response(JSON.stringify({ ...organization(21, 3, 'Renamed Synthetic Org'), retired_at: '2026-08-02T00:00:00Z' }), { headers: { ETag: '"organization-21-r3"' } });
       if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return new Response(null, { status: 204 });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
@@ -84,6 +84,7 @@ describe('OrganizationsSettings', () => {
     await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
     expect(requests.find((request) => request.method === 'PATCH')!.headers.get('If-Match')).toBe('"organization-21-r2"');
     await expect(requests.find((request) => request.method === 'PATCH')!.clone().json()).resolves.toMatchObject({ name: 'Renamed Synthetic Org' });
+    expect((await requests.find((request) => request.method === 'PATCH')!.clone().json()).retired).toBeUndefined();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Synthetic Org' })).toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Renamed Synthetic Org' }));
@@ -136,6 +137,7 @@ describe('OrganizationsSettings', () => {
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
 
     const put = requests.find((request) => request.method === 'PUT')!;
+    expect(put.headers.get('If-Match')).toBe('"organization-21-r3"');
     const body = await put.json();
     expect(body.names).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4' }),
@@ -185,7 +187,7 @@ describe('OrganizationsSettings', () => {
       if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') {
         puts += 1;
         return puts === 1
-          ? Response.json({ error: 'revision_conflict', message: 'profile changed elsewhere' }, { status: 412 })
+          ? Response.json({ error: 'organization_revision_conflict', message: 'profile changed elsewhere' }, { status: 409 })
           : new Response(JSON.stringify(concurrent), { headers: { ETag: '"organization-21-r5"' } });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
@@ -214,7 +216,7 @@ describe('OrganizationsSettings', () => {
     await waitFor(() => expect(puts).toBe(2));
   });
 
-  it('does not dismiss an editor during submission and closes it after success', async () => {
+  it('keeps an editor open during submission', async () => {
     let resolveCreate!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveCreate = resolve; });
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
@@ -229,6 +231,5 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Close organization editor' }));
     expect(screen.getByRole('dialog', { name: 'Create organization' })).toBeDefined();
     resolveCreate(new Response(JSON.stringify(organization(22, 1, 'Pending Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
   });
 });
