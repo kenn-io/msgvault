@@ -93,7 +93,7 @@
             >
               <Icon size={18} aria-hidden="true" />
               {#if !collapsed}<span class="sidebar__label">{item.label}</span>{/if}
-              {#if item.id === 'relationships' && duplicateCount > 0}<Chip size="sm">{duplicateCount >= 100 ? '99+' : duplicateCount}</Chip>{/if}
+              {#if item.id === 'relationships' && duplicateCount > 0}<Chip size="sm">{duplicateCount >= 500 ? '500+' : duplicateCount}</Chip>{/if}
             </button>
           </Tooltip>
           {#if item.id === 'everything' && !collapsed && viewsError}

@@ -79,7 +79,7 @@ export class ShellData {
 
   async refreshDuplicates(signal?: AbortSignal): Promise<void> {
     try {
-      const result = await listIdentityMatchCandidates({ state: 'candidate,conflict', limit: 100, offset: 0 }, { ...this.#client, signal });
+      const result = await listIdentityMatchCandidates({ state: 'candidate,conflict', limit: 500, offset: 0 }, { ...this.#client, signal });
       if (result.data && !signal?.aborted) this.duplicateCount = result.data.candidates?.length ?? 0;
     } catch { /* Keep the last count while offline. */ }
   }
