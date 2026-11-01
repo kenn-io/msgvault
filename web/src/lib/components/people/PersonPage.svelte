@@ -60,7 +60,7 @@
   async function savePerson(): Promise<void> {
     if (!person || saving) return;
     saving = true;
-    try { const result = await directory.promote(person.id); if (result.ok) await controller.loadList(predicate); } finally { saving = false; }
+    try { const result = await directory.promote(person.id); if (result.ok) await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); } finally { saving = false; }
   }
   const email = $derived(person?.identifiers?.find((identity) => identity.type === 'email')?.value ?? '');
   const since = $derived(controller.firstContactAt ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(controller.firstContactAt)) : undefined);

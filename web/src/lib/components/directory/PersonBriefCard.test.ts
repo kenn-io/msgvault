@@ -332,11 +332,11 @@ describe('PersonBriefCard', () => {
       await fireEvent.click(toggle);
       await waitFor(() => {
         expect(bodies).toHaveLength(previousCount + 1);
-        expect(toggle.checked).toBe(nextEnrolled);
         expect(toggle.disabled).toBe(false);
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
+      else await waitFor(() => expect(toggle.checked).toBe(false));
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.

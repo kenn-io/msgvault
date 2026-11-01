@@ -50,3 +50,24 @@ it('queues a fresh list after a write while an older list is pending', async () 
   expect(controller.visible).toBe(true);
   controller.destroy();
 });
+
+it.each(['pending', 'in_progress'] as const)('keeps cancellation when a stale %s list arrives and the follow-up refresh fails', async (status) => {
+  let finish: (response: Response) => void;
+  const fetch = vi.fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ manifests: [batch('staged', status)] }))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(Response.json({ id: 'staged', status: 'cancelled' }))
+    .mockRejectedValueOnce(new Error('Refresh failed'));
+  const controller = new DeletionsController(createAPIClient(fetch));
+  try {
+    await controller.refresh();
+    const poll = controller.refresh();
+    await controller.cancel('staged');
+    const afterCancel = controller.refresh();
+    finish!(Response.json({ manifests: [batch('staged', status)] }));
+    await Promise.all([poll, afterCancel]);
+    expect(controller.error).toBe("Can't load staged deletions.");
+    expect(controller.batches[0]?.status).toBe('cancelled');
+    expect(controller.visible).toBe(false);
+  } finally { controller.destroy(); }
+});

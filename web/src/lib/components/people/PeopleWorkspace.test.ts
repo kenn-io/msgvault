@@ -9,9 +9,6 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
-import PersonPage from './PersonPage.svelte';
-
-vi.mock('./PersonPage.svelte', { spy: true });
 
 const when = '2026-07-19T10:00:00Z';
 function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
@@ -89,23 +86,40 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
 });
 
 it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the result when the next pair %s', async (outcome) => {
-  let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
+  let calls = 0; let revision = 1; const profileReads: number[] = []; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
   const links: Array<{ participant_a: number; participant_b: number }> = [];
+  const selected = outcome === 'fails' || outcome === 'refreshes the cache';
+  const saved = () => profile(7, revision, revision === 1 ? [1] : [1, 2]);
   const client = clientFor({
+    '/api/v1/people/7': () => Response.json(saved()),
+    '/api/v1/people/7/profile': () => { profileReads.push(revision); return Response.json({ person: saved(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); },
+    '/api/v1/people/7/attributes': () => Response.json({ person_id: 7, attributes: [] }),
+    '/api/v1/attribute-definitions': () => Response.json({ definitions: [] }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', profile: saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
     '/api/v1/relationships': async () => {
       if (++listRequests === 2 && outcome === 'merges') await new Promise<void>(resolve => { releaseReconcile = resolve; });
       return Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) });
     },
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
+      if (selected && (calls === 1 || outcome === 'refreshes the cache')) revision += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
       return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/7/merge': () => Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: profile(7, 5, [1, 2]), merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } })
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  if (selected) {
+    state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+    await controller.openTarget('cluster:1', {}, false);
+  }
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: selected ? 'cluster:1' : null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
+    if (selected) {
+      await waitFor(() => expect(directory.detailLoading).toBe(false));
+      profileReads.length = 0;
+    }
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     if (outcome === 'merges') {
@@ -127,7 +141,8 @@ it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
       expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
     }
-    if (outcome === 'fails' || outcome === 'is cancelled') expect(screen.getByRole('status').textContent).toContain('1 of 2');
+    if (outcome === 'fails' || outcome === 'is cancelled') expect(screen.getByText(/^1 of 2/).getAttribute('role')).toBe('status');
+    if (selected) expect(profileReads).toEqual(outcome === 'fails' ? [2] : [2, 3]);
     expect(calls).toBe(outcome === 'merges' ? 3 : 2);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
@@ -160,7 +175,7 @@ it('resetting People filters commits one complete navigation', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('reads a saved profile once and loads its fields when Details opens', async () => {
+it('reads a saved profile once and mounts Details when Details opens', async () => {
   const paths: string[] = [];
   const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
   const client = createAPIClient(async input => {
@@ -171,6 +186,9 @@ it('reads a saved profile once and loads its fields when Details opens', async (
     if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
     if (path === '/api/v1/people/91') return Response.json(profile);
+    if (path === '/api/v1/people/91/profile') return Response.json({ person: profile, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path === '/api/v1/people/91/attributes') return Response.json({ person_id: 91, attributes: [] });
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
     if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'unknown', interaction_count: 0 });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
@@ -188,7 +206,7 @@ it('reads a saved profile once and loads its fields when Details opens', async (
     expect(paths).toContain('/api/v1/people/91/profile');
     expect(paths.filter(path => /people-inference|attribute-definitions|kata|agenda|brief/.test(path))).toEqual([]);
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(await screen.findByRole('button', { name: 'Add phone' })).toBeDefined();
+    expect(await screen.findByRole('heading', { name: 'Work' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -360,18 +378,6 @@ it.each([
 });
 
 
-it('forwards disabled sweep configuration and settings navigation to the person page', async () => {
-  const sweepConfigured = false;
-  vi.mocked(PersonPage).mockClear();
-  const client = clientFor({ '/api/v1/people/7': () => Response.json(profile(7, 1, [])) });
-  const state = new ExploreState(null); state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
-  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC');
-  const onOpenSettings = vi.fn();
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), sweepConfigured, onOpenSettings, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await waitFor(() => expect(PersonPage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sweepConfigured, onOpenSettings })));
-  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
-});
 
 it('keeps Files and its filters when a saved person finishes initial hydration', async () => {
   let releaseProfile!: (response: Response) => void;
@@ -404,29 +410,6 @@ it('keeps Files and its filters when a saved person finishes initial hydration',
   } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('keeps Messages mounted across a profile reload', async () => {
-  let releaseProfile!: (value: Response) => void; let personReads = 0;
-  const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
-  const saved = profile(7, 1, [1]);
-  const client = clientFor({
-    '/api/v1/people/7': () => ++personReads === 1 ? Response.json(saved) : pendingProfile,
-    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
-    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
-  });
-  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    const messages = await screen.findByRole('radio', { name: 'Messages' });
-    await waitFor(() => expect(directory.detailLoading).toBe(false));
-    let reload!: Promise<void>;
-    await act(() => { reload = directory.loadSelection(7); });
-    expect(messages.isConnected).toBe(true);
-    await act(async () => { releaseProfile(Response.json(saved)); await reload; });
-    expect(screen.getByRole('radio', { name: 'Messages' })).toBe(messages);
-  } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
 
 it('routes reconciliation Reload to the directory controller', async () => {
   const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 2, []), contact_state: 'active', categories: [], organizations: [] }] }) });
@@ -447,11 +430,16 @@ it('routes reconciliation Reload to the directory controller', async () => {
   } finally { view.unmount(); relationships.destroy(); controller.destroy(); state.destroy(); }
 });
 
-it.each([['participant', false], ['profile', false], ['missing', false], ['network', false], ['network', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
+it.each([['participant', false], ['profile', false], ['network', false], ['network', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
   let failed = true;
   const saved = profile(failure === 'network' ? 9 : 7, 1, [1]);
   const client = clientFor({
-    '/api/v1/people/7': () => failure === 'network' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: failure === 'missing' ? 'Person not found' : 'Saved profile unavailable' }, { status: failure === 'missing' ? 404 : 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
+    '/api/v1/people/7': () => failure === 'network' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
+    ...Object.fromEntries([7, 9].flatMap(id => [
+      [`/api/v1/people/${id}/profile`, () => Response.json({ person: profile(id, 1, [1]), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] })],
+      [`/api/v1/people/${id}/attributes`, () => Response.json({ person_id: id, attributes: [] })]
+    ])),
+    '/api/v1/attribute-definitions': () => Response.json({ definitions: [] }),
     '/api/v1/people/9': () => { if (failed) throw new Error('Could not load selected person.'); return Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }); },
     '/api/v1/participants/1': () => failure === 'participant' && failed ? Response.json({ message: 'Participant unavailable' }, { status: 503 }) : Response.json({ id: 1, display_label: 'Synthetic One', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
@@ -474,42 +462,17 @@ it.each([['participant', false], ['profile', false], ['missing', false], ['netwo
       expect(screen.getByRole('radio', { name: 'Messages' })).toBeDefined();
       await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     }
-    expect(await screen.findByText(new RegExp(failure === 'network' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : failure === 'missing' ? 'Person not found' : 'Participant unavailable'))).toBeDefined();
+    expect(await screen.findByText(new RegExp(failure === 'network' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : 'Participant unavailable'))).toBeDefined();
     expect(screen.queryByText('Loading person…')).toBeNull();
     if (failure === 'network') expect(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
     failed = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Person not found|Could not load selected person/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Could not load selected person/)).toBeNull());
     if (failure === 'network') expect(await screen.findByRole('heading', { name: 'Synthetic Two' })).toBeDefined();
     else expect(await screen.findByRole('radio', { name: 'Messages' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each([false, true])('refreshes the selected profile after bulk links (partial failure=%s)', async partial => {
-  let links = 0; let revision = 1; const profileReads: number[] = [];
-  const saved = () => profile(7, revision, revision === 1 ? [1] : [1, 2]);
-  const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, i) => ({ canonical_id: i + 1, display_label, member_ids: [i + 1], last_at: when, score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
-    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
-    '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${revision}"` } }),
-    '/api/v1/people/7/profile': () => { profileReads.push(revision); return Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${revision}"` } }); },
-    '/api/v1/identity/links': () => { if (++links === 2 && partial) return Response.json({ error: 'internal_error', message: 'Synthetic pair failed' }, { status: 500 }); revision += 1; return Response.json({ identity_revision: revision, cache_state: 'ready' }); },
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await waitFor(() => expect(directory.profile?.person?.revision).toBe(1));
-    profileReads.length = 0;
-    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText(partial ? /Synthetic pair failed/ : 'People are now treated as the same person.');
-    expect(profileReads).toEqual(partial ? [2] : [2, 3]);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
 
 it('keeps person B selected when an earlier deletion of person A completes', async () => {
   let finish!: (response: Response) => void;

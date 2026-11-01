@@ -27,7 +27,7 @@ import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceV
 import { trimAttributeText } from '../directory/attribute-text';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
-import { hasValidSearchAuthority, predicateFingerprint } from './selection';
+import { canonicalFingerprint, hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
@@ -146,6 +146,12 @@ const OPERATION_FILTER_FIELDS = [
 const OPERATION_HISTORY_FIELDS: ReadonlySet<keyof ExploreURLState> = new Set([
   ...OPERATION_FILTER_FIELDS, 'operationHistory', 'operationRunID', 'operationStatus'
 ]);
+
+export function navigationFingerprint(state: ExploreURLState): string {
+  return canonicalFingerprint(Object.fromEntries(
+    Object.entries(state).filter(([key]) => !OPERATION_HISTORY_FIELDS.has(key))
+  ));
+}
 
 export const defaultExploreURLState: ExploreURLState = {
   schemaVersion: 2,
