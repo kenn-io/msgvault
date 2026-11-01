@@ -110,3 +110,27 @@ it.each([
   await expect(writes[0]!.json()).resolves.toMatchObject({ [section]: { add: [{ [discriminator]: kind, original_value: value }] } });
   view.unmount(); controller.destroy();
 });
+
+it.each(['replacement', 'removal'])('retains an attribute draft through concurrent %s recovery', async outcome => {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'topics', label: 'Topics', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'topics', ordinal: 2, value: { type: 'text' as const, text: 'Original topic' }, active_from: when, created_at: when, source: 'user' };
+  const replacement = { ...value, id: 42, value: { type: 'text' as const, text: 'Concurrent topic' } };
+  const attributes = (current: typeof value[]) => ({ person_id: 7, attributes: [{ definition, current, history: [value] }] });
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+    if (request.method === 'PUT') return Response.json({ error: 'attribute_value_conflict', message: 'Changed elsewhere', current_value_id: 42 }, { status: 409 });
+    if (path.endsWith('/attributes')) return Response.json(attributes(outcome === 'replacement' ? [replacement] : []));
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
+    return Response.json(path.endsWith('/profile') ? profile() : person, { headers: { ETag: '"person-7-r2"' } });
+  });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: attributes([value]), definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {} });
+  const view = render(PersonFields, { controller });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Topics' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Topics' }), { target: { value: 'My local topic' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reload attributes' }));
+    await waitFor(() => expect(controller.reloadPending).toBe(false));
+    expect(screen.getByRole('textbox', { name: 'Topics' })).toHaveProperty('value', 'My local topic');
+  } finally { view.unmount(); controller.destroy(); }
+});
