@@ -257,7 +257,6 @@
       providers = document.person_enrichment_providers ?? [];
       pendingRestart = document.pending_restart;
       etag = response.headers.get('ETag') ?? '';
-      inference.updateConfigRevision(etag);
       credentialETag = response.headers.get('Credential-ETag') ?? document.credential_etag ?? '';
       if (retainDrafts) pruneSettledDrafts();
       else discardChanges();
@@ -365,7 +364,6 @@
       providers = result.person_enrichment_providers ?? providers;
       pendingRestart = result.pending_restart;
       etag = response.headers.get('ETag') ?? etag;
-      inference.updateConfigRevision(etag);
       credentialETag = response.headers.get('Credential-ETag') ?? result.credential_etag ?? credentialETag;
       discardChanges();
       void focusCategoryHeading();
@@ -403,7 +401,6 @@
     providers = document.person_enrichment_providers ?? providers;
     pendingRestart = document.pending_restart;
     etag = nextETag;
-    inference.updateConfigRevision(etag);
     credentialETag = document.credential_etag || credentialETag;
   }
   function rowLabel(setting: SettingState): string {
