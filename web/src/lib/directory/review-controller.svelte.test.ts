@@ -253,11 +253,18 @@ describe('DirectoryReviewController', () => {
   it('refreshes the queue after a stale review token without retrying the decision', async () => {
     const requests: Request[] = [];
     let reads = 0;
+    let changed = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       if (request.method === 'POST') {
+        changed = true;
         return Response.json({ error: 'identity_match_review_stale', message: 'Changed' }, { status: 409 });
+      }
+      const url = new URL(request.url);
+      if (url.pathname.includes('/participants/')) {
+        const id = Number(url.pathname.split('/').at(-1));
+        return Response.json({ id, display_label: changed ? 'Updated Example' : 'Original Example', activity_count: changed ? 9 : 1, identifiers: [{ participant_id: id, type: 'email', is_primary: true, value: changed ? 'updated@example.com' : 'original@example.com' }] });
       }
       reads += 1;
       const row = candidate(17);
@@ -266,6 +273,8 @@ describe('DirectoryReviewController', () => {
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
+    controller.requestSummaries();
+    await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Original Example', address: 'original@example.com', count: 1 }));
 
     await expect(settle(controller, 17, 'accept')).resolves.toMatchObject({
       ok: false, kind: 'stale', status: 409
@@ -273,6 +282,10 @@ describe('DirectoryReviewController', () => {
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
     expect(controller.rows[0]?.review_token).toBe('fresh-token');
     expect(controller.decisionError).toContain('Review the refreshed evidence');
+    controller.requestSummaries();
+    try {
+      await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Updated Example', address: 'updated@example.com', count: 9 }));
+    } finally { controller.destroy(); }
   });
 
   it('reports a committed decision as successful when page reconciliation fails', async () => {

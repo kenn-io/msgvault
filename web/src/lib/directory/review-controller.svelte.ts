@@ -393,9 +393,9 @@ export class DirectoryReviewController {
       if (!this.ownsDecision(candidateID, abort)) {
         return result = { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
       }
+      if (response.data ? decision === 'accept' : response.error?.error === 'identity_match_review_stale') this.invalidateSummaries();
       if (response.data) {
         const decidedCandidate = response.data.candidate;
-        if (decision === 'accept') this.invalidateSummaries();
         this.decisionDrafts.delete(candidateID);
         if (this.ownsDecisionContext(context)) {
           this.rows = this.rows.map(row => row.id === candidateID ? decidedCandidate : row);
