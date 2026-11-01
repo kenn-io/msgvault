@@ -67,9 +67,8 @@ export function overviewRows(
 
   const configuredRow = (id: Kind, name: string): OverviewRow => ({ id, name, chip: chip(id), action: on(id) ? undefined : setup(id) });
 
-  const messagesBuilt = Boolean(embedding?.active_generation);
   const messageProgress =
-    embedding && messagesBuilt && count(embedding.pending) > 0
+    embedding && count(embedding.pending) > 0
       ? `Building ${count(embedding.current).toLocaleString()} of ${count(embedding.eligible).toLocaleString()}`
       : undefined;
   const buildAvailable = Boolean(coverage?.actions.includes('build_index'));
