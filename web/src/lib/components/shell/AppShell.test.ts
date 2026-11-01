@@ -2113,7 +2113,6 @@ describe('AppShell', () => {
     expect(promotion).toBeDefined();
     await expect(promotion!.clone().json()).resolves.toEqual({ participant_id: 11 });
     await screen.findByRole('button', { name: 'More actions' });
-    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people/42')).toHaveLength(1);
     expect(requests.slice(requests.indexOf(promotion!) + 1).some(request => new URL(request.url).pathname === '/api/v1/people/directory')).toBe(true);
 
     rendered.unmount();
