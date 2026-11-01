@@ -200,17 +200,17 @@ export class DirectoryReviewController {
   }
   async loadNextPage(): Promise<void> {
     if (this.loading || !this.hasNextPage) return;
-    void this.settleDecision();
+    await this.settleDecision();
     await this.loadIdentityPage(this.offset + IDENTITY_REVIEW_PAGE_LIMIT);
   }
   async loadPreviousPage(): Promise<void> {
     if (this.loading || !this.hasPreviousPage) return;
-    void this.settleDecision();
+    await this.settleDecision();
     await this.loadIdentityPage(Math.max(0, this.offset - IDENTITY_REVIEW_PAGE_LIMIT));
   }
-  async retryPage(): Promise<void> {
-    void this.settleDecision();
-    await this.loadIdentityPage(this.retryOffset ?? this.offset);
+  async retryPage(targetOffset = this.retryOffset ?? this.offset): Promise<void> {
+    await this.settleDecision();
+    await this.loadIdentityPage(targetOffset);
   }
   async acceptIdentity(
     candidateID: number,
@@ -264,7 +264,7 @@ export class DirectoryReviewController {
     this.invalidateSummaries();
     this.resetIdentityContext(this.identityState);
     this.initialized = false;
-    if (active) await this.loadIdentityPage(0);
+    if (active) await this.settleDecision().then(() => this.loadIdentityPage(0));
   }
 
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }

@@ -75,6 +75,25 @@ describe('RelationshipsTab', () => {
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
   });
 
+  it('refreshes imported connections when the surviving person reloads in place', async () => {
+    let merged = false;
+    const imported = { id: 71, person_id: 7, matched_person_id: 141, raw_related_value: 'absorbed@example.com', raw_related_type: 'friend', value_kind: 'text', status: 'accepted', source: 'vcard_import', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+    const client = createAPIClient(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [{ ...imported, id: 70, raw_related_value: 'existing@example.com' }, ...(merged ? [imported] : [])] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      throw new Error(`Unexpected ${path}`);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
+    try {
+      await screen.findByText('existing@example.com');
+      merged = true;
+      await controller.refreshRelationships();
+      expect(await screen.findByText('absorbed@example.com')).toBeDefined();
+    } finally { rendered.unmount(); controller.destroy(); }
+  });
+
   it('renders the shared type catalog without person connections and keeps system types read-only', () => {
     const { client, controller } = controllerWith(vi.fn(), 0);
     controller.relationshipTypes = [
