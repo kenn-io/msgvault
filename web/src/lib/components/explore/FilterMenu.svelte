@@ -4,7 +4,7 @@
 
   import type { APIClient } from '../../api/client';
   import { createExploreAPI } from '../../explore/api';
-  import { entryKindPresentation } from '../../explore/labels';
+  import { CHAT_MESSAGE_TYPES, entryKindPresentation } from '../../explore/labels';
   import type { ExploreFilter } from '../../explore/models';
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
@@ -52,7 +52,7 @@
       const byName = new Map<string, string[]>();
       for (const row of loaded.result.rows) {
         const name = entryKindPresentation('', row.key).name;
-        byName.set(name, [...(byName.get(name) ?? []), row.key]);
+        byName.set(name, CHAT_MESSAGE_TYPES.has(row.key) ? [...CHAT_MESSAGE_TYPES] : [...(byName.get(name) ?? []), row.key]);
       }
       kinds = [...byName].map(([name, values]) => ({ name, values }));
       kindsStatus = kinds.length ? '' : 'No message kinds';
