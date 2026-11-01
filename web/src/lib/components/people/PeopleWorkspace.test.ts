@@ -319,7 +319,7 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('loads a saved person deep link inside its person page', async () => {
+it('loads a saved person deep link and opens Directory from its person page', async () => {
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
   const client = clientFor({
@@ -327,12 +327,15 @@ it('loads a saved person deep link inside its person page', async () => {
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const onNavigate = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByText('Loading details…');
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
     release(Response.json(profile(7, 1, [])));
     await screen.findByRole('heading', { name: 'Synthetic One' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
+    expect(onNavigate).toHaveBeenCalledWith({ workspace: 'directory', directoryPersonID: null, relationshipTarget: null });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
