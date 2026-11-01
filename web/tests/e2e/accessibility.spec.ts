@@ -213,7 +213,14 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `modal ${theme}/${density}`);
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
 
-      for (const workspace of ['Directory', 'Files', 'Sources', 'Staged deletions', 'Settings']) {
+      await selectWorkspace(page, 'People');
+      await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+      await page.getByText('Saved', { exact: true }).click();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('grid', { name: 'People results' }).getByText('Archive Person')).toBeVisible();
+      await assertNoViolations(page, `Saved People ${theme}/${density}`);
+
+      for (const workspace of ['Files', 'Sources', 'Staged deletions', 'Settings']) {
         await selectWorkspace(page, workspace);
         await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
@@ -322,14 +329,14 @@ for (const theme of ['light', 'dark'] as const) {
     }
   });
 
-  test(`${theme} Reviews identity matches and imported relationships have no axe violations`, async ({ page }) => {
+  test(`${theme} Possible duplicates and imported connections have no axe violations`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', peopleDuplicates: true
     }))}`);
     await setKitTheme(page, theme);
     await expect(page.locator('#duplicate-17')).toBeVisible();
-    await assertNoViolations(page, `Reviews identity matches ${theme}`);
+    await assertNoViolations(page, `Possible duplicates ${theme}`);
 
     for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
       await page.setViewportSize(viewport);
