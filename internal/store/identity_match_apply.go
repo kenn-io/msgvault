@@ -330,6 +330,13 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 func (s *Store) checkAcceptedApplicationTxContext(
 	ctx context.Context, tx *loggedTx, loaded *IdentityMatchCandidate,
 ) error {
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, connected := componentOf(loaded.LeftID, edges)[loaded.RightID]; connected {
+		return nil
+	}
 	if loaded.DecidedBy == nil || *loaded.DecidedBy != string(ProvenanceUser) {
 		if err := checkTelegramPairRejectionTxContext(ctx, tx, loaded); err != nil {
 			return err
@@ -348,15 +355,7 @@ func (s *Store) checkAcceptedApplicationTxContext(
 			return hashErr
 		}
 		if actual != reviewedFingerprint {
-			edges, edgeErr := s.loadLinkEdgesTxContext(ctx, tx)
-			if edgeErr != nil {
-				return edgeErr
-			}
-			if _, connected := componentOf(loaded.LeftID, edges)[loaded.RightID]; !connected {
-				return ErrIdentityMatchReviewStale
-			}
-			// Another operation already satisfied the assertion. Complete
-			// its pending work without applying the changed evidence.
+			return ErrIdentityMatchReviewStale
 		}
 	}
 	return nil

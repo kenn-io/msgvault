@@ -782,6 +782,77 @@ func TestTelegramAcceptedReplayPreservesRejectionUnderDifferentKey(t *testing.T)
 	assert.Equal(store.IdentityMatchStateRejected, previous.State)
 }
 
+func TestTelegramAcceptedReplaySettlesRejectedAlreadyConnectedPair(t *testing.T) {
+	for _, connection := range []string{"direct", "indirect"} {
+		t.Run(connection, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := storetest.New(t).Store
+			ctx := t.Context()
+			left, err := st.EnsureParticipantByIdentifier("beeper", "telegram-connected-left", "Synthetic User")
+			require.NoError(err)
+			right, err := st.EnsureParticipantByIdentifier("telegram", "user482111", "Synthetic User")
+			require.NoError(err)
+			previous, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+				LeftKind: store.IdentityMatchParticipant, LeftID: left,
+				RightKind: store.IdentityMatchParticipant, RightID: right,
+				Basis: store.IdentityMatchServiceScopeUsername, ServiceSlug: new("telegram"),
+				NormalizedValue: new("synthetic-user"), State: store.IdentityMatchStateCandidate,
+				Source: store.ProvenanceArchiveObservation,
+			})
+			require.NoError(err)
+			shared, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+				LeftKind: store.IdentityMatchParticipant, LeftID: left,
+				RightKind: store.IdentityMatchParticipant, RightID: right,
+				Basis: store.IdentityMatchStableProviderID, ServiceSlug: new("telegram"),
+				NormalizedValue: new("provider:8:telegram:7:service:0::6:482111"),
+				State:           store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+			})
+			require.NoError(err)
+
+			// Interrupt system acceptance before application, then reject another key.
+			_, err = st.DecideIdentityMatchCandidateContext(ctx, shared.ID, store.IdentityMatchStateAccepted, "system", nil)
+			require.NoError(err)
+			_, err = st.DecideIdentityMatchCandidateContext(ctx, previous.ID, store.IdentityMatchStateRejected, "user", nil)
+			require.NoError(err)
+			from := left
+			if connection == "indirect" {
+				from, err = st.EnsureParticipantByIdentifier("beeper", "telegram-connected-bridge", "Synthetic User")
+				require.NoError(err)
+				_, err = st.LinkParticipants(left, from)
+				require.NoError(err)
+			}
+			linkedRevision, err := st.LinkParticipants(from, right)
+			require.NoError(err)
+			before, err := st.GetIdentityMatchReviewContext(ctx, shared.ID)
+			require.NoError(err)
+			require.True(before.ApplicationPending)
+			var edgeCount int
+			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_links`).Scan(&edgeCount))
+
+			applied, err := st.ApplyAcceptedIdentityMatchesContext(ctx, 1)
+			require.NoError(err)
+			assert.Zero(applied)
+			after, err := st.GetIdentityMatchReviewContext(ctx, shared.ID)
+			require.NoError(err)
+			assert.False(after.ApplicationPending, "an existing connection must settle pending recovery work")
+			assert.Equal(store.IdentityMatchStateAccepted, after.State)
+			assert.Equal(before.DecidedBy, after.DecidedBy)
+			assert.Equal(before.DecidedAt, after.DecidedAt)
+			previous, err = st.GetIdentityMatchCandidateContext(ctx, previous.ID)
+			require.NoError(err)
+			assert.Equal(store.IdentityMatchStateRejected, previous.State)
+			assert.True(linkedPair(t, st, left, right))
+			var afterEdgeCount int
+			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_links`).Scan(&afterEdgeCount))
+			assert.Equal(edgeCount, afterEdgeCount, "recovery must preserve the manual link forest")
+			revision, err := st.IdentityRevisionContext(ctx)
+			require.NoError(err)
+			assert.Equal(linkedRevision, revision)
+		})
+	}
+}
+
 func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
