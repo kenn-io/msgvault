@@ -211,7 +211,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByText('Profile filters', { exact: true }).click();
   await page.getByRole('textbox', { name: 'Category filter' }).fill('Archive');
-  const filter = page.getByRole('button', { name: 'Remove Category Archive' }).locator('..');
+  const filter = page.locator('.chips .kit-chip').filter({ hasText: 'Archive' });
   await expect(filter).toBeVisible();
   const directoryGeometry = await filter.evaluate((element) => {
     const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);
