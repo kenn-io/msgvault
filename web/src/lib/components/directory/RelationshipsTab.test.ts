@@ -45,9 +45,9 @@ function relationshipType(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function controllerWith(fetchFn: typeof fetch): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
+function controllerWith(fetchFn: typeof fetch, personID = 7): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
   const client = createAPIClient(fetchFn);
-  return { client, controller: new DirectoryEntityController(client, 7) };
+  return { client, controller: new DirectoryEntityController(client, personID) };
 }
 
 describe('RelationshipsTab', () => {
@@ -70,14 +70,14 @@ describe('RelationshipsTab', () => {
   });
 
   it('renders the shared type catalog without person connections and keeps system types read-only', () => {
-    const { client, controller } = controllerWith(vi.fn());
+    const { client, controller } = controllerWith(vi.fn(), 0);
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner')];
     controller.relationshipTypes = [
       relationshipType({ ownership: 'system', is_deletable: false }),
       relationshipType({ id: 32, slug: 'custom', forward_label: 'supports', reverse_label: 'is supported by' })
     ];
 
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
     expect(screen.queryByRole('heading', { name: 'Connections' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add connection' })).toBeNull();
     expect(screen.queryByText('Synthetic Learner · mentors')).toBeNull();
@@ -140,9 +140,9 @@ describe('RelationshipsTab', () => {
         return Response.json({ relationship_types: [relationshipType()] });
       }
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }));
+    }), 0);
     controller.errors.relationshipTypes = 'relationship types unavailable';
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     expect(screen.getByRole('alert').textContent).toContain('relationship types unavailable');
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh relationship types' }));
@@ -472,8 +472,8 @@ describe('RelationshipsTab', () => {
         return new Response(JSON.stringify(created), { status: 201, headers: { ETag: '"relationship-type-33-r1"' } });
       }
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }));
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    }), 0);
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add type' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship type slug' }), { target: { value: 'peer' } });
@@ -499,8 +499,8 @@ describe('RelationshipsTab', () => {
 
   it('blocks a symmetric relationship type with mismatched trimmed labels without making a request', async () => {
     const fetchFn = vi.fn<typeof fetch>();
-    const { client, controller } = controllerWith(fetchFn);
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    const { client, controller } = controllerWith(fetchFn, 0);
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add type' }));
     const dialog = screen.getByRole('dialog', { name: 'Add relationship type' });
@@ -521,9 +521,9 @@ describe('RelationshipsTab', () => {
     const symmetricType = relationshipType({
       slug: 'peer', forward_label: 'works with', reverse_label: 'works with', is_symmetric: true
     });
-    const { client, controller } = controllerWith(fetchFn);
+    const { client, controller } = controllerWith(fetchFn, 0);
     controller.relationshipTypes = [symmetricType];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit peer relationship type' }));
     const dialog = screen.getByRole('dialog', { name: 'Edit peer relationship type' });
@@ -556,9 +556,9 @@ describe('RelationshipsTab', () => {
       }
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    }), 0);
     controller.relationshipTypes = [current];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit peer relationship type' }));
     const dialog = screen.getByRole('dialog', { name: 'Edit peer relationship type' });
@@ -592,8 +592,8 @@ describe('RelationshipsTab', () => {
         return Response.json({ relationship_types: [] });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    }), 0);
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add type' }));
     const dialog = screen.getByRole('dialog', { name: 'Add relationship type' });
@@ -630,9 +630,9 @@ describe('RelationshipsTab', () => {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    }), 0);
     controller.relationshipTypes = [current];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit mentor relationship type' }));
     expect(await screen.findByText('Symmetry cannot be changed after creation.')).toBeDefined();
@@ -667,9 +667,9 @@ describe('RelationshipsTab', () => {
       }
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    }), 0);
     controller.relationshipTypes = [current];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit mentor relationship type' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship type color' }), { target: { value: '   ' } });
@@ -683,9 +683,9 @@ describe('RelationshipsTab', () => {
   it('closes an unchanged relationship-type edit without sending an empty patch', async () => {
     const fetchFn = vi.fn<typeof fetch>();
     const current = relationshipType({ vcard_related_type: 'friend', color: '#123456', icon: 'people', description: 'Existing metadata' });
-    const { client, controller } = controllerWith(fetchFn);
+    const { client, controller } = controllerWith(fetchFn, 0);
     controller.relationshipTypes = [current];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit mentor relationship type' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Save relationship type' }));
@@ -724,9 +724,9 @@ describe('RelationshipsTab', () => {
         return Response.json({ error: 'revision_conflict', message: 'type changed elsewhere' }, { status: 412 });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    }), 0);
     controller.relationshipTypes = [initial];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit mentor relationship type' }));
     const dialog = screen.getByRole('dialog', { name: 'Edit mentor relationship type' });
@@ -755,12 +755,12 @@ describe('RelationshipsTab', () => {
   });
 
   it('exposes immutable symmetry and obeys the user-type deletable guard', async () => {
-    const { client, controller } = controllerWith(vi.fn());
+    const { client, controller } = controllerWith(vi.fn(), 0);
     controller.relationshipTypes = [
       relationshipType(),
       relationshipType({ id: 32, slug: 'locked', ownership: 'user', is_deletable: false, is_symmetric: true })
     ];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit locked relationship type' }));
 
@@ -781,9 +781,9 @@ describe('RelationshipsTab', () => {
       }
       if (path === '/api/v1/relationship-types/31' && request.method === 'DELETE') return new Response(null, { status: 204 });
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    }), 0);
     controller.relationshipTypes = [current];
-    render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: true });
+    render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Delete relationship type' }));
