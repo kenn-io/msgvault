@@ -26,7 +26,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     }
     if (path.endsWith('/profile')) return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
     if (path.endsWith('/attributes')) return Response.json(options.conflictAttributes ?? { attributes: [] });
-    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: options.definitions ?? [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: (options.definitions ?? []).filter(definition => new URL(request.url).searchParams.get('include_hidden') === 'true' || definition.is_active) });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
@@ -90,7 +90,7 @@ it('joins refreshed field settings, keeping a renamed draft and discarding a res
     await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
     await act(() => controller.reloadDefinitions());
     expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
-    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, ui_editable: false, revision: 3 };
+    options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, is_active: false, revision: 3 };
     await act(() => controller.reloadDefinitions());
     expect(screen.queryByDisplayValue('Private example')).toBeNull(); expect(screen.queryByText('Private example')).toBeNull();
     expect(screen.getByText('Private note')).toBeDefined();

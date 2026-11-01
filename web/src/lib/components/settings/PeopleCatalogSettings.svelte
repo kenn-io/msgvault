@@ -11,7 +11,7 @@
   import OrganizationsSettings from './OrganizationsSettings.svelte';
   let { client, onDirectoryChange }: { client: APIClient; onDirectoryChange?: () => void | Promise<void> } = $props();
   const entities = new DirectoryEntityController(untrack(() => client), 0, { onDirectoryChange: () => onDirectoryChange?.() });
-  const fields = new DirectoryProfileController(untrack(() => client), 0, { etags: {}, errors: {} }, { includeHiddenDefinitions: true });
+  const fields = new DirectoryProfileController(untrack(() => client), 0, { etags: {}, errors: {} });
   let creating = $state(false);
   let editing = $state<AttributeDefinition>();
   let deleting = $state(false);
