@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsWorkspace from './SettingsWorkspace.svelte';
 import { createAPIClient } from '../../api/client';
-import { lane, lanes } from '../../../test/operations';
+import { embeddingStatus, lane, lanes, visualStatus } from '../../../test/operations';
 import { chooseSelectOption } from '../../../test/kit-ui';
 
 type Setting = Record<string, unknown>;
@@ -813,6 +813,27 @@ it('marks failed coverage refreshes unavailable without hiding Overview', async 
   await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
   expect(within(row).getByText('Unavailable')).toBeDefined();
   expect(within(features).getByText('Source sync')).toBeDefined();
+});
+
+it.each([
+  { name: 'Message search', kind: 'message_embedding' as const, path: '/embeddings/status', status: { ...embeddingStatus, current: 2, pending: 8 } },
+  { name: 'Visual search', kind: 'visual_embedding' as const, path: '/multimodal/status', status: { ...visualStatus, current: 2 } },
+])('clears $name progress when a refresh fails over the network', async ({ name, kind, path, status }) => {
+  let reads = 0;
+  const { client } = fixture(settingsDoc(), request => {
+    if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane(kind, { active: { id: 'run-1', kind, lane: lane(kind).lane, state: 'running', started_at: '2026-01-01T00:00:00Z', counters: [] } })) });
+    if (request.url.endsWith(path)) {
+      if (++reads > 1) throw new TypeError('Failed to fetch');
+      return Response.json(status);
+    }
+  });
+  render(SettingsWorkspace, { client });
+  await screen.findByRole('list', { name: 'Features' });
+  const row = screen.getByText(name).closest('li')!;
+  await within(row).findByText('Building 2 of 10');
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  expect(await within(row).findByText('Running')).toBeDefined();
+  expect(within(row).queryByText('Building 2 of 10')).toBeNull();
 });
 
 it('refreshes a pending message rebuild and keeps Contacts available', async () => {
