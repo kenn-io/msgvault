@@ -8,43 +8,45 @@
 
   import type {
     AttributeDefinition,
-    PersonAttributeGroup,
     PersonAttributeValue,
   } from '../../api/generated/models';
   import type { PersonProfilePatchRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
-  import type { PendingUndo } from '../../people/pending-undo.svelte';
   import AttributeEditor from '../directory/AttributeEditor.svelte';
-  import { displayAttributeValue } from '../directory/attribute-value';
+  import { displayAttributeValue, joinDefinitions, isAttributeRevealed, supportedAttribute, canAddAttribute, canEditAttribute, canCloseAttribute } from '../directory/attribute-value';
   import DetailRow from './DetailRow.svelte';
-  import FieldEditor, { type FieldRecord, type FieldSection } from './FieldEditor.svelte';
+  import StructuredProfileEditor, { type StructuredProfileRecord as FieldRecord, type StructuredProfileSectionName as FieldSection } from '../directory/StructuredProfileEditor.svelte';
 
   interface Props {
     controller: DirectoryProfileController;
-    pending: PendingUndo;
     /** Shown beside the contact frequency when the person is overdue. */
     overdue?: boolean;
   }
 
-  let { controller, pending, overdue = false }: Props = $props();
+  let { controller, overdue = false }: Props = $props();
 
   type Editing =
     | { kind: 'profile'; section: FieldSection; current?: FieldRecord; contactKind?: string; nameKind?: string }
-    | { kind: 'attribute'; definition: AttributeDefinition; current?: PersonAttributeValue };
+    | { kind: 'attribute'; universalID: string; current?: PersonAttributeValue };
 
   type Row =
     | { id: string; kind: 'profile'; section: FieldSection; label: string; value: string; record: FieldRecord }
     | { id: string; kind: 'attribute'; label: string; value: string; definition: AttributeDefinition; current: PersonAttributeValue }
     | { id: string; kind: 'add'; label: string; target: Editing };
 
-  let removalError = $state('');
+  let confirming = $state<Row & { kind: 'profile' | 'attribute' }>();
   let editing = $state<Editing>();
   /** Where a new value's form opens: the add row that was clicked, or "more" for the More fields menu. */
   let addingAt = $state<string>();
   let revealed = $state<Record<string, boolean>>({});
 
   const profile = $derived(controller.structuredProfile);
-  const groups = $derived(controller.attributes?.attributes ?? []);
+  const groups = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []));
+  const activeEditor = $derived.by(() => { const target = editing; return target?.kind === 'attribute' ? groups.find((field) => field.definition.universal_id === target.universalID) : undefined; });
+  $effect(() => {
+    if (editing?.kind !== 'attribute') return;
+    if (!activeEditor || !activeEditor.definition.is_active || !activeEditor.definition.ui_editable || !activeEditor.definition.api_mutable || !supportedAttribute(activeEditor.definition) || !isAttributeRevealed(activeEditor.definition, revealed)) close();
+  });
 
   const CONTACT_LABELS: Record<string, string> = {
     email: 'Email',
@@ -86,7 +88,7 @@
     }
     for (const point of points) if (point.address_kind !== 'phone' && point.address_kind !== 'email') result.push(pointRow(point));
     for (const address of profile?.addresses ?? []) {
-      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: address.original_value || address.free_text || [address.street_address, address.locality, address.region, address.postal_code, address.country_name].filter(Boolean).join(', '), record: address });
+      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: [address.post_office_box, address.extended_address, address.street_address, address.locality, address.region, address.postal_code, address.country_name, address.extended_components].filter(Boolean).join(', ') || address.free_text || address.original_value, record: address });
     }
     result.push({ id: 'add:address', kind: 'add', label: 'Add address', target: { kind: 'profile', section: 'addresses' } });
     for (const date of profile?.dates ?? []) {
@@ -105,8 +107,8 @@
     for (const category of profile?.categories ?? []) {
       result.push({ id: `categories:${category.envelope.id}`, kind: 'profile', section: 'categories', label: 'Category', value: category.original_value, record: category });
     }
-    const ordered = [...groups].sort((left, right) => left.definition.display_order - right.definition.display_order);
-    for (const group of ordered) {
+    for (const media of profile?.media ?? []) result.push({ id: `media:${media.envelope.id}`, kind: 'profile', section: 'media', label: media.media_kind.charAt(0).toUpperCase() + media.media_kind.slice(1), value: media.original_value || media.uri || 'Inline media', record: media });
+    for (const group of groups) {
       for (const value of group.current ?? []) {
         result.push({
           id: `attribute:${group.definition.universal_id}:${value.id}`,
@@ -121,20 +123,7 @@
     return result;
   });
 
-  const visibleRows = $derived(rows.filter((row) => !pending.hides(row.id)));
-
-  const addableAttributes = $derived.by((): AttributeDefinition[] => {
-    const filled = new Map<string, number>(groups.map((group: PersonAttributeGroup) => [group.definition.universal_id, (group.current ?? []).length]));
-    return controller.definitions
-      .filter(
-        (definition) =>
-          definition.is_active &&
-          definition.api_mutable &&
-          definition.ui_creatable &&
-          (definition.cardinality === 'multi' || (filled.get(definition.universal_id) ?? 0) === 0),
-      )
-      .sort((left, right) => left.display_order - right.display_order);
-  });
+  const addableAttributes = $derived(groups.filter((field) => field.definition.is_active && field.definition.api_mutable && field.definition.ui_creatable && supportedAttribute(field.definition) && (field.definition.cardinality === 'multi' || field.current.length === 0)));
 
   const hasPronunciation = $derived((profile?.names ?? []).some((name) => name.name_kind === 'phonetic'));
 
@@ -152,11 +141,13 @@
       { label: 'Other date', section: 'dates' },
       { label: 'Another name', section: 'names' },
       { label: 'Category', section: 'categories' },
+      { label: 'Media metadata', section: 'media' },
     );
     return items;
   });
 
   function startAdd(target: Editing, at: string): void {
+    confirming = undefined;
     editing = target;
     addingAt = at;
   }
@@ -164,7 +155,7 @@
   function editorKey(target: Editing | undefined): string {
     if (!target) return '';
     if (target.kind === 'profile') return `${target.section}:${target.current?.envelope.id ?? 'new'}`;
-    return `${target.definition.universal_id}:${target.current?.id ?? 'new'}`;
+    return `${target.universalID}:${activeEditor?.definition.revision}:${target.current?.id ?? 'new'}`;
   }
 
   function editingRow(row: Row): boolean {
@@ -175,56 +166,78 @@
   }
 
   function startEdit(row: Row & { kind: 'profile' | 'attribute' }): void {
+    confirming = undefined;
     addingAt = undefined;
     editing =
       row.kind === 'profile'
         ? { kind: 'profile', section: row.section, current: row.record }
-        : { kind: 'attribute', definition: row.definition, current: row.current };
+        : { kind: 'attribute', universalID: row.definition.universal_id, current: row.current };
   }
 
   function close(): void {
     if (editing?.kind === 'profile') controller.discardProfileDraft();
-    else if (editing) controller.discardAttributeDraft(editing.definition.slug);
+    else if (editing) controller.discardAttributeDraft(activeEditor?.definition.slug ?? '');
     editing = undefined;
     addingAt = undefined;
   }
 
   function sensitive(row: Row): boolean {
-    return row.kind === 'attribute' && row.definition.is_sensitive && !revealed[row.id];
+    return row.kind === 'attribute' && row.definition.is_sensitive && !isAttributeRevealed(row.definition, revealed);
   }
 
   function closePatch(section: FieldSection, id: number): PersonProfilePatchRequest {
     return { [section]: { supersede: [id] } } as PersonProfilePatchRequest;
   }
 
-  function remove(row: Row & { kind: 'profile' | 'attribute' }): void {
-    removalError = '';
-    const text = row.kind === 'attribute' && row.definition.is_sensitive ? row.label : row.value.length > 40 ? `${row.value.slice(0, 40)}…` : row.value;
-    pending.start(row.id, `Removed ${text}`, async () => {
-      if (row.kind === 'profile') await controller.patchProfile(closePatch(row.section, row.record.envelope.id));
-      else await controller.clearAttribute(row.definition.slug, row.current.id, row.current.ordinal);
-      if (controller.draft || controller.conflict) removalError = controller.conflict?.message ?? 'Could not remove this value.';
-    });
+  async function closeCurrent(): Promise<void> {
+    const pending = confirming;
+    if (!pending) return;
+    if (pending.kind === 'profile') {
+      if (!controller.canWriteProfile) return;
+      await controller.patchProfile(closePatch(pending.section, pending.record.envelope.id));
+    } else {
+      const field = groups.find((field) => field.definition.universal_id === pending.definition.universal_id);
+      if (!field || !isAttributeRevealed(field.definition, revealed) || !canCloseAttribute(field.definition, controller)) return;
+      await controller.clearAttribute(field.definition.slug, pending.current.id, field.definition.cardinality === 'multi' ? pending.current.ordinal : undefined);
+    }
+    if (controller.draft === null && controller.conflict === null) confirming = undefined;
+  }
+
+  async function reload(): Promise<void> {
+    const result = await controller.reload();
+    if (result.ok && controller.draft === null) confirming = undefined;
   }
 
   function canEdit(row: Row & { kind: 'profile' | 'attribute' }): boolean {
-    if (row.kind === 'profile') return controller.canWriteProfile;
-    return row.definition.api_mutable && row.definition.ui_editable && !controller.mutationPending && !controller.reloadPending && !controller.hasUnresolvedConflict;
+    if (row.kind === 'profile') return controller.canWriteProfile && !(row.section === 'media' && 'has_data' in row.record && row.record.has_data);
+    return canEditAttribute(row.definition, controller);
+  }
+
+  function canRemove(row: Row & { kind: 'profile' | 'attribute' }): boolean {
+    return row.kind === 'profile' ? controller.canWriteProfile : canCloseAttribute(row.definition, controller);
+  }
+
+  function toggleReveal(definition: AttributeDefinition): void {
+    const shown = !revealed[definition.universal_id];
+    revealed = { ...revealed, [definition.universal_id]: shown };
+    if (!shown) {
+      controller.discardAttributeDraft(definition.slug);
+      if (editing?.kind === 'attribute' && editing.universalID === definition.universal_id) close();
+      if (confirming?.kind === 'attribute' && confirming.definition.universal_id === definition.universal_id) confirming = undefined;
+    }
   }
 </script>
 
 <div class="fields">
-  {#if pending.error}<p role="alert">{pending.error}</p>{/if}
   {#if !controller.structuredProfileETag}<p role="status">Profile revision unavailable<Button label="Reload profile" disabled={!controller.canReload} onclick={() => void controller.reload()} /></p>{/if}
-  {#if removalError}<p role="alert">{removalError}</p>{/if}
   {#if controller.definitionsError}<p role="alert">{controller.definitionsError}<Button label="Retry fields" onclick={() => void controller.reloadDefinitions()} /></p>{/if}
-  {#each visibleRows as row (row.id)}
+  {#each rows as row (row.id)}
     {#if editingRow(row)}
       {#key editorKey(editing)}
         {#if editing?.kind === 'profile'}
-          <FieldEditor {controller} section={editing.section} current={editing.current} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
-        {:else if editing?.kind === 'attribute'}
-          <AttributeEditor {controller} definition={editing.definition} current={editing.current} sensitiveRevealed onDone={close} onCancel={close} />
+          <StructuredProfileEditor {controller} section={editing.section} current={editing.current} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
+        {:else if editing?.kind === 'attribute' && activeEditor}
+          <AttributeEditor {controller} definition={activeEditor!.definition} current={editing.current} sensitiveRevealed onDone={close} onCancel={close} />
         {/if}
       {/key}
     {:else if row.kind === 'add'}
@@ -244,29 +257,36 @@
           {#if row.kind === 'attribute' && row.definition.is_sensitive}
             <IconButton
               size="sm"
-              ariaLabel={revealed[row.id] ? `Hide ${row.label}` : `Show ${row.label}`}
-              onclick={() => (revealed = { ...revealed, [row.id]: !revealed[row.id] })}
+              ariaLabel={isAttributeRevealed(row.definition, revealed) ? `Hide ${row.label}` : `Show ${row.label}`}
+              onclick={() => toggleReveal(row.definition)}
             >
-              {#if revealed[row.id]}<EyeOff size={14} aria-hidden="true" />{:else}<Eye size={14} aria-hidden="true" />{/if}
+              {#if isAttributeRevealed(row.definition, revealed)}<EyeOff size={14} aria-hidden="true" />{:else}<Eye size={14} aria-hidden="true" />{/if}
             </IconButton>
           {/if}
           <IconButton size="sm" ariaLabel={`Edit ${row.label}`} disabled={!canEdit(row) || sensitive(row)} onclick={() => startEdit(row)}>
             <Pencil size={14} aria-hidden="true" />
           </IconButton>
-          <IconButton size="sm" ariaLabel={`Remove ${row.label}`} disabled={!canEdit(row)} onclick={() => remove(row)}>
+          <IconButton size="sm" ariaLabel={`Remove ${row.label}`} disabled={!canRemove(row) || sensitive(row)} onclick={() => { close(); confirming = row; }}>
             <X size={14} aria-hidden="true" />
           </IconButton>
         {/snippet}
       </DetailRow>
+      {#if confirming?.id === row.id}
+        <div class="notice" role="group" aria-label={`Confirm removing ${row.label}`}>
+          <span>Remove this current value and keep it in History?</span>
+          <Button label="Cancel" disabled={controller.mutationPending} onclick={() => confirming = undefined} />
+          <Button label="Confirm removal" tone="danger" disabled={!canRemove(row) || sensitive(row)} onclick={() => void closeCurrent()} />
+        </div>
+      {/if}
     {/if}
   {/each}
 
   {#if editing && !editing.current && addingAt === 'more'}
     {#key editorKey(editing)}
       {#if editing.kind === 'profile'}
-        <FieldEditor {controller} section={editing.section} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
-      {:else}
-        <AttributeEditor {controller} definition={editing.definition} sensitiveRevealed onDone={close} onCancel={close} />
+        <StructuredProfileEditor {controller} section={editing.section} contactKind={editing.contactKind} nameKind={editing.nameKind} onDone={close} onCancel={close} />
+      {:else if activeEditor}
+        <AttributeEditor {controller} definition={activeEditor!.definition} sensitiveRevealed onDone={close} onCancel={close} />
       {/if}
     {/key}
   {/if}
@@ -278,8 +298,13 @@
       </MenuTrigger>
       <MenuContent ariaLabel="More fields">
         {#if addableAttributes.length > 0}
-          {#each addableAttributes as definition (definition.universal_id)}
-            <MenuItem textValue={definition.label} onselect={() => startAdd({ kind: 'attribute', definition }, 'more')}>{definition.label}</MenuItem>
+          {#each addableAttributes as field (field.definition.universal_id)}
+            {@const definition = field.definition}
+            {#if !isAttributeRevealed(definition, revealed)}
+              <MenuItem textValue={`Show ${definition.label}`} onselect={() => toggleReveal(definition)}>Show {definition.label}</MenuItem>
+            {:else}
+              <MenuItem textValue={definition.label} disabled={!canAddAttribute(field, controller, revealed)} onselect={() => startAdd({ kind: 'attribute', universalID: definition.universal_id }, 'more')}>{definition.label}</MenuItem>
+            {/if}
           {/each}
           <MenuSeparator />
         {/if}
@@ -299,7 +324,7 @@
   {#if controller.conflict && !editing}
     <div class="notice" role="alert">
       <span>{controller.conflict.code === 'person_revision_conflict' ? 'This person changed elsewhere.' : controller.conflict.message}</span>
-      <Button size="sm" label="Reload" disabled={!controller.canReload} onclick={() => void controller.reload()} />
+      <Button size="sm" label="Reload" disabled={!controller.canReload} onclick={() => void reload()} />
     </div>
   {/if}
 </div>

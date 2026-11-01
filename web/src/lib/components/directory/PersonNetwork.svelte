@@ -9,10 +9,10 @@
     controller: DirectoryEntityController;
     onOpenOrganization: (id: number) => void;
     /** Opens a person in the graph. */
-    onOpenPerson?: (personID: number) => void;
+    onOpenPerson: (personID: number) => void;
   }
 
-  let { controller, onOpenOrganization, onOpenPerson = undefined }: Props = $props();
+  let { controller, onOpenOrganization, onOpenPerson }: Props = $props();
 
   const COLUMN = 280;
   const NAME = 170;
@@ -135,7 +135,7 @@
               <IdentityAvatar label={node.label} seed={node.id} shape={person ? 'person' : 'domain'} size={AVATAR} />
               {#if !root}
                 <!-- kit-ui-check-ignore: a name in the graph that opens the person, styled as a link. -->
-                <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}`} onclick={() => person ? onOpenPerson?.(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
+                <button type="button" class="name link" aria-label={`Open ${node.kind} ${node.label}`} onclick={() => person ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
               {:else}
                 <span class="name">{node.label}</span>
               {/if}

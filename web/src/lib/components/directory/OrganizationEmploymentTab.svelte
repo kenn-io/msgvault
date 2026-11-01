@@ -203,7 +203,7 @@
   .row-actions { justify-content: flex-end; opacity: 0; }
   li:hover .row-actions, li:focus-within .row-actions { opacity: 1; }
   .dates { display: block; }
-  small { margin-left: var(--space-1); }
+  small { margin-left: var(--control-gap); }
   .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   [role="alert"] { color: var(--text-danger); }
   @media (hover: none) { .row-actions { opacity: 1; } }

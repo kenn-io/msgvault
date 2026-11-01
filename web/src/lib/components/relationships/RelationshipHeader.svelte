@@ -5,13 +5,11 @@
   import { Button, IconButton, SegmentedControl, copyToClipboard } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
-  import type { PersonAttributeGroup } from '../../api/generated/models';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { LinkOutcome, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import { identityChipText } from '../../relationships/identity-chip';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
-  import AttributeSummary from '../directory/AttributeSummary.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
@@ -34,7 +32,6 @@
     capturePersonMergeContext?: () => RelationshipsMergeContext;
     onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
     onOpenDirectoryPerson?: (personID: number) => void;
-    loadAttributes?: (personID: number) => Promise<PersonAttributeGroup[]>;
     onAnnounce?: (message: string) => void;
   }
 
@@ -54,7 +51,6 @@
     capturePersonMergeContext = undefined,
     onReconcilePersonMerge = undefined,
     onOpenDirectoryPerson = undefined,
-    loadAttributes = undefined,
     onAnnounce = undefined
   }: Props = $props();
 
@@ -71,7 +67,6 @@
   let unlinking = $state(false);
   let unlinkError = $state<string | null>(null);
   let identitiesOpen = $state(false);
-  let attributeGroups = $state<PersonAttributeGroup[]>([]);
 
   function isPersonDetail(value: PersonSummary | DomainSummary): value is PersonSummary {
     return 'identifiers' in value;
@@ -179,19 +174,6 @@
     unlinkError = null;
     activeDialog = undefined;
     identitiesOpen = false;
-  });
-
-  $effect(() => {
-    const id = profileID;
-    attributeGroups = [];
-    if (!id) return;
-    let cancelled = false;
-    void untrack(() => loadAttributes?.(id))
-      ?.then((groups) => { if (!cancelled) attributeGroups = groups; })
-      .catch(() => {
-        // This summary is best-effort; failed requests leave it empty.
-      });
-    return () => { cancelled = true; };
   });
 
   // ok/ready clears any earlier stale banner; ok/stale (re)raises it and
@@ -368,12 +350,6 @@
         · {detail.person_count.toLocaleString()} people
       {/if}
     </p>
-    {#if isPersonDetail(detail) && detail.profile?.id}
-      <AttributeSummary
-        groups={attributeGroups}
-        onEdit={onOpenDirectoryPerson ? () => onOpenDirectoryPerson(detail.profile!.id) : undefined}
-      />
-    {/if}
     {#if isPersonDetail(detail) && showIdentities}
       {#key detail.id}
       <details class="identities" open={identitiesOpen || forceIdentitiesOpen} ontoggle={handleIdentitiesToggle}>
