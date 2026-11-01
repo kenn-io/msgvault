@@ -35,7 +35,7 @@ A same-service, same-scope username match can become a review candidate instead
 of an automatic link. Conflicting existing bindings remain conflicts. This is
 why two entries for the same person may stay separate after a sync.
 
-Open the Web [Directory review queues](/docs/web-ui/#directory-and-reviews) to inspect
+Open the Web [People: Possible duplicates](/docs/web-ui/#saved-profiles-and-possible-duplicates) to inspect
 identity candidates and accept or reject the proposed match. Check the source
 and identifier evidence before linking. See [people and source identities](/docs/usage/people/)
 for the difference between an observed participant and a curated profile.

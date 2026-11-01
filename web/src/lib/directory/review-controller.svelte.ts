@@ -78,7 +78,6 @@ export class DirectoryReviewController {
   private lookupAbort = new AbortController();
   private lookupPauseMs = 120;
   private lookupTimer: ReturnType<typeof setTimeout> | undefined;
-  staleDecision = $state<IdentityMatchCandidate>();
   private readonly onSettled: (result: IdentityDecisionResult) => void;
   pending = $state<{ candidate: IdentityMatchCandidate; decision: 'accept' | 'reject'; context: DirectoryReviewContextSnapshot }>();
   readonly pendingDecisions = new SvelteSet<number>();
@@ -283,12 +282,6 @@ export class DirectoryReviewController {
     this.onSettled(result);
     return result;
   }
-  async retryCache(): Promise<void> {
-    const candidate = this.staleDecision;
-    if (!candidate) return;
-    const result = await this.acceptIdentity(candidate.id, undefined, this.reviewContextSnapshot(), candidate.review_token);
-    this.onSettled(result);
-  }
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }
   /** Queues the lookups for the cards on the current page. */
   requestSummaries(): void {
@@ -419,13 +412,12 @@ export class DirectoryReviewController {
       if (response.data) {
         const decidedCandidate = response.data.candidate;
         this.summaries.clear();
-        this.staleDecision = response.data.cache_state === 'stale' ? decidedCandidate : undefined;
         this.decisionDrafts.delete(candidateID);
         if (!this.ownsDecisionContext(context)) {
           return { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
         }
         this.rows = replaceByID(this.rows, decidedCandidate);
-        this.status = `Identity match ${decidedCandidate.state}.`;
+        this.status = `Identity match ${decidedCandidate.state}.${response.data.cache_state === 'stale' ? ' Identity cache refresh failed.' : ''}`;
         await this.loadIdentityPage(this.offset, this.identityState);
         return { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state };
       }

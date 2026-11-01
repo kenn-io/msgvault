@@ -24,6 +24,10 @@
     if (participantID !== null) { const outcome = await controller.linkParticipants(participantID, other); onLinked?.(participantID, other, outcome); return outcome; }
     if (personID === null) return { ok: false, code: 'error', message: 'Choose a person first.' };
     try {
+      const profile = await getPersonProfile({ id: personID }, client);
+      if (!profile.data) return { ok: false, code: 'error', message: profile.error?.message ?? 'Could not read this person.' };
+      const representative = profile.data.participant_ids?.[0];
+      if (representative !== undefined) { const outcome = await controller.linkParticipants(representative, other); onLinked?.(representative, other, outcome); return outcome; }
       let id = promoted.get(other);
       if (!id) {
         const result = await createPerson({ participant_id: other }, client);
@@ -38,7 +42,8 @@
     if (personID !== null) return savedPair(personID, other);
     try {
       const result = await getPersonProfile({ id: other }, client);
-      const ids = result.data?.participant_ids as number[] | undefined;
+      if (!result.data) return { ok: false, code: 'error', message: result.error?.message ?? 'Could not read the selected person.' };
+      const ids = result.data.participant_ids as number[] | undefined;
       if (!ids?.length && participantID !== null) {
         let id = promoted.get(participantID);
         if (!id) { const saved = await createPerson({ participant_id: participantID }, client); if (!saved.data) return { ok: false, code: 'error', message: saved.error?.message ?? 'Could not save this person.' }; id = saved.data.id; promoted.set(participantID, id); }
