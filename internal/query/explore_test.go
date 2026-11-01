@@ -30,10 +30,11 @@ func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
 		groupKey string
 		rows     int
 		total    int64
+		levelled bool
 	}{
-		{"limited", PageSpec{Limit: 1}, "", 1, 4},
-		{"unpaged", PageSpec{}, "", 4, 4},
-		{"keyed", PageSpec{}, "2026-07-04", 1, 1},
+		{"limited", PageSpec{Limit: 1}, "", 1, 4, false},
+		{"unpaged", PageSpec{}, "", 4, 4, true},
+		{"keyed", PageSpec{}, "2026-07-04", 1, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -43,7 +44,7 @@ func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
 			require.Len(result.Rows, tc.rows)
 			assert.Equal(tc.total, result.TotalCount)
 			for _, row := range result.Rows {
-				if tc.name == "limited" || tc.name == "keyed" {
+				if !tc.levelled {
 					assert.Empty(row.Level)
 				} else if row.Key == "2026-07-04" {
 					assert.Equal(identityindex.HeatFourthQuartile, row.Level)
