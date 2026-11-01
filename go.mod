@@ -46,7 +46,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	go.kenn.io/docbank v0.16.1-0.20261030132435-c87f7a8b7983
 	go.kenn.io/kata v0.20.0
-	go.kenn.io/kit v0.47.2
+	go.kenn.io/kit v0.47.5
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
@@ -146,7 +146,7 @@ require (
 	github.com/philhofer/fwd v1.2.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/posthog/posthog-go v1.38.0 // indirect
+	github.com/posthog/posthog-go v1.39.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/zerolog v1.35.1 // indirect

@@ -22,24 +22,34 @@ HTTP remote defaults, plaintext key display in interactive CLI,
 enabled=true override on account creation, and page-aligned pagination
 are documented design decisions — see code comments at each site.
 
-Remote engine query string reconstruction in buildSearchQueryString is
-intentionally simplified — phrase quoting edge cases are acceptable since
-the search parser on the server re-parses the query. Empty search queries
-sending q= is expected; the server returns empty results gracefully.
 TimeGranularity defaults to "month" when unspecified, which is correct.
 
-This is a single-user personal tool with no privilege separation, no
-setuid, no shared directories, and no multi-tenant access. Do not flag
+This is a single-user personal tool with no setuid, no shared
+directories, and no multi-tenant access. Do not flag
 symlink-following, local file overwrites, or similar CWE patterns that
 require an attacker with the same privileges as the user — they already
 own everything this tool touches. Auth on loopback-only endpoints with
 no configured API key is also by design.
 
-Anyone with access to the CLI or HTTP API is a privileged user. Do not
+Owner credentials (the server API key, a browser session, or keyless
+loopback access when no key is configured) are privileged. Do not
 flag SQL injection, statement validation, DDL bypass, or multi-statement
 risks on the query interface — the user is trusted and can already do
 anything via direct database access. The query surface is a convenience
 layer, not a security boundary.
+
+Delegated agent tokens (`X-Msgvault-Agent-Token`, enabled by
+`[server] agent_access`) and read-only remote client keys
+(`[[server.remote_clients]]`) are restricted credentials, and their
+limits are a real boundary. The daemon checks each agent call against the
+grant's permissions and exact source scope. A message, thread, or
+attachment outside the grant returns the same 404 as a missing one.
+Routes without a delegated permission, including SQL, exports,
+configuration, and grant management, stay owner-only. Remote client keys
+reach only a fixed set of read operations. Flag changes that let either
+credential exceed its grant, reach an owner-only route, or reveal whether
+an out-of-scope record exists. See docs/api-server.md and the agent
+commands in docs/cli-reference.md.
 
 IMAP passwords are stored on disk with restricted file permissions
 (0600), equivalent to OAuth tokens and API keys in the same data
