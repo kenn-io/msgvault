@@ -77,12 +77,16 @@ it('displays every structured address component before its original street value
   view.unmount(); controller.destroy();
 });
 
-it('joins refreshed sensitive and read-only field settings to current values and discards their editor', async () => {
+it('joins refreshed field settings, keeping a renamed draft and discarding a restricted editor', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
-  const options = { definitions: [{ ...definition, label: 'Private note', is_sensitive: true, ui_editable: false, revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
+  const options = { definitions: [{ ...definition, label: 'Renamed note', revision: 2 }, { ...definition, id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'favorite_color', label: 'Favorite color' }], bundle: { definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] } } };
   const { controller, view } = harness(profile(), options);
   await fireEvent.click(screen.getByRole('button', { name: 'Edit Note' }));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
+  await act(() => controller.reloadDefinitions());
+  expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
+  options.definitions[0] = { ...definition, label: 'Private note', is_sensitive: true, ui_editable: false, revision: 3 };
   await act(() => controller.reloadDefinitions());
   expect(screen.queryByDisplayValue('Private example')).toBeNull(); expect(screen.queryByText('Private example')).toBeNull();
   expect(screen.getByText('Private note')).toBeDefined();
