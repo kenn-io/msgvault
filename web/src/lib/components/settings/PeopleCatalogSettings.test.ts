@@ -55,3 +55,35 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
   expect(writes.at(-1)!.headers.get('If-Match')).toBe('"attribute-definition-41-r4"');
   catalog.unmount();
 });
+
+it('resumes acknowledgment after a created field registry refresh fails before creating another field', async () => {
+  let failRefresh = false; const definitions: Record<string, unknown>[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+    if (path.endsWith('/attribute-definitions')) {
+      if (request.method === 'POST') {
+        const definition = { ...(await request.json()), id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'first_field', ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, revision: 1 };
+        definitions.push(definition); failRefresh = true;
+        return Response.json(definition, { status: 201 });
+      }
+      if (failRefresh) { failRefresh = false; return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 }); }
+      return Response.json({ definitions });
+    }
+    if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [] });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  render(PeopleCatalogSettings, { client });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Add field' }));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Label' }), { target: { value: 'First field' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+  await screen.findByRole('button', { name: 'Retry registry refresh' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
+  await screen.findByRole('button', { name: 'Edit First field' });
+  expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
+  await screen.findByText('Created First field');
+  await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', false);
+});
