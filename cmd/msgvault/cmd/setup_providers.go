@@ -25,7 +25,6 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
-	"go.kenn.io/msgvault/internal/vector"
 )
 
 const (
@@ -297,11 +296,13 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	textUnconfigured := !loaded.Vector.Enabled && loaded.Vector.Embeddings.Endpoint == ""
 	needsLocalText := textUnconfigured && !detection.voyageKey && !detection.openAIKey
 	needsLocalInference := !loaded.People.Sweep.Enabled && !detection.openAIKey
+	skipOllama := detection.localEmbeddings
 	if (needsLocalText || needsLocalInference) && deps.probeOllama != nil {
 		server := strings.TrimRight(strings.TrimSpace(loaded.Chat.Server), "/")
 		detection.ollama = deps.probeOllama(ctx, server)
 		detection.ollamaEndpoint = server + "/v1"
 		detection.ollamaLoopback = embeddingProviderName(server) == "local"
+		skipOllama = skipOllama || server == "http://localhost:11434" || server == "http://127.0.0.1:11434"
 	}
 	if needsLocalText && !detection.localEmbeddings && detection.ollamaLoopback && detection.ollama.Reachable && detection.ollama.hasModel(setupOllamaTextModel) {
 		detection.embeddingEndpoint = detection.ollamaEndpoint
@@ -310,7 +311,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		if err != nil {
 			detection.embeddingError = fmt.Errorf("local embedding directory: %w", err)
 		} else {
-			detection.embeddingEndpoint, detection.embeddingError = deps.localEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: detection.localEmbeddings})
+			detection.embeddingEndpoint, detection.embeddingError = deps.localEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: skipOllama})
 		}
 	}
 	return detection
@@ -532,7 +533,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 		lane.Provider = textEmbeddingProviderName(embeddings)
 		lane.Model = embeddings.Model
 		lane.Reason = "already configured; switching the embedding policy requires `msgvault embeddings build --full-rebuild`"
-		if !embeddings.LocalOnly && embeddings.Model == setupOllamaTextModel && embeddingProviderName(embeddings.Endpoint) == "local" {
+		if !embeddings.LocalOnly && embeddings.LocalCompatible() && embeddingProviderName(embeddings.Endpoint) == "local" {
 			lane.Reason = "switch to the shared local server with `msgvault setup providers --local-embeddings`; a matching Nomic recipe keeps the message index"
 			lane.next = []string{"msgvault setup providers --local-embeddings"}
 		}
@@ -582,7 +583,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 		lane.Action, lane.Provider, lane.Model = planActionEnable, "local", setupOllamaTextModel
 		lane.Reason = "local embeddings; message text stays on this machine"
 		if loaded.Vector.Enabled {
-			if embeddings.Model == setupOllamaTextModel {
+			if embeddings.LocalCompatible() {
 				lane.Reason += "; keeps the message index when its Nomic recipe matches"
 			} else {
 				lane.Reason += "; different model: run `msgvault embeddings build --full-rebuild --yes`"
@@ -594,14 +595,15 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			"document_prefix": setupOllamaDocPrefix, "query_prefix": setupOllamaQueryPrefix,
 			"max_input_chars": setupOllamaMaxInput,
 		}
-		if embeddings.EffectiveAPIFormat() == vector.APIFormatOpenAI && embeddings.Model == setupOllamaTextModel && embeddings.Dimension == setupOllamaTextDim {
+		if embeddings.LocalCompatible() {
+			lane.Model, values["model"] = embeddings.Model, embeddings.Model
 			values["document_prefix"], values["query_prefix"] = embeddings.DocumentPrefix, embeddings.QueryPrefix
 			values["max_input_chars"] = embeddings.MaxInputChars
 		}
 		lane.edits = append([]config.TableEdit{vectorEdit, {Path: []string{tomlTableVector, "embeddings"}, Values: values}}, setupScheduleEdits(detection.configKeys, "embed")...)
 	}
 	lane.next = []string{"msgvault embeddings build --full-rebuild --yes"}
-	if loaded.Vector.Enabled && embeddings.EffectiveAPIFormat() == vector.APIFormatOpenAI && embeddings.Model == lane.Model && embeddings.Dimension == setupOllamaTextDim {
+	if loaded.Vector.Enabled && embeddings.LocalCompatible() && embeddings.Model == lane.Model {
 		lane.next = []string{"msgvault embeddings build --yes"}
 	}
 	return lane
@@ -1127,7 +1129,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	}
 
 	for i, lane := range plan.Lanes {
-		if !lane.local || lane.Action != planActionEnable {
+		if !lane.local || lane.Action != planActionEnable || (detection.embeddingError == nil && detection.embeddingEndpoint != "") {
 			continue
 		}
 		err := installSetupLocalEmbeddings(command, deps, options, reader)

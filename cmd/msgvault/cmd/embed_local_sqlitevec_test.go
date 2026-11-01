@@ -119,3 +119,14 @@ func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
 	_, err := resolveLocalVectorConfig(ctx, cfg.Vector)
 	require.NoError(err)
 }
+
+func TestLocalEmbeddingRuntimeNeedsSetup(t *testing.T) {
+	dir := t.TempDir()
+	original := localEmbeddingsDir
+	localEmbeddingsDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { localEmbeddingsDir = original })
+	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true, Model: "nomic-embed-text", Dimension: 768}}
+	_, err := resolveLocalVectorConfig(t.Context(), cfg)
+	require.ErrorContains(t, err, "msgvault setup providers --local-embeddings")
+	assert.NotContains(t, err.Error(), "provide Confirm")
+}

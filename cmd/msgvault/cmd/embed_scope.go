@@ -242,7 +242,7 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 	if errors.Is(err, embedlocal.ErrNotFound) {
 		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir})
 		if installErr != nil {
-			return vector.Config{}, fmt.Errorf("local embeddings need setup: run msgvault setup providers --local-embeddings: %w", installErr)
+			return vector.Config{}, errors.New("local embeddings need setup: run msgvault setup providers --local-embeddings")
 		}
 		endpoint, err = embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
 	}

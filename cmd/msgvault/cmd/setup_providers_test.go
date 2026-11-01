@@ -1707,12 +1707,12 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 }
 
 func TestSetupProvidersExplicitLocalSwitch(t *testing.T) {
-	for _, model := range []string{"", "nomic-embed-text", "other-model"} {
+	for _, model := range []string{"", "nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text:v1.5", "other-model"} {
 		t.Run(model, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			content := setupProvidersMinimalConfig + "\n[chat]\nserver = \"http://ollama.example.com:11434\"\n"
 			if model != "" {
-				content += fmt.Sprintf("\n[vector]\nenabled = true\n[vector.embeddings]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = %q\ndimension = 768\nmax_input_chars = 1000\n", model)
+				content += fmt.Sprintf("\n[vector]\nenabled = true\n[vector.embeddings]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = %q\ndimension = 768\nmax_input_chars = 1000\ndocument_prefix = \"document: \"\nquery_prefix = \"query: \"\n", model)
 			}
 			fixture := newSetupProvidersFixture(t, content)
 			before := fixture.load(t).Vector.GenerationFingerprint()
@@ -1731,11 +1731,62 @@ func TestSetupProvidersExplicitLocalSwitch(t *testing.T) {
 			assert.True(after.Vector.Embeddings.LocalOnly)
 			assert.Equal("local", textSearchLane(after, setupEnvironment{}).Provider)
 			build := "msgvault embeddings build --full-rebuild --yes"
-			if model == "nomic-embed-text" {
+			if strings.HasPrefix(model, "nomic-embed-text") {
+				assert.Equal(model, after.Vector.Embeddings.Model)
+				assert.Equal("document: ", after.Vector.Embeddings.DocumentPrefix)
+				assert.Equal("query: ", after.Vector.Embeddings.QueryPrefix)
+				assert.Equal(1000, after.Vector.Embeddings.MaxInputChars)
 				assert.Equal(before, after.Vector.GenerationFingerprint())
 				build = "msgvault embeddings build --yes"
 			}
 			assert.Contains(output.String(), build)
+		})
+	}
+}
+
+func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
+	for _, args := range [][]string{nil, {"--local-embeddings"}} {
+		t.Run(fmt.Sprint(args), func(t *testing.T) {
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			deps := fixture.deps(t)
+			deps.localEndpoint = func(context.Context, embedlocal.Options) (string, error) {
+				return "http://127.0.0.1:54321/v1", nil
+			}
+			deps.localInstall = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
+				assert.Fail(t, "a discovered server needs no installation or download")
+				return embedlocal.Installation{}, errors.New("unexpected installation")
+			}
+			command := newSetupProvidersCommand(deps)
+			command.SetOut(io.Discard)
+			command.SetErr(io.Discard)
+			command.SetArgs(args)
+			require.NoError(t, command.ExecuteContext(t.Context()))
+			loaded := fixture.load(t)
+			assert.True(t, loaded.Vector.Enabled)
+			assert.True(t, loaded.Vector.Embeddings.LocalOnly)
+		})
+	}
+}
+
+func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
+	for _, server := range []string{"http://localhost:11434/", "http://127.0.0.1:11434", "http://localhost:11435"} {
+		t.Run(server, func(t *testing.T) {
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf("\n[chat]\nserver = %q\n", server))
+			deps := fixture.deps(t)
+			probes, discoveries := 0, 0
+			deps.probeOllama = func(_ context.Context, address string) ollamaProbeResult {
+				probes++
+				assert.Equal(t, strings.TrimRight(server, "/"), address)
+				return ollamaProbeResult{}
+			}
+			deps.localEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
+				discoveries++
+				assert.Equal(t, server != "http://localhost:11435", opts.SkipOllama)
+				return "", embedlocal.ErrNotFound
+			}
+			detectSetupProviders(t.Context(), fixture.load(t), deps, setupProvidersOptions{})
+			assert.Equal(t, 1, probes)
+			assert.Equal(t, 1, discoveries)
 		})
 	}
 }

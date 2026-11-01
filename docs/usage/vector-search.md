@@ -113,6 +113,8 @@ Use `msgvault setup providers` to select defaults. Without a hosted key, setup u
 
 Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. The switch changes document-vector and semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
 
+The switch also changes the separate document-vector generation: renew its consents, restart the daemon, and build the matching generation to restore document semantic search.
+
 For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.
 

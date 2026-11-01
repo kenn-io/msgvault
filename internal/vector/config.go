@@ -200,6 +200,19 @@ func (e EmbeddingsConfig) EffectiveAPIFormat() EmbeddingAPIFormat {
 	return e.APIFormat
 }
 
+// LocalCompatible reports whether the shared local server supports this recipe.
+func (e EmbeddingsConfig) LocalCompatible() bool {
+	if e.EffectiveAPIFormat() != APIFormatOpenAI || e.Dimension != 768 {
+		return false
+	}
+	switch e.Model {
+	case "nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text:v1.5":
+		return true
+	default:
+		return false
+	}
+}
+
 // IdentityDestination names the provider independently of a local server's port.
 func (e EmbeddingsConfig) IdentityDestination() string {
 	if e.LocalOnly {
@@ -222,7 +235,7 @@ func (e EmbeddingsConfig) Validate() error {
 		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
 			APIFormatVoyageContextual, "voyage-context-4", e.Model)
 	}
-	if e.LocalOnly && (e.EffectiveAPIFormat() != APIFormatOpenAI || e.Model != "nomic-embed-text" || e.Dimension != 768) {
+	if e.LocalOnly && !e.LocalCompatible() {
 		return errors.New("vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions")
 	}
 	if e.IdentityDestination() == "" {
