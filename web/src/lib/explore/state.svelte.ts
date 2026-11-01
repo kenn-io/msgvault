@@ -146,7 +146,7 @@ const OPERATION_FILTER_FIELDS = [
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
 
 const OPERATION_HISTORY_FIELDS: ReadonlySet<keyof ExploreURLState> = new Set([
-  ...OPERATION_FILTER_FIELDS, 'operationRunID', 'operationStatus'
+  ...OPERATION_FILTER_FIELDS, 'operationHistory', 'operationRunID', 'operationStatus'
 ]);
 
 export const defaultExploreURLState: ExploreURLState = {
@@ -651,9 +651,9 @@ export class ExploreState {
     }
     const next = this.readURLState();
     const nextIndex = this.browser.history.state?.exploreIndex ?? this.historyIndex;
-    if (this.current.operationHistory && next.operationHistory &&
-      (Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
+    if ((Object.keys(next) as Array<keyof ExploreURLState>).every(key =>
         OPERATION_HISTORY_FIELDS.has(key) || JSON.stringify(this.current[key]) === JSON.stringify(next[key]))) {
+      this.current.operationHistory = next.operationHistory;
       this.current.operationLane = next.operationLane;
       this.current.operationKind = next.operationKind;
       this.current.operationState = next.operationState;

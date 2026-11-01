@@ -36,6 +36,26 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
+  it('keeps the same title while a deep-linked run loads', async () => {
+    let resolveDetail!: (response: Response) => void;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+      if (path === '/api/v1/operations/runs') return Response.json({ runs: [], membership_revision: 1, unavailable_kinds: [] });
+      if (path === `/api/v1/operations/runs/${run.id}`) return new Promise<Response>(resolve => { resolveDetail = resolve; });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const controller = new OperationsController(client); controllers.push(controller);
+    render(RunHistoryDialog, { client, controller,
+      state: { ...defaultOperationsState(), operationRunID: run.id },
+      onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn() });
+    await vi.waitFor(() => expect(resolveDetail).toBeDefined());
+    expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
+    resolveDetail(Response.json({ ...run, supported_actions: [] }));
+    await screen.findByRole('region', { name: 'Operation run detail' });
+    expect(screen.getByRole('dialog', { name: 'Past runs' })).toBeTruthy();
+  });
+
   it('loads document counts when polling observes configuration', async () => {
     let configured = false;
     const client = createAPIClient(async input => {
