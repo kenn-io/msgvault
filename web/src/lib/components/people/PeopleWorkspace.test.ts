@@ -18,7 +18,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
 
-it('retains the selected day, file filters, and Details across the 720px breakpoint', async () => {
+it('retains the day and file filters between tabs and keeps Details selected when resized', async () => {
   const observers = new Map<Element, ResizeObserverCallback>();
   vi.stubGlobal('ResizeObserver', class {
     constructor(private callback: ResizeObserverCallback) {}
