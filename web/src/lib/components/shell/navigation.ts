@@ -41,6 +41,7 @@ export function relationshipDestination(participantID: number) {
     query: '',
     relationshipFacet: 'people' as const,
     relationshipTarget: `cluster:${participantID}`,
+    directoryPersonID: null,
     relationshipFiles: false,
     relationshipShowAll: false,
     analysisTarget: null,

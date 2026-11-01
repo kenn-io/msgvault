@@ -204,7 +204,7 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		case TimeMonth:
 			gran = timeGranularityMonth
 		case TimeDay:
-			gran = "day"
+			gran = timeGranularityDay
 		default:
 			return aggDimension{}, fmt.Errorf("unsupported time granularity: %d", timeGranularity)
 		}
@@ -576,7 +576,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 		case TimeMonth:
 			gran = timeGranularityMonth
 		case TimeDay:
-			gran = "day"
+			gran = timeGranularityDay
 		default:
 			gran = timeGranularityMonth
 		}
@@ -1652,7 +1652,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 		case TimeMonth:
 			gran = timeGranularityMonth
 		case TimeDay:
-			gran = "day"
+			gran = timeGranularityDay
 		default:
 			gran = timeGranularityMonth
 		}
