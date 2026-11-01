@@ -613,7 +613,7 @@ it('selects a refreshed People profile after saving Server settings and returnin
   let consented = false;
   let selected = false;
   const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings') {
       if (request.method === 'PATCH') revision = '"s2"';
@@ -630,7 +630,7 @@ it('selects a refreshed People profile after saving Server settings and returnin
       }, { headers: { ETag: revision } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
   await screen.findByText('model-one');
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
@@ -653,7 +653,7 @@ it('keeps People profile removal tied to the displayed revision after a shared-s
   let revision = '"s1"';
   let removed = false;
   const doc = settingsDoc();
-  const { client, seen } = fixture(doc, request => {
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/settings' && request.method === 'GET') return Response.json(doc, { headers: { ETag: revision } });
     if (path === '/api/v1/settings' && request.method === 'PATCH') return Response.json({ message: 'Config changed' }, { status: 412 });
@@ -670,7 +670,7 @@ it('keeps People profile removal tied to the displayed revision after a shared-s
       }, { headers: { ETag: revision } });
     }
   });
-  render(SettingsWorkspace, { client, category: 'enrichment' });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
   await screen.findByText('model-one');
   revision = '"s2"';
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
