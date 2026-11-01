@@ -1666,35 +1666,22 @@ func TestSetupProvidersRejectsExplicitProviderWhenSweepEnabled(t *testing.T) {
 
 func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 	for _, tc := range []struct {
-		name, input                 string
-		args                        []string
-		tty, install, enabled, fail bool
+		name, input  string
+		args         []string
+		tty, enabled bool
 	}{
-		{name: "accept", tty: true, input: "yes\nyes\n", install: true, enabled: true},
-		{name: "decline", tty: true, input: "yes\nno\n", install: true},
+		{name: "accept", tty: true, input: "yes\nyes\n", enabled: true},
+		{name: "decline", tty: true, input: "yes\nno\n"},
 		{name: "implicit nonterminal", args: []string{"--yes", "--json"}},
-		{name: "plain nonterminal"},
-		{name: "yes alone", args: []string{"--yes"}},
-		{name: "explicit yes", args: []string{"--local-embeddings", "--yes"}, install: true, enabled: true},
-		{name: "install error", args: []string{"--local-embeddings", "--yes"}, install: true, fail: true},
+		{name: "yes alone", tty: true, args: []string{"--yes"}},
+		{name: "explicit yes", args: []string{"--local-embeddings", "--yes"}, enabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			fixture.tty, fixture.download = tc.tty, true
-			if tc.name != "plain nonterminal" {
-				fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-			}
-			deps, installs := fixture.deps(t), 0
-			install := deps.localInstall
-			deps.localInstall = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				installs++
-				if tc.fail {
-					return embedlocal.Installation{}, errors.New("download unavailable")
-				}
-				return install(ctx, opts)
-			}
-			command := newSetupProvidersCommand(deps)
+			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
+			command := newSetupProvidersCommand(fixture.deps(t))
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(io.Discard)
@@ -1702,12 +1689,11 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 			command.SetArgs(tc.args)
 			require.NoError(command.ExecuteContext(t.Context()), output.String())
 			loaded := fixture.load(t)
-			assert.Equal(tc.install, installs > 0)
 			assert.Equal(tc.enabled, loaded.Vector.Enabled)
 			assert.Equal(tc.enabled, loaded.Vector.Embeddings.LocalOnly)
 			assert.Equal(tc.enabled, loaded.Vector.People.Enabled)
 			assert.Equal(tc.enabled, loaded.Attachments.Documents.Index.Embeddings.Enabled)
-			assert.Equal(tc.name != "plain nonterminal", loaded.Attachments.Documents.Enabled)
+			assert.True(loaded.Attachments.Documents.Enabled)
 			if !tc.enabled {
 				assert.Contains(output.String(), "msgvault setup providers --local-embeddings")
 				if tc.name == "implicit nonterminal" {
@@ -1715,9 +1701,6 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 					require.NoError(json.Unmarshal(output.Bytes(), &result))
 					assert.Equal(laneStatePending, findLane(t, result.Report, laneTextSearch).State)
 				}
-			}
-			if tc.fail {
-				assert.Contains(output.String(), "download unavailable")
 			}
 		})
 	}

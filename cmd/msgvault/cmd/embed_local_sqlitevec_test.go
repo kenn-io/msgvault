@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -109,7 +110,10 @@ func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
 	require.NoError(status.ExecuteContext(ctx))
 	people := localPersonProviderDeps(cfg.People.Sweep, fixture.Store, nil)
 	people.vectorConfig = func() vector.Config { return cfg.Vector }
+	var output bytes.Buffer
+	status.SetOut(&output)
 	require.NoError(runPersonSemanticProviderStatus(status, people, false, true))
+	assert.NotContains(output.String(), `"local_only"`)
 	require.NoError(runPersonSemanticProviderConsent(status, people, true, true))
 	cfg.Vector.Enabled = false
 	_, err := resolveLocalVectorConfig(ctx, cfg.Vector)

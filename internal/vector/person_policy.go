@@ -60,7 +60,7 @@ type SemanticPersonEmbeddingProfile struct {
 	Fingerprint           string             `json:"fingerprint"`
 	Purpose               string             `json:"purpose"`
 	Destination           string             `json:"destination"`
-	LocalOnly             bool               `json:"local_only,omitzero"`
+	LocalOnly             bool               `json:"-"`
 	APIFormat             EmbeddingAPIFormat `json:"api_format"`
 	Model                 string             `json:"model"`
 	APIKeyEnv             string             `json:"api_key_env"`
