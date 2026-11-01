@@ -540,20 +540,25 @@ describe('DirectoryProfileController', () => {
     expect(controller.conflict).toMatchObject({ code: 'request_failed', status: 503 });
   });
 
-  it('loads and refreshes definitions after creating a user definition', async () => {
-    let listed = 0;
+  it.each([false, true])('loads and refreshes definitions after creating a user definition (initial read pending=%s)', async pending => {
+    let listed = 0; let finishInitial!: (response: Response) => void;
+    const initialResponse = new Promise<Response>(resolve => { finishInitial = resolve; });
     const created = { id: 4, universal_id: 'field-4', slug: 'preferred-channel', label: 'Preferred channel', field_type: 'choice', value_type: 'text', cardinality: 'single', object_type: 'person', ownership: 'user', api_mutable: true, history_exempt: false, display_order: 0, is_active: true, is_audited: false, is_deletable: true, is_required: false, is_searchable: true, is_sensitive: true, ui_creatable: true, ui_editable: true, revision: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'POST') return Response.json(created, { status: 201 });
       listed += 1;
+      if (listed === 1 && pending) return initialResponse;
       return Response.json({ definitions: listed === 1 ? [] : [created] });
     });
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
 
-    await controller.reloadDefinitions();
+    const initial = controller.reloadDefinitions();
+    if (!pending) await initial;
     await controller.createDefinition({ label: 'Preferred channel', field_type: 'choice', value_type: 'text', object_type: 'person', cardinality: 'single', is_sensitive: true });
 
+    finishInitial(Response.json({ definitions: [] }));
+    await initial;
     expect(controller.createdDefinition).toEqual(created);
     expect(controller.definitions).toEqual([created]);
     const create = requests(fetchFn).find((request) => request.method === 'POST')!;
