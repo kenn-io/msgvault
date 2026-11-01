@@ -20,7 +20,7 @@ const explore: MeetingPanelScope = { kind: 'explore', explore: { predicate: { qu
 ] }, cache_revision: 'cache-1', search_provenance: { lexical_index_revision: 'lex-1', vector_generation: 2 }, candidate_snapshot_id: 'candidate-1' } };
 
 describe('MeetingsController', () => {
-  it('loads metrics and actions under the exact generated scope and defaults to all source statuses', async () => {
+  it('loads the exact scope', async () => {
     const transport = api();
     const controller = new MeetingsController(transport);
     await controller.setScope(explore);
@@ -82,6 +82,7 @@ describe('MeetingsController', () => {
     await controller.setScope(person);
     await controller.loadMore();
     await controller.setFilters({ status: 'pending', assigneeEmail: ' Person@Example.test ' });
+    expect(transport.metrics).toHaveBeenCalledTimes(1);
     expect(vi.mocked(transport.actions).mock.lastCall![0]).toEqual({ scope: { person_id: 7 }, limit: 50, status: 'pending', assignee_email: 'person@example.test' });
   });
 

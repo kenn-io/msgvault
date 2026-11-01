@@ -55,6 +55,24 @@ describe('KataEvidenceDialog', () => {
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
 
+  it.each([false, true])('keeps Escape inside the Kata dialog while saving=%s', async (saving) => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    const h = harness(async () => pending);
+    const onclose = vi.fn();
+    render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up', onclose });
+    await screen.findByText('Opening passage');
+    if (saving) await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
+    const close = screen.getAllByRole('button', { name: 'Close' })[0];
+    close.focus();
+    await fireEvent.keyDown(close, { key: 'Escape' });
+    expect(onclose).toHaveBeenCalledTimes(saving ? 0 : 1);
+    if (saving) {
+      finish(Response.json({ issue, replayed: false }, { status: 201 }));
+      await screen.findByText('example#abcd');
+    }
+  });
+
   const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
   it.each([
     { kind: 'message', text: 'Café 🙂 send the budget by Friday', quote: 'send the budget', initial: selector, earlier: false },

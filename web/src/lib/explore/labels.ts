@@ -197,7 +197,7 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
   if (normalized === 'calendar' || normalized === 'calendar_event') {
     return kindPresentation('□', 'Calendar event');
   }
-  if (normalized === 'meeting' || normalized === 'meeting_transcript') {
+  if (normalized === 'meeting' || normalized === 'meeting_transcript' || normalized === 'meeting_note' || normalized === 'meeting_minutes') {
     return kindPresentation('◫', 'Meeting item');
   }
   return kindPresentation('◇', 'Archive item');
