@@ -1227,7 +1227,7 @@ describe('ExploreState history ownership', () => {
     state.destroy();
   });
 
-  it('advances restoration epochs only for initial URL ownership and popstate', () => {
+  it('advances restoration epochs only for initial URL ownership and archive popstate', () => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
     const initialEpoch = state.restorationEpoch;
@@ -1240,6 +1240,7 @@ describe('ExploreState history ownership', () => {
     state.commitSearch('committed', 'full_text');
     expect(state.restorationEpoch).toBe(initialEpoch);
 
+    window.history.replaceState(null, '', '/');
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect(state.restorationEpoch).toBe(initialEpoch + 1);
     expect(state.peekRestorationEpoch()).toBe(initialEpoch + 1);

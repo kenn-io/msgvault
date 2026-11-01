@@ -28,7 +28,7 @@
       {@const chip = operationStateChip(run.state)}
       <li><button type="button" data-run-id={run.id} aria-label={`Open ${OPERATION_KIND_LABELS[run.kind]} run`} aria-describedby={`run-${run.id}-summary run-${run.id}-state`} onclick={(event) => onSelect(run.id, event.currentTarget)}>
         <span class="compact-runs__text"><span class="compact-runs__name" id={`run-${run.id}-summary`}>{OPERATION_KIND_LABELS[run.kind]}{#if run.connection} · {run.connection}{/if} <time datetime={run.started_at}>{formatDateTime(run.started_at)}</time></span>
-          <span class="compact-runs__meta">{run.error && run.state !== 'succeeded' ? run.error.message : [triggerLabel(run.trigger), operationDuration(run), counterSummary(run.counters)].filter(Boolean).join(' · ')}</span></span>
+          <span class="compact-runs__meta">{[triggerLabel(run.trigger), operationDuration(run), counterSummary(run.counters), run.error?.message].filter(Boolean).join(' · ')}</span></span>
         <span id={`run-${run.id}-state`}><Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip></span>
       </button></li>
     {/each}

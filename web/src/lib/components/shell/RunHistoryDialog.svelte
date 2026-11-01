@@ -102,7 +102,7 @@
   }
 </script>
 
-<Dialog title={local.operationStatus ? RELATED_STATUS_LABELS[local.operationStatus] : current.detail && local.operationRunID ? OPERATION_KIND_LABELS[current.detail.kind] : 'Past runs'} {onclose}>
+<Dialog title={local.operationStatus ? RELATED_STATUS_LABELS[local.operationStatus] : 'Past runs'} {onclose}>
   <div class="history" bind:this={root}>
     {#if local.operationStatus}
       {#if current.statusReadable || current.statusError}
