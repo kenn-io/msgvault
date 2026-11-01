@@ -1775,10 +1775,12 @@ func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
 		name, endpoint, model string
 		local, fail           bool
 		daemonStopped         bool
+		building              bool
 		wantRecovery          bool
 	}{
 		{name: "Ollama switch", endpoint: "http://127.0.0.1:11434/v1", wantRecovery: true},
 		{name: "Ollama switch with stopped daemon", endpoint: "http://127.0.0.1:11434/v1", daemonStopped: true, wantRecovery: true},
+		{name: "Ollama switch with building document generation", endpoint: "http://127.0.0.1:11434/v1", building: true, wantRecovery: true},
 		{name: "different model", endpoint: "http://127.0.0.1:11434/v1", model: "other-model", wantRecovery: true},
 		{name: "same local identity", local: true},
 		{name: "configured local identity", endpoint: "http://local-embeddings.invalid/v1"},
@@ -1797,6 +1799,9 @@ endpoint = %q
 local_only = %t
 model = %q
 dimension = 768
+[vector.embed.schedule]
+cron = ""
+run_after_sync = false
 [vector.people]
 enabled = true
 retention_posture = "declared"
@@ -1807,6 +1812,15 @@ enabled = true
 enabled = true
 `, tc.endpoint, tc.local, tc.model)
 			fixture := newSetupProvidersFixture(t, content)
+			if tc.building {
+				documents, _, _ := documentVectorCommandFixture(t)
+				fixture.store = documents.Store
+				ctx := testInvocationContext(t.Context(), fixture.load(t), invocationOptions{})
+				spec, err := desiredDocumentVectorSpec(ctx, fixture.store)
+				require.NoError(err)
+				_, _, err = fixture.store.EnsureDocumentVectorGeneration(ctx, spec)
+				require.NoError(err)
+			}
 			deps := fixture.deps(t)
 			deps.daemonAlive = func(context.Context, *config.Config) bool { return !tc.daemonStopped }
 			if tc.fail {
@@ -1822,6 +1836,26 @@ enabled = true
 			require.NoError(command.ExecuteContext(t.Context()), output.String())
 			var result setupProvidersOutput
 			require.NoError(json.Unmarshal(output.Bytes(), &result))
+			if tc.building {
+				loaded := fixture.load(t)
+				assert.Empty(loaded.Vector.Embed.Schedule.Cron)
+				assert.False(loaded.Vector.Embed.Schedule.RunAfterSync)
+				ctx := testInvocationContext(t.Context(), loaded, invocationOptions{})
+				spec, err := desiredDocumentVectorSpec(ctx, fixture.store)
+				require.NoError(err)
+				_, _, err = fixture.store.EnsureDocumentVectorGeneration(ctx, spec)
+				require.ErrorContains(err, "a document vector generation is already building")
+				previous := -1
+				for _, step := range []string{
+					"msgvault documents vectors status --json",
+					"If status.building exists and its fingerprint differs from status.configured_spec.fingerprint, run msgvault documents vectors retire --generation-id <status.building.id> --yes",
+					"msgvault documents vectors build",
+				} {
+					index := slices.Index(result.FollowUps, step)
+					require.Greater(index, previous, "recovery must inspect and retire an incompatible building generation before building: %v", result.FollowUps)
+					previous = index
+				}
+			}
 			for _, step := range []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault documents vectors build"} {
 				if tc.wantRecovery {
 					assert.Contains(result.FollowUps, step)

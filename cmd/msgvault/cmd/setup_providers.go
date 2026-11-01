@@ -614,7 +614,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			before, beforeErr := vectordocument.Fingerprint("", loaded.Vector)
 			after, afterErr := vectordocument.Fingerprint("", desired)
 			if beforeErr == nil && afterErr == nil && before != after {
-				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault daemon restart", "msgvault documents vectors build"}
+				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault daemon restart", "msgvault documents vectors status --json", "If status.building exists and its fingerprint differs from status.configured_spec.fingerprint, run msgvault documents vectors retire --generation-id <status.building.id> --yes", "msgvault documents vectors build"}
 			}
 		}
 		lane.edits = append([]config.TableEdit{vectorEdit, {Path: []string{tomlTableVector, "embeddings"}, Values: values}}, setupScheduleEdits(detection.configKeys, "embed")...)
@@ -1374,7 +1374,7 @@ func followUpRank(step string) int {
 		return 1
 	case step == "msgvault daemon restart":
 		return 2
-	case strings.Contains(step, "setup providers"):
+	case strings.Contains(step, "setup providers"), strings.Contains(step, "documents vectors status"), strings.Contains(step, "documents vectors retire"):
 		return 3
 	case strings.Contains(step, " build"):
 		return 4
