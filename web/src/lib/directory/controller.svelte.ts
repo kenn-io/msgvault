@@ -342,6 +342,8 @@ export class DirectoryController {
       if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
       return;
     }
+    this.promotionAbort?.abort();
+    ++this.promotionGeneration;
     this.detailAbort?.abort();
     ++this.detailGeneration;
     const controller = new AbortController();
@@ -365,15 +367,7 @@ export class DirectoryController {
       const [person, structuredProfile, attributes, contactState] = await Promise.all([
         settleSection(generatedGetPersonProfile({ id: personID }, requestOptions)),
         settleSection(generatedGetPersonStructuredProfile({ id: personID }, requestOptions)),
-        settleSection(
-          generatedListPersonAttributes(
-            { id: personID },
-            { history: true },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
+        settleSection(generatedListPersonAttributes({ id: personID }, { history: true }, requestOptions)),
         settleSection(generatedGetPersonContactState({ id: personID }, requestOptions)),
       ]);
       if (controller.signal.aborted || generation !== this.detailGeneration) return;

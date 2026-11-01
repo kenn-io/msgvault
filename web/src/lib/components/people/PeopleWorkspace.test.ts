@@ -588,3 +588,25 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
     expect(onNavigate).not.toHaveBeenCalled();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
+
+it('clears former participant activity when a split leaves the selected saved profile unbound', async () => {
+  let split = false;
+  const saved = () => profile(7, split ? 2 : 1, split ? [] : [1]);
+  const client = clientFor({
+    '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
+    '/api/v1/people/7/profile': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${saved().revision}"` } }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: split ? profile(9, 1, [1]) : saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+  });
+  const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7, relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const onReplaceNavigation = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await waitFor(() => expect(directory.profile).not.toBeNull());
+    split = true;
+    await act(() => directory.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 }));
+    await waitFor(() => expect(onReplaceNavigation).toHaveBeenCalledWith({ relationshipTarget: null, relationshipFiles: false }));
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
