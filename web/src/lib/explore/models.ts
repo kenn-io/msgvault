@@ -111,9 +111,7 @@ export type ExploreWorkspace =
 export type OperationKind = GeneratedOperationKind;
 export type OperationLane = GeneratedOperationLane;
 export type OperationState = GeneratedOperationState;
-export type DirectoryReviewKind = 'identity' | 'fact' | 'relationship';
 export type IdentityReviewState = 'candidate' | 'conflict' | 'accepted' | 'rejected';
-export type RelationshipReviewState = 'pending' | 'accepted' | 'rejected';
 export type RelationshipFacet = 'people' | 'domains';
 export type ExploreColumn = 'kind' | 'people' | 'title' | 'excerpt' | 'time' | 'attachments' | 'size';
 

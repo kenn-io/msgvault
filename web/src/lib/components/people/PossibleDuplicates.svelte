@@ -36,7 +36,7 @@
 
   function nameOf(key: string): string {
     const summary = summaryOf(key);
-    return summary && summary !== 'failed' ? summary.name : 'Unknown person';
+    return summary && summary !== 'failed' ? summary.name : summary === 'failed' ? 'Person details unavailable' : 'Loading person';
   }
 
   // A match between two saved people still merges: the server asks which one to keep.
@@ -79,15 +79,16 @@
             {#each pair as id (id)}
               {@const summary = summaryOf(id)}
               <div class="person">
-                <IdentityAvatar label={nameOf(id)} seed={id} size={32} />
+                {#if summary && summary !== 'failed'}<IdentityAvatar label={summary.name} seed={id} size={32} />{:else}<span class="avatar-placeholder" aria-hidden="true"></span>{/if}
                 <div class="text">
-                  <span class="name">{nameOf(id)}</span>
                   {#if summary && summary !== 'failed'}
+                    <span class="name">{summary.name}</span>
                     <span class="detail">{summary.address}</span>
                     <span class="detail" data-mono>{joinParts([summary.lastAt ? formatRelativeTime(summary.lastAt) : '', summary.count === undefined ? '' : messageCount(summary.count)])}</span>
-                  {:else if !summary}
-                    <span class="detail">Loading…</span>
-                  {:else}<Button label="Retry person" size="sm" onclick={() => controller.retrySummary(id)} />
+                  {:else}
+                    <span class="name placeholder" aria-hidden="true">&nbsp;</span>
+                    {#if !summary}<span class="detail">Loading…</span>{:else}<Button label="Retry person" size="sm" onclick={() => controller.retrySummary(id)} />{/if}
+                    <span class="detail" aria-hidden="true">&nbsp;</span>
                   {/if}
                 </div>
               </div>
@@ -106,20 +107,21 @@
             {#if !history}
               <Button
                 label="Keep separate"
+                disabled={controller.submitting}
                 onclick={() => onDecide(candidate, 'reject', [nameOf(pair[0]), nameOf(pair[1])])}
               />
               <Button
                 tone="info"
                 surface="solid"
                 label="Merge"
-                disabled={blocked(candidate) || controller.isDecisionPending(candidate.id)}
+                disabled={blocked(candidate) || controller.submitting}
                 onclick={() => onDecide(candidate, 'accept', [nameOf(pair[0]), nameOf(pair[1])])}
               />
             {/if}
           </div>
           {#if !history && controller.lastMerge?.candidateID === candidate.id}<p class="status" role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
           <details><summary>Evidence and notes</summary>
-            <IdentityCandidateCard {candidate} pending={controller.isDecisionPending(candidate.id)} onAccept={() => undefined} onReject={() => undefined} showActions={false} />
+            <IdentityCandidateCard {candidate} pending={controller.isDecisionPending(candidate.id)} />
             {#if !history}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}
           </details>
         </li>
@@ -172,6 +174,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--section-gap);
   }
+
+  .avatar-placeholder { width: 32px; height: 32px; flex-shrink: 0; border-radius: var(--radius-md); background: var(--bg-inset); }
+  .placeholder { background: var(--bg-inset); width: 60%; }
+  .name, .detail { min-height: 1lh; }
 
   .person {
     display: flex;

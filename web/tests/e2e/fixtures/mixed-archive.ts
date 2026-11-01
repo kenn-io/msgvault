@@ -1106,6 +1106,7 @@ export async function installDirectoryReviewArchive(page: Page) {
         mergedCandidate.decided_by = 'synthetic-reviewer';
         mergedCandidate.updated_at = mergedCandidate.decided_at;
       }
+      for (const candidate of candidates) candidate.review_token = `review-${candidate.id}-postmerge`;
       phase = 'postmerge';
       return route.fulfill({
         headers: { ETag: '"person-7-r5"' },
@@ -1135,6 +1136,7 @@ export async function installDirectoryReviewArchive(page: Page) {
       const restored = reviewPerson(19, 1, 'Synthetic Restored');
       restored.participant_ids = [901];
       people.set(19, restored);
+      for (const candidate of candidates) candidate.review_token = `review-${candidate.id}-postsplit`;
       phase = 'postsplit';
       return route.fulfill({
         headers: { ETag: '"person-7-r6"', 'X-New-Person-ETag': '"person-19-r1"' },
