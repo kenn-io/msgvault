@@ -77,41 +77,55 @@ for (const width of [1280, 420]) {
         canonical_state: { query, search_mode: 'full_text' },
         created_at: row.occurred_at, updated_at: row.occurred_at
       }] } }));
-      await selectWorkspace(page, 'Saved views');
-      const view = page.locator('.view-list article').filter({ hasText: 'Long archive search' });
+      await page.reload();
+      const opener = page.getByRole('button', { name: 'Open navigation' });
+      if (await opener.isVisible()) await opener.click();
+      const view = page.locator('.saved-view').filter({ hasText: 'Long archive search' });
       await expect(view).toBeVisible();
-      for (const name of ['Open', 'Edit', 'Delete']) {
-        const action = view.getByRole('button', { name: `${name} Long archive search`, exact: true });
+      const open = view.getByRole('button', { name: 'Long archive search', exact: true });
+      await expect(open).toBeInViewport({ ratio: 1 });
+      await open.click({ trial: true });
+      await view.hover();
+      await view.getByRole('button', { name: 'Long archive search actions', exact: true }).click();
+      for (const name of ['Rename', 'Edit description…', 'Delete']) {
+        const action = page.getByRole('menuitem', { name, exact: true });
         await expect(action).toBeInViewport({ ratio: 1 });
         await action.click({ trial: true });
       }
-      const label = view.locator('.summary .kit-chip__label').filter({ hasText: query });
+      await page.keyboard.press('Escape');
+      if (await opener.isVisible()) await opener.click();
+      await open.click();
+      const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
+      await expect(label).toBeVisible();
       expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
     });
   });
 }
 
-test('a long saved view list keeps every row at its full height and scrolls', async ({ page }) => {
+test('a long sidebar saved view list keeps every row at its full height and scrolls', async ({ page }) => {
   const description = 'Synthetic description that wraps across several lines of the saved view row. '.repeat(4).trim();
-  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 12 }, (_, index) => ({
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 40 }, (_, index) => ({
     id: index + 1, name: `Saved view ${index + 1}`, description, schema_version: 1, revision: 1,
-    canonical_state: { filters: [{ field: 'source', operator: 'eq', values: ['1'] }], grouping: ['year'], presentation: 'table' },
+    canonical_state: { filters: [{ field: 'source', operator: 'eq', values: ['1'] }], grouping: ['year'], presentation: index < 20 ? 'table' : 'files' },
     created_at: row.occurred_at, updated_at: row.occurred_at
   })) } }));
-  await selectWorkspace(page, 'Saved views');
-  const views = page.locator('.view-list article');
-  await expect(views).toHaveCount(12);
+  await page.reload();
+  const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+  const views = sidebar.locator('.saved-view');
+  await expect(views).toHaveCount(40);
   const rows = await views.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
     return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
   }));
   for (const [index, current] of rows.entries()) {
     expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
+    expect(current.bottom - current.top, `row ${index + 1} is squashed`).toBeGreaterThanOrEqual(28);
     if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
   }
-  const last = page.getByRole('button', { name: 'Open Saved view 12', exact: true });
+  const last = sidebar.getByRole('button', { name: 'Saved view 40', exact: true });
   await last.scrollIntoViewIfNeeded();
   await expect(last).toBeInViewport({ ratio: 1 });
+  expect(await sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 });
 
 test('save-view dialog shares header and field insets', async ({ page }) => {

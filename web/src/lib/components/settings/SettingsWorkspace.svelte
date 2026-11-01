@@ -184,15 +184,6 @@
         if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
       })
       .catch(() => { if (!controller.signal.aborted) visualStatus = undefined; });
-    void generatedGetOperationStatus({ ...client, signal: controller.signal })
-      .then(({ data, response }) => {
-        if (controller.signal.aborted) return;
-        lanes = response.ok ? data?.lanes : undefined;
-        statusSettled = true;
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
-      });
     return () => controller.abort();
   });
 
