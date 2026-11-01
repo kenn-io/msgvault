@@ -25,9 +25,6 @@ type objectMetadata struct {
 }
 
 func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge) error {
-	if !safeObjectID(obj.ID) || !safeObjectID(root) {
-		return errors.New("invalid Facebook object identity")
-	}
 	if obj.Parent != nil && obj.Parent.ID != "" {
 		if parent == "" {
 			return errors.New("Facebook root post cannot have a parent")
@@ -92,16 +89,18 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		if rootMeta.Version != objectMetadataVersion {
 			return errors.New("unsupported Facebook root metadata version")
 		}
-		saved, err := r.imp.store.GetMessageMetadataContext(ctx, parentRow.ID)
-		if err != nil {
-			return err
-		}
-		var parentMeta objectMetadata
-		if !saved.Valid || json.Unmarshal([]byte(saved.String), &parentMeta) != nil || parentMeta.AppID != r.app || parentMeta.PageID != r.page || parentMeta.PostID != root {
-			return errors.New("Facebook parent belongs to a different conversation")
-		}
-		if parentMeta.Version != objectMetadataVersion {
-			return errors.New("unsupported Facebook parent metadata version")
+		if parent != root {
+			saved, err := r.imp.store.GetMessageMetadataContext(ctx, parentRow.ID)
+			if err != nil {
+				return err
+			}
+			var parentMeta objectMetadata
+			if !saved.Valid || json.Unmarshal([]byte(saved.String), &parentMeta) != nil || parentMeta.AppID != r.app || parentMeta.PageID != r.page || parentMeta.PostID != root {
+				return errors.New("Facebook parent belongs to a different conversation")
+			}
+			if parentMeta.Version != objectMetadataVersion {
+				return errors.New("unsupported Facebook parent metadata version")
+			}
 		}
 		reply = sql.NullInt64{Int64: parentRow.ID, Valid: true}
 	}

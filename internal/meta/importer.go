@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -135,7 +136,9 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			return
 		}
 		if retErr != nil {
-			checkpoint.ErrorsCount = 1
+			if jobctx.ErrorAfterYield(ctx, retErr) != nil {
+				checkpoint.ErrorsCount = 1
+			}
 			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, checkpoint))
 		} else if sum.Partial {
 			retErr = imp.store.PauseSyncWithCheckpoint(syncID, checkpoint)
@@ -164,14 +167,15 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			}
 		}
 	}
-	if len(errs) > 0 {
+	phaseErr := errors.Join(errs...)
+	if jobctx.ErrorAfterYield(ctx, phaseErr) != nil {
 		for _, edge := range postEdges {
 			if state.Phases[edge].Done {
 				state.Phases[edge].Rescan = true
 			}
 		}
 	}
-	return sum, errors.Join(errs...)
+	return sum, phaseErr
 }
 
 func (r *importRun) checkpoint() (*store.Checkpoint, error) {

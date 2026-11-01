@@ -1,8 +1,10 @@
 package meta
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -265,13 +268,115 @@ func TestImportFailureKeepsCheckpoint(t *testing.T) {
 func TestAdPermissionFailureDoesNotStarveOrganic(t *testing.T) {
 	st, f, imp, src := setupImport(t)
 	f.denied["100/ads_posts"] = true
+	f.denied["601/comments"] = true
+	f.posts = append(f.posts, Object{ID: "100_900"}, Object{ID: "100_901"})
 	for i := 1; i <= 3; i++ {
-		id := fmt.Sprint(600 + i)
-		f.comments["100_200"] = append(f.comments["100_200"], *comment(id, "100_200", "new organic"))
+		f.comments["100_200"] = append(f.comments["100_200"], *comment(fmt.Sprint(600+i), "100_200", "new organic"))
+	}
+	// Repeated provider errors must retain the unfinished multi-page organic
+	// response and nested traversal, while completed independent phases rescan.
+	for range 2 {
 		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-		require.Error(t, err)
+		require.ErrorContains(t, err, "Facebook ads_posts")
 		assert.True(t, sum.Partial)
-		message(t, st, src.ID, id)
+		checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
+		require.NoError(t, err)
+		var state syncState
+		require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+		organic := state.Phases[Posts]
+		assert.False(t, organic.Done)
+		assert.False(t, organic.Rescan)
+		assert.Equal(t, "2", organic.After)
+		require.Len(t, organic.Posts, 1)
+		assert.Equal(t, "100_900", organic.Posts[0].ID)
+		require.Len(t, organic.Stack, 2)
+		assert.Equal(t, "601", organic.Stack[1].Parent)
+		assert.Equal(t, "2", organic.Stack[0].Next)
+		require.Len(t, organic.Stack[0].Pending, 1)
+		assert.Equal(t, "602", organic.Stack[0].Pending[0].ID)
+	}
+	delete(f.denied, "601/comments")
+	for _, target := range []string{"100_901", "604"} {
+		if target == "604" {
+			f.comments["100_200"] = append(f.comments["100_200"], *comment(target, "100_200", "late comment on old organic root"))
+		}
+		foundDuringDenial := false
+		for range 12 {
+			before := f.calls
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
+			assert.LessOrEqual(t, f.calls-before, 4)
+			assert.True(t, sum.Partial)
+			if err != nil {
+				require.ErrorContains(t, err, "Facebook ads_posts")
+			}
+			ids, readErr := st.MessageExistsBatch(src.ID, []string{target})
+			require.NoError(t, readErr)
+			if ids[target] != 0 && err != nil {
+				foundDuringDenial = true
+				break
+			}
+		}
+		require.True(t, foundDuringDenial, "bounded organic progress must reach %s despite ongoing ad denial", target)
+	}
+	assert.Equal(t, message(t, st, src.ID, "100_200").ID, message(t, st, src.ID, "604").ReplyToMessageID.Int64)
+}
+
+type yieldingAPI struct {
+	API
+	cancel context.CancelCauseFunc
+}
+
+func (a yieldingAPI) Posts(ctx context.Context, page string, edge PostEdge, after string) (ObjectPage, error) {
+	result, err := a.API.Posts(ctx, page, edge, after)
+	if edge == VisitorPosts {
+		a.cancel(jobctx.ErrYieldedToWaiter)
+		err = errors.Join(err, ctx.Err())
+	}
+	return result, err
+}
+
+func TestImportSchedulerYieldHandoff(t *testing.T) {
+	for _, outcome := range []string{"pure yield", "yield joined with provider failure"} {
+		t.Run(outcome, func(t *testing.T) {
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "archived before handoff")}
+			providerFailure := outcome != "pure yield"
+			f.denied["100/visitor_posts"] = providerFailure
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			base := imp.api
+			imp.api = yieldingAPI{API: base, cancel: cancel}
+			sum, err := imp.Import(ctx, "9", "100", ImportOptions{})
+			require.ErrorIs(t, err, context.Canceled)
+			assert.True(t, sum.Partial)
+			run, readErr := st.GetLatestCheckpointedSync(src.ID)
+			require.NoError(t, readErr)
+			var state syncState
+			require.NoError(t, json.Unmarshal([]byte(run.CursorBefore.String), &state))
+			assert.True(t, state.Phases[Posts].Done)
+			if providerFailure {
+				var providerErr *APIError
+				require.ErrorAs(t, jobctx.ErrorAfterYield(ctx, err), &providerErr)
+				assert.Equal(t, http.StatusForbidden, providerErr.Status)
+				assert.Equal(t, store.SyncStatusFailed, run.Status)
+				assert.Positive(t, run.ErrorsCount)
+				assert.Contains(t, run.ErrorMessage.String, "HTTP 403")
+				return
+			}
+			assert.NoError(t, jobctx.ErrorAfterYield(ctx, err))
+			assert.Equal(t, store.SyncStatusCancelled, run.Status)
+			assert.Zero(t, run.ErrorsCount)
+			assert.Empty(t, run.ErrorMessage.String)
+			assert.False(t, state.Phases[Posts].Rescan)
+			archived := message(t, st, src.ID, "100_201")
+			reads := f.freshCommentReads
+			imp.api = base
+			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(t, err)
+			assert.False(t, sum.Partial)
+			assert.Equal(t, reads, f.freshCommentReads, "handoff must resume without rescanning completed organic history")
+			assert.Equal(t, archived.ID, message(t, st, src.ID, "100_201").ID)
+		})
 	}
 }
 
