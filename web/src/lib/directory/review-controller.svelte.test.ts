@@ -426,12 +426,13 @@ describe('DirectoryReviewController', () => {
 
     controller.setDecisionDraft(17, 'Review both profiles');
     await controller.queueDecision(controller.rows[0]!, 'accept');
-    await controller.loadNextPage();
+    const navigation = controller.loadNextPage();
     const decision = controller.settleDecision();
     await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
     decisionResponse.resolve(Response.json(conflict, { status: 409 }));
 
     await expect(decision).resolves.toEqual({ ok: false, kind: 'merge_required', conflict });
+    await navigation;
     expect(controller.offset).toBe(10);
     expect(controller.mergeRequired?.candidateID).toBe(17);
     await controller.setIdentityState('accepted');
@@ -640,5 +641,59 @@ it('returns to the first page when deciding the last later-page row empties that
     expect(controller.offset).toBe(0);
     expect(controller.rows).toHaveLength(10);
     expect(controller.hasNextPage).toBe(false);
+  } finally { controller.destroy(); }
+});
+
+it('settles a queued decision before an active invalidation replaces its page', async () => {
+  const refresh = deferredResponse();
+  let reads = 0;
+  const writes: Request[] = [];
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = requestOf(input);
+    if (request.method === 'POST') { writes.push(request); return Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }); }
+    if (++reads === 2) return refresh.promise;
+    return page([candidate(1)]);
+  }));
+  try {
+    await controller.loadIdentityPage();
+    await controller.queueDecision(controller.rows[0]!, 'reject');
+    const invalidation = controller.invalidate(true);
+    const expiry = controller.settleDecision();
+    await vi.waitFor(() => expect(reads).toBe(2));
+    refresh.resolve(page([candidate(1)]));
+    await Promise.all([invalidation, expiry]);
+    expect(writes).toHaveLength(1);
+    expect(controller.hidden.has(1)).toBe(false);
+  } finally { controller.destroy(); }
+});
+
+it.each(['next', 'previous', 'retry'] as const)('keeps the %s page destination after settling its queued decision', async direction => {
+  const decision = deferredResponse(), destination = deferredResponse();
+  const start = direction === 'previous' ? 10 : 0;
+  const target = direction === 'previous' ? 0 : 10;
+  let moving = false, decided = false, posted = false, destinationRead = false;
+  const rows = Array.from({ length: 11 }, (_, index) => candidate(start + index + 1));
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = requestOf(input);
+    if (request.method === 'POST') { posted = true; const response = await decision.promise; decided = true; return response; }
+    const offset = Number(new URL(request.url).searchParams.get('offset'));
+    if (!moving && offset === target && direction === 'retry') return Response.json({ message: 'Queue unavailable' }, { status: 503 });
+    if (moving && offset === target) { destinationRead = true; return destination.promise; }
+    return page(decided ? rows.slice(1) : rows, offset);
+  }));
+  try {
+    await controller.loadIdentityPage(start);
+    if (direction === 'retry') await controller.loadNextPage();
+    await controller.queueDecision(controller.rows[0]!, 'reject');
+    moving = true;
+    const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'previous' ? controller.loadPreviousPage() : controller.retryPage();
+    await vi.waitFor(() => expect(posted).toBe(true));
+    decision.resolve(Response.json({ candidate: candidate(start + 1, 'rejected'), cache_state: 'ready' }));
+    await vi.waitFor(() => expect(controller.pendingDecisions.size).toBe(0));
+    await vi.waitFor(() => expect(destinationRead).toBe(true));
+    destination.resolve(page([candidate(101)], target));
+    await navigation;
+    expect(controller.offset).toBe(target);
+    expect(controller.rows.map(row => row.id)).toEqual([101]);
   } finally { controller.destroy(); }
 });
