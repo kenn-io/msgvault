@@ -172,12 +172,12 @@
       .then(({ data, response }) => {
         if (!controller.signal.aborted) embeddingStatus = response.ok ? data : undefined;
       })
-      .catch(() => undefined);
+      .catch(() => { if (!controller.signal.aborted) embeddingStatus = undefined; });
     void generatedGetVisualAttachmentStatus({ ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
       })
-      .catch(() => undefined);
+      .catch(() => { if (!controller.signal.aborted) visualStatus = undefined; });
     void generatedGetOperationStatus({ ...client, signal: controller.signal })
       .then(({ data, response }) => {
         if (controller.signal.aborted) return;
