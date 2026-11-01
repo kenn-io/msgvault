@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -129,4 +130,22 @@ func TestLocalEmbeddingRuntimeNeedsSetup(t *testing.T) {
 	_, err := resolveLocalVectorConfig(t.Context(), cfg)
 	require.ErrorContains(t, err, "msgvault setup providers --local-embeddings")
 	assert.NotContains(t, err.Error(), "provide Confirm")
+}
+
+func TestLocalEmbeddingRuntimeInstallError(t *testing.T) {
+	dir := t.TempDir()
+	// Discovery needs no install lock. A directory in its place prevents installation.
+	lockPath, err := (daemon.RuntimeStore{Dir: dir, Prefix: "kit-embed-install"}).LockPath()
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(lockPath, 0o700))
+	original := localEmbeddingsDir
+	localEmbeddingsDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { localEmbeddingsDir = original })
+	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true, Model: "nomic-embed-text", Dimension: 768}}
+	_, err = resolveLocalVectorConfig(t.Context(), cfg)
+	require.ErrorContains(t, err, "install local embeddings")
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	assert.Equal(t, lockPath, pathErr.Path)
+	assert.NotContains(t, err.Error(), "msgvault setup providers")
 }

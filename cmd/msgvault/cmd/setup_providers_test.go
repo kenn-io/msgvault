@@ -1741,6 +1741,136 @@ func TestSetupProvidersExplicitLocalSwitch(t *testing.T) {
 	}
 }
 
+func TestSetupProvidersLocalSwitchDocumentRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint, model string
+		local, fail           bool
+		wantRecovery          bool
+	}{
+		{name: "Ollama switch", endpoint: "http://127.0.0.1:11434/v1", wantRecovery: true},
+		{name: "different model", endpoint: "http://127.0.0.1:11434/v1", model: "other-model", wantRecovery: true},
+		{name: "same local identity", local: true},
+		{name: "configured local identity", endpoint: "http://local-embeddings.invalid/v1"},
+		{name: "failed switch", endpoint: "http://127.0.0.1:11434/v1", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			if tc.model == "" {
+				tc.model = "nomic-embed-text"
+			}
+			content := setupProvidersMinimalConfig + fmt.Sprintf(`
+[vector]
+enabled = true
+[vector.embeddings]
+endpoint = %q
+local_only = %t
+model = %q
+dimension = 768
+[vector.people]
+enabled = true
+retention_posture = "declared"
+training_posture = "declared"
+[attachments.documents]
+enabled = true
+[attachments.documents.index.embeddings]
+enabled = true
+`, tc.endpoint, tc.local, tc.model)
+			fixture := newSetupProvidersFixture(t, content)
+			deps := fixture.deps(t)
+			deps.daemonAlive = func(context.Context, *config.Config) bool { return true }
+			if tc.fail {
+				deps.localInstall = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
+					return embedlocal.Installation{}, errors.New("installation failed")
+				}
+			}
+			command := newSetupProvidersCommand(deps)
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(io.Discard)
+			command.SetArgs([]string{"--local-embeddings", "--yes", "--json"})
+			require.NoError(command.ExecuteContext(t.Context()), output.String())
+			var result setupProvidersOutput
+			require.NoError(json.Unmarshal(output.Bytes(), &result))
+			for _, step := range []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault documents vectors build"} {
+				if tc.wantRecovery {
+					assert.Contains(result.FollowUps, step)
+				} else {
+					assert.NotContains(result.FollowUps, step)
+				}
+			}
+			if result.Applied {
+				require.NotEmpty(result.FollowUps)
+				assert.Equal("msgvault daemon restart", result.FollowUps[0])
+			}
+			if tc.fail {
+				assert.Equal(laneStateOn, findLane(t, result.Report, laneTextSearch).State)
+			}
+		})
+	}
+}
+
+func TestSetupProvidersDeclinedLocalSwitchKeepsSavedProvider(t *testing.T) {
+	for _, jsonOutput := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
+[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:11434/v1"
+model = "nomic-embed-text"
+dimension = 768
+[vector.people]
+enabled = true
+retention_posture = "declared"
+training_posture = "declared"
+[attachments.documents]
+enabled = true
+[attachments.documents.index.embeddings]
+enabled = true
+`)
+			fixture.tty = true
+			before, err := os.ReadFile(fixture.path)
+			require.NoError(err)
+			deps := fixture.deps(t)
+			deps.localInstall = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+				approved, err := opts.Confirm(ctx, 295000000)
+				require.False(approved)
+				if err != nil {
+					return embedlocal.Installation{}, fmt.Errorf("confirm download: %w", err)
+				}
+				return embedlocal.Installation{}, errors.New("download declined")
+			}
+			command := newSetupProvidersCommand(deps)
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(io.Discard)
+			command.SetIn(strings.NewReader("no\n"))
+			command.SetArgs([]string{"--local-embeddings", fmt.Sprintf("--json=%t", jsonOutput)})
+			require.NoError(command.ExecuteContext(t.Context()), output.String())
+			after, err := os.ReadFile(fixture.path)
+			require.NoError(err)
+			assert.Equal(string(before), string(after))
+			if jsonOutput {
+				var result setupProvidersOutput
+				require.NoError(json.Unmarshal(output.Bytes(), &result))
+				assert.Equal(laneStateOn, findLane(t, result.Report, laneTextSearch).State)
+				assert.False(result.Applied)
+				assert.Equal([]string{"msgvault setup providers --local-embeddings"}, result.FollowUps)
+				for _, lane := range result.Plan {
+					if lane.Lane == laneTextSearch {
+						assert.Equal(planActionPending, lane.Action)
+						assert.Contains(lane.Reason, "download needs confirmation")
+					}
+				}
+			} else {
+				assert.Contains(output.String(), "Download? [y/N]:")
+				assert.NotContains(output.String(), "msgvault documents vectors build")
+			}
+		})
+	}
+}
+
 func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
 	for _, args := range [][]string{nil, {"--local-embeddings"}} {
 		t.Run(fmt.Sprint(args), func(t *testing.T) {

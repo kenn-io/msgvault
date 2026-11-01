@@ -228,6 +228,8 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 
 var localEmbeddingsDir = embedlocal.DefaultDir
 
+var errLocalEmbeddingDownloadRequired = errors.New("local embedding download required")
+
 // resolveLocalVectorConfig resolves transport without changing message identity.
 // Only setup can approve downloads; runtime reuses an installed server.
 func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Config, error) {
@@ -240,9 +242,14 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 	}
 	endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
 	if errors.Is(err, embedlocal.ErrNotFound) {
-		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir})
-		if installErr != nil {
+		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(context.Context, int64) (bool, error) {
+			return false, errLocalEmbeddingDownloadRequired
+		}})
+		if errors.Is(installErr, errLocalEmbeddingDownloadRequired) {
 			return vector.Config{}, errors.New("local embeddings need setup: run msgvault setup providers --local-embeddings")
+		}
+		if installErr != nil {
+			return vector.Config{}, fmt.Errorf("install local embeddings: %w", installErr)
 		}
 		endpoint, err = embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
 	}
@@ -250,8 +257,5 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 		return vector.Config{}, fmt.Errorf("resolve local embeddings: %w", err)
 	}
 	cfg.Embeddings.Endpoint = endpoint
-	if err := cfg.Validate(); err != nil {
-		return vector.Config{}, err
-	}
 	return cfg, nil
 }

@@ -25,6 +25,8 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/vector"
+	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 )
 
 const (
@@ -600,12 +602,26 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			values["document_prefix"], values["query_prefix"] = embeddings.DocumentPrefix, embeddings.QueryPrefix
 			values["max_input_chars"] = embeddings.MaxInputChars
 		}
+		if localOnly && loaded.Attachments.Documents.Enabled && loaded.Attachments.Documents.Index.Embeddings.Enabled {
+			desired := loaded.Vector
+			if !embeddings.LocalCompatible() {
+				desired.Embeddings = vector.EmbeddingsConfig{APIFormat: vector.APIFormatOpenAI, Model: lane.Model, Dimension: setupOllamaTextDim,
+					DocumentPrefix: setupOllamaDocPrefix, QueryPrefix: setupOllamaQueryPrefix, MaxInputChars: setupOllamaMaxInput}
+			}
+			desired.Embeddings.LocalOnly, desired.Embeddings.Endpoint = true, ""
+			before, beforeErr := vectordocument.Fingerprint("", loaded.Vector)
+			after, afterErr := vectordocument.Fingerprint("", desired)
+			if beforeErr == nil && afterErr == nil && before != after {
+				lane.next = []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes", "msgvault documents vectors build"}
+			}
+		}
 		lane.edits = append([]config.TableEdit{vectorEdit, {Path: []string{tomlTableVector, "embeddings"}, Values: values}}, setupScheduleEdits(detection.configKeys, "embed")...)
 	}
-	lane.next = []string{"msgvault embeddings build --full-rebuild --yes"}
+	build := "msgvault embeddings build --full-rebuild --yes"
 	if loaded.Vector.Enabled && embeddings.LocalCompatible() && embeddings.Model == lane.Model {
-		lane.next = []string{"msgvault embeddings build --yes"}
+		build = "msgvault embeddings build --yes"
 	}
+	lane.next = append([]string{build}, lane.next...)
 	return lane
 }
 
@@ -1274,7 +1290,7 @@ func writeSetupProvidersResult(
 	}
 	report := buildLaneReport(loaded, env)
 	for _, lane := range plan.Lanes {
-		if lane.local && lane.Action == planActionPending {
+		if lane.local && lane.Action == planActionPending && !loaded.Vector.Enabled {
 			for i := range report.Lanes {
 				if report.Lanes[i].Lane == lane.Lane {
 					report.Lanes[i].State, report.Lanes[i].Reason, report.Lanes[i].Next = laneStatePending, lane.Reason, lane.next
