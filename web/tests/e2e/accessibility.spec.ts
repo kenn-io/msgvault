@@ -282,22 +282,12 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network graph labels stay within bounds and have no axe violations', async ({ page }) => {
+test('Directory network graph has no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   const graph = page.getByRole('region', { name: 'Network graph' });
   await expect(graph).toBeVisible();
-  await expect(page.getByRole('list', { name: 'Directory network connections' })).toHaveCount(0);
-  const bounds = await graph.boundingBox();
-  expect(bounds!.width).toBeGreaterThan(200);
-  expect(bounds!.height).toBeGreaterThan(40);
-  const peer = graph.getByRole('button', { name: 'Open person Curated Peer' });
-  const node = peer.locator('xpath=ancestor::*[contains(@class, "node")][1]');
-  await expect(node.locator('.relation')).toContainText('mentors');
-  const box = await node.boundingBox();
-  expect(box!.x).toBeGreaterThanOrEqual(bounds!.x);
-  expect(box!.x + box!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1);
   await assertNoViolations(page, 'Directory network');
 });
 

@@ -1,8 +1,10 @@
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
+import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+import type { AttributeDefinition } from '../../api/generated/models';
 
 const when = '2026-08-01T00:00:00Z';
 const currentEnvelope = { ordinal: 0, source: 'user', active_from: when, created_at: when, updated_at: when, vcard: {} };
@@ -12,6 +14,56 @@ function person() {
 }
 
 describe('ProfileHistoryDialog', () => {
+  it.each(['attributes', 'definitions'])('reloads custom history on open and retries failed %s without hiding profile history', async (failedSection) => {
+    let failing = true;
+    const requests: URL[] = [];
+    const definition: AttributeDefinition = {
+      id: 8, universal_id: '00000000-0000-4000-8000-000000000008', object_type: 'person', slug: 'note', label: 'Note',
+      value_type: 'text', field_type: 'textarea', cardinality: 'single', display_order: 0, is_required: false,
+      ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_searchable: false,
+      is_sensitive: false, is_audited: true, is_deletable: true, history_exempt: false, is_active: true,
+      revision: 1, created_at: when, updated_at: when,
+    };
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const url = new URL((input instanceof Request ? input : new Request(input)).url);
+      requests.push(url);
+      if (url.pathname.endsWith('/merges')) return Response.json({ merges: [] });
+      if (url.pathname === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
+      if (url.pathname.endsWith('/profile')) return Response.json({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"profile-7-r3"' } });
+      if (url.pathname.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
+      if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: [{
+        person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { ...currentEnvelope, id: 2 },
+      }] });
+      if (url.pathname.endsWith('/attributes')) {
+        expect(url.searchParams.get('history')).toBe('true');
+        if (failing && failedSection === 'attributes') return Response.json({ message: 'attributes unavailable' }, { status: 503 });
+        return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [{
+          id: 9, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Earlier note' },
+          source: 'user', active_from: when, active_until: '2026-08-02T00:00:00Z', created_at: when,
+        }] }] });
+      }
+      if (url.pathname.endsWith('/attribute-definitions')) {
+        if (failing && failedSection === 'definitions') return Response.json({ message: 'definitions unavailable' }, { status: 503 });
+        return Response.json({ definitions: [definition] });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const controller = new DirectoryProfileController(client, 7, { person: person(), etags: {}, errors: { attributes: 'initial request failed' } });
+    const props = { client, controller, personID: 7, onClose: vi.fn() };
+    const dialog = render(ProfileHistoryDialog, props);
+    expect((await screen.findByRole('alert')).textContent).toBe(`${failedSection} unavailable`);
+    expect(await screen.findByText('Current Name')).toBeDefined();
+    failing = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry attribute history' }));
+    expect(await screen.findByText('Earlier note')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    await dialog.unmount();
+    render(ProfileHistoryDialog, props);
+    expect(await screen.findByText('Current Name')).toBeDefined();
+    expect(requests.filter((url) => url.pathname.endsWith('/attributes'))).toHaveLength(3);
+    expect(requests.filter((url) => url.pathname.endsWith('/attribute-definitions'))).toHaveLength(3);
+  });
+
   it('retains current structured provenance alongside superseded rows and observations', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {

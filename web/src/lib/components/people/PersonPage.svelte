@@ -161,7 +161,7 @@
   .calendar { width: 100%; max-width: 960px; margin-inline: auto; padding: var(--pane-pad-y) var(--page-gutter); box-sizing: border-box; }
   .tabs { padding: var(--space-3) var(--page-gutter); border-bottom: 1px solid var(--border-muted); }
   .files { display: flex; min-height: 0; flex: 1; padding: var(--pane-pad-y) var(--page-gutter) var(--page-gutter); }
-  .details { display: flex; flex-direction: column; gap: var(--space-7); padding: var(--pane-pad-y) var(--page-gutter) var(--space-8); }
+  .details:not([hidden]) { display: flex; flex-direction: column; gap: var(--space-7); padding: var(--pane-pad-y) var(--page-gutter) var(--space-8); }
   .details > :global(*) { max-width: 720px; }
   .summary-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--pane-pad-y) var(--page-gutter); }
 </style>

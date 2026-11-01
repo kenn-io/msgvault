@@ -28,6 +28,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   onMount(() => void load());
+  onMount(() => void controller?.reload());
   async function load(): Promise<void> {
     loading = true;
     error = null;
@@ -135,7 +136,10 @@
       {/each}
     {/if}
     {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
-    {#if controller}<AttributeSection {controller} historyOnly />{/if}
+    {#if controller?.attributesError ?? controller?.definitionsError}
+      <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
+      <Button label="Retry attribute history" onclick={() => void controller?.reload()} />
+    {:else if controller}<AttributeSection {controller} historyOnly />{/if}
     <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} {onSplitCommitted} />
   </div>
   {#snippet footer()}

@@ -634,7 +634,8 @@ describe('DirectoryEntityController', () => {
       relationship_type_slug: 'knows'
     })).resolves.toMatchObject({ ok: true });
 
-    expect(includeEndedValues).toEqual(['true', 'true']);
+    await controller.refreshRelationships();
+    expect(includeEndedValues).toEqual(['true', 'true', 'true']);
     expect(controller.relationships).toEqual([createdView]);
     expect(controller.relationshipRecords.get(42)).toEqual(created);
     expect(controller.relationshipETags.get(42)).toBe('"relationship-42-r1"');

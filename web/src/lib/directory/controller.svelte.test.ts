@@ -299,6 +299,27 @@ describe('DirectoryController', () => {
     expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]);
   });
 
+  it('rereads relationships and network when reopening the selected person', async () => {
+    const requests: Request[] = [];
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return detailResponse(pathOf(request));
+    }));
+    const controller = new DirectoryController(client);
+    try {
+      await controller.loadSelection(7);
+      const firstEntity = controller.entity!;
+      await firstEntity.loadNetwork(1, false);
+      await controller.loadSelection(7);
+      expect(controller.entity).not.toBe(firstEntity);
+      await controller.entity!.loadNetwork(1, false);
+      for (const section of ['relationships', 'network']) {
+        expect(requests.filter(request => pathOf(request) === `/api/v1/people/7/${section}`)).toHaveLength(2);
+      }
+    } finally { controller.destroy(); }
+  });
+
   it('requests each person detail section once and leaves the network to the Network tab', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -453,7 +474,7 @@ describe('DirectoryController', () => {
     expect(directoryRead).toBe(2);
   });
 
-  it.each(['filtered', 'unfiltered', 'reload'])('reconciles Unicode category membership after add and close (%s)', async mode => {
+  function categoryHarness(filtered: boolean, failReconcile = false) {
     const commits: Array<Record<string, unknown>> = [];
     const directoryRequests: Request[] = [];
     let directoryRead = 0; let failed = false;
@@ -467,9 +488,9 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') {
         directoryRequests.push(request);
-        if (mode === 'reload' && directoryRead === 2 && !failed) { failed = true; return Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 }); }
+        if (failReconcile && directoryRead === 2 && !failed) { failed = true; return Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 }); }
         directoryRead += 1;
-        if (mode === 'unfiltered') return Response.json({ people: [directoryPerson(7)] });
+        if (!filtered) return Response.json({ people: [directoryPerson(7)] });
         if (directoryRead === 1) return Response.json({ people: [directoryPerson(8)], next_cursor: 'initial-page-2' });
         if (directoryRead === 2) return Response.json({ people: [directoryPerson(9)], next_cursor: 'initial-page-3' });
         if (directoryRead === 3) return Response.json({ people: [directoryPerson(7), directoryPerson(8)], next_cursor: 'added-page-2' });
@@ -490,35 +511,22 @@ describe('DirectoryController', () => {
       return detailResponse(path);
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
-    if (mode !== 'unfiltered') {
+    if (filtered) {
       controller.query = 'synthetic person';
       controller.contactState = 'active';
       controller.category = 'STRASSE';
       controller.organization = 'Example Org';
       controller.primaryChannel = 'email';
     }
+    return { controller, commits, directoryRequests, category };
+  }
+
+  it('reconciles filtered Unicode category membership after add and close', async () => {
+    const { controller, commits, directoryRequests, category } = categoryHarness(true);
     await controller.loadFirstPage();
-    if (mode !== 'unfiltered') await controller.loadNextPage();
+    await controller.loadNextPage();
     await controller.selectPerson(7);
-
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
-
-    if (mode === 'unfiltered') {
-      expect(controller.rows[0]?.categories).toEqual(['Straße']);
-      await controller.profile?.patchProfile({ categories: { supersede: [31] } });
-      expect(controller.rows[0]?.categories).toEqual([]);
-      expect(directoryRead).toBe(1);
-      return;
-    }
-    if (mode === 'reload') {
-      expect(controller.pageError).toBe('Directory reconciliation unavailable.');
-      await controller.reloadFirstPage();
-      expect(directoryRequests).toHaveLength(4);
-      expect(controller.pageError).toBeNull();
-      const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
-      expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic person', contact_state: 'active', category: 'STRASSE', organization: 'Example Org', primary_channel: 'email' });
-      return;
-    }
     expect(controller.rows.map((row) => row.id)).toEqual([7, 8, 9]);
     expect(controller.rows[0]?.categories).toEqual(['Straße']);
     expect(controller.cursor).toBe('added-page-3');
@@ -540,6 +548,31 @@ describe('DirectoryController', () => {
       expect(parameters.get('organization')).toBe('Example Org');
       expect(parameters.get('primary_channel')).toBe('email');
     }
+  });
+
+  it('updates unfiltered Unicode categories locally after add and close', async () => {
+    const { controller, directoryRequests } = categoryHarness(false);
+    await controller.loadFirstPage();
+    await controller.selectPerson(7);
+    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
+    expect(controller.rows[0]?.categories).toEqual(['Straße']);
+    await controller.profile?.patchProfile({ categories: { supersede: [31] } });
+    expect(controller.rows[0]?.categories).toEqual([]);
+    expect(directoryRequests).toHaveLength(1);
+  });
+
+  it('retains Directory filters when reloading after a failed reconciliation', async () => {
+    const { controller, directoryRequests } = categoryHarness(true, true);
+    await controller.loadFirstPage();
+    await controller.loadNextPage();
+    await controller.selectPerson(7);
+    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
+    expect(controller.pageError).toBe('Directory reconciliation unavailable.');
+    await controller.reloadFirstPage();
+    expect(directoryRequests).toHaveLength(4);
+    expect(controller.pageError).toBeNull();
+    const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
+    expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic person', contact_state: 'active', category: 'STRASSE', organization: 'Example Org', primary_channel: 'email' });
   });
 
   it('keeps the observed Directory channel after a preferred-channel set and clear', async () => {
