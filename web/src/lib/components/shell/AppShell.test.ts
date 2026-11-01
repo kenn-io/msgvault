@@ -144,8 +144,10 @@ describe('AppShell', () => {
   }
 
 
-  it.each([false, true])('continues deep Messages restoration after opening and closing Past runs with a later page pending, filtered=%s', async filtered => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ selectedRow: 'message:3', activeRow: 'message:1', scrollAnchor: { key: 'message:1', offset: 4 } }))}`);
+  it.each([
+    { filtered: false, direct: false }, { filtered: true, direct: false }, { filtered: false, direct: true }
+  ])('continues deep Messages restoration after closing Past runs with a later page pending, filtered=$filtered direct=$direct', async ({ filtered, direct }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ selectedRow: 'message:3', activeRow: 'message:1', scrollAnchor: { key: 'message:1', offset: 4 }, operationHistory: direct }))}`);
     let finishPage!: (response: Response) => void;
     const cursors: Array<string | undefined> = [];
     const client = createAPIClient(async input => {
@@ -168,11 +170,15 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client, state });
     try {
       await waitFor(() => expect(cursors).toEqual([undefined, 'page:1']));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Idle' }));
-      await fireEvent.click(await screen.findByRole('menuitem', { name: /^Past runs/ }));
+      if (!direct) {
+        await fireEvent.click(await screen.findByRole('button', { name: 'Sync status: Idle' }));
+        await fireEvent.click(await screen.findByRole('menuitem', { name: /^Past runs/ }));
+      }
       const dialog = await screen.findByRole('dialog', { name: 'Past runs' });
       if (filtered) await chooseSelectOption(within(dialog).getByRole('combobox', { name: /^Kind/ }), 'Source sync');
+      const closed = direct ? Promise.resolve() : new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      await closed;
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Past runs' })).toBeNull());
       expect(screen.queryByText('The selected entry is no longer available in this context.')).toBeNull();
       finishPage(Response.json(exploreResponse({ rows: [entry(2)], total_count: 3, next_cursor: 'page:2' })));
@@ -2203,7 +2209,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it.each(['reader next', 'Display columns', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
+  it.each(['reader next', 'Display without columns', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2240,11 +2246,9 @@ describe('AppShell', () => {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');
-      } else if (control === 'Display columns') {
-        expect(within(grid).queryByRole('columnheader', { name: 'Size' })).toBeNull();
+      } else if (control === 'Display without columns') {
         await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
-        await fireEvent.click(await screen.findByRole('menuitem', { name: 'Size' }));
-        expect(await within(grid).findByRole('columnheader', { name: 'Size' })).toBeDefined();
+        expect(screen.queryByRole('menuitem', { name: 'Size' })).toBeNull();
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });

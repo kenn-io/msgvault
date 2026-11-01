@@ -19,7 +19,7 @@
 
   interface Props {
     rows: EntryRow[];
-    selection: ExploreSelectionState;
+    selection?: ExploreSelectionState;
     columns?: ExploreColumn[];
     columnWidths?: Partial<Record<ExploreColumn, number>>;
     loading?: boolean;
@@ -185,15 +185,15 @@
   const activeRow = $derived(activeIndex >= 0 ? rows[activeIndex] : undefined);
   const orderedKeys = $derived(rows.map((row) => row.key));
   const allLoadedSelected = $derived(
-    orderedKeys.length > 0 && orderedKeys.every((key) => selection.isSelected(key))
+    orderedKeys.length > 0 && orderedKeys.every((key) => selection?.isSelected(key))
   );
   const someLoadedSelected = $derived(
-    orderedKeys.some((key) => selection.isSelected(key))
+    orderedKeys.some((key) => selection?.isSelected(key))
   );
-  const selectionMode = $derived(selection.mode === 'all_matching' || selection.count > 0);
+  const selectionMode = $derived(selection?.mode === 'all_matching' || (selection?.count ?? 0) > 0);
   const template = $derived(
     [
-      '32px',
+      ...(selection ? ['32px'] : []),
       ...visibleColumns.map((column) => {
         const configured = columnWidths[column];
         if (configured !== undefined) return `${configured}px`;
@@ -349,16 +349,16 @@
     }
     else if (event.key === 'PageDown') await moveTo(activeIndex + Math.max(1, Math.floor(viewport / height)));
     else if (event.key === 'PageUp') await moveTo(activeIndex - Math.max(1, Math.floor(viewport / height)));
-    else if (event.key === ' ' && activeRow) {
+    else if (event.key === ' ' && activeRow && selection) {
       selection.toggle(activeRow.key, activeIndex, rows.map((row) => row.key), event.shiftKey);
-    } else if (event.key.toLowerCase() === 'a') {
+    } else if (event.key.toLowerCase() === 'a' && selection) {
       const firstVisible = Math.max(0, Math.ceil(scrollTop / height));
       const lastVisible = Math.min(
         rows.length - 1,
         Math.ceil((scrollTop + viewport) / height) - 1
       );
       selection.selectVisible(rows.slice(firstVisible, lastVisible + 1).map((row) => row.key));
-    } else if (event.key === 'x') {
+    } else if (event.key === 'x' && selection) {
       selection.clear();
     } else if (event.key === 'Enter' && activeRow) {
       onOpen?.(activeRow);
@@ -393,8 +393,8 @@
   }
 
   function toggleLoadedSelection(): void {
-    if (allLoadedSelected) selection.clear();
-    else selection.selectVisible(orderedKeys);
+    if (allLoadedSelected) selection?.clear();
+    else selection?.selectVisible(orderedKeys);
   }
 </script>
 
@@ -405,7 +405,7 @@
     role="grid"
     aria-label="Messages results"
     aria-rowcount={accessibilityRowCount}
-    aria-colcount={visibleColumns.length + 1}
+    aria-colcount={visibleColumns.length + (selection ? 1 : 0)}
     aria-busy={loading || loadingMore}
     aria-activedescendant={activeRow ? rowId(activeRow) : undefined}
     class:selection-mode={selectionMode}
@@ -414,7 +414,7 @@
     onscroll={handleScroll}
   >
     <div class="table-header" bind:this={headerElement} role="row" style:grid-template-columns={template}>
-      <span role="columnheader" class="selection-header">
+      {#if selection}<span role="columnheader" class="selection-header">
         <SelectionCheckbox
           checked={allLoadedSelected}
           mixed={!allLoadedSelected && someLoadedSelected}
@@ -422,7 +422,7 @@
           inGrid
           onToggle={toggleLoadedSelection}
         />
-      </span>
+      </span>{/if}
       {#each visibleColumns as column (column)}
         <span
           role="columnheader"
@@ -471,7 +471,7 @@
               role="row"
               style:grid-template-columns={template}
             >
-              <span class="skeleton-cell selection-cell" role="gridcell"><i></i></span>
+              {#if selection}<span class="skeleton-cell selection-cell" role="gridcell"><i></i></span>{/if}
               {#each visibleColumns as column (column)}
                 <span class="skeleton-cell" role="gridcell"><i></i></span>
               {/each}
@@ -494,13 +494,13 @@
               <div
                 class="data-row"
                 class:data-row--active={index === activeIndex}
-                class:data-row--selected={selection.isSelected(row.key)}
+                class:data-row--selected={selection?.isSelected(row.key)}
                 class:data-row--inspected={inspectedKey === row.key}
                 id={rowId(row)}
                 data-row-key={row.key}
                 role="row"
                 aria-rowindex={index + 2}
-                aria-selected={selection.isSelected(row.key)}
+                aria-selected={selection?.isSelected(row.key)}
                 aria-current={inspectedKey === row.key ? 'true' : undefined}
                 style:grid-template-columns={template}
                 onpointerdown={() => {
@@ -510,7 +510,7 @@
                 }}
                 onclick={() => onOpen?.(row)}
               >
-                <span class="selection-cell" role="gridcell">
+                {#if selection}<span class="selection-cell" role="gridcell">
                   <SelectionCheckbox
                     checked={selection.isSelected(row.key)}
                     label={`${selection.isSelected(row.key) ? 'Unselect' : 'Select'} ${row.title || 'item'}`}
@@ -518,10 +518,10 @@
                     onToggle={(range) => {
                       activeKey = row.key;
                       onActiveKey?.(row.key);
-                      selection.toggle(row.key, index, orderedKeys, range);
+                      selection?.toggle(row.key, index, orderedKeys, range);
                     }}
                   />
-                </span>
+                </span>{/if}
                 {#each visibleColumns as column (column)}
                   <span class={`cell cell--${column}`} role="gridcell">
                     {#if column === 'kind'}
