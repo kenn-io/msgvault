@@ -93,6 +93,18 @@ describe('ContextBar chips', () => {
 });
 
 describe('ContextBar grouping picker', () => {
+  it('hides presentation and grouping choices for a locked filter', () => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()),
+      query: '', searchMode: 'full_text', filters: [], groupingChain: [],
+      lockedFilter: { dimension: 'participant', values: ['1'] },
+      countLabel: '', sort,
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    expect(screen.queryByRole('combobox', { name: /^Show as:/ })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Group by' })).toBeNull();
+  });
+
   it.each([
     [[], 'Group by'],
     [['participant'], 'Add grouping']

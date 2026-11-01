@@ -53,7 +53,6 @@
     isEnabled: () => true,
     predicate: requestPredicate,
     onPredicateChange: () => {
-      selection.clear();
       if (hasPredicate) exploreState.replaceTransient({ selectedRow: null, conversationAnchor: null });
       hasPredicate = true;
     },
@@ -90,7 +89,7 @@
   function focusGrid(): void { root?.querySelector<HTMLElement>('[role="grid"]')?.focus(); }
   function navigate(patch: Partial<ExploreURLState>): void {
     if (patch.workspace === 'settings') { onOpenSettings?.(); return; }
-    if (patch.workspace === 'files' || patch.presentation === 'files') { onOpenFiles(); return; }
+    if (patch.workspace === 'files') { onOpenFiles(); return; }
     if (patch.filters) { onClearPeriod(); onFiltersChange(patch.filters); }
     exploreState.commitNavigation(patch);
   }
