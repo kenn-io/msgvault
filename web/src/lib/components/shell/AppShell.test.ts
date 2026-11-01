@@ -1330,7 +1330,6 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
       if (path === '/api/v1/people/7/files/search') return Response.json({ files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {} });
       return Response.json(exploreResponse());
     });
@@ -1508,7 +1507,6 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
       if (path === '/api/v1/people/7/files/search') return Response.json({
         files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {}
       });
@@ -2077,7 +2075,6 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people/42/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/42/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/42/days') return Response.json({ person_id: 42, days: [], total_count: 0 });
       if (path === '/api/v1/people/42/files/search') return Response.json({
         files: [], total_count: 0, cache_revision: 'cache-person', search_provenance: {}
       });
@@ -2098,6 +2095,7 @@ describe('AppShell', () => {
       new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST'
     );
     expect(promotion).toBeDefined();
+    await expect(promotion!.clone().json()).resolves.toMatchObject({ participant_id: 11 });
     await screen.findByRole('button', { name: 'More actions' });
 
     rendered.unmount();
