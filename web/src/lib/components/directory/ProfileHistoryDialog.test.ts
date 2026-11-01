@@ -143,6 +143,33 @@ describe('ProfileHistoryDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
     expect(screen.getByRole('dialog', { name: 'History' })).toBeDefined();
   });
+
+  it('opening History preserves a conflicted profile draft', async () => {
+    const saved = person();
+    const structured = { person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] };
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'Profile changed elsewhere' }, { status: 409 });
+      if (path.endsWith('/profile/history')) return Response.json(structured);
+      if (path.endsWith('/profile')) return Response.json(structured, { headers: { ETag: '"profile-7-r4"' } });
+      if (path === '/api/v1/people/7') return Response.json({ ...saved, revision: 4 }, { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/merges')) return Response.json({ merges: [] });
+      return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown' });
+    });
+    const controller = new DirectoryProfileController(client, 7, { person: saved, structuredProfile: structured, etags: { structuredProfile: '"profile-7-r3"' }, errors: {} });
+    await controller.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
+    const draft = controller.draft, conflict = controller.conflict;
+    expect(conflict).not.toBeNull();
+    const view = render(ProfileHistoryDialog, { client, controller, personID: 7, onClose: vi.fn() });
+    try {
+      await waitFor(() => expect(controller.person?.revision).toBe(4));
+      expect(controller.draft).toBe(draft);
+      expect(controller.conflict).toBe(conflict);
+    } finally { view.unmount(); controller.destroy(); }
+  });
 });
 
 it('opening History preserves a conflicted profile draft', async () => {

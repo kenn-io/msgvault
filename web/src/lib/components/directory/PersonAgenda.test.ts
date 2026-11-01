@@ -599,6 +599,16 @@ describe('PersonAgenda', () => {
     const request = requests.find((candidate) => candidate.method === 'DELETE');
     expect(new URL(request!.url).pathname).toBe('/api/v1/people/7/agenda/one');
   });
+
+  it('reports that a bounded agenda has more open tasks', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      return Response.json({ project: 'msgvault', items: [item('one', 'Ask')], truncated: true });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    expect(await screen.findByText('More tasks are linked to this person.')).toBeDefined();
+  });
 });
 
 function item(ref: string, title: string) {
@@ -614,13 +624,3 @@ function item(ref: string, title: string) {
     state: 'open',
   };
 }
-
-it('reports that a bounded agenda has more open tasks', async () => {
-  const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-    const request = input instanceof Request ? input : new Request(input);
-    if (isStatus(request)) return readyStatus();
-    return Response.json({ project: 'msgvault', items: [item('one', 'Ask')], truncated: true });
-  }));
-  render(PersonAgenda, { client, personID: 7 });
-  expect(await screen.findByText('More tasks are linked to this person.')).toBeDefined();
-});
