@@ -10,6 +10,8 @@ All notable changes to msgvault, grouped by release.
 
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
+- People brings people, domains, and saved profile filters into one list. Person and domain pages share Messages and Files, with a daily Activity calendar; Details keeps identity actions and links to full Directory profiles. API schema 3.28.0 adds timezone-aware daily grouping and sent-only group counts.
+
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
 - Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.30.0 adds optional participant IDs to messages in conversation responses.
