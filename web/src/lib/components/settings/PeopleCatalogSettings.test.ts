@@ -3,10 +3,10 @@ import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
-it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete', async () => {
-  let created = true; let conflict = true;
+it.each(['edit', 'deactivate', 'conflict recovery', 'reactivate', 'delete'])('retains catalog %s', async operation => {
+  let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];
-  const definition = { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true };
+  const definition = { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: operation !== 'reactivate' && operation !== 'conflict recovery', is_sensitive: false, revision: 1, is_deletable: true };
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
@@ -18,42 +18,45 @@ it('retains catalog edit, deactivate, conflict recovery, reactivate, and delete'
       if (request.method === 'DELETE') { writes.push(request); created = false; return new Response(null, { status: 204 }); }
       if (request.method === 'PATCH') {
         writes.push(request.clone()); const patch = await request.json();
-        if (patch.is_active && conflict) { conflict = false; definition.revision = 3; definition.label = 'Concurrent color'; return Response.json({ message: 'Field changed elsewhere' }, { status: 409 }); }
+        if (patch.is_active && conflict) { conflict = false; definition.revision = 3; definition.label = 'Concurrent color'; return Response.json({ error: 'attribute_definition_revision_conflict', message: 'Field changed elsewhere' }, { status: 409 }); }
         Object.assign(definition, patch, { revision: definition.revision + 1 });
       }
       return Response.json(definition, { headers: { ETag: `"attribute-definition-41-r${definition.revision}"` } });
     }
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
-    if (path.endsWith('/organizations')) return Response.json({ organizations: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${path}`);
   });
   const catalog = render(PeopleCatalogSettings, { client });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Edit Favorite color' }));
-  await screen.findByRole('textbox', { name: 'Name' });
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('Text · inactive');
-  expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
-  await fireEvent.click(await screen.findByRole('button', { name: 'Edit Preferred color' }));
-  await screen.findByRole('textbox', { name: 'Name' });
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('Field changed elsewhere');
-  await fireEvent.click(screen.getByRole('button', { name: 'Reload field' }));
-  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Concurrent color'));
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByRole('button', { name: 'Edit Concurrent color' });
-  expect(writes[2]!.headers.get('If-Match')).toBe('"attribute-definition-41-r3"');
-  await expect(writes[2]!.clone().json()).resolves.toMatchObject({ is_active: true });
-  await fireEvent.click(screen.getByRole('button', { name: 'Edit Concurrent color' }));
-  await screen.findByRole('textbox', { name: 'Name' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
-  await screen.findByText('No custom fields yet');
-  expect(writes.at(-1)!.headers.get('If-Match')).toBe('"attribute-definition-41-r4"');
-  catalog.unmount();
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Favorite color' }));
+    await screen.findByRole('textbox', { name: 'Name' });
+    if (operation === 'delete') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
+      await screen.findByText('No custom fields yet');
+      expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
+      return;
+    }
+    if (operation === 'edit') await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
+    else await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
+    if (operation === 'conflict recovery') {
+      await screen.findByText('Field changed elsewhere');
+      await fireEvent.click(screen.getByRole('button', { name: 'Reload field' }));
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Concurrent color'));
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await screen.findByRole('button', { name: 'Edit Concurrent color' });
+      expect(writes[1]!.headers.get('If-Match')).toBe('"attribute-definition-41-r3"');
+      await expect(writes[1]!.clone().json()).resolves.toMatchObject({ is_active: true });
+    } else if (operation === 'deactivate') await screen.findByText('Text · inactive');
+    else {
+      await screen.findByRole('button', { name: operation === 'edit' ? 'Edit Preferred color' : 'Edit Favorite color' });
+      await expect(writes[0]!.clone().json()).resolves.toMatchObject(operation === 'edit' ? { label: 'Preferred color' } : { is_active: true });
+    }
+  } finally { catalog.unmount(); }
 });
 
 it('keeps Add disabled and resumes a field creation after its refresh fails', async () => {
@@ -70,7 +73,7 @@ it('keeps Add disabled and resumes a field creation after its refresh fails', as
       return Response.json({ definitions });
     }
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
-    if (path.endsWith('/organizations')) return Response.json({ organizations: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const view = render(PeopleCatalogSettings, { client });
