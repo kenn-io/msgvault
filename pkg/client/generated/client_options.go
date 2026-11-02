@@ -11078,6 +11078,182 @@ func (o *GetRelationshipTimelineRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// AddRestrictionRequestOptions is the options needed to make a request to AddRestriction.
+type AddRestrictionRequestOptions struct {
+	Body *AddRestrictionBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *AddRestrictionRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AddRestrictionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *AddRestrictionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AddRestrictionRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AddRestrictionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CheckRestrictionsRequestOptions is the options needed to make a request to CheckRestrictions.
+type CheckRestrictionsRequestOptions struct {
+	PathParams *CheckRestrictionsPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *CheckRestrictionsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CheckRestrictionsRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *CheckRestrictionsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CheckRestrictionsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CheckRestrictionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SetRestrictionTaintRequestOptions is the options needed to make a request to SetRestrictionTaint.
+type SetRestrictionTaintRequestOptions struct {
+	Body *SetRestrictionTaintBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SetRestrictionTaintRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetRestrictionTaintRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetRestrictionTaintRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetRestrictionTaintRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetRestrictionTaintRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RemoveRestrictionRequestOptions is the options needed to make a request to RemoveRestriction.
+type RemoveRestrictionRequestOptions struct {
+	PathParams *RemoveRestrictionPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *RemoveRestrictionRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemoveRestrictionRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemoveRestrictionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemoveRestrictionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemoveRestrictionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateSavedViewRequestOptions is the options needed to make a request to CreateSavedView.
 type CreateSavedViewRequestOptions struct {
 	Body *CreateSavedViewBody

@@ -316,6 +316,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchStatusResponse](apiV1, "getMediaSearchStatus", http.MethodGet, "/media/search/status", "Get recording transcript search configuration status", s.handleMediaSearchStatus)
 	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search recordings and attachments as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	s.registerTelemetryRoutes(apiV1)
+	s.registerRestrictionRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
 	s.registerContactRouteRoutes(apiV1)

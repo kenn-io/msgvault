@@ -32,6 +32,8 @@ func (s *Store) personHasUserOwnedStateTx(
 		WHERE id = ? AND (
 			EXISTS (SELECT 1 FROM person_tracking
 				WHERE person_id = persons.id)
+			OR EXISTS (SELECT 1 FROM agent_restrictions
+				WHERE person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM carddav_publications
 				WHERE person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM person_participants

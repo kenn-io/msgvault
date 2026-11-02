@@ -172,6 +172,7 @@ Maintenance and repair:
   repair-list-ids      Repair archived email List-Id values from raw MIME
   repair-message       Repair one Gmail message snapshot or audit stored Gmail MIME
   repair-senders       Restore missing email senders from archived MIME
+  restrict             Manage staged agent restriction rules
   schema-version       Print the binary's expected archive schema version
   unpack-attachments   Restore packed attachments to loose files
 

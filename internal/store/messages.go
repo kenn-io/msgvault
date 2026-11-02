@@ -2864,6 +2864,8 @@ func (s *Store) EnsureLabel(
 //   - Existing label found by source_label_id: updates name if renamed
 //   - Name conflict with different source_label_id: upserts, adopting
 //     the new source_label_id (handles deleted+recreated labels, imports)
+//   - Restricted name conflict with a new provider ID: preserves the old
+//     row and its history under an archive name, then creates a separate row
 func ensureLabelWith(
 	q querier,
 	sourceID int64,
@@ -2933,6 +2935,10 @@ func ensureLabelWith(
 	// Not found by source_label_id — upsert by name. Handles the case
 	// where a label with this name exists from a previous import or
 	// with a stale/NULL source_label_id.
+	// A restricted row must retain its provider identity and historical links.
+	if err := preserveReplacedRestrictedLabelName(q, sourceID, name); err != nil {
+		return 0, err
+	}
 	if systemRole != nil {
 		if _, err = q.Exec(`
 			INSERT INTO labels (source_id, source_label_id, name, label_type, system_role)
@@ -2977,6 +2983,24 @@ func preserveArchivedLabelName(q querier, sourceID int64, name string) error {
 	if err != nil {
 		return fmt.Errorf("find archived label name: %w", err)
 	}
+	return preserveLabelNameByID(q, sourceID, id)
+}
+
+func preserveReplacedRestrictedLabelName(q querier, sourceID int64, name string) error {
+	var id int64
+	err := q.QueryRow(`SELECT l.id FROM labels l
+ WHERE l.source_id = ? AND l.name = ?
+ AND EXISTS (SELECT 1 FROM agent_restrictions r WHERE r.label_id = l.id)`, sourceID, name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("find replaced restricted label: %w", err)
+	}
+	return preserveLabelNameByID(q, sourceID, id)
+}
+
+func preserveLabelNameByID(q querier, sourceID, id int64) error {
 	archiveName := fmt.Sprintf("msgvault-archive:%d:label:%d", sourceID, id)
 	for {
 		var used bool
@@ -3043,6 +3067,11 @@ func mergeLabelByName(
 		UPDATE message_labels SET label_id = ? WHERE label_id = ?
 	`, keepID, conflictID); err != nil {
 		return fmt.Errorf("reassign label associations: %w", err)
+	}
+	if _, err = q.Exec(`
+		UPDATE agent_restrictions SET label_id = ? WHERE label_id = ?
+	`, keepID, conflictID); err != nil {
+		return fmt.Errorf("reassign label restrictions: %w", err)
 	}
 	if _, err = q.Exec(`
 		DELETE FROM labels WHERE id = ?

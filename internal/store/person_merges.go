@@ -394,6 +394,11 @@ func (s *Store) mergePersonsOnce(
 			return fmt.Errorf("rebind absorbed person participants: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
+			`UPDATE agent_restrictions SET person_id = ? WHERE person_id = ?`,
+			survivor.ID, absorbed.ID); err != nil {
+			return fmt.Errorf("rebind absorbed person restrictions: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE carddav_resources SET person_id = ?, owns_display_name = FALSE WHERE person_id = ?`,
 			survivor.ID, absorbed.ID); err != nil {
 			return fmt.Errorf("rebind absorbed CardDAV resources: %w", err)

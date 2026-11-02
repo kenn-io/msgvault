@@ -250,6 +250,21 @@ func (a Address) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AgentRestriction struct {
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        int64     `json:"id"`
+	Kind      string    `json:"kind" validate:"required"`
+	LabelID   *int64    `json:"label_id,omitempty"`
+	Note      string    `json:"note" validate:"omitempty"`
+	PersonID  *int64    `json:"person_id,omitempty"`
+	Reveal    string    `json:"reveal" validate:"required"`
+	SourceID  *int64    `json:"source_id,omitempty"`
+}
+
+func (a AgentRestriction) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AgentTokenIssueRequest struct {
 	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
 	Label            string              `json:"label" validate:"required"`
@@ -14265,6 +14280,51 @@ func (r RemoveResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type RestrictionRequest struct {
+	Kind     string  `json:"kind" validate:"required"`
+	LabelID  *int64  `json:"label_id,omitempty"`
+	Note     *string `json:"note,omitzero"`
+	PersonID *int64  `json:"person_id,omitempty"`
+	Reveal   *string `json:"reveal,omitzero"`
+	SourceID *int64  `json:"source_id,omitempty"`
+}
+
+func (r RestrictionRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type RestrictionResponse struct {
+	Notice string             `json:"notice" validate:"required"`
+	Rules  []AgentRestriction `json:"rules" validate:"required"`
+	Staged bool               `json:"staged"`
+	Taint  bool               `json:"taint"`
+}
+
+func (r RestrictionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Notice, "required"); err != nil {
+		errors = errors.Append("Notice", err)
+	}
+	if err := typesValidator.Var(r.Rules, "required"); err != nil {
+		errors = errors.Append("Rules", err)
+	}
+	for i, item := range r.Rules {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rules[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type RestrictionTaintRequest struct {
+	Enabled bool `json:"enabled"`
 }
 
 type Result struct {

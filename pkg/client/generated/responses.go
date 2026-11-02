@@ -3463,6 +3463,56 @@ func (g *GetRelationshipTimelineErrorResponseJSON503) UnmarshalJSON(data []byte)
 
 type GetRelationshipTimelineErrorResponseJSONDefault = ErrorResponse
 
+type ListRestrictionsResponse = RestrictionResponse
+
+type ListRestrictionsErrorResponse = ErrorResponse
+
+type ListRestrictionsErrorResponseJSON = ErrorResponse
+
+type ListRestrictionsErrorResponseJSON503 = ErrorResponse
+
+type ListRestrictionsErrorResponseJSONDefault = ErrorResponse
+
+type AddRestrictionResponse = RestrictionResponse
+
+type AddRestrictionErrorResponse = ErrorResponse
+
+type AddRestrictionErrorResponseJSON = ErrorResponse
+
+type AddRestrictionErrorResponseJSON503 = ErrorResponse
+
+type AddRestrictionErrorResponseJSONDefault = ErrorResponse
+
+type CheckRestrictionsResponse = RestrictionResponse
+
+type CheckRestrictionsErrorResponse = ErrorResponse
+
+type CheckRestrictionsErrorResponseJSON = ErrorResponse
+
+type CheckRestrictionsErrorResponseJSON503 = ErrorResponse
+
+type CheckRestrictionsErrorResponseJSONDefault = ErrorResponse
+
+type SetRestrictionTaintResponse = RestrictionResponse
+
+type SetRestrictionTaintErrorResponse = ErrorResponse
+
+type SetRestrictionTaintErrorResponseJSON = ErrorResponse
+
+type SetRestrictionTaintErrorResponseJSON503 = ErrorResponse
+
+type SetRestrictionTaintErrorResponseJSONDefault = ErrorResponse
+
+type RemoveRestrictionResponse = RestrictionResponse
+
+type RemoveRestrictionErrorResponse = ErrorResponse
+
+type RemoveRestrictionErrorResponseJSON = ErrorResponse
+
+type RemoveRestrictionErrorResponseJSON503 = ErrorResponse
+
+type RemoveRestrictionErrorResponseJSONDefault = ErrorResponse
+
 type ListSavedViewsResponse = SavedViewsResponse
 
 type ListSavedViewsErrorResponse = ErrorResponse
@@ -7126,6 +7176,61 @@ type GetRelationshipTimelineResp struct {
 	JSON409      *GetRelationshipTimelineErrorResponseJSON
 	JSON503      *GetRelationshipTimelineErrorResponseJSON503
 	JSONDefault  *GetRelationshipTimelineErrorResponseJSONDefault
+}
+
+type ListRestrictionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListRestrictionsResponse
+	JSON400      *ListRestrictionsErrorResponse
+	JSON404      *ListRestrictionsErrorResponseJSON
+	JSON503      *ListRestrictionsErrorResponseJSON503
+	JSONDefault  *ListRestrictionsErrorResponseJSONDefault
+}
+
+type AddRestrictionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *AddRestrictionResponse
+	JSON400      *AddRestrictionErrorResponse
+	JSON404      *AddRestrictionErrorResponseJSON
+	JSON503      *AddRestrictionErrorResponseJSON503
+	JSONDefault  *AddRestrictionErrorResponseJSONDefault
+}
+
+type CheckRestrictionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CheckRestrictionsResponse
+	JSON400      *CheckRestrictionsErrorResponse
+	JSON404      *CheckRestrictionsErrorResponseJSON
+	JSON503      *CheckRestrictionsErrorResponseJSON503
+	JSONDefault  *CheckRestrictionsErrorResponseJSONDefault
+}
+
+type SetRestrictionTaintResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetRestrictionTaintResponse
+	JSON400      *SetRestrictionTaintErrorResponse
+	JSON404      *SetRestrictionTaintErrorResponseJSON
+	JSON503      *SetRestrictionTaintErrorResponseJSON503
+	JSONDefault  *SetRestrictionTaintErrorResponseJSONDefault
+}
+
+type RemoveRestrictionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RemoveRestrictionResponse
+	JSON400      *RemoveRestrictionErrorResponse
+	JSON404      *RemoveRestrictionErrorResponseJSON
+	JSON503      *RemoveRestrictionErrorResponseJSON503
+	JSONDefault  *RemoveRestrictionErrorResponseJSONDefault
 }
 
 type ListSavedViewsResp struct {
