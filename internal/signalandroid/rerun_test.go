@@ -181,3 +181,106 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 		assert.Contains(err.Error(), "cannot verify --phone")
 	})
 }
+
+func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	writeSignalFixture(t, dir, layoutCurrent, 0)
+	runImport(t, st, dir, t.TempDir())
+	changeFixture(t, dir, `UPDATE message SET body = 'Carol again' WHERE _id = 300`)
+	summary := runImport(t, st, dir, t.TempDir())
+
+	var processed, added, updated int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT messages_processed, messages_added, messages_updated FROM sync_runs
+		WHERE source_id = ? ORDER BY id DESC LIMIT 1`), summary.SourceID).Scan(&processed, &added, &updated))
+	assert.Equal(summary.MessagesProcessed, processed)
+	assert.Equal(int64(0), added)
+	assert.Equal(int64(6), updated)
+	assert.Equal(summary.MessagesUpdated, updated)
+}
+
+func TestReplyLinksToArchivedNumberBasedParent(t *testing.T) {
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	writeSignalFixture(t, dir, layoutCurrent, 0)
+	runImport(t, st, dir, t.TempDir())
+
+	// Carol's account ID becomes known, her old message is gone from the
+	// newer backup, and the owner replies to it.
+	tReplyCarol := tCarol + 600_000
+	changeFixture(t, dir,
+		`UPDATE recipient SET aci = '`+carolACI+`' WHERE _id = 4`,
+		`DELETE FROM attachment WHERE message_id = 300`,
+		`DELETE FROM message WHERE _id = 300`,
+		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id,
+			type, body, quote_id, quote_author) VALUES (301, `+ms(tReplyCarol)+`, `+ms(tReplyCarol+1)+`,
+			12, 1, 4, `+ms(typeOutgoing)+`, 'Answering late', `+ms(tCarol)+`, 4)`)
+	summary := runImport(t, st, dir, t.TempDir())
+
+	assert.Equal(int64(0), summary.RepliesUnresolved)
+	got := importedMessages(t, st)
+	assert.Equal(importedMessage{
+		conversation: "signal:aci:" + carolACI, body: "Answering late", fromMe: true,
+		replyTo: carolPhone + ":" + ms(tCarol),
+	}, got[ownACI+":"+ms(tReplyCarol)])
+	assert.Equal("signal:aci:"+carolACI, got[carolPhone+":"+ms(tCarol)].conversation)
+}
+
+func TestRefusedReconciliationKeepsAttribution(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	writeSignalFixture(t, dir, layoutCurrent, 0)
+	// Bob also reacts to Alice's first message.
+	changeFixture(t, dir, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received)
+		VALUES (100, 3, 'x', `+ms(tAlice1+5)+`, `+ms(tAlice1+6)+`)`)
+	runImport(t, st, dir, t.TempDir())
+	aciOnly, _, err := st.ParticipantByIdentifier(ACIIdentifierType, bobACI)
+	require.NoError(err)
+
+	// The archive owner curated Bob's account and his number as two people,
+	// so the participants must not be merged.
+	_, _, err = st.CreatePersonFromParticipant(aciOnly)
+	require.NoError(err)
+	phoneOnly, err := st.EnsureParticipantByPhone(bobPhone, "", "phone")
+	require.NoError(err)
+	_, _, err = st.CreatePersonFromParticipant(phoneOnly)
+	require.NoError(err)
+
+	changeFixture(t, dir, `UPDATE recipient SET e164 = '`+bobPhone+`' WHERE _id = 3`)
+	summary := runImport(t, st, dir, t.TempDir())
+
+	assert.Positive(summary.Errors)
+	var sender sql.NullInt64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`),
+		bobACI+":"+ms(tGroup)).Scan(&sender))
+	assert.Equal(sql.NullInt64{Int64: aciOnly, Valid: true}, sender)
+	assert.Equal(1, countRows(t, st, `
+		SELECT COUNT(*) FROM reactions r JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ? AND r.participant_id = ?`, aliceACI+":"+ms(tAlice1), aciOnly))
+}
+
+func TestSendStateFollowsSignal(t *testing.T) {
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	writeSignalFixture(t, dir, layoutCurrent, 0)
+	failed := 24 | pushMessageBit | secureMessageBit
+	changeFixture(t, dir, `UPDATE message SET type = `+ms(failed)+` WHERE _id = 101`)
+	runImport(t, st, dir, t.TempDir())
+
+	isSent := func() bool {
+		var sent bool
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_sent FROM messages WHERE source_message_id = ?`),
+			ownACI+":"+ms(tReply)).Scan(&sent))
+		return sent
+	}
+	assert.False(isSent(), "a failed send did not leave the phone")
+
+	changeFixture(t, dir, `UPDATE message SET type = `+ms(typeOutgoing)+` WHERE _id = 101`)
+	runImport(t, st, dir, t.TempDir())
+	assert.True(isSent(), "a later backup shows it sent")
+}

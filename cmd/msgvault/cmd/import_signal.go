@@ -14,18 +14,21 @@ import (
 	"go.kenn.io/msgvault/internal/signalandroid"
 )
 
-var (
-	importSignalPhone             string
-	importSignalDisplayName       string
-	importSignalAttachmentsDir    string
-	importSignalLimit             int
-	noDefaultIdentityImportSignal bool
-)
+// importSignalFlags holds the import-signal flag values.
+type importSignalFlags struct {
+	phone             string
+	displayName       string
+	attachmentsDir    string
+	limit             int
+	noDefaultIdentity bool
+}
 
-var importSignalCmd = &cobra.Command{
-	Use:   "import-signal <database.sqlite | directory>",
-	Short: "Import a decrypted Signal Android backup",
-	Long: `Import direct and group chats from a Signal Android backup that
+func newImportSignalCmd() *cobra.Command {
+	var flags importSignalFlags
+	command := &cobra.Command{
+		Use:   "import-signal <database.sqlite | directory>",
+		Short: "Import a decrypted Signal Android backup",
+		Long: `Import direct and group chats from a Signal Android backup that
 signalbackup-tools has decrypted into a directory:
 
   signalbackup-tools signal-<date>.backup <passphrase> --output <directory>
@@ -39,13 +42,22 @@ already in the archive are updated in place.
 Examples:
   msgvault import-signal --phone "+447700900000" ~/signal-backup
   msgvault import-signal --phone "+447700900000" ~/signal-backup/database.sqlite`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if !isDaemonCLISubprocess() {
-			return runDaemonCLICommandHTTPFromCobra(cmd, args)
-		}
-		return runSignalImport(cmd, args[0])
-	},
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
+			return runSignalImport(cmd, args[0], flags)
+		},
+	}
+	command.Flags().StringVar(&flags.phone, "phone", "", "your phone number in E.164 format (required)")
+	command.Flags().StringVar(&flags.displayName, "display-name", "", "display name for the phone owner")
+	command.Flags().StringVar(&flags.attachmentsDir, "attachments-dir", "",
+		"directory holding the Attachment_*.bin files (default: the database's directory)")
+	command.Flags().IntVar(&flags.limit, "limit", 0, "limit number of messages (for testing)")
+	command.Flags().BoolVar(&flags.noDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
+	_ = command.MarkFlagRequired("phone")
+	return command
 }
 
 // resolveSignalInput accepts the directory signalbackup-tools wrote or the
@@ -71,19 +83,22 @@ func resolveSignalInput(input, attachmentsDir string) (dbPath, filesDir string, 
 	return dbPath, filesDir, nil
 }
 
-func runSignalImport(cmd *cobra.Command, input string) error {
+func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	if importSignalPhone == "" {
+	if flags.phone == "" {
 		return usageErr(cmd, errors.New("--phone is required for Signal import (E.164 format, e.g., +447700900000)"))
 	}
-	if len(importSignalPhone) < 2 || importSignalPhone[0] != '+' {
-		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importSignalPhone))
+	// Normalize once: the source identifier and the confirmed owner identity
+	// must both be the E.164 form the importer stores.
+	phone := signalandroid.NormalizePhone(flags.phone)
+	if phone == "" {
+		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", flags.phone))
 	}
-	dbPath, filesDir, err := resolveSignalInput(input, importSignalAttachmentsDir)
+	dbPath, filesDir, err := resolveSignalInput(input, flags.attachmentsDir)
 	if err != nil {
 		return err
 	}
@@ -110,16 +125,16 @@ func runSignalImport(cmd *cobra.Command, input string) error {
 	}()
 
 	opts := signalandroid.DefaultOptions()
-	opts.Phone = importSignalPhone
-	opts.DisplayName = importSignalDisplayName
+	opts.Phone = phone
+	opts.DisplayName = flags.displayName
 	opts.AttachmentFilesDir = filesDir
 	opts.AttachmentsDir = cfg.AttachmentsDir()
-	opts.Limit = importSignalLimit
+	opts.Limit = flags.limit
 
 	fmt.Printf("Importing Signal messages from %s\n", dbPath)
-	fmt.Printf("Phone: %s\n", importSignalPhone)
-	if importSignalLimit > 0 {
-		fmt.Printf("Limit: %d messages\n", importSignalLimit)
+	fmt.Printf("Phone: %s\n", phone)
+	if flags.limit > 0 {
+		fmt.Printf("Limit: %d messages\n", flags.limit)
 	}
 	fmt.Println()
 
@@ -133,8 +148,8 @@ func runSignalImport(cmd *cobra.Command, input string) error {
 		return fmt.Errorf("import failed: %w", err)
 	}
 
-	if !noDefaultIdentityImportSignal && summary.SourceID != 0 {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, importSignalPhone, importSignalPhone, "phone-e164", state.logger)
+	if !flags.noDefaultIdentity && summary.SourceID != 0 {
+		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, phone, phone, "phone-e164", state.logger)
 	}
 	if summary.SourceID != 0 {
 		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
@@ -175,12 +190,5 @@ func (p *signalCLIProgress) OnComplete(*signalandroid.ImportSummary) {
 }
 
 func init() {
-	importSignalCmd.Flags().StringVar(&importSignalPhone, "phone", "", "your phone number in E.164 format (required)")
-	importSignalCmd.Flags().StringVar(&importSignalDisplayName, "display-name", "", "display name for the phone owner")
-	importSignalCmd.Flags().StringVar(&importSignalAttachmentsDir, "attachments-dir", "",
-		"directory holding the Attachment_*.bin files (default: the database's directory)")
-	importSignalCmd.Flags().IntVar(&importSignalLimit, "limit", 0, "limit number of messages (for testing)")
-	importSignalCmd.Flags().BoolVar(&noDefaultIdentityImportSignal, "no-default-identity", false, noDefaultIdentityHelp)
-	_ = importSignalCmd.MarkFlagRequired("phone")
-	rootCmd.AddCommand(importSignalCmd)
+	rootCmd.AddCommand(newImportSignalCmd())
 }

@@ -71,6 +71,16 @@ func isOutgoing(messageType int64) bool {
 	return false
 }
 
+// isSent reports whether a message left its sender: every received message,
+// and an own message only once Signal marked it sent.
+func isSent(messageType int64) bool {
+	switch messageType & baseTypeMask {
+	case baseOutboxType, baseSendingType, baseSentFailedType:
+		return false
+	}
+	return true
+}
+
 // normalizeACI returns the lower-case UUID of a Signal ACI, or "".
 func normalizeACI(raw string) string {
 	value := strings.TrimSpace(raw)
@@ -99,6 +109,12 @@ func isUUID(value string) bool {
 		}
 	}
 	return true
+}
+
+// NormalizePhone returns the E.164 form of a phone number given with its
+// country code, or "" for anything else. Import uses it for --phone.
+func NormalizePhone(raw string) string {
+	return normalizeE164(raw)
 }
 
 // normalizeE164 returns an E.164 phone number, or "" for anything else.
