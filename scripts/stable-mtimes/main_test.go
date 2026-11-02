@@ -12,22 +12,23 @@ import (
 )
 
 func TestStableMtimes(t *testing.T) {
+	req := require.New(t)
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		if strings.HasPrefix(name, "GIT_") {
 			t.Setenv(name, "")
-			require.NoError(t, os.Unsetenv(name))
+			req.NoError(os.Unsetenv(name))
 		}
 	}
 	temp := t.TempDir()
 	globalConfig := filepath.Join(temp, "gitconfig")
-	require.NoError(t, os.WriteFile(globalConfig, nil, 0o600))
+	req.NoError(os.WriteFile(globalConfig, nil, 0o600))
 	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GOWORK", "off")
 
 	source := filepath.Join(temp, "source")
-	require.NoError(t, os.MkdirAll(filepath.Join(source, "testdata"), 0o755))
+	req.NoError(os.MkdirAll(filepath.Join(source, "testdata"), 0o755))
 	for name, content := range map[string]string{
 		"go.mod": "module example.com/fixture\n",
 		"input_test.go": `package fixture
@@ -45,7 +46,7 @@ func TestInputs(t *testing.T) {
 `,
 		"testdata/café.txt": "abc",
 	} {
-		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(content), 0o644))
+		req.NoError(os.WriteFile(filepath.Join(source, name), []byte(content), 0o644))
 	}
 	for _, args := range [][]string{
 		{"git", "init", "-q"},
@@ -55,7 +56,7 @@ func TestInputs(t *testing.T) {
 		cmd := exec.Command(args[0], args[1:]...)
 		cmd.Dir = source
 		output, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", output)
+		req.NoError(err, "%s", output)
 	}
 
 	checkout := filepath.Join(temp, "checkout")
@@ -69,18 +70,19 @@ func TestInputs(t *testing.T) {
 		{"same size edit", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
 			cmd := exec.Command("git", "clone", "-q", source, checkout)
 			output, err := cmd.CombinedOutput()
-			require.NoError(t, err, "%s", output)
-			t.Cleanup(func() { require.NoError(t, os.RemoveAll(checkout)) })
+			require.NoError(err, "%s", output)
+			t.Cleanup(func() { require.NoError(os.RemoveAll(checkout)) })
 			t.Chdir(checkout)
 			if tc.edit {
-				require.NoError(t, os.WriteFile("testdata/café.txt", []byte("abd"), 0o644))
+				require.NoError(os.WriteFile("testdata/café.txt", []byte("abd"), 0o644))
 			}
-			require.NoError(t, run())
+			require.NoError(run())
 			cmd = exec.Command("go", "test", "./...")
 			output, err = cmd.CombinedOutput()
-			require.NoError(t, err, "%s", output)
+			require.NoError(err, "%s", output)
 			assert.Equal(t, tc.cached, strings.Contains(string(output), "(cached)"), "%s", output)
 		})
 	}
