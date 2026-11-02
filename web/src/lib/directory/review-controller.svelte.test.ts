@@ -159,6 +159,31 @@ describe('DirectoryReviewController', () => {
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
+  it('refreshes endpoint evidence with the new review token after history restoration', async () => {
+    let changed = false;
+    const client = createAPIClient(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.includes('/participants/')) {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ id, display_label: changed ? 'Updated Example' : 'Original Example', activity_count: changed ? 9 : 3, identifiers: [{ participant_id: id, type: 'email', is_primary: true, value: changed ? 'updated@example.com' : 'original@example.com' }] });
+      }
+      return page([{ ...candidate(17), review_token: changed ? 'fresh-token' : 'old-token' }]);
+    });
+    const controller = new DirectoryReviewController(client);
+    try {
+      controller.applyURLState({ identityState: 'candidate' });
+      await vi.waitFor(() => expect(controller.rows[0]?.review_token).toBe('old-token'));
+      controller.requestSummaries();
+      await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Original Example', address: 'original@example.com', count: 3 }));
+      changed = true;
+      // The shell calls this owner when Back restores the duplicate queue after a sync.
+      controller.applyURLState({ identityState: 'candidate' }, true);
+      await vi.waitFor(() => expect(controller.rows[0]?.review_token).toBe('fresh-token'));
+      controller.requestSummaries();
+      await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Updated Example', address: 'updated@example.com', count: 9 }));
+    } finally { controller.destroy(); }
+  });
+
   it('refreshes the queue after a stale review token without retrying the decision', async () => {
     const requests: Request[] = [];
     let reads = 0;

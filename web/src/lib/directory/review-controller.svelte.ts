@@ -135,6 +135,7 @@ export class DirectoryReviewController {
     this.identityState = state.identityState;
     if (!this.initialized || changed || historyRestoration) {
       this.initialized = true;
+      if (historyRestoration) this.invalidateSummaries();
       this.resetIdentityContext(state.identityState);
       void this.loadIdentityPage(0, state.identityState);
     }
