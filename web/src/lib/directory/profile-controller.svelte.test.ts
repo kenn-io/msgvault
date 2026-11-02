@@ -43,6 +43,28 @@ function pathOf(request: Request): string {
 }
 
 describe('DirectoryProfileController', () => {
+  it('notifies deletion with a cleared draft without reading the deleted person', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'DELETE') return new Response(null, { status: 204 });
+      return Response.json({ error: 'person_not_found', message: 'Person not found.' }, { status: 404 });
+    });
+    let readsBeforeNotification: Request[] = [];
+    let draftAtNotification: unknown;
+    const onDeleted = vi.fn(() => {
+      readsBeforeNotification = requests(fetchFn).filter(request => request.method === 'GET' && pathOf(request).startsWith('/api/v1/people/7'));
+      draftAtNotification = controller.draft;
+    });
+    const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle(), { onDeleted });
+    try {
+      await controller.deletePerson();
+      expect(onDeleted).toHaveBeenCalledWith(7);
+      expect(readsBeforeNotification).toEqual([]);
+      expect(draftAtNotification).toBeNull();
+      expect(controller.draft).toBeNull();
+    } finally { controller.destroy(); }
+  });
+
   it.each(['save', 'clear'] as const)('refreshes and publishes contact state after a contact frequency %s', async (operation) => {
     const when = '2026-08-04T00:00:00Z';
     const definition: AttributeDefinition = {

@@ -231,7 +231,7 @@ export class DirectoryProfileController {
         },
       );
       if (response.response.status === 204) {
-        await this.completeMutation(draftGeneration, true);
+        await this.completeMutation(draftGeneration, false);
         deleted = true;
       } else {
         this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -481,10 +481,10 @@ export class DirectoryProfileController {
     this.mutationPending = true;
     this.activeMutationGeneration = draftGeneration;
   }
-  private async completeMutation(draftGeneration: number, succeeded: boolean): Promise<void> {
-    if (!succeeded) return;
+  private async completeMutation(draftGeneration: number, refresh: boolean): Promise<void> {
     if (this.draftGeneration === draftGeneration) { this.draft = null; this.conflict = null; }
-    this.finishMutation(draftGeneration); await this.reload(false);
+    this.finishMutation(draftGeneration);
+    if (refresh) await this.reload(false);
   }
   private finishMutation(draftGeneration: number): void {
     if (this.activeMutationGeneration !== draftGeneration) return;
