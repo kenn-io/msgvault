@@ -457,10 +457,10 @@ describe('DirectoryController', () => {
     expect(directoryRead).toBe(2);
   });
 
-  function categoryHarness(filtered: boolean, failReconcile = false) {
+  function categoryHarness(filtered: boolean) {
     const commits: Array<Record<string, unknown>> = [];
     const directoryRequests: Request[] = [];
-    let directoryRead = 0; let failed = false;
+    let directoryRead = 0;
     let profileWrite = 0;
     const category = {
       person_id: 7, original_value: 'Straße', normalized_value: 'strasse',
@@ -471,7 +471,6 @@ describe('DirectoryController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') {
         directoryRequests.push(request);
-        if (failReconcile && directoryRead === 2 && !failed) { failed = true; return Response.json({ message: 'Directory reconciliation unavailable.' }, { status: 503 }); }
         directoryRead += 1;
         if (!filtered) return Response.json({ people: [directoryPerson(7)] });
         if (directoryRead === 1) return Response.json({ people: [directoryPerson(8)], next_cursor: 'initial-page-2' });
@@ -542,20 +541,6 @@ describe('DirectoryController', () => {
     await controller.profile?.patchProfile({ categories: { supersede: [31] } });
     expect(controller.rows[0]?.categories).toEqual([]);
     expect(directoryRequests).toHaveLength(1);
-  });
-
-  it('retains Directory filters when reloading after a failed reconciliation', async () => {
-    const { controller, directoryRequests } = categoryHarness(true, true);
-    await controller.loadFirstPage();
-    await controller.loadNextPage();
-    await controller.selectPerson(7);
-    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
-    expect(controller.pageError).toBe('Directory reconciliation unavailable.');
-    await controller.reloadFirstPage();
-    expect(directoryRequests).toHaveLength(4);
-    expect(controller.pageError).toBeNull();
-    const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
-    expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic person', contact_state: 'active', category: 'STRASSE', organization: 'Example Org', primary_channel: 'email' });
   });
 
   it('keeps the observed Directory channel after a preferred-channel set and clear', async () => {
@@ -926,7 +911,8 @@ describe('DirectoryController', () => {
     { name: 'page-one HTTP', failurePage: 1, network: false, message: 'Directory reconciliation unavailable.' },
     { name: 'page-N HTTP', failurePage: 2, network: false, message: 'Directory reconciliation unavailable.' },
     { name: 'network rejection', failurePage: 1, network: true, message: 'reconciliation network down' }
-  ])('preserves the prior page sequence and offers Reload after a $name failure', async ({ failurePage, network, message }) => {
+  ])('preserves the prior page sequence and offers Reload after a $name failure', async ({ name, failurePage, network, message }) => {
+    const directoryRequests: Request[] = [];
     let directoryRead = 0;
     let reconciliationRead = 0; let profileWritten = false;
     const category = {
@@ -937,10 +923,12 @@ describe('DirectoryController', () => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') {
+        directoryRequests.push(request);
         directoryRead += 1;
         if (directoryRead === 1) return Response.json({ people: [directoryPerson(7), directoryPerson(8)], next_cursor: 'old-page-2' });
         if (directoryRead === 2) return Response.json({ people: [directoryPerson(9)], next_cursor: 'old-page-3' });
         reconciliationRead += 1;
+        if (name === 'page-one HTTP' && reconciliationRead > 1) return Response.json({ people: [directoryPerson(7)] });
         if (failurePage === 2 && reconciliationRead === 1) {
           return Response.json({ people: [directoryPerson(11)], next_cursor: 'new-page-2' });
         }
@@ -995,6 +983,13 @@ describe('DirectoryController', () => {
     expect(controller.cursor).toBe('old-page-3');
     expect(controller.pageError).toBe(message);
     expect(controller.pageRecovery).toBe('reload');
+
+    if (name === 'page-one HTTP') {
+      await controller.reloadFirstPage();
+      const parameters = new URL(directoryRequests.at(-1)!.url).searchParams;
+      expect(Object.fromEntries(['q', 'contact_state', 'category', 'organization', 'primary_channel'].map(key => [key, parameters.get(key)]))).toEqual({ q: 'synthetic', contact_state: 'active', category: 'vip', organization: 'Example Org', primary_channel: 'email' });
+      expect(controller.pageError).toBeNull();
+    }
   });
 
   it('lets a new filter load supersede an abort-ignorant reconciliation failure', async () => {

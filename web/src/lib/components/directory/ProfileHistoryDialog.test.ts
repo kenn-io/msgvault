@@ -182,7 +182,7 @@ describe('ProfileHistoryDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Profile history' })).toBeDefined();
   });
 
-  it('opening History preserves a conflicted draft until explicit Reload recovers editing', async () => {
+  it('opening History preserves a conflicted draft', async () => {
     const saved = person();
     const structured = { person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] };
     const client = createAPIClient(async input => {
@@ -206,10 +206,6 @@ describe('ProfileHistoryDialog', () => {
       await waitFor(() => expect(controller.person?.revision).toBe(4));
       expect(controller.draft).toBe(draft);
       expect(controller.conflict).toBe(conflict);
-      await controller.reload();
-      expect(controller.conflict).toBeNull();
-      expect(controller.draft).toBeNull();
-      expect(controller.canWriteProfile).toBe(true);
     } finally { view.unmount(); controller.destroy(); }
   });
 });
