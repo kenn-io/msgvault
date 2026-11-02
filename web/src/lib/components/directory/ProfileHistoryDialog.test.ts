@@ -66,7 +66,7 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
-  it('shows current values compactly and earlier values with removal provenance', async () => {
+  it('preserves structured provenance and classifies every closed value as earlier', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -93,7 +93,7 @@ describe('ProfileHistoryDialog', () => {
         observations: [{
           participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
           normalized_value: 'observed@example.test', normalization: 'email', normalization_version: 1,
-          service_slug: 'email', observed_at: '2026-07-31T12:00:00Z',
+          service_slug: 'email', source_id: 12, observed_at: '2026-07-31T12:00:00Z',
           envelope: { id: 9, ordinal: 0, source: 'archive_observation', created_at: when, updated_at: when, vcard: {} }
         }]
       });
@@ -105,22 +105,25 @@ describe('ProfileHistoryDialog', () => {
     for (const title of ['Names', 'Contact points', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
+    expect.soft(screen.getByText('Current category').closest('details')).not.toBeNull();
+    expect.soft(screen.getByText('Current Name').closest('li')?.textContent).toContain('Valid from:');
+    expect.soft(screen.getByText('observed@example.test').closest('li')?.textContent).toContain('Source 12');
     const dateText = '(Jul|Aug) \\d{1,2}, 2026';
-    for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current category', 'Current photo']) {
+    for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current photo']) {
       const row = screen.getByText(value).closest('li')!;
       expect(row.closest('details')).toBeNull();
-      expect(row.textContent).toMatch(new RegExp(`You · ${dateText}`));
-      expect(row.textContent).not.toMatch(/Source:|Updated:|Valid from:|\d{4}-\d{2}-\d{2}T/);
+      expect(row.textContent).toMatch(new RegExp(`You · .*Updated: ${dateText}`));
+      expect(row.textContent).not.toMatch(/Source:|\d{4}-\d{2}-\d{2}T/);
     }
     const summaries = screen.getAllByText(/earlier values?$/).map((node) => node.textContent);
-    expect(summaries).toEqual(['1 earlier value', '2 earlier values', '1 earlier value']);
+    expect(summaries).toEqual(['1 earlier value', '2 earlier values', '2 earlier values']);
     for (const value of ['Previous Name', 'Past category']) {
       const row = screen.getByText(value).closest('li')!;
       expect(row.closest('details')).not.toBeNull();
       expect(row.textContent).toMatch(new RegExp(`Removed ${dateText}`));
     }
     const observed = screen.getByText('observed@example.test').closest('li')!;
-    expect(observed.textContent).toMatch(/Archive observation · Jul 31, 2026/);
+    expect(observed.textContent).toMatch(/Archive observation · Updated: .*· Jul 31, 2026/);
     expect(screen.getByText('slack · workspace / workspace-a')).toBeDefined();
     expect(screen.getByText('slack · workspace / workspace-b')).toBeDefined();
     expect(screen.getByText('email')).toBeDefined();

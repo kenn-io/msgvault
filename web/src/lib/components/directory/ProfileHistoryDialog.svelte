@@ -3,7 +3,7 @@
   import { Button, Modal } from '@kenn-io/kit-ui';
   import AttributeSection from './AttributeSection.svelte';
   import { sentenceCase } from '../../explore/labels';
-  import { historySource, historyProvenance } from './history-format';
+  import { historyProvenance } from './history-format';
   import { formatDateTime as historyTime } from '../../util/format';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -45,16 +45,16 @@
       loading = false;
     }
   }
-  type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string };
+  type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string; sourceID?: number };
 
-  // A value stops being current when it is replaced, removed, or its validity ends.
+  // Any closed validity or transaction interval makes a value historical.
   function ended(envelope: ValueEnvelope): string | undefined {
-    return envelope.superseded_at ?? (envelope.active_until && Date.parse(envelope.active_until) <= Date.now() ? envelope.active_until : undefined);
+    return envelope.superseded_at ?? envelope.active_until;
   }
 
-  type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; scope_kind?: string; scope_value?: string };
+  type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; source_id?: number; service_slug?: string; scope_kind?: string; scope_value?: string };
   function rows(items: Item[], value: ((item: Item) => string) | null = null, context: ((item: Item) => string | null) | null = null): HistoryRow[] {
-    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at }));
+    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at, sourceID: item.source_id }));
   }
 
   const sections = $derived.by(() => {
@@ -114,7 +114,7 @@
         <li>
           <span class="value">{item.value}{#if item.context}<small>{item.context}</small>{/if}</span>
           <span class="meta">
-            {#if past}Removed {historyTime(ended(item.envelope))} · {historyProvenance(item.envelope)}{:else}{historySource(item.envelope.source)} · {historyTime(item.observedAt ?? item.envelope.updated_at)}{/if}
+            {#if past}Removed {historyTime(ended(item.envelope))} · {/if}{historyProvenance(item.envelope)}{#if item.observedAt} · {historyTime(item.observedAt)}{/if}{#if item.sourceID !== undefined} · Source {item.sourceID}{/if}
           </span>
         </li>
       {/snippet}
