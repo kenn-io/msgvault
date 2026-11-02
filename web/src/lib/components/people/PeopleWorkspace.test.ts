@@ -10,12 +10,11 @@ import PeopleWorkspace from './PeopleWorkspace.svelte';
 import { emptyCalendar } from './fixtures.test-support';
 
 const when = '2026-07-19T10:00:00Z';
-function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
+function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>) {
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     const personID = Number(path.match(/\/people\/(\d+)\//)?.[1]);
-    requests?.push(path);
     return routes[path]?.(request) ?? (path.endsWith('/profile') ? Response.json({ person: profile(personID, 1, []), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }) : undefined) ?? (path.endsWith('/attributes') ? Response.json({ person_id: personID, attributes: [] }) : undefined) ?? (path.endsWith('/attribute-definitions') ? Response.json({ definitions: [] }) : undefined) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }

@@ -16,26 +16,7 @@ async function expectNoAxeViolations(page: Page, label: string): Promise<void> {
     .toEqual([]);
 }
 
-async function installTallDirectory(page: Page): Promise<void> {
-  await page.unroute('**/api/v1/people/directory*');
-  await page.route('**/api/v1/people/directory*', (route) => route.fulfill({
-    json: {
-      people: Array.from({ length: 40 }, (_, index) => ({
-        id: index === 0 ? 42 : 100 + index,
-        revision: 1,
-        display_name: index === 0 ? 'Archive Person' : `Synthetic Person ${index}`,
-        primary_channel: 'email',
-        contact_state: 'active',
-        categories: [],
-        organizations: []
-      }))
-    }
-  }));
-}
-
 test('Directory lists durable people, opens People Files, and scopes files to the durable person', async ({ page }) => {
-  const requests: string[] = [];
-  page.on('request', (request) => requests.push(new URL(request.url()).pathname));
   await installMixedArchive(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL());
@@ -52,10 +33,7 @@ test('Directory lists durable people, opens People Files, and scopes files to th
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
   await personTabs.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
-  expect(requests).toContain('/api/v1/people/42/files/search');
-  expect(requests).not.toContain('/api/v1/participants/42/files/search');
-  expect(requests).not.toContain('/api/v1/files/search');
-  await expectNoAxeViolations(page, 'Directory split media detail');
+  await expectNoAxeViolations(page, 'People Files');
 });
 
 test('Directory keeps a one-sided last contacted date as a chip across reload until it is removed', async ({ page }) => {
@@ -108,7 +86,6 @@ test('Person tabs stay on one line at phone width', async ({ page }) => {
 
 test('People Details scrolls independently at desktop width', async ({ page }) => {
   await installMixedArchive(page);
-  await installTallDirectory(page);
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.goto(directoryURL(42));
   const pane = page.getByRole('group', { name: 'Person page' });

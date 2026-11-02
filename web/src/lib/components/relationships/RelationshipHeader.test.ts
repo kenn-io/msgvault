@@ -121,7 +121,7 @@ describe('RelationshipHeader', () => {
     expect(screen.queryByText(/items/)).toBeNull();
   });
 
-  it('collapses linked identities by default and opens them on request', async () => {
+  it('collapses linked identities, opens them on request, and describes identity chips in tooltips', async () => {
     render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
 
     const summary = screen.getByText('Identities (2)');

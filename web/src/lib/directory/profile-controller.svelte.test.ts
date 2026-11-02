@@ -87,7 +87,7 @@ describe('DirectoryProfileController', () => {
         await vi.waitFor(() => expect(staleProfile).toBeDefined());
       }
       linked = true;
-      await controller.reload();
+      if (cause === 'pending profile reload') await controller.reload();
       releaseSave(cause === 'pending structured PATCH' ? staleProfile! : Response.json({ dry_run: false, value }));
       await save;
       releaseReload(staleProfile ?? Response.json({}));

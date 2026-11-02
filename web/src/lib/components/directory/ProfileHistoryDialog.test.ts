@@ -100,7 +100,7 @@ describe('ProfileHistoryDialog', () => {
 
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
-    expect(await screen.findByText('Previous Name')).toBeDefined();
+    expect((await screen.findByText('Previous Name')).closest('li')?.textContent).toContain('Address book');
     for (const title of ['Names', 'Contact points', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
