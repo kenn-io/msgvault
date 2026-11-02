@@ -224,7 +224,7 @@ func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
 			scriptPath := installScript(t, repo, tc.scriptRel)
 			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
 			cmd.Dir = repo
-			cmd.Env = append(os.Environ(), tc.branchEnv+"=main", "PYTHONDONTWRITEBYTECODE=1")
+			cmd.Env = append(os.Environ(), tc.branchEnv+"=main")
 			output, err := cmd.CombinedOutput()
 
 			require.Error(err, string(output))
