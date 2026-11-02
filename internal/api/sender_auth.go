@@ -2,25 +2,22 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/senderauth"
 )
 
 func (s *Server) fillStoreSenderAuth(ctx context.Context, messages []APIMessage) {
+	if len(messages) == 0 {
+		return
+	}
 	ids := make([]int64, len(messages))
 	for i, m := range messages {
 		ids[i] = m.ID
 	}
-	reader, ok := s.queryEngineForContext(ctx).(query.SenderAuthReader)
-	if !ok {
-		if archive, available := s.store.(agentReadSnapshotStore); available {
-			engine := query.NewEngine(archive.DB(), archive.IsPostgreSQL())
-			query.ConfigureSenderAuth(engine, s.senderAuthPins)
-			reader, ok = engine.(query.SenderAuthReader)
-		}
-	}
+	reader := s.storeSenderAuthReader(ctx)
 	var results map[int64]*senderauth.Verdict
-	if ok {
+	if reader != nil {
 		results = reader.ReadSenderAuth(ctx, ids)
 	}
 	for i := range messages {
@@ -34,4 +31,23 @@ func (s *Server) fillStoreSenderAuth(ctx context.Context, messages []APIMessage)
 		}
 		messages[i].SenderAuth = query.SenderAuthForAddresses(verdict, []query.Address{{Email: from}})
 	}
+}
+
+// Store-backed responses derive receipt metadata from the same archive and
+// request snapshot as their selected records, even without an analytics engine.
+func (s *Server) storeSenderAuthReader(ctx context.Context) query.SenderAuthReader {
+	if archive, ok := s.store.(interface {
+		DB() *sql.DB
+		IsPostgreSQL() bool
+	}); ok && archive.DB() != nil {
+		var dialect query.Dialect = query.SQLiteQueryDialect{}
+		if archive.IsPostgreSQL() {
+			dialect = query.PostgreSQLQueryDialect{}
+		}
+		reader := query.NewEngineWithDialect(archive.DB(), dialect)
+		reader.SetSenderAuthPins(s.senderAuthPins)
+		return reader
+	}
+	reader, _ := s.queryEngineForContext(ctx).(query.SenderAuthReader)
+	return reader
 }
