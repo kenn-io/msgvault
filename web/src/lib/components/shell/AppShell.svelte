@@ -1233,6 +1233,7 @@
           </IconButton>
         </span>
       {/if}
+      {#if exploreState.current.workspace !== 'relationships' || !exploreState.current.peopleDuplicates}
       <SearchBar
         workspace={exploreState.current.workspace}
         query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
@@ -1244,6 +1245,7 @@
         onSubmit={submitGlobalSearch}
         filterLabel={exploreState.current.relationshipFacet === 'domains' ? 'Filter domains' : 'Filter people'}
       />
+      {/if}
       <div class="app-top-bar__end" aria-label="Appearance controls">
         <DisplayMenu
           bind:open={displayOpen}

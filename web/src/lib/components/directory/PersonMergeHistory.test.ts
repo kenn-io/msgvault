@@ -1,3 +1,4 @@
+import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,21 +15,7 @@ afterEach(() => {
 
 function detail(currentPersonID: number | null = 12): MergeDetail {
   return {
-    merge: {
-      id: 41,
-      survivor_person_id: 7,
-      absorbed_person_id: 9,
-      current_person_id: currentPersonID ?? undefined,
-      survivor_vcard_uid: 'synthetic-7',
-      absorbed_vcard_uid: 'synthetic-9',
-      survivor_revision_before: 3,
-      absorbed_revision_before: 2,
-      survivor_revision_after: 4,
-      actor: 'web',
-      snapshot_version: 1,
-      snapshot_sha256: 'synthetic-digest',
-      created_at: '2026-08-03T00:00:00Z',
-    },
+    merge: { ...mergeResult(person(7)).merge, current_person_id: currentPersonID ?? undefined },
     participants: [
       { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
       { merge_id: 41, participant_id: 702, origin_side: 'survivor', split_id: 55 },

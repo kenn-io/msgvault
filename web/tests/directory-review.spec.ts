@@ -6,9 +6,11 @@ const duplicatesURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspa
 test('People Filter restores History on reload and To review on Back', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   await page.goto(peopleURL);
+  await expect(page.getByRole('searchbox', { name: 'Filter people' })).toBeVisible();
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByText('Possible duplicates', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Possible duplicates' })).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Filter people' })).toHaveCount(0);
   await page.getByRole('radio', { name: 'History', exact: true }).click();
   await expect(page.getByText('Nothing decided yet')).toBeVisible();
   await page.reload();
@@ -17,6 +19,7 @@ test('People Filter restores History on reload and To review on Back', async ({ 
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
   await page.getByRole('radio', { name: 'History', exact: true }).click();
   await page.getByRole('button', { name: 'Back to People' }).click();
+  await expect(page.getByRole('searchbox', { name: 'Filter people' })).toBeVisible();
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByText('Possible duplicates', { exact: true }).click();
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();

@@ -1,14 +1,9 @@
-import { requestOf } from './entity-fixtures.test-support';
+import { candidate, requestOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryReviewController, IDENTITY_REVIEW_PAGE_LIMIT } from './review-controller.svelte';
-import { pair } from '../components/shell/fixtures.test-support';
 import { mergeResult, person } from './entity-fixtures.test-support';
-
-function candidate(id: number, state = 'candidate') {
-  return { ...pair, id, left_id: id * 10, right_id: id * 10 + 1, state, review_token: `token-${id}-${state}`, actionable: state === 'candidate' || state === 'conflict' };
-}
 
 function page(candidates: ReturnType<typeof candidate>[], offset = 0): Response {
   return Response.json({ candidates, limit: IDENTITY_REVIEW_PAGE_LIMIT, offset });

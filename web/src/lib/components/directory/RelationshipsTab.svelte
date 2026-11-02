@@ -12,6 +12,8 @@
   import PersonRelationshipEditor from './PersonRelationshipEditor.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import { sentenceCase } from '../../explore/labels';
+  import { formatContactDate } from '../../directory/labels';
+  import { historySource } from './history-format';
   import RelationshipTypeEditor from './RelationshipTypeEditor.svelte';
 
   interface Props {
@@ -146,7 +148,7 @@
     {#if imports.loading}<p role="status">Loading imported connections…</p>{/if}
     {#if imports.error}<p role="alert">{imports.error}<Button label="Retry imported connections" size="sm" onclick={() => void imports.retry()} /></p>{/if}
     {#each imports.rows as row (row.id)}
-      <DetailRow label={sentenceCase(row.status)} description={[row.raw_related_type, row.source, row.value_kind, row.updated_at, row.reviewed_at].filter(Boolean).join(' · ')}>
+      <DetailRow label={sentenceCase(row.status)} description={[row.raw_related_type, historySource(row.source), sentenceCase(row.value_kind), row.updated_at && formatContactDate(row.updated_at), row.reviewed_at && formatContactDate(row.reviewed_at)].filter(Boolean).join(' · ')}>
         {row.raw_related_value}
         {#if row.matched_person_id && !controller.relationships.some(view => row.status === 'accepted' && view.counterpart_person_id === row.matched_person_id)}<Button label="Open person" size="sm" onclick={() => onOpenPerson?.(row.matched_person_id!)} />{/if}
       </DetailRow>

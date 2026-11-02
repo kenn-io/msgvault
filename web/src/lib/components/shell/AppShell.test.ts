@@ -3079,14 +3079,17 @@ it.each([
 it('refreshes cached duplicate cards after explicit reentry', async () => {
   const { client, server } = duplicateReviewArchive();
   const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityQuery: 'Synthetic' });
   const rendered = render(AppShell, { client, state });
   try {
     await screen.findByRole('button', { name: 'Keep separate' });
+    expect(screen.queryByRole('searchbox', { name: 'Filter people' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
+    expect((await screen.findByRole('searchbox', { name: 'Filter people' }) as HTMLInputElement).value).toBe('Synthetic');
     server.changed = true;
     await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
     await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
+    expect(screen.queryByRole('searchbox', { name: 'Filter people' })).toBeNull();
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
     await fireEvent(window, new Event('pagehide'));
     await waitFor(() => expect(server.decisions).toEqual([{ review_token: 'fresh-17' }]));

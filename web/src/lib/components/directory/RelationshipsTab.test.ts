@@ -65,7 +65,7 @@ describe('RelationshipsTab', () => {
 
   it('refreshes imported connections when the surviving person reloads in place', async () => {
     let merged = false;
-    const imported = { id: 71, person_id: 7, matched_person_id: 141, raw_related_value: 'absorbed@example.com', raw_related_type: 'friend', value_kind: 'text', status: 'accepted', source: 'vcard_import', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+    const imported = { id: 71, person_id: 7, matched_person_id: 141, raw_related_value: 'absorbed@example.com', raw_related_type: 'X-CUSTOM_friend', value_kind: 'text', status: 'accepted', source: 'vcard_import', created_at: '2026-08-01T12:00:00Z', updated_at: '2026-08-01T12:00:00Z', reviewed_at: '2026-08-02T12:00:00Z' };
     const client = createAPIClient(async input => {
       const path = pathOf(requestOf(input));
       if (path === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [{ ...imported, id: 70, raw_related_value: 'existing@example.com' }, ...(merged ? [imported] : [])] });
@@ -77,6 +77,7 @@ describe('RelationshipsTab', () => {
     try {
       await screen.findByText('existing@example.com');
       expect(screen.getByText('Accepted')).toBeDefined();
+      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X-CUSTOM_friend · Vcard import · Text · Aug 1, 2026 · Aug 2, 2026');
       merged = true;
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();

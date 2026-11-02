@@ -124,6 +124,7 @@
     if (!connections.length) contactsLoading = true;
     contactsRequest?.abort();
     const request = contactsRequest = new AbortController();
+    const statusRevisions = new Map(Array.from(contactControllers.values(), controller => [controller, controller.statusRevision]));
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
       const { data } = await generatedListCardDAVConnections({ ...client, signal });
@@ -141,15 +142,10 @@
         let controller = contactControllers.get(connection.connection);
         if (!controller) {
           controller = new CardDAVController(client, document, connection.connection);
-          controller.status = connection.status;
           contactControllers.set(connection.connection, controller);
+          statusRevisions.set(controller, controller.statusRevision);
         }
-        if (connection.status.active || connection.status.scheduled || connection.status.queued_at || connection.status.scheduler_running) {
-          void controller.retryStatus();
-        } else {
-          controller.status = connection.status;
-          controller.statusLoading = false;
-        }
+        void controller.refreshFromConnection(connection.status, statusRevisions.get(controller));
       }
       contactsError = '';
     } catch {
@@ -352,7 +348,8 @@
     }
   }
   async function syncContacts(connection: CardDAVConnectionResponse): Promise<void> {
-    await contactControllers.get(connection.connection)?.sync().then(() => { contactsRequest?.abort(); if (!disposed) onStatusChange(); });
+    await contactControllers.get(connection.connection)?.sync();
+    if (!disposed) onStatusChange();
   }
   function staleLastResult(source: Source): boolean {
     const resultAt = source.latest_sync?.completed_at ?? source.latest_sync?.started_at;
