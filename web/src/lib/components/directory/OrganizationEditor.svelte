@@ -264,8 +264,8 @@
 </script>
 
 <Modal
-  title={initialOrganization ? `Edit ${initialOrganization.name}` : 'Create organization'}
-  ariaLabel={initialOrganization ? `Edit ${initialOrganization.name}` : 'Create organization'}
+  title={initialOrganization ? `Edit ${currentProfile?.organization.name ?? initialOrganization.name ?? 'organization'}` : 'Create organization'}
+  ariaLabel={initialOrganization ? `Edit ${currentProfile?.organization.name ?? initialOrganization.name ?? 'organization'}` : 'Create organization'}
   closeLabel="Close organization editor"
   onclose={requestClose}
   maxWidth="min(640px, calc(100vw - 32px))"

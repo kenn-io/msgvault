@@ -42,6 +42,7 @@ describe('OrganizationEmploymentTab', () => {
       const name = await screen.findByRole('textbox', { name: 'Organization name' });
       await waitFor(() => expect(name).toHaveProperty('disabled', false));
       expect(name).toHaveProperty('value', 'Synthetic Org');
+      expect(screen.getByRole('dialog', { name: 'Edit Synthetic Org' })).toBeDefined();
       expect(reads).toBe(1);
     } finally { view.unmount(); controller.destroy(); }
   });
