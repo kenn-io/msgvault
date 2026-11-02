@@ -1091,6 +1091,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					result.acknowledged = append(result.acknowledged, sourceMessageID)
 					continue
 				}
+				if errors.Is(err, store.ErrAcquisitionSettled) {
+					result.skipped++
+					continue
+				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++

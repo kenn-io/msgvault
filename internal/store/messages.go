@@ -108,7 +108,9 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
-	SyncRunItem               *SyncRunItem
+	// SyncRunItem resolves a failed acquisition in the same transaction. The
+	// save fails with ErrAcquisitionSettled if it is no longer outstanding.
+	SyncRunItem *SyncRunItem
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2363,7 +2365,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 		return 0, err
 	}
 	if data.SyncRunItem != nil {
-		if err := s.recordSyncRunItemWith(ctx, tx, *data.SyncRunItem); err != nil {
+		// After the message write, so on PostgreSQL a concurrent purge of the
+		// same row has committed before this check reads the log.
+		if err := s.resolveAcquisitionWith(ctx, tx, *data.SyncRunItem); err != nil {
 			return 0, err
 		}
 	}

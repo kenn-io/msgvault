@@ -292,3 +292,44 @@ func TestDedupPurgeSettlesAcquisitionDebt(t *testing.T) {
 		})
 	}
 }
+
+// Saving a message resolves its failed acquisition only while the failure is
+// outstanding. Once a purge has settled it, the save is refused, so a sync that
+// read the failure before the purge cannot bring the message back.
+func TestPersistMessageResolvesOnlyOutstandingAcquisition(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	runID := f.StartSync()
+	for _, id := range []string{"outstanding", "purged"} {
+		require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+			SyncRunID: runID, SourceMessageID: id, Phase: "fetch",
+			Status: store.SyncRunItemStatusError, ErrorKind: "fetch_error",
+		}))
+	}
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID: runID, SourceMessageID: "purged", Phase: "fetch",
+		Status: store.SyncRunItemStatusResolved, ErrorKind: "purged",
+	}))
+	persist := func(id string) error {
+		_, err := f.Store.PersistMessage(&store.MessagePersistData{
+			Message: f.NewMessage().WithSourceMessageID(id).Build(),
+			SyncRunItem: &store.SyncRunItem{
+				SyncRunID: runID, SourceMessageID: id, Phase: "fetch",
+				Status: store.SyncRunItemStatusResolved, ErrorKind: "acquired",
+			},
+		})
+		return err
+	}
+
+	require.NoError(persist("outstanding"))
+	require.ErrorIs(persist("purged"), store.ErrAcquisitionSettled)
+
+	ids, err := f.Store.MessageExistsBatch(f.Source.ID, []string{"outstanding", "purged"})
+	require.NoError(err)
+	assert.Contains(ids, "outstanding")
+	assert.NotContains(ids, "purged", "a refused save writes nothing")
+	items, err := f.Store.ListUnresolvedSyncItemErrors(context.Background(), f.Source.ID)
+	require.NoError(err)
+	assert.Empty(items)
+}

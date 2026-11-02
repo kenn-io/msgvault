@@ -43,6 +43,11 @@ var ErrSyncAlreadyActive = errors.New("sync already active")
 // generation that is no longer running or current for its source.
 var ErrSyncRunSuperseded = errors.New("sync run superseded")
 
+// ErrAcquisitionSettled is returned when a message is saved to resolve a
+// failed acquisition that something else, such as a dedup purge, has already
+// settled. Nothing is saved, so the purge stands.
+var ErrAcquisitionSettled = errors.New("acquisition already settled")
+
 type syncGeneration struct {
 	sourceID int64
 	runID    int64
@@ -971,6 +976,42 @@ func (s *Store) recordSyncRunItemWith(ctx context.Context, q contextQuerier, ite
 	)
 	if err != nil {
 		return fmt.Errorf("insert sync_run_item: %w", err)
+	}
+	return nil
+}
+
+// resolveAcquisitionWith records item unless the message's latest acquisition
+// outcome is already resolved, and returns ErrAcquisitionSettled if it is.
+func (s *Store) resolveAcquisitionWith(ctx context.Context, q contextQuerier, item SyncRunItem) error {
+	result, err := q.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO sync_run_items (
+			sync_run_id, source_message_id, phase, status,
+			error_kind, error_message, created_at
+		)
+		SELECT ?, ?, ?, ?, ?, ?, %s
+		WHERE COALESCE((
+			SELECT i.status
+			FROM sync_run_items i
+			JOIN sync_runs r ON r.id = i.sync_run_id
+			WHERE r.source_id = (SELECT source_id FROM sync_runs WHERE id = ?)
+			  AND i.source_message_id = ? AND i.phase IN ('fetch', 'ingest')
+			ORDER BY i.id DESC
+			LIMIT 1
+		), '') <> ?
+	`, s.dialect.Now()),
+		item.SyncRunID, item.SourceMessageID, item.Phase, item.Status,
+		item.ErrorKind, item.ErrorMessage,
+		item.SyncRunID, item.SourceMessageID, SyncRunItemStatusResolved,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve acquisition: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("resolve acquisition: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("message %q: %w", item.SourceMessageID, ErrAcquisitionSettled)
 	}
 	return nil
 }

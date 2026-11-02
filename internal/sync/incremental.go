@@ -296,6 +296,9 @@ func (s *Syncer) incrementalWithRecovery(
 						if _, err := s.ingestMessage(
 							ctx, source.ID, raw, threadID, labelMap,
 						); err != nil {
+							if errors.Is(err, store.ErrAcquisitionSettled) {
+								continue
+							}
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 							checkpoint.ErrorsCount++
@@ -480,6 +483,10 @@ func (s *Syncer) replayAcquisitionFailures(
 				if errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil {
 					return nil, err
 				}
+				if errors.Is(err, store.ErrAcquisitionSettled) {
+					// A purge settled this retry after the run read it.
+					continue
+				}
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				continue
@@ -555,6 +562,9 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if _, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
+				if errors.Is(err, store.ErrAcquisitionSettled) {
+					return false, false, nil
+				}
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, false, err
