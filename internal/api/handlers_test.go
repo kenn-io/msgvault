@@ -8992,13 +8992,14 @@ func TestHandleSourceStatusDisablesSyncForQueuedJobs(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			sched := newMockScheduler()
 			identifier := "queued@example.com"
+			queuedAt := time.Date(2026, 10, 1, 15, 4, 0, 0, time.UTC)
 			_, err := st.GetOrCreateSource(sourceType, identifier)
 			require.NoError(err)
 			if sourceType == "gmail" {
 				sched.scheduled[identifier] = true
-				sched.statuses = []AccountStatus{{Email: identifier, Queued: true}}
+				sched.statuses = []AccountStatus{{Email: identifier, Queued: true, QueuedAt: queuedAt}}
 			} else {
-				sched.jobStatuses = []JobStatus{{Name: "granola:" + identifier, Queued: true}}
+				sched.jobStatuses = []JobStatus{{Name: "granola:" + identifier, Queued: true, QueuedAt: queuedAt}}
 			}
 			srv := NewServer(&config.Config{}, st, sched, testLogger())
 			w := httptest.NewRecorder()
@@ -9008,6 +9009,8 @@ func TestHandleSourceStatusDisablesSyncForQueuedJobs(t *testing.T) {
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 			require.Len(response.Sources, 1)
 			assert.True(response.Sources[0].SchedulerQueued)
+			require.NotNil(response.Sources[0].SchedulerQueuedAt)
+			assert.Equal("2026-10-01T15:04:00Z", *response.Sources[0].SchedulerQueuedAt)
 			assert.False(response.Sources[0].CanSync)
 			assert.Equal("sync_already_running", response.Sources[0].SyncUnavailableReason)
 		})
@@ -9239,4 +9242,8 @@ func TestSearchLiteralORWarning(t *testing.T) {
 			assert.Equal(t, tc.warn, len(result.Warnings) > 0)
 		})
 	}
+}
+
+func (*fakeVectorBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{}
 }

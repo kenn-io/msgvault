@@ -428,25 +428,44 @@ func TestCardDAVStatusReportsSelectedAndAggregateSchedules(t *testing.T) {
 	controller := &CardDAVController{cfg: cfg, store: testutil.NewTestStore(t)}
 	next := time.Date(2026, 10, 1, 1, 0, 0, 0, time.UTC)
 	sched := newMockScheduler()
-	sched.jobStatuses = []JobStatus{{Name: "carddav:work", NextRun: next}, {Name: "carddav:personal", NextRun: next.Add(time.Hour)}, {Name: "unrelated", NextRun: next.Add(-time.Hour)}}
+	queuedWork := JobStatus{Name: "carddav:work", NextRun: next, Queued: true, QueuedAt: next.Add(-time.Minute)}
+	runningWork := JobStatus{Name: "carddav:work", NextRun: next, Running: true}
+	personal := JobStatus{Name: "carddav:personal", NextRun: next.Add(time.Hour), Queued: true, QueuedAt: next}
+	unrelated := JobStatus{Name: "unrelated", NextRun: next.Add(-time.Hour)}
 	server := cardDAVReadServer(t, cfg, controller, sched)
 	for _, tc := range []struct {
-		query     string
-		scheduled bool
-		next      time.Time
+		query            string
+		jobs             []JobStatus
+		scheduled        bool
+		next             time.Time
+		queued           time.Time
+		schedulerRunning bool
 	}{
-		{"", true, next}, {"?connection=work", true, next}, {"?connection=personal", true, next.Add(time.Hour)}, {"?connection=default", false, time.Time{}},
+		{query: "", jobs: []JobStatus{queuedWork, personal, unrelated}, scheduled: true, next: next, queued: next.Add(-time.Minute)},
+		{query: "?connection=work", jobs: []JobStatus{queuedWork, personal, unrelated}, scheduled: true, next: next, queued: next.Add(-time.Minute)},
+		{query: "?connection=personal", jobs: []JobStatus{queuedWork, personal, unrelated}, scheduled: true, next: next.Add(time.Hour), queued: next},
+		{query: "?connection=default", jobs: []JobStatus{queuedWork, personal, unrelated}},
+		{query: "", jobs: []JobStatus{runningWork, personal, unrelated}, scheduled: true, next: next, queued: next, schedulerRunning: true},
+		{query: "?connection=work", jobs: []JobStatus{runningWork, personal, unrelated}, scheduled: true, next: next, schedulerRunning: true},
 	} {
+		sched.jobStatuses = tc.jobs
 		response := getCardDAVRead(t, server, "/api/v1/carddav/status"+tc.query)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var status CardDAVStatusResponse
 		require.NoError(json.NewDecoder(response.Body).Decode(&status))
 		assertions.Equal(tc.scheduled, status.Scheduled)
+		assertions.Equal(tc.schedulerRunning, status.SchedulerRunning)
 		if tc.scheduled {
 			require.NotNil(status.NextScheduledAt)
 			assertions.Equal(tc.next, *status.NextScheduledAt)
 		} else {
 			assertions.Nil(status.NextScheduledAt)
+		}
+		if !tc.queued.IsZero() {
+			require.NotNil(status.QueuedAt)
+			assertions.Equal(tc.queued, *status.QueuedAt)
+		} else {
+			assertions.Nil(status.QueuedAt)
 		}
 	}
 }

@@ -2276,6 +2276,10 @@ when explicitly set, including `false` and `""`. Already enabled text lanes keep
 their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
+Automatic message, person, and document indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
+
+Completed provider responses are saved in the vector store before the next request, so a resumed pass or restarted daemon does not repeat them; unfinished requests run again. See [scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
+
 #### `[vector.people]`
 
 Semantic people search: one curated document per durable person, built from

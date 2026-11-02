@@ -383,8 +383,9 @@ import (
 // 3.29.0 adds literal address filtering to the durable people Directory.
 // 3.30.0 adds the stored hidden_text_present flag to message details and search rows.
 // 3.31.0 adds literal OR warnings to full-text search responses.
-// 3.32.0 adds archived calendar occurrence listing.
-const APISchemaVersion = "3.32.0"
+// 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
+// 3.33.0 adds archived calendar occurrence listing.
+const APISchemaVersion = "3.33.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
