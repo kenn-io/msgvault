@@ -27,7 +27,7 @@ func TestSanitizeEventRemovesCapabilities(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	raw := []byte(`{"type":"future","replyToken":"secret","message":{"id":"123","type":"file","fileName":"example.txt","fileSize":9007199254740993,"markAsReadToken":"secret","native":{"quoteToken":"keep"}},"unknown":[{"replyToken":"secret","nested":[{"markAsReadToken":"secret","number":9007199254740993}]}]}`)
+	raw := []byte(`{"type":"message","replyToken":"secret","message":{"id":"123","type":"file","fileName":"example.txt","fileSize":9007199254740993,"markAsReadToken":"secret","native":{"quoteToken":"keep"}},"unknown":[{"replyToken":"secret","nested":[{"markAsReadToken":"secret","number":9007199254740993}]}]}`)
 	clean, err := line.SanitizeEvent(raw)
 	must.NoError(err)
 	checks.NotContains(string(clean), "replyToken")

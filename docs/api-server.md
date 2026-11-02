@@ -42,12 +42,11 @@ timeouts still apply. Signed webhook routes bypass the API IP rate limiter;
 the receiver applies its own signature checks and concurrency bounds.
 
 The body limit is 1 MiB. Across configured channels, at most 16 requests can
-read or retain bodies at once. Excess requests receive `503` before their body
-is read. A separate limit admits at most eight authenticated requests to inbox
-processing. `events` must be an array; a signed empty array is a valid connection
+read bodies or commit inbox events at once. Excess requests receive `503` before
+their body is read. `events` must be an array; a signed empty array is a valid connection
 check. Each event needs a nonempty `type`, a positive integer
-`timestamp`, and a nonempty `webhookEventId` of at most 200 bytes that does not
-start with `_`. Message and edit events require `message.id` and `message.type`;
+`timestamp`, and a nonempty `webhookEventId` of at most 200 bytes.
+Message and edit events require `message.id` and `message.type`;
 unsend events require `unsend.messageId`. Unknown event types retain sanitized
 native evidence. Missing source identities are retained for the processor to
 handle, rather than merged into a shared anonymous direct chat.
@@ -59,7 +58,7 @@ handle, rather than merged into a shared anonymous direct chat.
 | `401` | Missing/invalid signature or a destination that differs from the registered bot |
 | `404` | Unknown or disabled channel on a mounted receiver; no configuration details in the body |
 | `413` | Request body exceeds 1 MiB |
-| `503` | Body-read or authenticated-ingress concurrency bound reached, or the inbox transaction failed; delivery can be retried |
+| `503` | Receiver concurrency bound reached, or the inbox transaction failed; delivery can be retried |
 
 With no enabled channels, the route is not mounted and ordinary server
 protections apply. Valid batches remove `replyToken` and `markAsReadToken`

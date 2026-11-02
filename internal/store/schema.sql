@@ -4819,3 +4819,7 @@ CREATE TABLE IF NOT EXISTS line_memberships (
     left_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (source_id,conversation_key,member_identifier)
 );
+
+CREATE INDEX IF NOT EXISTS idx_line_unresolved_quotes
+    ON messages(source_id,conversation_id,json_extract(metadata,'$.quotedMessageId'))
+    WHERE message_type='line' AND reply_to_message_id IS NULL;

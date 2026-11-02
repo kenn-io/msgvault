@@ -7,7 +7,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
+	"unicode/utf8"
 )
 
 // LineWebhookEvent is sanitized provider evidence and its durable processing state.
@@ -189,7 +191,11 @@ func (s *Store) FinishLineEventContext(ctx context.Context, id int64, state, las
 		return errors.New("invalid LINE event state")
 	}
 	if len(lastError) > 500 {
-		lastError = lastError[:500]
+		end := 500
+		for end > 0 && !utf8.RuneStart(lastError[end]) {
+			end--
+		}
+		lastError = lastError[:end]
 	}
 	var nextAt any
 	if !next.IsZero() {
@@ -514,9 +520,12 @@ func (s *Store) refreshLineMembershipAfterParticipantMergeTx(ctx context.Context
 	return nil
 }
 
-// ResolveLineQuotesForConversationContext settles unresolved quotes in one
-// LINE conversation after the inbox pass touches that conversation.
-func (s *Store) ResolveLineQuotesForConversationContext(ctx context.Context, sourceID int64, sourceConversationID string) error {
+// ResolveLineQuotesForMessagesContext links the batch's replies and older
+// replies quoting parents that arrived in this batch, within one conversation.
+func (s *Store) ResolveLineQuotesForMessagesContext(ctx context.Context, sourceID int64, sourceConversationID string, messageIDs []string) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
 	if sourceConversationID == "" {
 		return errors.New("LINE quote resolution requires a conversation ID")
 	}
@@ -526,11 +535,22 @@ func (s *Store) ResolveLineQuotesForConversationContext(ctx context.Context, sou
 	}
 	target := `SELECT parent.id FROM messages parent WHERE parent.source_id=? AND parent.source_message_id=` + quoted + ` AND parent.conversation_id=messages.conversation_id AND parent.id<>messages.id`
 	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET reply_to_message_id=(`+target+`)
+		update := `UPDATE messages SET reply_to_message_id=(` + target + `)
  WHERE source_id=? AND message_type='line' AND reply_to_message_id IS NULL
- AND EXISTS (`+target+`)
-		AND messages.conversation_id=(SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?)`, sourceID, sourceID, sourceID, sourceID, sourceConversationID)
-		return err
+ AND EXISTS (` + target + `)
+ AND messages.conversation_id=(SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?)`
+		for batch := range slices.Chunk(messageIDs, 500) {
+			args := []any{sourceID, sourceID, sourceID, sourceID, sourceConversationID}
+			for _, id := range batch {
+				args = append(args, id)
+			}
+			for _, field := range []string{"source_message_id", quoted} {
+				if _, err := q.Exec(update+` AND `+field+` IN (`+placeholders(len(batch))+`)`, args...); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 }
 

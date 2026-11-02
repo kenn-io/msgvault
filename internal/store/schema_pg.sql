@@ -4413,3 +4413,6 @@ CREATE TABLE IF NOT EXISTS line_memberships (
     left_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (source_id,conversation_key,member_identifier)
 );
+
+-- idx_line_unresolved_quotes is built by Store.buildLargeIndexesConcurrently
+-- because messages can already be large when an archive enables LINE.

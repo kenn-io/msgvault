@@ -108,12 +108,6 @@ func (e *Event) UnmarshalJSON(raw []byte) error {
 	switch common.Type {
 	case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave", "follow", "unfollow":
 	default:
-		var compatible plain
-		if json.Unmarshal(snapshot, &compatible) == nil {
-			compatible.Raw = snapshot
-			*e = Event(compatible)
-			return nil
-		}
 		*e = Event{Type: common.Type, Timestamp: common.Timestamp, WebhookEventID: common.WebhookEventID, Raw: snapshot}
 		return nil
 	}
@@ -139,12 +133,6 @@ func (m *Message) UnmarshalJSON(raw []byte) error {
 	switch common.Type {
 	case "text", "image", "video", "audio", "file", "location", "sticker":
 	default:
-		var compatible plain
-		if json.Unmarshal(snapshot, &compatible) == nil {
-			compatible.Raw = snapshot
-			*m = Message(compatible)
-			return nil
-		}
 		*m = Message{ID: common.ID, Type: common.Type, Raw: snapshot}
 		return nil
 	}

@@ -16,8 +16,7 @@ import (
 
 const webhookPrefix = "/webhooks/line/"
 const webhookMaxBytes = 1 << 20
-const webhookIngressLimit = 8
-const webhookBodyReadLimit = 16
+const webhookIngressLimit = 16
 
 // ReceiverChannel is one enabled, registered channel captured at daemon startup.
 type ReceiverChannel struct {
@@ -36,11 +35,10 @@ type receiverChannel struct {
 // Receiver authenticates and commits incoming events without calling LINE.
 // Channel configuration is immutable; only signature counters change at runtime.
 type Receiver struct {
-	store     *store.Store
-	channels  map[string]*receiverChannel
-	ingress   chan struct{}
-	bodyReads chan struct{}
-	wake      func(string)
+	store    *store.Store
+	channels map[string]*receiverChannel
+	ingress  chan struct{}
+	wake     func(string)
 }
 
 // NewReceiver takes enabled channels only. wake must enqueue work without waiting
@@ -48,8 +46,7 @@ type Receiver struct {
 func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string)) (*Receiver, error) {
 	receiver := &Receiver{
 		store: st, channels: make(map[string]*receiverChannel),
-		ingress:   make(chan struct{}, webhookIngressLimit),
-		bodyReads: make(chan struct{}, webhookBodyReadLimit), wake: wake,
+		ingress: make(chan struct{}, webhookIngressLimit), wake: wake,
 	}
 	if len(channels) > 0 && st == nil {
 		return nil, errors.New("line: receiver requires an archive store")
@@ -100,11 +97,10 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	// Bound untrusted readers and retained bodies before allocating bytes. This
-	// is separate from the smaller authenticated inbox-transaction allowance.
+	// Bound each request from its first body read through its inbox commit.
 	select {
-	case r.bodyReads <- struct{}{}:
-		defer func() { <-r.bodyReads }()
+	case r.ingress <- struct{}{}:
+		defer func() { <-r.ingress }()
 	default:
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -154,13 +150,6 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	var events []jsontext.Value
 	if err := json.Unmarshal(envelope.Events, &events); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	select {
-	case r.ingress <- struct{}{}:
-		defer func() { <-r.ingress }()
-	default:
-		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	batch := make([]store.LineWebhookEvent, 0, len(events))

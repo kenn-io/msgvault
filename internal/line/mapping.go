@@ -93,9 +93,6 @@ func metadataFor(e Event, prior sql.NullString) (sql.NullString, error) {
 }
 
 func (p *Processor) message(ctx context.Context, e Event) error {
-	if e.Message == nil || e.Message.ID == "" || e.Message.Type == "" {
-		return invalidEvent("LINE message content missing")
-	}
 	key, kind, err := e.Source.ConversationID()
 	if err != nil {
 		return invalidEvent("invalid LINE message source")

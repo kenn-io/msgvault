@@ -1179,6 +1179,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
 		{"idx_messages_source_sent_at", "ON messages(source_id, sent_at DESC, id DESC)"},
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
+		{"idx_line_unresolved_quotes", "ON messages(source_id, conversation_id, (metadata->>'quotedMessageId')) WHERE message_type='line' AND reply_to_message_id IS NULL"},
 		{"idx_messages_account", messagesAccountIndexDefinition},
 		{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},

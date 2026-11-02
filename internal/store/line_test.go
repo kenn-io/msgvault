@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,16 +227,40 @@ func TestLineQuotesStayInConversation(t *testing.T) {
 		return id
 	}
 	child := persist("child", conv, `{"quotedMessageId":"parent"}`)
+	unrelated := persist("unrelated-child", conv, `{"quotedMessageId":"unrelated-parent"}`)
+	persist("unrelated-parent", conv, "")
 	persist("parent", other, "")
-	must.NoError(st.ResolveLineQuotesForConversationContext(ctx, src.ID, "group:synthetic-a"))
+	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"child"}))
 	var reply sql.NullInt64
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
 	checks.False(reply.Valid)
 	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET conversation_id=? WHERE source_id=? AND source_message_id='parent'`), conv, src.ID)
 	must.NoError(err)
-	must.NoError(st.ResolveLineQuotesForConversationContext(ctx, src.ID, "group:synthetic-a"))
+	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"parent"}))
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
 	checks.True(reply.Valid)
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
+	checks.False(reply.Valid, "settling a batch leaves unrelated messages alone")
+	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"unrelated-child"}))
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
+	checks.True(reply.Valid, "a batch's reply can quote an already archived parent")
+}
+
+func TestLineInboxErrorTruncationPreservesUTF8(t *testing.T) {
+	must := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000001")
+	must.NoError(err)
+	const bot = "U00000000000000000000000000000001"
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, bot))
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, bot, []store.LineWebhookEvent{{WebhookEventID: "error-example", EventType: "future", EventTimestamp: 1, RawJSON: `{"type":"future"}`}}))
+	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 1)
+	must.NoError(err)
+	must.Len(rows, 1)
+	must.NoError(st.FinishLineEventContext(t.Context(), rows[0].ID, "failed", strings.Repeat("界", 200), time.Time{}))
+	var message string
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT last_error FROM line_webhook_events WHERE id=?`), rows[0].ID).Scan(&message))
+	assert.Equal(t, strings.Repeat("界", 166), message)
 }
 
 func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {

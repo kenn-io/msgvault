@@ -103,6 +103,9 @@ func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, at
 // and newly scheduled retries belong to a later drain.
 func (p *Processor) Drain(ctx context.Context) error {
 	cutoff := p.now()
+	if err := p.store.PruneLineEventsContext(ctx, p.sourceID, cutoff.Add(-30*24*time.Hour)); err != nil {
+		return err
+	}
 	throughID, err := p.store.LineInboxHighWaterContext(ctx, p.sourceID)
 	if err != nil {
 		return err
@@ -125,10 +128,6 @@ func (p *Processor) Drain(ctx context.Context) error {
 }
 
 func (p *Processor) Process(ctx context.Context) error {
-	return p.process(ctx, p.now(), 0)
-}
-
-func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int64) (resultErr error) {
 	if p == nil || p.store == nil || p.client == nil {
 		return errors.New("LINE processor unavailable")
 	}
@@ -139,6 +138,10 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		}
 		p.lastPruned = now
 	}
+	return p.process(ctx, p.now(), 0)
+}
+
+func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int64) (resultErr error) {
 	due, err := p.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 1)
 	if err != nil {
 		return err
@@ -169,6 +172,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	checkpoint := &store.Checkpoint{}
 	touched := make(map[string]struct{})
 	var touchedConversations []string
+	messageIDs := make(map[string][]string)
 	type finishedEvent struct {
 		id               int64
 		state, lastError string
@@ -179,7 +183,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	// repeated preemption still makes progress.
 	settle := func(ctx context.Context) error {
 		for _, conversationKey := range touchedConversations {
-			if err := pass.store.ResolveLineQuotesForConversationContext(ctx, p.sourceID, conversationKey); err != nil {
+			if err := pass.store.ResolveLineQuotesForMessagesContext(ctx, p.sourceID, conversationKey, messageIDs[conversationKey]); err != nil {
 				return err
 			}
 			if err := pass.store.RecomputeConversationStatsForSourceConversationContext(ctx, p.sourceID, conversationKey); err != nil {
@@ -234,6 +238,9 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 			}
 		}
 		if conversationKey != "" {
+			if event.Message != nil {
+				messageIDs[conversationKey] = append(messageIDs[conversationKey], event.Message.ID)
+			}
 			if _, seen := touched[conversationKey]; !seen {
 				touched[conversationKey] = struct{}{}
 				touchedConversations = append(touchedConversations, conversationKey)
@@ -402,7 +409,7 @@ func (p *Processor) reconcileMutations(ctx context.Context, messageID string) er
 }
 
 func (p *Processor) unsend(ctx context.Context, e Event) error {
-	if e.Unsend == nil || e.Unsend.MessageID == "" || strings.ContainsAny(e.Unsend.MessageID, "\r\n") {
+	if strings.ContainsAny(e.Unsend.MessageID, "\r\n") {
 		return invalidEvent("invalid LINE unsend target")
 	}
 	row, err := p.store.LineMessageContext(ctx, p.sourceID, e.Unsend.MessageID)

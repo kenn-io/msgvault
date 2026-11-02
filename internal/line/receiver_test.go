@@ -268,9 +268,9 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
 	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
 	must.NoError(err)
-	waitForEight := func(started <-chan struct{}, label string) {
+	waitForRequests := func(started <-chan struct{}, count int, label string) {
 		t.Helper()
-		for range 8 {
+		for range count {
 			select {
 			case <-started:
 			case <-time.After(5 * time.Second):
@@ -280,7 +280,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	}
 	started := make(chan struct{}, 8)
 	release := make(chan struct{})
-	responses := make(chan int, 8)
+	responses := make(chan int, 16)
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
@@ -291,7 +291,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 			responses <- response.Code
 		})
 	}
-	waitForEight(started, "unauthenticated request bodies")
+	waitForRequests(started, 8, "unauthenticated request bodies")
 	body := receiverEnvelope(`[{"type":"message","webhookEventId":"signed-through","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}]`)
 	response := serveSignedReceiver(receiver, body)
 	checks.Equal(http.StatusOK, response.Code)
@@ -301,7 +301,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 		checks.Equal(http.StatusUnauthorized, <-responses)
 	}
 
-	startedAuthenticated := make(chan struct{}, 8)
+	startedAuthenticated := make(chan struct{}, 16)
 	releaseAuthenticated := make(chan struct{})
 	limited, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) {
 		startedAuthenticated <- struct{}{}
@@ -309,7 +309,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	})
 	must.NoError(err)
 	var authenticated sync.WaitGroup
-	for index := range 8 {
+	for index := range 16 {
 		authenticated.Go(func() {
 			eventID := fmt.Sprintf("authenticated-%d", index)
 			body := receiverEnvelope(fmt.Sprintf(`[{"type":"future","webhookEventId":%q,"timestamp":123}]`, eventID))
@@ -317,13 +317,13 @@ func TestReceiverBoundedIngress(t *testing.T) {
 			responses <- response.Code
 		})
 	}
-	waitForEight(startedAuthenticated, "authenticated webhook commits")
+	waitForRequests(startedAuthenticated, 16, "authenticated webhook commits")
 	blocked := receiverEnvelope(`[{"type":"future","webhookEventId":"overflow","timestamp":123}]`)
 	response = serveSignedReceiver(limited, blocked)
 	checks.Equal(http.StatusServiceUnavailable, response.Code)
 	close(releaseAuthenticated)
 	authenticated.Wait()
-	for range 8 {
+	for range 16 {
 		checks.Equal(http.StatusOK, <-responses)
 	}
 }

@@ -1069,3 +1069,35 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	cancel()
 	must.ErrorIs(processor.Drain(ctx), context.Canceled)
 }
+
+func TestProcessorDrainExcludesNewReceiptAfterRetention(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	f.enqueue(t, f.message("expired", "expired delivery", f.now.UnixMilli()), f.now.Add(-31*24*time.Hour))
+	rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+	must.NoError(err)
+	must.Len(rows, 2)
+	for _, row := range rows {
+		if row.WebhookEventID == "event-expired" {
+			must.NoError(f.st.FinishLineEventContext(t.Context(), row.ID, "ignored", "", time.Time{}))
+		}
+	}
+	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusAccepted})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/bot/message/1/content" {
+			f.enqueue(t, f.message("later", "next drain", f.now.UnixMilli()), time.Time{})
+		}
+		f.api.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
+	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+	must.NoError(processor.Drain(t.Context()))
+	var laterMessages int
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='later'"), f.source.ID).Scan(&laterMessages))
+	checks.Zero(laterMessages, "cleanup must not let later receipts enter the current drain")
+	must.NoError(processor.Drain(t.Context()))
+	checks.Equal("next drain", f.archived(t, "later").body)
+}

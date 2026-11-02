@@ -110,8 +110,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Body = `{"groupId":"C00000000000000000000000000000003","groupName":"Example Group"}`
 	case strings.HasSuffix(path, "/content"):
 		response.Body = "synthetic-content"
-	case key == "POST /v2/bot/channel/webhook/test":
-		response.Body = `{"success":true,"timestamp":"2026-10-30T00:00:00Z","statusCode":200,"reason":"OK","detail":""}`
 	}
 	if queued := s.responses[key]; len(queued) > 0 {
 		response = queued[0]
