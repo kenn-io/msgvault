@@ -843,6 +843,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		HasAttachments:       msg.HasAttachments,
 		HiddenTextPresent:    msg.HiddenTextPresent,
 		Labels:               msg.Labels,
+		LocalAutoKind:        msg.LocalAutoKind,
 		BodyText:             msg.BodyText,
 		BodyHTML:             msg.BodyHTML,
 		From:                 apiMessageFromAddress(msg),

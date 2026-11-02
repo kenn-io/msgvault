@@ -102,8 +102,9 @@ type MessageDetail struct {
 	BodyHTML string `json:"body_html"`
 
 	// Metadata
-	Labels      []string         `json:"labels"`
-	Attachments []AttachmentInfo `json:"attachments"`
+	Labels        []string         `json:"labels"`
+	LocalAutoKind string           `json:"local_auto_kind,omitempty"`
+	Attachments   []AttachmentInfo `json:"attachments"`
 }
 
 // Address represents an email address with optional display name.

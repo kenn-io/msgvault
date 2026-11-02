@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/mailkind"
 	"go.kenn.io/msgvault/internal/mailrecords"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
 const tableMessageRecords = "message_records"
+const mailRecordsStatusField = "status"
 
 var stageMailRecordsCandidateHook func(int64)
 
@@ -84,30 +86,60 @@ func stageMessageRecords(ctx context.Context, snapshot *cacheSourceSnapshot, id 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var text, body string
-	err := snapshot.QueryRow(`SELECT COALESCE(body_text,''), COALESCE(body_html,'')
-		FROM message_bodies WHERE message_id = ?
-		AND CASE
-			WHEN COALESCE(octet_length(body_html), 0) > ?
-				OR COALESCE(octet_length(body_text), 0) > ?
-			THEN 0
-			ELSE instr(lower(substr(body_html,1,?)), 'application/ld+json') > 0
-		END`,
-		id, mailrecords.MaxHTMLBytes, mailrecords.MaxHTMLBytes, mailrecords.MaxHTMLBytes).Scan(&text, &body)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("hydrate message records body %d: %w", id, err)
-	}
 	var subject, snippet, messageType string
 	if err := snapshot.QueryRow(`SELECT COALESCE(subject,''), COALESCE(snippet,''), COALESCE(message_type,'') FROM messages WHERE id = ?`, id).Scan(&subject, &snippet, &messageType); err != nil {
 		return fmt.Errorf("read message records metadata %d: %w", id, err)
+	}
+	if messageType != "" && messageType != "email" {
+		return nil
+	}
+	var encoded string
+	if err := snapshot.QueryRow(`SELECT COALESCE(json_group_array(name), '[]') FROM
+  (SELECT l.name FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+   WHERE ml.message_id = ? AND l.source_id IS NULL AND l.label_type = 'auto' AND l.name LIKE 'mv:kind/%'
+   GROUP BY l.name ORDER BY l.name LIMIT 11)`, id).Scan(&encoded); err != nil {
+		return fmt.Errorf("read local auto kind %d: %w", id, err)
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(encoded), &names); err != nil {
+		return fmt.Errorf("decode local auto kind: %w", err)
+	}
+	modelKind := ""
+	if len(names) <= 10 {
+		modelKind = mailkind.KindFromLocalLabelNames(names)
+	}
+	var text, body string
+	var oversized bool
+	err := snapshot.QueryRow(`SELECT
+	  CASE WHEN COALESCE(octet_length(body_text), 0) <= ? THEN COALESCE(body_text,'') ELSE '' END,
+	  CASE WHEN COALESCE(octet_length(body_html), 0) <= ? THEN COALESCE(body_html,'') ELSE '' END,
+	  COALESCE(octet_length(body_text), 0) > ? OR COALESCE(octet_length(body_html), 0) > ?
+  FROM message_bodies WHERE message_id = ?
+  AND (? <> '' OR instr(lower(substr(body_html,1,?)), 'application/ld+json') > 0)`,
+		mailrecords.MaxHTMLBytes, mailrecords.MaxHTMLBytes, mailrecords.MaxHTMLBytes, mailrecords.MaxHTMLBytes,
+		id, modelKind, mailrecords.MaxHTMLBytes).Scan(&text, &body, &oversized)
+	if errors.Is(err, sql.ErrNoRows) {
+		if modelKind == "" {
+			return nil
+		}
+	} else if err != nil {
+		return fmt.Errorf("hydrate message records body %d: %w", id, err)
+	}
+	if oversized {
+		return nil
 	}
 	if verification.Detect(verification.Input{MessageType: messageType, Subject: subject, Snippet: snippet, BodyText: text, BodyHTML: body}) != nil {
 		return nil
 	}
 	result := mailrecords.Extract(mailrecords.Input{Text: text, HTML: body})
+	if len(result.Records) == 0 && modelKind != "" {
+		extra, err := json.Marshal(map[string]string{"kind_trust": "model_judgment", "warning": "Advisory local auto kind; sender and transaction are not verified."})
+		if err != nil {
+			return fmt.Errorf("encode model kind annotation: %w", err)
+		}
+		_, err = snapshot.DuckDB().ExecContext(ctx, `INSERT INTO tmp_message_records (message_id, kind, basis, dropped, extractor_version, extra) VALUES (?, ?, 'model_kind', 0, ?, ?)`, id, modelKind, mailrecords.ExtractorVersion, string(extra))
+		return err
+	}
 	for _, record := range result.Records {
 		if err := insertMessageRecord(ctx, snapshot.DuckDB(), id, record); err != nil {
 			return err
@@ -125,7 +157,7 @@ func insertMessageRecord(ctx context.Context, db sqlRunner, id int64, record mai
 	if err != nil {
 		return fmt.Errorf("encode message record: %w", err)
 	}
-	names := []string{"merchant", "order_number", "amount", "currency", "tracking_number", "carrier", "status", "starts_at", "ends_at", "origin", "destination", "confirmation_code"}
+	names := []string{"merchant", "order_number", "amount", "currency", "tracking_number", "carrier", mailRecordsStatusField, "starts_at", "ends_at", "origin", "destination", "confirmation_code"}
 	args := []any{id, kinds[record.Type], "jsonld"}
 	for _, name := range names {
 		args = append(args, messageRecordSQLValue(record.Fields[name].Value))

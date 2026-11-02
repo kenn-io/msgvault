@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/mailkind"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -293,7 +294,7 @@ func appendSummaryRecipient(msg *MessageSummary, recipType string, addr Address)
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchMessageLabelsDetail(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT l.name
+		SELECT l.name, l.source_id, COALESCE(l.label_type, '')
 		FROM %smessage_labels ml
 		JOIN %slabels l ON l.id = ml.label_id
 		WHERE ml.message_id = ?
@@ -303,14 +304,22 @@ func fetchMessageLabelsDetail(ctx context.Context, db store.SQLReader, rebind re
 	}
 	defer func() { _ = rows.Close() }()
 
+	localAuto := []string{}
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var name, labelType string
+		var sourceID sql.NullInt64
+		if err := rows.Scan(&name, &sourceID, &labelType); err != nil {
 			return err
 		}
 		msg.Labels = append(msg.Labels, name)
+		if !sourceID.Valid && labelType == "auto" {
+			localAuto = append(localAuto, name)
+		}
 	}
 
+	if msg.MessageType == "" || msg.MessageType == "email" {
+		msg.LocalAutoKind = mailkind.KindFromLocalLabelNames(localAuto)
+	}
 	return rows.Err()
 }
 

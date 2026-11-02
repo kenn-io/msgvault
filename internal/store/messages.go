@@ -1758,6 +1758,12 @@ func messageBodyChanges(
 	if textChanged || htmlChanged {
 		recordsChanged = strings.Contains(strings.ToLower(nullStringValue(oldHTML)), "application/ld+json") ||
 			strings.Contains(strings.ToLower(nullStringValue(bodyHTML)), "application/ld+json")
+		if !recordsChanged {
+			if err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+    WHERE ml.message_id = ? AND l.source_id IS NULL AND l.label_type = 'auto' AND l.name LIKE 'mv:kind/%')`, messageID).Scan(&recordsChanged); err != nil {
+				return false, false, false, fmt.Errorf("inspect model kind freshness: %w", err)
+			}
+		}
 	}
 	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML),
 		textChanged, recordsChanged, nil

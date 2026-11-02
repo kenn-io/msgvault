@@ -363,19 +363,13 @@ func (s *Store) MailKindLabelContext(ctx context.Context, id int64) (string, err
 		return "", fmt.Errorf("read local mail kind: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	kind := ""
+	names := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return "", err
 		}
-		candidate := strings.TrimPrefix(name, mailKindLabelPrefix)
-		if mailkind.KindAllowed(candidate) {
-			if kind != "" && kind != candidate {
-				return "", nil
-			}
-			kind = candidate
-		}
+		names = append(names, name)
 	}
-	return kind, rows.Err()
+	return mailkind.KindFromLocalLabelNames(names), rows.Err()
 }

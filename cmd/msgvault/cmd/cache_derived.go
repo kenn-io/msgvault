@@ -205,6 +205,15 @@ func refreshDerivedDatasetsOnly(
 	}
 	relatedExports := make(map[string]int64)
 	relatedReplacements := make(map[string]bool)
+	// Label-only repairs must replace the model-kind projection too. Stage
+	// primary-key bodies before CSV preparation closes the source snapshot.
+	recordsChanged := repairRelated && relatedKinds.labels
+	if recordsChanged {
+		if err := stageMailRecords(ctx, sourceSnapshot, analyticsDir, 0, state.LastMessageID, true); err != nil {
+			return nil, err
+		}
+		relatedReplacements[tableMessageRecords] = true
+	}
 	for dataset, changed := range relatedKinds.datasets() {
 		if changed {
 			relatedExports[dataset] = 0
@@ -216,6 +225,11 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	exportDB := sourceSnapshot.DuckDB()
+	if recordsChanged {
+		if err := exportMailRecords(ctx, sourceSnapshot, staging.root); err != nil {
+			return nil, err
+		}
+	}
 
 	conversationFingerprint, err := fingerprintConversationParticipantsFromSnapshot(
 		ctx,

@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,24 @@ var kindCriteria = map[string]string{
 func KindAllowed(kind string) bool {
 	_, ok := kindCriteria[kind]
 	return ok
+}
+
+// KindFromLocalLabelNames reads a closed kind only after the caller has
+// established that every supplied label is local (NULL source) and auto.
+// Conflicting kinds are ambiguous and produce no model evidence.
+func KindFromLocalLabelNames(names []string) string {
+	kind := ""
+	for _, name := range names {
+		candidate, ok := strings.CutPrefix(name, "mv:kind/")
+		if !ok || !KindAllowed(candidate) {
+			continue
+		}
+		if kind != "" && kind != candidate {
+			return ""
+		}
+		kind = candidate
+	}
+	return kind
 }
 
 func (c JevClient) Decide(ctx context.Context, packet Packet) (Judgment, error) {

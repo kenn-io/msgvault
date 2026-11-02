@@ -1778,6 +1778,12 @@ The `cc`, `bcc`, and `body_html` fields are included only when present. `body` i
 
 API schema 3.35.0 adds `body_text` to this single-message endpoint. It preserves the canonical plain-text body and is an empty string for HTML-only mail. Clients talking to older servers that omit `body_text` can use `body` as the legacy fallback. Conversation windows keep their existing `body` and `body_html` representation.
 
+API schema 3.37.0 adds optional `local_auto_kind` to message details. It comes
+only from a local `auto` label in the closed mail-kind list. User labels and
+provider labels with matching names are excluded; conflicting local kinds
+produce no value. The kind is an advisory model judgment and does not verify
+a sender or transaction. Older servers omit this field.
+
 ---
 
 ### Attachment metadata {#get-apiv1attachmentsid}

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/mailkind"
 	"go.kenn.io/msgvault/internal/mailrecords"
 	"go.kenn.io/msgvault/internal/verification"
 )
@@ -49,5 +50,10 @@ func (h *handlers) getMessageRecords(ctx context.Context, req toolRequest) (*too
 	// Markup does not establish authorship. Keep origin unknown until the
 	// message segmenter provides evidence, including for forwarded copies.
 	value := mailrecords.Extract(mailrecords.Input{HTML: msg.BodyHTML, Text: msg.BodyText})
+	if value.Kind == "none" && (msg.MessageType == "" || msg.MessageType == "email") &&
+		len(msg.BodyText) <= mailrecords.MaxHTMLBytes && len(msg.BodyHTML) <= mailrecords.MaxHTMLBytes && mailkind.KindAllowed(msg.LocalAutoKind) {
+		value.Kind, value.KindSource, value.KindTrust = msg.LocalAutoKind, "decision_model", "model_judgment"
+		value.Warnings = append(value.Warnings, "The local auto kind is an advisory model judgment; it does not authenticate the sender or transaction.")
+	}
 	return jsonResult(messageRecordsResponse{MessageID: id, Result: value})
 }

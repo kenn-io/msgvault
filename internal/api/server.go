@@ -615,6 +615,8 @@ type ServerOptions struct {
 	// GmailProfileAddress reads one profile using the selected source credentials.
 	// Nil leaves Gmail provider discovery unavailable. Ordinary sync does not use it.
 	GmailProfileAddress func(context.Context, *store.Source) (string, error)
+	// MailKindEndpoint overrides the pinned classification endpoint. Tests use a local fixture.
+	MailKindEndpoint string
 }
 
 // NewServer creates a new API server.
@@ -659,6 +661,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		cardDAV:                opts.CardDAV,
 		logger:                 opts.Logger,
 		requestTimeout:         timeout,
+		mailKindEndpoint:       opts.MailKindEndpoint,
 		readTimeout:            daemonReadTimeout,
 		queryTimeout:           QueryEndpointTimeout,
 		inProgressThreshold:    inProgressLogThreshold,

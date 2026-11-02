@@ -66,15 +66,20 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 | `sources` | id, source_type |
 
 `message_records` is a rebuildable projection of schema.org JSON-LD in
-archived mail. `basis` is `jsonld`; `extra` carries the complete record with
+archived mail. `basis=jsonld` rows carry the complete record in `extra`, with
 field trust, unknown authorship, and `markup_only` hints. Typed values validate
 syntax, not the sender's claims. URLs remain untrusted and are never fetched.
 Credential messages identified by the verification detector are excluded.
-This slice does not add a restriction policy to archive SQL.
+When no deterministic record exists, a local `auto` kind label adds one
+`basis=model_kind` row. Its field columns are null and `extra.kind_trust` is
+`model_judgment`. User and provider labels with matching names are excluded;
+conflicting local kinds produce no row. These rows are advisory classifications,
+not verified transactions. This slice does not add a restriction policy to
+archive SQL.
 
 The builder reads bodies by message ID from the same snapshot as the other
 cache tables. It skips bodies over 1 MiB and parses only HTML with the JSON-LD
-marker. Body changes and deletions invalidate the cache through its repair
+marker, plus bodies with eligible local auto kinds. Label changes, body changes, and deletions invalidate the cache through its repair
 journal. Queries use the cache publication reported in the existing `cache`
 metadata; rebuild for current aggregate results. No extracted records are
 stored in the archive database.
