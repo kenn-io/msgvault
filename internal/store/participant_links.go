@@ -77,8 +77,8 @@ func (s *Store) loadLinkEdgesContext(ctx context.Context) ([]linkEdge, error) {
 }
 
 // loadLinkEdgesTx reads every participant_links row within tx. Used by
-// Link/UnlinkParticipants so the redundant-edge check sees a consistent
-// snapshot with the write that follows it.
+// UnlinkParticipants so the cluster split sees a consistent snapshot with the
+// write that follows it.
 func (s *Store) loadLinkEdgesTx(tx *loggedTx) ([]linkEdge, error) {
 	return s.loadLinkEdgesTxContext(context.Background(), tx)
 }
@@ -91,6 +91,23 @@ func (s *Store) loadLinkEdgesTxContext(
 		`SELECT participant_a, participant_b FROM participant_links`)
 	if err != nil {
 		return nil, fmt.Errorf("query participant links: %w", err)
+	}
+	return scanLinkEdges(rows)
+}
+
+func (s *Store) loadComponentEdgesTxContext(ctx context.Context, tx *loggedTx, a, b int64) ([]linkEdge, error) {
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE walk(id, parent) AS (
+		SELECT id, CAST(0 AS BIGINT) FROM participants WHERE id IN (?, ?)
+		UNION
+		SELECT CASE WHEN l.participant_a = walk.id THEN l.participant_b ELSE l.participant_a END, walk.id
+		FROM walk JOIN participant_links l ON l.participant_a = walk.id OR l.participant_b = walk.id
+		WHERE l.participant_a <> walk.parent AND l.participant_b <> walk.parent
+	)
+	SELECT DISTINCT CASE WHEN id < parent THEN id ELSE parent END,
+		CASE WHEN id < parent THEN parent ELSE id END
+	FROM walk WHERE parent <> 0`, a, b)
+	if err != nil {
+		return nil, fmt.Errorf("query participant component links: %w", err)
 	}
 	return scanLinkEdges(rows)
 }
@@ -372,7 +389,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, lo, hi); err != nil {
 			return err
 		}
-		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+		edges, err := s.loadComponentEdgesTxContext(ctx, tx, lo, hi)
 		if err != nil {
 			return err
 		}
