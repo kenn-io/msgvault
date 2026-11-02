@@ -37,6 +37,23 @@ afterEach(() => {
 });
 
 describe('DeletionsWorkspace', () => {
+  it('lists each batch account without detail reads', async () => {
+    const seen: Seen[] = [];
+    const client = api([
+      { ...batch('work', 'pending', 2), account: 'work@example.com' },
+      { ...batch('personal', 'pending', 3), account: 'personal@example.com' },
+    ], seen);
+    const controller = new DeletionsController(client);
+    const view = render(DeletionsWorkspace, { client, controller });
+    try {
+      const table = await screen.findByRole('table', { name: 'Staged deletions' });
+      const rows = within(table).getAllByRole('row').slice(1);
+      expect(within(rows[0]).queryByText('work@example.com')).not.toBeNull();
+      expect(within(rows[1]).queryByText('personal@example.com')).not.toBeNull();
+      expect(seen).toEqual([{ method: 'GET', path: '/api/v1/deletions' }]);
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it('shows an alert and retry without an empty state when the first list load fails', async () => {
     const client = createAPIClient(async () => Response.json({ message: 'Offline' }, { status: 500 }));
     const controller = new DeletionsController(client);

@@ -3607,6 +3607,8 @@ components:
     DeletionManifestSummary:
       additionalProperties: true
       properties:
+        account:
+          type: string
         created_at:
           format: date-time
           type: string
@@ -16726,7 +16728,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.31.0
+  version: 3.32.0
 openapi: 3.1.0
 paths:
   /api/ping:

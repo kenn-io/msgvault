@@ -639,6 +639,32 @@ func TestStageDeletionEngineUnavailable(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "engine_unavailable")
 }
 
+func TestListDeletionsReturnsEachBatchAccount(t *testing.T) {
+	t.Parallel()
+	st := &deletionMockStore{manifests: map[deletion.Status][]*deletion.Manifest{
+		deletion.StatusPending: {
+			{ID: "batch-work", Filters: deletion.Filters{Account: "work@example.com"}},
+			{ID: "batch-personal", Filters: deletion.Filters{Account: "personal@example.com"}},
+		},
+	}}
+	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Manifests []struct {
+			ID      string `json:"id"`
+			Account string `json:"account"`
+		} `json:"manifests"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	accounts := make(map[string]string)
+	for _, manifest := range resp.Manifests {
+		accounts[manifest.ID] = manifest.Account
+	}
+	assert.Equal(t, map[string]string{"batch-work": "work@example.com", "batch-personal": "personal@example.com"}, accounts)
+}
+
 func TestListDeletions(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
