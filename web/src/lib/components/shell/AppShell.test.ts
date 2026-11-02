@@ -2294,6 +2294,46 @@ describe('AppShell', () => {
     } finally { rendered.unmount(); state.destroy(); }
   });
 
+  it('closes the reader on Back to a same-person entry with no reader', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/participants/1') return Response.json({
+        id: 1, display_label: 'Example Person', identifiers: [], activity_count: 1, file_count: 0,
+        source_counts: [], first_at: '2026-07-18T12:00:00Z', last_at: '2026-07-18T12:00:00Z', cache_revision: 'cache-1'
+      });
+      if (path === '/api/v1/participants/1/timeline') return Response.json(exploreResponse({
+        rows: [{ ...entry(1), conversation_id: 1, anchor_message_id: 1 }], total_count: 1
+      }));
+      if (path === '/api/v1/conversations/1') return Response.json({
+        id: 1, messages: [{ id: 1, conversation_id: 1, subject: 'Synthetic subject 1',
+          sent_at: '2026-07-18T12:00:00Z', message_type: 'email', from: 'sender@example.com', to: [],
+          body: 'Reader body 1', snippet: 'Reader body 1', attachments: [] }],
+        anchor_id: 1, total: 1, has_before: false, has_after: false
+      });
+      return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await within(grid).findByText('Synthetic subject 1');
+      expect(screen.queryByText('Reader body 1')).toBeNull();
+      state.commitNavigation({ relationshipShowAll: true });
+      await waitFor(() => expect(state.current.relationshipShowAll).toBe(true));
+      await fireEvent.click(await within(grid).findByText('Synthetic subject 1'));
+      await screen.findByText('Reader body 1');
+
+      const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await restored;
+      await waitFor(() => expect(state.current.relationshipShowAll).toBe(false));
+      expect(state.current.relationshipTarget).toBe('cluster:1');
+      await waitFor(() => expect(screen.queryByText('Reader body 1')).toBeNull());
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
   it('re-opens the hub target when the predicate changes but the target string does not', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:1'
