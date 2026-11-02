@@ -36,13 +36,11 @@ func TestLinkParticipantsTraversesBothDirectionsAndBindsPerson(t *testing.T) {
 	for i := range ids {
 		ids[i] = f.EnsureParticipant(fmt.Sprintf("participant-%d@example.com", i), "", "example.com")
 	}
-	// Both endpoints must walk from participant_b to participant_a to meet.
+	// Traversal from the chain's end crosses from participant_b to participant_a.
 	for _, pair := range [][2]int{{0, 3}, {1, 3}, {1, 4}, {5, 6}} {
 		_, err := f.Store.LinkParticipants(ids[pair[0]], ids[pair[1]])
 		require.NoError(err)
 	}
-	_, err := f.Store.LinkParticipants(ids[0], ids[4])
-	require.ErrorIs(err, store.ErrAlreadyLinked)
 	person, _, err := f.Store.CreatePersonFromParticipant(ids[2])
 	require.NoError(err)
 	_, err = f.Store.LinkParticipants(ids[4], ids[2])

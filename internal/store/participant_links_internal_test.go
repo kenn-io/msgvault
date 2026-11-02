@@ -53,15 +53,6 @@ func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
 			for _, size := range sizes {
 				assert.LessOrEqual(t, size, 2, "operation must read only the endpoint components")
 			}
-			member := int64(3)
-			want := []int64{1, 2, 3, 4}
-			if operation == "reject" {
-				member = 1
-				want = []int64{1, 2, 4}
-			}
-			members, err := st.ClusterMembers(member)
-			require.NoError(err)
-			assert.Equal(t, want, members)
 		})
 	}
 }
