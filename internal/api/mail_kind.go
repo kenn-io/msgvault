@@ -41,6 +41,7 @@ type mailKindConsentStore interface {
 }
 
 func (s *Server) registerMailKindRoutes(api huma.API) {
+	s.registerMailKindRunRoute(api)
 	status := rawAPIV1Operation("getMailKindStatus", http.MethodGet, "/mail/kind/status", "Get optional mail kind configuration and exact disclosure")
 	status.Responses = jsonResponsesFor[MailKindStatus](api)
 	addErrorResponses(api, status.Responses, http.StatusServiceUnavailable)

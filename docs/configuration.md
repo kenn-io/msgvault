@@ -154,9 +154,21 @@ after configuration changes. It waits for an in-flight request guarded by
 that purpose; later attempts recheck consent. Grant and revoke are idempotent
 and preserve the consent audit history.
 
-These commands manage authorization and do not send classification requests.
-Nothing runs during sync or on a schedule. See the
-[CLI reference](cli-reference.md#mail-kind) for command output.
+`msgvault mail kind classify` explicitly sends one bounded packet per eligible
+message and persists only a local `auto` label, such as `mv:kind/receipt`.
+Nothing runs during sync or on a schedule. Existing deterministic kinds and
+detected credential messages are skipped. The shared quote segmenter removes
+recognized quoted, forwarded, and signature ranges; it cannot prove authorship.
+Oversized or incompletely examined bodies are skipped. HTML-only input is
+converted to text without resolving URLs. Long digit runs (four or more digits)
+and email local parts are masked before the excerpt and subject limits apply.
+
+A label requires both configured probability thresholds. The chosen option's
+probability is used, not its separate confidence score. Missing or malformed
+answers, unknown choices, changed evidence, and consent withdrawal write no
+label. Local labels are advisory and do not authenticate a sender or transaction.
+They appear with other archive labels, and `label:mv:kind/receipt` works in
+search. See the [CLI reference](cli-reference.md#mail-kind) for command output.
 
 ## People tiers
 

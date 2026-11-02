@@ -281,6 +281,7 @@ type Server struct {
 	requestTimeout         time.Duration
 	// Empty in production; API tests use a local Jev fixture.
 	personMatchScoringEndpoint string
+	mailKindEndpoint           string
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.

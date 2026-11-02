@@ -91,6 +91,8 @@ const (
 	ToolApproveCardDAVPublication = "approve_carddav_publication"
 	ToolSyncCardDAV               = "sync_carddav"
 	ToolGetCardDAVSyncStatus      = "get_carddav_sync_status"
+	ToolGetMailKindStatus         = "get_mail_kind_status"
+	ToolClassifyMailKind          = "classify_mail_kind"
 	ToolGetIdentityScoringStatus  = "get_identity_scoring_status"
 	ToolScoreIdentityMatches      = "score_identity_matches"
 	ToolListIdentityJudgments     = "list_identity_judgments"
@@ -150,8 +152,10 @@ type ServeOptions struct {
 	// evidence to the configured external provider. Each invocation requires
 	// MCP client confirmation after the client obtains user approval.
 	AllowIdentityScoring bool
-	AllowPersonMerges    bool
-	AllowCardDAVWrites   bool
+	// AllowMailKind exposes separately consented, confirmed mail classification.
+	AllowMailKind      bool
+	AllowPersonMerges  bool
+	AllowCardDAVWrites bool
 	// AllowCalendarWrites exposes calendar mutation tools when the transport's
 	// general write policy also permits writes.
 	AllowCalendarWrites bool
@@ -196,6 +200,7 @@ type ServeOptions struct {
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
+	MailKind        MailKindBackend
 	// Drafts runs managed draft commands with the caller's credential.
 	Drafts        DraftRunner
 	DraftCommands []string
@@ -408,6 +413,7 @@ func newMCPServerWithPolicy(
 		personCardDAV:        opts.PersonCardDAV,
 		messageTags:          opts.MessageTags,
 		identityScoring:      opts.IdentityScoring,
+		mailKind:             opts.MailKind,
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
@@ -427,6 +433,9 @@ func newMCPServerWithPolicy(
 		}
 		if definition.security == toolSecurityIdentityScoring &&
 			(!allowWrites || !opts.AllowIdentityScoring) {
+			continue
+		}
+		if definition.security == toolSecurityMailKind && (!allowWrites || !opts.AllowMailKind) {
 			continue
 		}
 		if definition.security == toolSecurityPersonMerge &&
@@ -556,6 +565,7 @@ func newMCPHTTPServerWithPolicy(
 				requestOpts.OperationWriteFamilies = nil
 				requestOpts.AllowIdentityDecisions = false
 				requestOpts.AllowIdentityScoring = false
+				requestOpts.AllowMailKind = false
 				requestOpts.AllowPersonMerges = false
 				requestOpts.AllowCardDAVWrites = false
 				requestOpts.AllowCalendarWrites = false

@@ -280,6 +280,8 @@ import type {
   MCPCapabilities,
   MailKindConsentRequest,
   MailKindConsentResponse,
+  MailKindRunRequest,
+  MailKindRunResponse,
   MailKindStatus,
   Manifest,
   MediaSearchResponse,
@@ -2209,6 +2211,23 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Classify a bounded mail batch and apply local auto labels
+ */
+export const classifyMailKind = (
+  mailKindRunRequest: MailKindRunRequest,
+  options?: SecondParameter<typeof orvalFetch<MailKindRunResponse>>,
+) => {
+  return orvalFetch<MailKindRunResponse>(
+    {
+      url: `/api/v1/mail/kind/classify`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mailKindRunRequest,
+    },
     options,
   );
 };

@@ -4413,6 +4413,7 @@ Manage the separate disclosure and consent for optional mail kind decisions:
 msgvault mail kind status [--json]
 msgvault mail kind consent <disclosure-fingerprint> [--json]
 msgvault mail kind revoke <disclosure-fingerprint> [--json]
+msgvault mail kind classify [--limit 20] [--message-id 101,102] [--json]
 ```
 
 `status` reports whether configuration, a daemon-side credential, and exact
@@ -4424,8 +4425,24 @@ Review that disclosure before granting its fingerprint. Repeating a grant or
 revocation is a no-op; revocation can target an older fingerprint after a
 configuration change. Consent for identity scoring or other processing does
 not authorize mail kind decisions. These owner commands use the daemon and
-are unavailable in agent-delegated CLI mode. They do not send a provider
-request. See [mail kind configuration](configuration.md#mail-kind-consent).
+are unavailable in agent-delegated CLI mode. Status, consent, and revoke do
+not send a provider request.
+
+`classify` is the explicit request to send the disclosed masked packets. With
+no IDs it considers the newest received mail without a local kind label. The
+limit defaults to the configured batch size and cannot exceed it. Explicit
+IDs can be repeated or comma-separated, with at most 100 IDs. Detected
+credentials, deterministic kinds, oversized bodies, and low-probability
+answers are left unlabeled. A body change during the request also prevents
+the label. Existing labels are preserved.
+
+Output contains only `classified`, `labeled`, `undecided`, `errors`, and
+`requests` counts plus an advisory warning. `classified` counts valid model
+answers, including those below the labeling thresholds. `requests` counts
+actual HTTP attempts, including retries. A stopped batch returns its completed
+counts and a blocker; the CLI exits unsuccessfully. No message text or provider
+response prose is returned. See
+[mail kind configuration](configuration.md#mail-kind-consent).
 
 ## query
 
