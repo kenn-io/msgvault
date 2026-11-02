@@ -198,14 +198,24 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	// to the same source.
 	for start := 0; start < len(exceptions); start += 500 {
 		end := min(start+500, len(exceptions))
-		args := make([]any, end-start)
-		for i := start; i < end; i++ {
-			args[i-start] = exceptions[i].MessageID
+		ids := make([]any, 0, end-start)
+		var seriesIDs []any
+		seen := make(map[string]bool, end-start)
+		for _, exception := range exceptions[start:end] {
+			ids = append(ids, exception.MessageID)
+			if id := exception.Event.SeriesProviderID; !seen[id] {
+				seen[id] = true
+				seriesIDs = append(seriesIDs, id)
+			}
 		}
-		predicate := `e.kind IN ('series', 'single') AND EXISTS (SELECT 1 FROM calendar_events x JOIN messages mx ON mx.id = x.message_id
-   WHERE x.message_id IN (` + placeholders(len(args)) + `)
+		// Name the parent IDs directly so the provider index finds the few
+		// candidates even before the planner has statistics; otherwise the
+		// EXISTS runs once for every archived event.
+		predicate := `e.kind IN ('series', 'single') AND e.provider_event_id IN (` + placeholders(len(seriesIDs)) + `)
+   AND EXISTS (SELECT 1 FROM calendar_events x JOIN messages mx ON mx.id = x.message_id
+   WHERE x.message_id IN (` + placeholders(len(ids)) + `)
    AND x.series_provider_id = e.provider_event_id AND mx.source_id = m.source_id)`
-		parents, err := queryCalendarSeriesWithinBudget(ctx, r, predicate, args)
+		parents, err := queryCalendarSeriesWithinBudget(ctx, r, predicate, append(seriesIDs, ids...))
 		if err != nil {
 			return nil, err
 		}
