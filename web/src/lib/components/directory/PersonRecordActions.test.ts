@@ -33,6 +33,7 @@ describe('PersonRecordActions', () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'GET') return Response.json({ message: 'Readback unavailable' }, { status: 503 });
       requests.push(request);
       return new Response(JSON.stringify({ ...person(), revision: 4, display_name: 'Renamed User' }), {
         headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' }
@@ -44,7 +45,8 @@ describe('PersonRecordActions', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed User' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
 
-    await waitFor(() => expect(requests).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull());
+    expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('PATCH');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
     await expect(requests[0]!.clone().json()).resolves.toEqual({ display_name: 'Renamed User' });
@@ -71,7 +73,9 @@ describe('PersonRecordActions', () => {
   it('requires confirmation and the current strong ETag before deleting a person', async () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'GET') return Response.json({ message: 'Readback unavailable' }, { status: 503 });
+      requests.push(request);
       return new Response(null, { status: 204 });
     }));
 
@@ -80,7 +84,8 @@ describe('PersonRecordActions', () => {
     expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
 
-    await waitFor(() => expect(requests).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull());
+    expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('DELETE');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
   });
