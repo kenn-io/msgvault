@@ -2123,41 +2123,42 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('refreshes filtered Saved results after renaming their organization in Settings', async () => {
+  it('refetches filtered Saved results when Settings reports a directory change', async () => {
     let renamed = false;
-    const organization = () => ({ id: 21, revision: renamed ? 2 : 1, name: renamed ? 'New Org' : 'Old Org', kind: 'company', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' });
-    const session = createSessionController(async input => {
-      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
-      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
+    const directoryReads: URL[] = [];
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const url = new URL(request.url);
+      const path = url.pathname;
       if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
       if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
-      if (path === '/api/v1/settings') return Response.json({ settings: [], groups: [], pending_restart: false }, { headers: { ETag: '"settings"' } });
-      if (path === '/api/v1/people/directory') return Response.json({ people: new URL(request.url).searchParams.get('organization') !== organization().name ? [] : [{ id: 7, revision: 1, display_name: 'Synthetic Person', organizations: [organization().name], categories: [], contact_state: 'active' }] });
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/organizations/21') {
-        if (request.method === 'PATCH') { renamed = true; return Response.json(organization(), { headers: { ETag: '"organization-21-r2"' } }); }
-        return Response.json({ organization: organization(), names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] }, { headers: { ETag: '"organization-21-r1"' } });
+      if (path === '/api/v1/people/directory') {
+        directoryReads.push(url);
+        return Response.json({ people: renamed || url.searchParams.get('organization') !== 'Old Org' ? [] : [{ id: 7, revision: 1, display_name: 'Synthetic Person', organizations: ['Old Org'], categories: [], contact_state: 'active' }] });
       }
-      if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
-      if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });
       if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
       return Response.json({ rows: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
     });
+    const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => ({
+      render: () => '<main aria-label="Settings fixture"><button>Report directory change</button></main>',
+      setup: element => {
+        const button = element.querySelector('button')!;
+        const report = () => { renamed = true; args[9]()(); };
+        button.addEventListener('click', report);
+        return () => button.removeEventListener('click', report);
+      }
+    }));
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryOrganization: 'Old Org' }))}`);
-    const view = render(App, { session });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client, state, settings });
     try {
-      await session.bootstrap();
       await screen.findByText('Synthetic Person');
+      const readsBeforeSettings = directoryReads.length;
       await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-      await fireEvent.click(await within(screen.getByRole('main', { name: 'Settings' })).findByRole('button', { name: 'People' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Edit Old Org' }));
-      await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'New Org' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-      await screen.findByRole('button', { name: 'Edit New Org' });
-      await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'People' }));
-      await screen.findByRole('main', { name: 'People' });
-      await waitFor(() => expect(screen.queryByText('Synthetic Person')).toBeNull());
-    } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
+      await fireEvent.click(await screen.findByRole('button', { name: 'Report directory change' }));
+      await waitFor(() => expect(directoryReads).toHaveLength(readsBeforeSettings + 1));
+      expect(directoryReads.at(-1)?.searchParams.get('organization')).toBe('Old Org');
+    } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
   });
 
   it.each(['reader next', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {

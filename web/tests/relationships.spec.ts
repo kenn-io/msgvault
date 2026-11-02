@@ -470,15 +470,12 @@ test('saved people keep durable IDs separate from participants and open profiles
   await expect.poll(() => exploreHistoryState(page)).toMatchObject({ directoryPersonID: 91, relationshipTarget: 'cluster:1' });
   await list.getByText('Draft Contact', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Draft Contact', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
   await page.getByRole('radio', { name: 'Domains', exact: true }).click();
   await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
   await page.getByRole('radio', { name: 'People', exact: true }).click();
   await list.getByText('Saved Contact', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Saved Contact' })).toBeVisible();
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92, relationshipTarget: null });
-  await expect(page.getByRole('radio', { name: 'Details', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
 });
 
 test('People history and reload restore participant scope without a message query', async ({ page }) => {

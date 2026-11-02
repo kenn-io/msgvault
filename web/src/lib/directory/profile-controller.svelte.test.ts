@@ -130,7 +130,7 @@ describe('DirectoryProfileController', () => {
     } finally { controller.destroy(); }
   });
 
-  it.each(['save', 'clear'] as const)('refreshes and publishes contact state after a contact frequency %s', async (operation) => {
+  it.each(['save', 'clear'] as const)('publishes refreshed contact state and attributes after an attribute write (%s)', async (operation) => {
     const when = '2026-08-04T00:00:00Z';
     const definition: AttributeDefinition = {
       id: 8, universal_id: '34b52841-dcf5-40c6-a24e-628b049e85b2', object_type: 'person', slug: 'contact_frequency', label: 'Contact frequency',

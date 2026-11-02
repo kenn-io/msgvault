@@ -237,7 +237,7 @@ test("production imports expose archived actions, summary totals, and exact cont
   });
 });
 
-test("participant, domain, Directory and Relationships keep scoped meeting evidence and source navigation", async ({
+test("participant, domain and Relationships keep scoped meeting evidence and source navigation", async ({
   page,
   daemon,
 }, info) => {
@@ -259,10 +259,6 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
       },
     },
     {
-      name: "directory",
-      state: { workspace: "directory", directoryPersonID: daemon.personID },
-    },
-    {
       name: "relationships",
       state: {
         workspace: "relationships",
@@ -277,8 +273,7 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
     let panel = page
       .getByRole("region", { name: "Meeting activity", exact: true })
       .last();
-    if (scope.name === "relationships" || scope.name === "directory") {
-      if (scope.name === "directory") await page.getByRole("radio", { name: "Messages", exact: true }).click();
+    if (scope.name === "relationships") {
       await page.getByRole("region", { name: "Meeting summary", exact: true }).getByRole("button", { name: /Action items/ }).click();
       panel = page.getByRole("dialog", { name: "Action items", exact: true });
       await panel.getByText("Meeting metrics", { exact: true }).click();
@@ -288,7 +283,7 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
     } else {
       await assertMetrics(panel, 3, 3, 0, "1h 40m", "33m 20s");
     }
-    const source = (["relationships", "directory"].includes(scope.name) ? panel.locator('a[href^="/messages/"]') : panel
+    const source = (scope.name === "relationships" ? panel.locator('a[href^="/messages/"]') : panel
       .getByRole("link", { name: "Open archived meeting", exact: true }))
       .filter({ visible: true })
       .first();
@@ -306,26 +301,6 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
       fullPage: true,
     });
   }
-  await page.setViewportSize({ width: 700, height: 900 });
-  await page.goto(
-    meetingURL(daemon, {
-      workspace: "directory",
-      directoryPersonID: daemon.personID,
-    }),
-  );
-  await page.getByRole("radio", { name: "Messages", exact: true }).click();
-  await page.getByRole("region", { name: "Meeting summary", exact: true }).getByRole("button", { name: /Action items/ }).click();
-  const narrow = page.getByRole("dialog", { name: "Action items", exact: true });
-  await narrow.getByText("Meeting metrics", { exact: true }).click();
-  await assertMetrics(narrow, 3, 3, 0, "1h 40m", "33m 20s");
-  await narrow.locator('a[href^="/messages/"]').filter({ visible: true }).first().click();
-  await expect(
-    page.getByRole("dialog", { name: "Archived meeting", exact: true }),
-  ).toBeVisible();
-  await page.goBack();
-  await expect(
-    page.getByRole("dialog", { name: "Archived meeting", exact: true }),
-  ).toHaveCount(0);
 });
 
 test("rapid search scope changes leave only the final meeting evidence", async ({

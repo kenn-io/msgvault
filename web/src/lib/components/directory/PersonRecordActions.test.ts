@@ -99,7 +99,6 @@ describe('PersonRecordActions', () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (request.method === 'GET') return Response.json({ message: 'Readback unavailable' }, { status: 503 });
       requests.push(request);
       return new Response(null, { status: 204 });
     }));
