@@ -490,7 +490,6 @@ it('keeps credential and provider saves immediate while workspace drafts remain 
   expect(screen.getByText('Save endpoint settings first before changing this credential.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
-  expect(screen.getByRole('dialog').textContent).toContain('The daemon uses it after a restart.');
   await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save API key' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

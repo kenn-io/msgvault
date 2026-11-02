@@ -1200,7 +1200,7 @@ describe('ExploreState history ownership', () => {
     state.destroy();
   });
 
-  it('advances restoration epochs only for initial URL ownership and archive popstate', () => {
+  it('advances restoration epochs only for initial URL ownership and archive popstate', async () => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
     const initialEpoch = state.restorationEpoch;
@@ -1221,6 +1221,21 @@ describe('ExploreState history ownership', () => {
     expect(state.peekRestorationEpoch()).toBe(initialEpoch + 1);
     state.acknowledgeRestoration(initialEpoch + 1);
     expect(state.peekRestorationEpoch()).toBeUndefined();
+    state.commitNavigation({ query: 'budget', activeRow: 'message:1', scrollAnchor: { key: 'message:1', offset: 12 } });
+    state.openOperationHistory({});
+    const firstRun = `op2.${'a'.repeat(32)}.firstRun`;
+    state.openOperationHistory({ operationRunID: firstRun });
+    state.openOperationHistory({ operationRunID: `op2.${'b'.repeat(32)}.secondRun` });
+    const current = state.current;
+    const archiveFields = Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith('operation')));
+    const epoch = state.restorationEpoch;
+    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await popped;
+    expect(state.current.operationRunID).toBe(firstRun);
+    expect(state.restorationEpoch).toBe(epoch);
+    expect(state.current).toBe(current);
+    expect(Object.fromEntries(Object.entries(state.current).filter(([key]) => !key.startsWith('operation')))).toEqual(archiveFields);
     state.destroy();
   });
 
@@ -1751,30 +1766,6 @@ describe('session-owned exploration selection', () => {
     ).toThrow('candidate snapshot');
   });
 
-});
-
-it('keeps archive state and restoration epoch when popping between Past runs', async () => {
-  window.history.replaceState(null, '', '/');
-  const state = new ExploreState(window);
-  try {
-    state.commitNavigation({ query: 'budget', activeRow: 'message:1', scrollAnchor: { key: 'message:1', offset: 12 } });
-    state.openOperationHistory({});
-    const firstRun = `op2.${'a'.repeat(32)}.firstRun`;
-    state.openOperationHistory({ operationRunID: firstRun });
-    state.openOperationHistory({ operationRunID: `op2.${'b'.repeat(32)}.secondRun` });
-    const current = state.current;
-    const archiveFields = Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith('operation')));
-    const epoch = state.restorationEpoch;
-    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await popped;
-    expect(state.current.operationRunID).toBe(firstRun);
-    expect(state.restorationEpoch).toBe(epoch);
-    expect(state.current).toBe(current);
-    expect(Object.fromEntries(Object.entries(state.current).filter(([key]) => !key.startsWith('operation')))).toEqual(archiveFields);
-  } finally {
-    state.destroy();
-  }
 });
 
 it.each(['close', 'back'] as const)('returns Past runs to its opening page through %s after changing filters and detail', async action => {

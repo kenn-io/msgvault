@@ -147,32 +147,6 @@ describe('DirectoryReviewController', () => {
     expect(controller.rows).toEqual([candidate(1, entry === 'History' ? 'accepted' : 'candidate')]);
   });
 
-  it('applies a successful decision before best-effort reconciliation', async () => {
-    const reconcile = deferredResponse();
-    const requests: Request[] = [];
-    const accepted = candidate(17, 'accepted');
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      if (request.method === 'POST') {
-        return Response.json({ candidate: accepted, identity_revision: 4, cache_state: 'ready' });
-      }
-      if (requests.length === 1) return page([candidate(17)]);
-      return reconcile.promise;
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-
-    const decision = settle(controller, 17, 'accept');
-    await vi.waitFor(() => expect(controller.rows).toEqual([accepted]));
-    expect(controller.isDecisionPending(17)).toBe(true);
-
-    reconcile.resolve(page([accepted]));
-    await expect(decision).resolves.toEqual({ ok: true, candidate: accepted, cacheState: 'ready' });
-    expect(controller.isDecisionPending(17)).toBe(false);
-    expect(controller.status).toContain('accepted');
-  });
-
   it.each([503, 409])('keeps a failed reject note and never automatically retries the decision: %s', async status => {
     const message = status === 503 ? 'Decision unavailable' : 'An accepted identity match cannot be rejected because its participant link is retained';
     const requests: Request[] = [];
@@ -235,31 +209,6 @@ describe('DirectoryReviewController', () => {
     try {
       await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Updated Example' }));
     } finally { controller.destroy(); }
-  });
-
-  it('reports a committed decision as successful when page reconciliation fails', async () => {
-    let reads = 0;
-    const accepted = candidate(17, 'accepted');
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (request.method === 'POST') {
-        return Response.json({ candidate: accepted, identity_revision: 5, cache_state: 'stale' });
-      }
-      reads += 1;
-      if (reads === 1) return page([candidate(17)]);
-      return Response.json({ error: 'unavailable', message: 'Reload failed' }, { status: 503 });
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-
-    await expect(settle(controller, 17, 'accept')).resolves.toEqual({
-      ok: true,
-      candidate: accepted,
-      cacheState: 'stale'
-    });
-    expect(controller.rows).toEqual([accepted]);
-    expect(controller.pageError).toBe('Reload failed');
-    expect(controller.decisionError).toBeNull();
   });
 
   it('leaves the second pair untouched while the staged pair needs a survivor', async () => {
@@ -461,33 +410,53 @@ describe('DirectoryReviewController', () => {
   });
 });
 
-it.each(['accept', 'reject'] as const)('settles %s with the displayed request and invalidates all cluster summaries only on acceptance', async decision => {
+it.each([
+  { decision: 'accept', reconciliation: 'ready' },
+  { decision: 'reject', reconciliation: 'ready' },
+  { decision: 'accept', reconciliation: 'pending' },
+  { decision: 'accept', reconciliation: 'failed' }
+] as const)('settles $decision with $reconciliation reconciliation and invalidates summaries only on acceptance', async ({ decision, reconciliation }) => {
   const writes: Array<{ path: string; body: unknown; keepalive: boolean }> = [];
   const settled = vi.fn();
+  const refresh = deferredResponse();
+  const accepted = candidate(1, decision === 'accept' ? 'accepted' : 'rejected');
+  const cacheState = reconciliation === 'failed' ? 'stale' : 'ready';
   let decided = false;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
     if (request.method === 'POST') {
       writes.push({ path: new URL(request.url).pathname, body: await request.json(), keepalive: request.keepalive });
       decided = true;
-      return Response.json({ candidate: candidate(1, decision === 'accept' ? 'accepted' : 'rejected'), cache_state: 'ready' });
+      return Response.json({ candidate: accepted, cache_state: cacheState });
     }
-    return page(decided ? [candidate(2)] : [candidate(1), candidate(2)]);
+    if (decided && reconciliation === 'pending') return refresh.promise;
+    if (decided && reconciliation === 'failed') return Response.json({ error: 'unavailable', message: 'Reload failed' }, { status: 503 });
+    return page(decided ? [candidate(2)] : reconciliation === 'ready' ? [candidate(1), candidate(2)] : [candidate(1)]);
   }), undefined, settled);
   try {
     await controller.loadIdentityPage();
     const saved = { id: 7, name: 'Saved', address: 'Saved person', lastAt: null };
     controller.summaries.set('participant:20', saved);
     controller.summaries.set('participant:11', saved);
-    controller.setDecisionDraft(1, '  Different people  ');
-    controller.queueDecision(controller.rows[0]!, decision);
-    await controller.settleDecision();
+    const completion = settle(controller, 1, decision, '  Different people  ');
+    if (reconciliation === 'pending') {
+      await vi.waitFor(() => expect(controller.rows).toEqual([accepted]));
+      expect(controller.isDecisionPending(1)).toBe(true);
+      refresh.resolve(page([accepted]));
+    }
+    await expect(completion).resolves.toEqual({ ok: true, candidate: accepted, cacheState });
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+    expect(controller.isDecisionPending(1)).toBe(false);
     expect(writes).toEqual([{ path: `/api/v1/identity/match-candidates/1/review/${decision}`, body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
-    expect(controller.rows.map(row => row.id)).toEqual([2]);
+    expect(controller.rows).toEqual(reconciliation === 'ready' ? [candidate(2)] : [accepted]);
     expect(controller.getDecisionDraft(1)).toBe('');
     expect(controller.summaries.has('participant:20')).toBe(decision === 'reject');
     expect(controller.summaries.has('participant:11')).toBe(decision === 'reject');
+    if (reconciliation === 'pending') expect(controller.status).toContain('accepted');
+    if (reconciliation === 'failed') {
+      expect(controller.pageError).toBe('Reload failed');
+      expect(controller.decisionError).toBeNull();
+    }
   } finally { controller.destroy(); }
 });
 

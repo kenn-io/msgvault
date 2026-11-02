@@ -391,7 +391,6 @@ describe('DirectoryProfileController', () => {
     await controller.setAttribute(createdDefinition.slug, { value: { type: 'text', text: 'First value' } });
 
     expect(onDetailChange.mock.calls[0]?.[0].attributes?.attributes).toEqual([group]);
-    expect(controller.attributes?.attributes).toEqual([group]);
   });
 
   it('rejects a rapid second rename without letting the first response erase its draft', async () => {

@@ -3006,36 +3006,6 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it('refreshes Saved rows when browser Back restores unchanged filters', async () => {
-  let synced = false;
-  const saved = () => directoryPerson(7, { revision: 1, display_name: synced ? 'After sync' : 'Before sync' });
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/people/directory')) return Response.json({ people: [saved()] });
-    if (path.endsWith('/people/7')) return Response.json(person(7, 1, []), { headers: { ETag: '"person-7-r1"' } });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
-  });
-  window.history.replaceState(null, '', '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true })));
-  const state = new ExploreState(window);
-  const view = render(AppShell, { client, state });
-  try {
-    const grid = await screen.findByRole('grid', { name: 'People results' });
-    await within(grid).findByText('Before sync');
-    await fireEvent.click(within(grid).getByText('Before sync'));
-    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
-    synced = true;
-    const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await restored;
-    await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
-    const restoredGrid = await screen.findByRole('grid', { name: 'People results' });
-    expect(await within(restoredGrid).findByText('After sync')).toBeDefined();
-    expect(within(restoredGrid).queryByText('Before sync')).toBeNull();
-  } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
-});
-
 it('shows a saved profile rename when returning to cached duplicate cards', async () => {
   let renamed = false;
   const saved = () => ({ ...person(7, renamed ? 5 : 4, []), display_name: renamed ? 'Renamed saved person' : 'Original saved person' });

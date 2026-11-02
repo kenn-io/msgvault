@@ -530,7 +530,7 @@ it('leaving People aborts its pending Save', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('refreshes retained Saved rows when the workspace remounts', async () => {
+it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %s', async entry => {
   let synced = false;
   const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7, { display_name: synced ? 'After sync' : 'Before sync' })] }) });
   const state = new ExploreState(null);
@@ -540,9 +540,10 @@ it('refreshes retained Saved rows when the workspace remounts', async () => {
   let view = render(PeopleWorkspace, { props });
   try {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Before sync');
-    view.unmount();
+    if (entry === 'remount') view.unmount();
     synced = true;
-    view = render(PeopleWorkspace, { props });
+    if (entry === 'remount') view = render(PeopleWorkspace, { props });
+    else await view.rerender({ ...props, restorationEpoch: 1 });
     const grid = await screen.findByRole('grid', { name: 'People results' });
     await within(grid).findByText('After sync');
     expect(within(grid).queryByText('Before sync')).toBeNull();
