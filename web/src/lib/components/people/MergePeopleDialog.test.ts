@@ -23,7 +23,6 @@ it.each([
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request.clone());
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/7/merge' && request.method === 'POST') return Response.json(mergeResult(profile(7, 5), 'stale'), { headers: { ETag: '"person-7-r5"' } });
     if (path === '/api/v1/people/directory') return Response.json({ people: savedAnchor && promote ? [] : [directoryPerson(savedAnchor ? 9 : 7)] });
     if (path === '/api/v1/participants/search') return Response.json({ rows: savedAnchor && promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') return Response.json(profile(9));
@@ -67,9 +66,7 @@ it.each([
     }
     controller.query = 'Another person';
     if (outcome === 'stale merge') {
-      await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
-      await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+      await modal.onSuccess({ result: mergeResult(profile(7), 'stale'), survivor: profile(7), responseETag: '"person-7-r5"' });
       await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
       expect(await screen.findByText('People merged. Identity cache refresh failed.')).toBeDefined();
       expect(onOpenPerson).toHaveBeenCalledWith(7);

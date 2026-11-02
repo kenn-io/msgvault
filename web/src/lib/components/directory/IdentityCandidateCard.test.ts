@@ -50,15 +50,13 @@ function completeCandidate(): IdentityMatchCandidate {
 }
 
 describe('IdentityCandidateCard', () => {
-  it.each([true, false])('renders candidate fields and labelled evidence, evidence=%s', (hasEvidence) => {
-    render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate(), ...(hasEvidence ? {} : { evidence: [] }) }, pending: false
-    });
+  it('shows when no evidence was supplied', () => {
+    render(IdentityCandidateCard, { candidate: { ...completeCandidate(), evidence: [] }, pending: false });
+    expect(screen.getByText('No evidence supplied.')).toBeDefined();
+  });
 
-    if (!hasEvidence) {
-      expect(screen.getByText('No evidence supplied.')).toBeDefined();
-      return;
-    }
+  it('renders candidate fields and labelled evidence', () => {
+    render(IdentityCandidateCard, { candidate: completeCandidate(), pending: false });
 
     const card = screen.getByRole('article', { name: 'Identity match 17' });
     expect(screen.getByText('Accepted')).toBeDefined();

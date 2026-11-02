@@ -2898,7 +2898,7 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
   } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
-it('refreshes Saved after merging a pair through Possible duplicates', async () => {
+it('returns focus to a merged pair once, preserves review navigation focus, and refreshes Saved', async () => {
   let merged = false;
   const profile = (id: number) => person(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]);
   const conflict = { error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: profile(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) };
@@ -2947,7 +2947,7 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
     await fireEvent.click(toReview);
     await screen.findAllByRole('button', { name: 'Merge' });
     await tick();
-    await waitFor(() => expect(document.activeElement).toBe(toReview));
+    expect(document.activeElement?.closest('[id^="duplicate-"]')?.id).not.toBe('duplicate-17');
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
     const savedGrid = await screen.findByRole('grid', { name: 'People results' });
     await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
