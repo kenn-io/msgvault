@@ -198,32 +198,7 @@ func TestBuildStoresConversationMembershipOncePerConversation(t *testing.T) {
 func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	committedRoot, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, committedRoot, syntheticRelationshipFanOutOptions{
-		firstMessageID:   1,
-		messageCount:     4,
-		memberCount:      5,
-		startDate:        "2026-01-01",
-		messageType:      "email",
-		conversationType: "email_thread",
-	})
-	_, err := Build(context.Background(), db, BuildOptions{
-		Mode:           ModeFull,
-		StagedBaseRoot: committedRoot,
-		OutputRoot:     committedRoot,
-	})
-	requirements.NoError(err)
-
-	stagedRoot := t.TempDir()
-	writeRelationshipParquet(t, db, stagedRoot, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
-	writeSyntheticRelationshipFanOut(t, db, stagedRoot, syntheticRelationshipFanOutOptions{
-		firstMessageID:   101,
-		messageCount:     3,
-		memberCount:      5,
-		startDate:        "2026-02-01",
-		messageType:      "email",
-		conversationType: "email_thread",
-	})
+	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 4, 3, 5)
 	result, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeIncremental,
 		CommittedRoot:  committedRoot,
@@ -250,7 +225,7 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 }
 
 func TestBuildIncrementalAppendFitsLowMemoryOnLargeArchive(t *testing.T) {
-	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 300_000)
+	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 300_000, 1000, 3)
 	require.NoError(t, setRelationshipTestMemoryLimit(db, "128MB"))
 	_, err := db.Exec("SET max_temp_directory_size = '128MB'")
 	require.NoError(t, err)
@@ -268,7 +243,7 @@ func TestBuildIncrementalAppendFitsLowMemoryOnLargeArchive(t *testing.T) {
 func BenchmarkBuildIncrementalAppend(b *testing.B) {
 	for _, committed := range []int64{100_000, 400_000} {
 		b.Run(fmt.Sprintf("committed-%dk", committed/1000), func(b *testing.B) {
-			committedRoot, stagedRoot, db := writeIncrementalAppendFixture(b, committed)
+			committedRoot, stagedRoot, db := writeIncrementalAppendFixture(b, committed, 1000, 3)
 			require.NoError(b, setRelationshipTestMemoryLimit(db, "512MB"))
 			b.ResetTimer()
 			for range b.N {
@@ -282,11 +257,11 @@ func BenchmarkBuildIncrementalAppend(b *testing.B) {
 	}
 }
 
-func writeIncrementalAppendFixture(tb testing.TB, committed int64) (string, string, *sql.DB) {
+func writeIncrementalAppendFixture(tb testing.TB, committed, appended, members int64) (string, string, *sql.DB) {
 	tb.Helper()
 	committedRoot, db := writeRelationshipBaseFixture(tb, true)
 	opts := syntheticRelationshipFanOutOptions{
-		firstMessageID: 1, messageCount: committed, memberCount: 3,
+		firstMessageID: 1, messageCount: committed, memberCount: members,
 		startDate: "2026-01-01", messageType: "email", conversationType: "email_thread",
 	}
 	writeSyntheticRelationshipFanOut(tb, db, committedRoot, opts)
@@ -298,7 +273,7 @@ func writeIncrementalAppendFixture(tb testing.TB, committed int64) (string, stri
 	stagedRoot := tb.TempDir()
 	writeRelationshipParquet(tb, db, stagedRoot, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 	opts.firstMessageID = committed + 1
-	opts.messageCount = 1000
+	opts.messageCount = appended
 	opts.startDate = "2026-02-01"
 	writeSyntheticRelationshipFanOut(tb, db, stagedRoot, opts)
 	return committedRoot, stagedRoot, db
