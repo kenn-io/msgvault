@@ -41,7 +41,7 @@
   // Each history entry keeps its own day: Back restores that entry's day, even for the same target.
   $effect(() => { void page.target; untrack(() => selectedDate = relationshipDayHistory(window.history.state, 'relationships', page.target)); });
   $effect(() => { const target = untrack(() => page.target); window.history.replaceState({ ...window.history.state, [RELATIONSHIP_DAY_HISTORY_KEY]: selectedDate && target ? { target, date: selectedDate } : undefined }, ''); });
-  $effect(() => { void (selectedProfileID ?? target); untrack(() => { domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
+  $effect(() => { void (selectedProfileID ?? target); untrack(() => { domainYear = null; details &&= controller.target === target && controller.detail !== null; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);

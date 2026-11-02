@@ -251,7 +251,6 @@ describe('PersonBriefCard', () => {
     const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(screen.getByRole('checkbox', { name: 'Also track this person' })).toBeDefined();
-    expect(screen.queryByText('No brief yet.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Generate a brief now' })).toBeNull();
     expect(paths).toEqual(['/api/v1/people/7/brief-enrollment']);
   });
@@ -330,6 +329,7 @@ describe('PersonBriefCard', () => {
       await waitFor(() => {
         expect(bodies).toHaveLength(previousCount + 1);
         expect(toggle.disabled).toBe(false);
+        expect(toggle.checked).toBe(nextEnrolled);
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
@@ -536,7 +536,6 @@ describe('PersonBriefCard', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: sentenceTexts[1] })).toBeNull());
     const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
     await waitFor(() => expect(toggle.checked).toBe(false));
-    expect(screen.queryByText('No brief yet.')).toBeNull();
     expect(document.body.textContent).not.toContain('Said by this person');
   });
 });

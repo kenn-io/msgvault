@@ -9,6 +9,44 @@ import { requestOf, pathOf, organization, organizationProfile, employment, colle
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
 describe('OrganizationEmploymentTab', () => {
+  it('shows editable Work while an employer name is still loading', async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment()] });
+      if (path === '/api/v1/organizations/21') return pending;
+      throw new Error(`unexpected ${path}`);
+    });
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    const opening = controller.refreshEmployments();
+    try {
+      expect(await screen.findByRole('button', { name: 'Edit employment' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Organization 21' })).toBeDefined();
+      release(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+      expect(await screen.findByRole('button', { name: 'Synthetic Org' })).toBeDefined();
+    } finally { release(Response.json(organizationProfile())); await opening; view.unmount(); controller.destroy(); }
+  });
+
+  it('opens an employer with one fresh organization read', async () => {
+    let reads = 0;
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/organizations/21') { reads += 1; return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }); }
+      throw new Error(`unexpected ${path}`);
+    });
+    controller.employments = [employment()];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Organization 21' }));
+      const name = await screen.findByRole('textbox', { name: 'Organization name' });
+      await waitFor(() => expect(name).toHaveProperty('disabled', false));
+      expect(name).toHaveProperty('value', 'Synthetic Org');
+      expect(screen.getByRole('dialog', { name: 'Edit Synthetic Org' })).toBeDefined();
+      expect(reads).toBe(1);
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it('keeps local employment history actionable beside a reconciliation warning and recovers', async () => {
     let reads = 0;
     let resolveRefresh!: (response: Response) => void;
@@ -43,6 +81,25 @@ describe('OrganizationEmploymentTab', () => {
     resolveRefresh(collection([employment(12, 2, { title: 'Recovered role' })], undefined));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(await screen.findByText(/Recovered role/)).toBeDefined();
+  });
+
+  it('selects an organization created from Add work in the employment form', async () => {
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return Response.json(organization(22, 1, 'New employer'), { status: 201, headers: { ETag: '"organization-22-r1"' } });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    });
+    controller.organizations = [organization()];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'New organization' }));
+      await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'New employer' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
+      expect(screen.getByRole('button', { name: 'Organization: New employer' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Create employment' })).toHaveProperty('disabled', false);
+    } finally { view.unmount(); controller.destroy(); }
   });
 
   it.each([false, true])('creates work for the selected person and employer with user provenance (search beyond fifty=%s)', async search => {
@@ -176,6 +233,7 @@ describe('OrganizationEmploymentTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit employment' }));
     const title = await screen.findByRole('textbox', { name: 'Employment title' }) as HTMLInputElement;
+    expect(screen.queryByRole('button', { name: 'New organization' })).toBeNull();
     await fireEvent.input(title, { target: { value: 'Draft title' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save employment' }));
 

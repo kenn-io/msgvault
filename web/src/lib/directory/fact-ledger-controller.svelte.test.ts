@@ -1,13 +1,10 @@
+import { requestOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { evidenceStatusReasonLabel, FACT_LEDGER_PAGE_LIMIT, FactLedgerController } from './fact-ledger-controller.svelte';
 
 const revision = `sha256:${'a'.repeat(64)}`;
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;

@@ -21,7 +21,7 @@
   const profile = $derived(directory.selectedPersonID === personID ? directory.profile : null);
   const entity = $derived(directory.selectedPersonID === personID ? directory.entity : null);
   const bundle = $derived(directory.selectedPersonID === personID ? directory.detail : null);
-  $effect(() => { const owner = profile; if (owner) untrack(() => void owner.reloadDefinitions()); });
+  $effect(() => { const owner = profile, collection = entity; if (owner) untrack(() => { void owner.reloadDefinitions(); void collection?.load(); }); });
 </script>
 
 <div class="details">
@@ -48,9 +48,9 @@
       <PersonNetwork controller={entity} {onOpenPerson} onOpenOrganization={(id) => organizationRequest = { id, key: ++requestKey }} />
     {/if}
     <PersonAgenda {client} {personID} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
-    <PersonFacts {client} {personID} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
-    <PersonBriefCard {client} {personID} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
-    {#if profile.person && profile.person.participant_ids.length === 0}<MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
+    <PersonFacts {client} {personID} refreshKey={profile.person} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    <PersonBriefCard {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    {#if profile.person && profile.person.participant_ids.length > 0}<MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
   {/if}
 </div>
 <style>

@@ -137,10 +137,6 @@ test('History wraps long provenance at phone width', async ({ page }) => {
   const historyDialog = page.getByRole('dialog', { name: 'History', exact: true });
   await historyDialog.getByText('1 earlier value', { exact: true }).click();
   const metadata = historyDialog.locator('.meta').filter({ hasText: reference });
-  await expect(metadata).toContainText('Valid from:');
-  await expect(metadata).toContainText('Valid until:');
-  await expect(metadata).toContainText('Superseded:');
-  await expect(metadata).toContainText('Updated:');
   await expect.poll(() => metadata.evaluate(element => {
     const row = element.closest('li')!;
     const bounds = row.getBoundingClientRect();

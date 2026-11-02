@@ -1,3 +1,5 @@
+import { pathOf } from './entity-fixtures.test-support';
+import { emptyProfile } from './profile-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -17,7 +19,7 @@ function person(id = 7, revision = 3, displayName = 'Test User') {
 }
 
 function profile(id = 7, revision = 3) {
-  return { person: person(id, revision), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] };
+  return emptyProfile(person(id, revision));
 }
 
 function attributes(id = 7) {
@@ -36,10 +38,6 @@ function bundle(id = 7): DirectoryReadBundle {
 
 function requests(fetchFn: ReturnType<typeof vi.fn>): Request[] {
   return fetchFn.mock.calls.map(([input]) => input instanceof Request ? input : new Request(input));
-}
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
 }
 
 describe('DirectoryProfileController', () => {
@@ -90,7 +88,7 @@ describe('DirectoryProfileController', () => {
         await vi.waitFor(() => expect(staleProfile).toBeDefined());
       }
       linked = true;
-      await controller.reload();
+      if (cause === 'pending profile reload') await controller.reload();
       releaseSave(cause === 'pending structured PATCH' ? staleProfile! : Response.json({ dry_run: false, value }));
       await save;
       releaseReload(staleProfile ?? Response.json({}));
@@ -133,7 +131,7 @@ describe('DirectoryProfileController', () => {
     } finally { controller.destroy(); }
   });
 
-  it.each(['save', 'clear'] as const)('refreshes and publishes contact state after a contact frequency %s', async (operation) => {
+  it.each(['save', 'clear'] as const)('publishes refreshed contact state and attributes after an attribute write (%s)', async (operation) => {
     const when = '2026-08-04T00:00:00Z';
     const definition: AttributeDefinition = {
       id: 8, universal_id: '34b52841-dcf5-40c6-a24e-628b049e85b2', object_type: 'person', slug: 'contact_frequency', label: 'Contact frequency',

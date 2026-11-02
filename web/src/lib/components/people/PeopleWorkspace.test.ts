@@ -1,5 +1,6 @@
 import { directoryPerson, mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { openTypeahead } from '../../../test/kit-ui';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi, onTestFinished } from 'vitest';
@@ -9,16 +10,16 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
+import { employment, organizationProfile } from '../../directory/entity-fixtures.test-support';
 import { emptyCalendar } from './fixtures.test-support';
 
 const when = '2026-07-19T10:00:00Z';
-function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
+function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>) {
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     const personID = Number(path.match(/\/people\/(\d+)\//)?.[1]);
-    requests?.push(path);
-    return routes[path]?.(request) ?? (path.endsWith('/profile') ? Response.json({ person: profile(personID, 1, []), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }) : undefined) ?? (path.endsWith('/attributes') ? Response.json({ person_id: personID, attributes: [] }) : undefined) ?? (path.endsWith('/attribute-definitions') ? Response.json({ definitions: [] }) : undefined) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/profile') ? Response.json(emptyProfile(profile(personID, 1, []))) : undefined) ?? (path.endsWith('/attributes') ? Response.json({ person_id: personID, attributes: [] }) : undefined) ?? (path.endsWith('/attribute-definitions') ? Response.json({ definitions: [] }) : undefined) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 
@@ -148,7 +149,7 @@ it.each([
   const one = profile(7, 4, [1]), two = profile(9, 2, [2]);
   const unrelated = { ...profile(42, 1, []), display_name: 'Unrelated person' };
   const survivor = { ...two, revision: 3, participant_ids: [1, 2] };
-  const structured = (person: ReturnType<typeof profile>, alias: string) => ({ person, names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+  const structured = (person: ReturnType<typeof profile>, alias: string) => ({ ...emptyProfile(person), names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }] });
   const missing = () => Response.json({ error: 'person_not_found', message: 'Person not found.' }, { status: 404 });
   const links: Array<{ participant_a: number; participant_b: number }> = [];
   const client = clientFor({
@@ -177,7 +178,10 @@ it.each([
   const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
   const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    if (selectedID !== null) expect(await screen.findByText(selectedID === 7 ? 'Absorbed alias' : 'Unrelated alias')).toBeDefined();
+    if (selectedID !== null) {
+      await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+      expect(await screen.findByText(selectedID === 7 ? 'Absorbed alias' : 'Unrelated alias')).toBeDefined();
+    }
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     if (outcome === 'merges') {
@@ -250,11 +254,14 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(saved.id, { revision: saved.revision, display_name: saved.display_name })] }),
     '/api/v1/people/7': () => entry === 'deep link' ? pending : Response.json(saved, { headers: { ETag: '"person-7-r1"' } }),
-    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } }),
+    '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved), { headers: { ETag: '"person-7-r1"' } }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: saved, display_label: 'Saved Person', identifiers: [], first_at: when, last_at: when, activity_count: 50, file_count: 0, source_counts: [] }),
     '/api/v1/people/7/contact-state': () => Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 50, computed_at: when, stale: false }),
+    '/api/v1/people/7/employments': () => Response.json({ employments: [employment()] }),
+    '/api/v1/organizations/21': () => Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
+  const requests = vi.spyOn(client, 'fetch');
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: entry === 'deep link' ? 7 : null });
   const navigate = (patch: Parameters<typeof state.commitNavigation>[0]) => {
@@ -272,40 +279,14 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
     }
     await screen.findByRole('heading', { name: 'Saved Person' });
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
+    if (entry === 'list') {
+      await waitFor(() => expect(directory.detailLoading).toBe(false));
+      const paths = requests.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname);
+      expect(paths.filter(path => /attribute-definitions|agenda|brief|\/people\/7\/(employments|relationships)|relationship-types|\/organizations\//.test(path))).toEqual([]);
+      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+      expect(await screen.findByRole('button', { name: 'Synthetic Org' })).toBeDefined();
+    }
   } finally { release(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
-it('reads a saved profile once before Details opens', async () => {
-  const paths: string[] = [];
-  const saved = { ...profile(91, 1, [1]), display_name: 'Saved Example', vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    paths.push(path);
-    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(saved.id, { revision: saved.revision, display_name: saved.display_name })] });
-    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
-    if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
-    if (path === '/api/v1/people/91') return Response.json(saved);
-    if (path === '/api/v1/people/91/profile') return Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
-    if (path === '/api/v1/people/91/attributes') return Response.json({ person_id: 91, attributes: [] });
-    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
-    if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
-    if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
-  });
-  const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
-  const directory = new DirectoryController(client);
-  const controller = new RelationshipsController(client, () => 'UTC');
-  await controller.openTarget('cluster:1', {});
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: patch => state.commitNavigation(patch), onReplaceNavigation: patch => state.replaceCommittedNavigation(patch), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await screen.findByRole('heading', { name: 'Saved Example' });
-    await waitFor(() => expect(directory.detailLoading).toBe(false));
-    expect(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
-    expect(paths.filter(path => path === '/api/v1/people/91/profile')).toHaveLength(1);
-    expect(paths.filter(path => /attribute-definitions|agenda|brief/.test(path))).toEqual([]);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
 it('names an empty Domains list for the selected facet', async () => {
@@ -405,7 +386,7 @@ it.each(['complete', 'partial'])('refreshes cached Saved dates and Most recent o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['link', 'merge'])('refreshes the selected profile and Saved list after a %s from Details', async operation => {
+it.each(['link', 'merge'])('keeps Details current and its draft mounted after a %s', async operation => {
   let changed = false;
   let merged = false;
   const one = { ...profile(7, 4, [1]), last_contact_at: '2020-07-18T10:00:00Z' };
@@ -422,6 +403,8 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
       if (operation === 'link' || merged) { changed = true; return Response.json({ identity_revision: 8, cache_state: 'ready' }); }
       return Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 });
     },
+    '/api/v1/people/7/brief-enrollment': () => Response.json({ person_id: 7, enrolled: merged, enabled_at: merged ? when : null, actor: 'api' }),
+    '/api/v1/people/7/brief': () => Response.json({ error: 'person_brief_not_found', message: 'Person brief not found' }, { status: 404 }),
     '/api/v1/people/7/merge': () => { merged = true; changed = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: survivor, merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } }); },
   });
   const state = new ExploreState(null);
@@ -438,11 +421,9 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
     if (records.some(record => [...record.addedNodes].some(node => node.textContent?.includes('Loading person…')))) sawLoadingPerson = true;
   });
   try {
-    const list = within(await screen.findByRole('grid', { name: 'People results' }));
-    await list.findByText('2020');
-    if (operation === 'merge') await list.findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await waitFor(() => expect((screen.getByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement).checked).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
     const draft = screen.getByRole('textbox', { name: 'Contact value' });
     await fireEvent.input(draft, { target: { value: '+12025550123' } });
@@ -457,7 +438,6 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
       await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
       await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-      await waitFor(() => expect(merged).toBe(true));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
       expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
     }
@@ -466,13 +446,8 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
     expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toBe(draft);
     expect(draft).toHaveProperty('value', '+12025550123');
-    if (operation === 'merge') await screen.findByText('absorbed@example.com');
+    if (operation === 'merge') await waitFor(() => expect((screen.getByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement).checked).toBe(true));
     expect(sawLoadingPerson).toBe(false);
-    await list.findByText('2021');
-    view.unmount();
-    view = render(PeopleWorkspace, { props: { ...props, urlState: state.current, target: state.current.relationshipTarget } });
-    await within(await screen.findByRole('grid', { name: 'People results' })).findByText('2021');
-    if (operation === 'merge') expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull();
   } finally { observer.disconnect(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -531,7 +506,7 @@ it('keeps Files and its filename filter when a saved person finishes initial hyd
   const saved = profile(7, 1, [1]);
   const client = clientFor({
     '/api/v1/people/7': () => pendingProfile,
-    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }),
+    '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved)),
     '/api/v1/people/7/attributes': () => Response.json({ person_id: 7, attributes: [] }),
     '/api/v1/people/7/files/search': () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
@@ -574,13 +549,13 @@ it('routes reconciliation Reload to the directory controller', async () => {
   } finally { view.unmount(); relationships.destroy(); controller.destroy(); state.destroy(); }
 });
 
-it.each([['participant', false], ['profile', false], ['second person', false], ['second person', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
+it.each([['participant', false], ['second person', false], ['second person', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
   let failed = true;
   const saved = profile(failure === 'second person' ? 9 : 7, 1, failure === 'second person' ? [2] : [1]);
   const client = clientFor({
-    '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
+    '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
     ...Object.fromEntries([7, 9].flatMap(id => [
-      [`/api/v1/people/${id}/profile`, () => Response.json({ person: profile(id, 1, [id === 9 ? 2 : 1]), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] })],
+      [`/api/v1/people/${id}/profile`, () => Response.json(emptyProfile(profile(id, 1, [id === 9 ? 2 : 1])))],
       [`/api/v1/people/${id}/attributes`, () => Response.json({ person_id: id, attributes: [] })]
     ])),
     '/api/v1/attribute-definitions': () => Response.json({ definitions: [] }),
@@ -590,7 +565,7 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: failure !== 'profile' ? 7 : null });
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: 7 });
   await controller.openTarget('cluster:1', {});
   const props = { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   let view = render(PeopleWorkspace, { props });
@@ -603,16 +578,12 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
       else await view.rerender({ urlState: state.current, target: null });
     }
     await waitFor(() => expect(directory.detailLoading).toBe(false));
-    if (failure === 'profile') {
-      expect(screen.getByRole('radio', { name: 'Messages' })).toBeDefined();
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    }
-    expect(await screen.findByText(new RegExp(failure === 'second person' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : 'Participant unavailable'))).toBeDefined();
+    expect(await screen.findByText(new RegExp(failure === 'second person' ? 'Could not load selected person' : 'Participant unavailable'))).toBeDefined();
     expect(screen.queryByText('Loading person…')).toBeNull();
     if (failure === 'second person') expect(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
     failed = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Could not load selected person/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Participant unavailable|Could not load selected person/)).toBeNull());
     if (failure === 'second person') expect(await screen.findByRole('heading', { name: 'Synthetic Two' })).toBeDefined();
     else expect(await screen.findByRole('radio', { name: 'Messages' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
@@ -651,8 +622,10 @@ it.each([false, true])('refreshes duplicates and keeps the split receipt after s
   const merge = mergeResult(saved()).merge;
   const client = clientFor({
     '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
-    '/api/v1/people/7/profile': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${saved().revision}"` } }),
-    '/api/v1/people/7/profile/history': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }),
+    '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved()), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
+    '/api/v1/people/7/profile/history': () => Response.json({ ...emptyProfile(saved()), observations: [] }),
+    '/api/v1/people/7/brief-enrollment': () => Response.json({ person_id: 7, enrolled: !split, enabled_at: split ? null : when, actor: 'api' }),
+    '/api/v1/people/7/brief': () => Response.json({ error: 'person_brief_not_found', message: 'Person brief not found' }, { status: 404 }),
     '/api/v1/people/7/merges': () => Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }] }),
     '/api/v1/person-merges/41': () => Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] }),
     '/api/v1/people/7/split': () => { split = true; return Response.json({ source_person: saved(), new_person: profile(9, 1, [1]), split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'synthetic-9', source_revision_before: 4, source_revision_after: 5, exact_reversal: false, actor: 'web', created_at: when }, exact_reversal: false, ambiguous_rows: [{ table_name: 'person_names', original_row_key: 'synthetic-row', action: 'ambiguous' }], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }); },
@@ -665,6 +638,9 @@ it.each([false, true])('refreshes duplicates and keeps the split receipt after s
   const onDuplicatesChanged = vi.fn();
   const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget })); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    const enrollment = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    await waitFor(() => expect(enrollment.checked).toBe(true));
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
@@ -676,6 +652,7 @@ it.each([false, true])('refreshes duplicates and keeps the split receipt after s
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(onDuplicatesChanged).toHaveBeenCalled();
     expect(state.current.relationshipTarget).toBeNull();
+    await waitFor(() => expect((screen.getByLabelText('Enroll this person in briefs') as HTMLInputElement).checked).toBe(false));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

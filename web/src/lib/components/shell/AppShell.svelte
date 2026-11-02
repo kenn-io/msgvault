@@ -1302,7 +1302,6 @@
             })}
           onOpenPerson={openRelationship}
           onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
-          onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
           onOpenFileItem={openFileItem}

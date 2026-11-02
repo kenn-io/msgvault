@@ -548,7 +548,7 @@ describe('application foundation', () => {
       if (path === '/api/v1/people/7/contact-state')
         return Response.json({
           person_id: 7,
-          cadence_status: 'current',
+          cadence_status: 'ok',
           interaction_count: 0,
           computed_at: '2026-08-28T10:00:00Z',
           stale: false,
@@ -579,6 +579,7 @@ describe('application foundation', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
+    expect(screen.queryByRole('dialog', { name: 'Publish to address book' })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(detailHeading));
     expect(detailRequests).toEqual([41]);
     const firstAnnouncement = screen.getByRole('status', { name: 'Operation status' }).firstElementChild;

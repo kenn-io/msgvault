@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatPartialDate as partialDate } from '../../directory/dates';
   import type { Employment, Organization } from '../../directory/models';
 
   interface Props {
@@ -12,15 +13,6 @@
     return organization?.id === employment.organization_id
       ? `${organization.name} (${employment.organization_id})`
       : `Organization ${employment.organization_id}`;
-  }
-
-  function partialDate(value: { year?: number; month?: number; day?: number } | undefined): string {
-    if (!value) return '';
-    return [
-      value.year?.toString().padStart(4, '0'),
-      value.month?.toString().padStart(2, '0'),
-      value.day?.toString().padStart(2, '0')
-    ].filter(Boolean).join('-');
   }
 </script>
 

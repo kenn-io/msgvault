@@ -93,7 +93,7 @@ its URL with someone who has access to your archive. Use Back and Forward to
 return to earlier views.
 
 Maintain profiles, review identities and merges, publish contacts through
-CardDAV, and catch up with a saved conversation brief in **Directory**.
+CardDAV, and catch up with a saved conversation brief in **People → Details**.
 Open the status dot for running and failed jobs, or Past runs for history. Update provider credentials
 in **Settings**, which shows changes that take effect after a restart.
 [Explore the workspaces](/docs/web-ui/).

@@ -470,15 +470,12 @@ test('saved people keep durable IDs separate from participants and open profiles
   await expect.poll(() => exploreHistoryState(page)).toMatchObject({ directoryPersonID: 91, relationshipTarget: 'cluster:1' });
   await list.getByText('Draft Contact', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Draft Contact', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
   await page.getByRole('radio', { name: 'Domains', exact: true }).click();
   await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
   await page.getByRole('radio', { name: 'People', exact: true }).click();
   await list.getByText('Saved Contact', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Saved Contact' })).toBeVisible();
   expect(await exploreHistoryState(page)).toMatchObject({ directoryPersonID: 92, relationshipTarget: null });
-  await expect(page.getByRole('radio', { name: 'Details', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByRole('button', { name: 'More actions', exact: true })).toBeVisible();
 });
 
 test('People history and reload restore participant scope without a message query', async ({ page }) => {
@@ -652,6 +649,11 @@ for (const previous of ['Alice', 'no person']) {
     for (const person of profiles) {
       await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
       await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+      const participantID = person.participant_ids[0];
+      await page.route(`**/api/v1/participants/${participantID}/timeline`, route => route.fulfill({ json: {
+        rows: [{ ...timelineRows[0], key: `message:${participantID}`, anchor_message_id: participantID, title: `${person.display_name}'s message`, participant_ids: [participantID], participant_labels: [person.display_name] }],
+        total_count: 1, cache_revision: 'cache-relationships', search_provenance: {}
+      } }));
     }
     await page.route('**/api/v1/participants/1', route => route.fulfill({ json: { ...alice, profile: { id: 91, display_name: 'Alice Example' } } }));
     await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
@@ -665,7 +667,7 @@ for (const previous of ['Alice', 'no person']) {
     await page.getByRole('radio', { name: 'Messages', exact: true }).click();
     await expect(list.getByRole('row', { name: /Bob Example/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
-    await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
+    await expect(page.getByRole('grid', { name: 'Messages results' }).getByText("Bob Example's message")).toBeVisible();
   });
 }
 

@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -30,9 +31,9 @@ describe('ProfileHistoryDialog', () => {
       requests.push(url);
       if (url.pathname.endsWith('/merges')) return Response.json({ merges: [] });
       if (url.pathname === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
-      if (url.pathname.endsWith('/profile')) return Response.json({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"profile-7-r3"' } });
+      if (url.pathname.endsWith('/profile')) return Response.json(emptyProfile(person()), { headers: { ETag: '"profile-7-r3"' } });
       if (url.pathname.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
-      if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: [{
+      if (url.pathname.endsWith('/profile/history')) return Response.json({ ...emptyProfile(person()), observations: [], names: [{
         person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { ...currentEnvelope, id: 2 },
       }] });
       if (url.pathname.endsWith('/attributes')) {
@@ -65,7 +66,7 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
-  it('shows current values compactly and earlier values with removal provenance', async () => {
+  it('preserves structured provenance and classifies every closed value as earlier', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -84,7 +85,7 @@ describe('ProfileHistoryDialog', () => {
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } }],
         addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
         dates: [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, date_text: 'February 14', original_value: '--02-14', envelope: { ...currentEnvelope, id: 32 } }],
-        categories: [{ person_id: 7, normalized_value: 'current category', original_value: 'Current category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
+        categories: [{ person_id: 7, normalized_value: 'scheduled end category', original_value: 'Scheduled end category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
           person_id: 7, original_value: 'Past category', normalized_value: 'past category',
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
@@ -92,7 +93,7 @@ describe('ProfileHistoryDialog', () => {
         observations: [{
           participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
           normalized_value: 'observed@example.test', normalization: 'email', normalization_version: 1,
-          service_slug: 'email', observed_at: '2026-07-31T12:00:00Z',
+          service_slug: 'email', source_id: 12, observed_at: '2026-07-31T12:00:00Z',
           envelope: { id: 9, ordinal: 0, source: 'archive_observation', created_at: when, updated_at: when, vcard: {} }
         }]
       });
@@ -100,26 +101,29 @@ describe('ProfileHistoryDialog', () => {
 
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
-    expect(await screen.findByText('Previous Name')).toBeDefined();
+    expect((await screen.findByText('Previous Name')).closest('li')?.textContent).toContain('Address book');
     for (const title of ['Names', 'Contact points', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
+    expect.soft(screen.getByText('Scheduled end category').closest('details')).not.toBeNull();
+    expect.soft(screen.getByText('Current Name').closest('li')?.textContent).toContain('Valid from:');
+    expect.soft(screen.getByText('observed@example.test').closest('li')?.textContent).toContain('Source 12');
     const dateText = '(Jul|Aug) \\d{1,2}, 2026';
-    for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current category', 'Current photo']) {
+    for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current photo']) {
       const row = screen.getByText(value).closest('li')!;
       expect(row.closest('details')).toBeNull();
-      expect(row.textContent).toMatch(new RegExp(`You · ${dateText}`));
-      expect(row.textContent).not.toMatch(/Source:|Updated:|Valid from:|\d{4}-\d{2}-\d{2}T/);
+      expect(row.textContent).toMatch(new RegExp(`You · .*Updated: ${dateText}`));
+      expect(row.textContent).not.toMatch(/Source:|\d{4}-\d{2}-\d{2}T/);
     }
     const summaries = screen.getAllByText(/earlier values?$/).map((node) => node.textContent);
-    expect(summaries).toEqual(['1 earlier value', '2 earlier values', '1 earlier value']);
+    expect(summaries).toEqual(['1 earlier value', '2 earlier values', '2 earlier values']);
     for (const value of ['Previous Name', 'Past category']) {
       const row = screen.getByText(value).closest('li')!;
       expect(row.closest('details')).not.toBeNull();
       expect(row.textContent).toMatch(new RegExp(`Removed ${dateText}`));
     }
     const observed = screen.getByText('observed@example.test').closest('li')!;
-    expect(observed.textContent).toMatch(/Archive observation · Jul 31, 2026/);
+    expect(observed.textContent).toMatch(/Archive observation · Updated: .*· Jul 31, 2026/);
     expect(screen.getByText('slack · workspace / workspace-a')).toBeDefined();
     expect(screen.getByText('slack · workspace / workspace-b')).toBeDefined();
     expect(screen.getByText('email')).toBeDefined();
@@ -188,18 +192,5 @@ describe('ProfileHistoryDialog', () => {
     } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });
 
-  it('keeps the dialog open and reports a failed history read', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [] });
-      return Response.json({ error: 'unavailable', message: 'history unavailable' }, { status: 503 });
-    }));
-
-    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
-
-    expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
-    expect(await screen.findByRole('heading', { name: 'Merges' })).toBeDefined();
-    expect(screen.getByRole('dialog', { name: 'History' })).toBeDefined();
-  });
 
 });

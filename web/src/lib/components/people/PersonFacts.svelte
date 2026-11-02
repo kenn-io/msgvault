@@ -9,20 +9,20 @@
   interface Props {
     client: APIClient;
     personID: number;
+    refreshKey?: unknown;
     /** Opens the setting that turns fact review on, while it is off. Stored facts stay readable. */
     onSetUp?: () => void;
   }
 
-  let { client, personID, onSetUp = undefined }: Props = $props();
+  let { client, personID, refreshKey, onSetUp = undefined }: Props = $props();
 
   const controller = new FactLedgerController(untrack(() => client));
   let open = $state(false);
 
   // Nothing loads until the section opens.
   $effect(() => {
-    const id = personID;
-    const shown = open;
-    untrack(() => controller.applyContext(shown, id));
+    const id = personID, shown = open; refreshKey;
+    untrack(() => { if (shown && controller.active && controller.personID === id) void controller.retrySection(controller.selectedSection); else controller.applyContext(shown, id); });
   });
 
   onDestroy(() => controller.destroy());

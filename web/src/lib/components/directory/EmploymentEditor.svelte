@@ -187,7 +187,7 @@
       {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     {:else}
       <div class="field"><span class="label">Organization</span><div class="org"><Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} />
-        <Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} /></div></div>
+        {#if !initialEmployment}<Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} />{/if}</div></div>
       <div class="pair"><label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
       <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label></div>
       <div class="pair"><label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
@@ -216,7 +216,7 @@
     </div>
   </form>
 </Modal>
-{#if creatingOrganization}<OrganizationEditor {controller} onDone={() => { creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
+{#if creatingOrganization}<OrganizationEditor {controller} onDone={(organization) => { selectedOrganization = organization; organizationID = String(organization?.id ?? ''); creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
 
 
 <style>

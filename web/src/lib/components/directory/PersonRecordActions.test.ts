@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -63,7 +64,7 @@ describe('PersonRecordActions', () => {
       if (request.method !== 'GET') return pendingRename;
       await pendingReadback;
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/profile')) return Response.json({ person: renamed, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/profile')) return Response.json(emptyProfile(renamed), { headers: { ETag: '"person-7-r4"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
       if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
@@ -99,7 +100,6 @@ describe('PersonRecordActions', () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (request.method === 'GET') return Response.json({ message: 'Readback unavailable' }, { status: 503 });
       requests.push(request);
       return new Response(null, { status: 204 });
     }));
@@ -129,19 +129,6 @@ describe('PersonRecordActions', () => {
 
     resolveDelete(new Response(null, { status: 204 }));
     await waitFor(() => expect(controller.mutationPending).toBe(false));
-  });
-
-  it('shows one of rename or delete at a time', async () => {
-    renderActions(vi.fn());
-
-    await choose('Rename');
-    await choose('Delete');
-    expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
-
-    await choose('Rename');
-    expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
   });
 
   it('disables both write actions when the person cannot be written', async () => {

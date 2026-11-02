@@ -1,11 +1,8 @@
+import { requestOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { PersonTrackingController } from './person-tracking-controller.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function catalog(includeSensitive = false) {
   return {

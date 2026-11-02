@@ -189,7 +189,7 @@ export class DirectoryEntityController {
   private async readEmployments(signal: AbortSignal) {
     const response = await generatedListPersonEmployments({ id: this.personID }, undefined, { ...this.client, signal });
     const ids = new Set((response.data?.employments ?? []).map(item => item.organization_id).filter(id => !this.organizationRecords.has(id)));
-    await Promise.allSettled([...ids].map(id => this.prepareOrganizationMutation(id, signal)));
+    void Promise.allSettled([...ids].map(id => this.prepareOrganizationMutation(id, signal)));
     return response;
   }
   async refreshRelationships(includeEnded = this.relationshipsIncludeEnded): Promise<void> {

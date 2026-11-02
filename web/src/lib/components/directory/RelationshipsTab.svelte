@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatPartialDate as dateText } from '../../directory/dates';
   import { appShortcuts, Button, Checkbox, Modal, IconButton } from '@kenn-io/kit-ui';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
   import { untrack, onDestroy } from 'svelte';
@@ -50,11 +51,6 @@
 
   function counterpart(view: PersonRelationshipView): string {
     return view.counterpart_display_name?.trim() || view.counterpart_vcard_uid || `Person ${view.counterpart_person_id}`;
-  }
-
-  function dateText(value: { year?: number; month?: number; day?: number } | undefined): string {
-    if (!value) return '';
-    return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
   }
 
   async function changeHistoryMode(checked: boolean): Promise<void> {

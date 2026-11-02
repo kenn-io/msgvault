@@ -340,7 +340,7 @@
   /* Add rows and More fields sit in the value column, under the values they add to. */
   .add-row,
   .add :global(.add-trigger) {
-    padding-left: calc(120px + var(--field-gap));
+    padding-left: calc(var(--detail-label-width) + var(--field-gap));
   }
 
   .add :global(.add-trigger) {
@@ -380,13 +380,6 @@
     font: inherit;
     font-size: var(--font-size-sm);
     text-align: left;
-  }
-
-  @media (max-width: 640px) {
-    .add-row,
-    .add :global(.add-trigger) {
-      padding-left: calc(88px + var(--field-gap));
-    }
   }
 
   .add-row:hover:not(:disabled) {

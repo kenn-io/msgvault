@@ -411,7 +411,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
     route.fulfill({
       json: {
         person_id: 42,
-        cadence_status: 'current',
+        cadence_status: 'ok',
         computed_at: FIXTURE_TIME,
         interaction_count: 3,
         stale: false,
@@ -1152,7 +1152,7 @@ export async function installDirectoryReviewArchive(page: Page) {
       return route.fulfill({
         json: {
           person_id: person.id,
-          cadence_status: 'current',
+          cadence_status: 'ok',
           computed_at: FIXTURE_TIME,
           interaction_count: 2,
           stale: false,

@@ -48,13 +48,12 @@
     void savedProfile;
     // Stop following loading state once this profile's unfiltered metadata is available.
     if (untrack(() => !directory.detail)) void directory.detailLoading;
-    if (untrack(() => !directory.detail?.contactState && (controller.target !== target || !controller.detail))) void controller.timelineLoading;
+    if (untrack(() => target === null || controller.target !== target || controller.timelineLoading)) void controller.timelineLoading;
     untrack(() => {
       if (directory.detailLoading || directory.selectedPersonID !== profileID || !directory.detail) return;
-      if (controller.timelineLoading && !directory.detail.contactState) return;
+      if (target === null ? directory.detail.person?.participant_ids.length : controller.target !== target || controller.timelineLoading) return;
       details ||= !filesOpen &&
-        !(controller.target === target && target !== null && controller.firstContactAt) &&
-        !directory.detail.contactState?.interaction_count;
+        !(controller.target === target && target !== null && controller.firstContactAt);
     });
   });
   const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
@@ -141,11 +140,13 @@
       <div class="calendar">
         {#if domain}
           <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
-        {:else}
+        {:else if scope}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}
             {selectedDate} {since} title="Activity" onDateChange={(date) => selectedDate = date}
             onYearChange={(year) => { selectedDate = null; void controller.loadRelationshipYear(year); }} />
+        {:else}
+          <EmptyState title="No items match this view" />
         {/if}
       </div>
     {/if}

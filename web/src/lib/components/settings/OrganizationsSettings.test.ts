@@ -23,7 +23,7 @@ describe('OrganizationsSettings', () => {
     resolveSearch(Response.json({ error: 'unavailable', message: 'Organization search unavailable.' }, { status: 503 }));
     expect((await screen.findByRole('alert')).textContent).toContain('Organization search unavailable.');
 
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search organizations' }), { target: { value: 'synthetic again' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry organizations' }));
     expect(await screen.findByRole('button', { name: 'Edit Synthetic Org' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
     expect(screen.getByRole('dialog', { name: 'Create organization' })).toBeDefined();

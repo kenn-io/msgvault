@@ -17,7 +17,7 @@
   }
 
   let { controller, personID, organizationRequest = undefined }: Props = $props();
-  let organizationEditor = $state<Organization | null | undefined>(undefined);
+  let organizationEditor = $state<(Pick<Organization, 'id'> & Partial<Organization>) | null | undefined>(undefined);
   let employmentEditor = $state<Employment | null | undefined>(undefined);
   let employmentAction = $state<'edit' | 'end'>('edit');
   let deletingEmployment = $state<Employment>();
@@ -63,14 +63,9 @@
     return start && end ? `${start} – ${end}` : start ? `Since ${start}` : end && end !== 'present' ? `Until ${end}` : '';
   }
 
-  async function openRequestedOrganization(id: number): Promise<void> {
+  function openRequestedOrganization(id: number): void {
     actionMessage = '';
-    try {
-      const profile = await controller.prepareOrganizationMutation(id);
-      organizationEditor = profile.organization;
-    } catch (cause: unknown) {
-      actionMessage = cause instanceof Error ? cause.message : 'Unable to open the organization.';
-    }
+    organizationEditor = { id };
   }
 
   async function addEmployment(): Promise<void> {

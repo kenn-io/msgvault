@@ -1,3 +1,4 @@
+import { requestOf } from '../directory/entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -55,10 +56,6 @@ function detail(id: number, overrides: Record<string, unknown> = {}) {
     ...forbiddenMarkers,
     ...overrides
   };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 function deferredResponse() {

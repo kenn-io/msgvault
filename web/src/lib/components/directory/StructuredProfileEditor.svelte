@@ -377,7 +377,7 @@
         /></label
       >
       {/if}
-      <label>{nameKind === 'phonetic' ? 'First name, said as' : 'Given name'}<TextInput bind:value={givenName} ariaLabel={nameKind === 'phonetic' ? 'First name, said as' : 'Given name'} block disabled={submitting} /></label>
+      <label>{nameKind === 'phonetic' ? 'First name, said as' : 'Given name'}<TextInput bind:value={givenName} required={nameKind === 'phonetic' && !familyName.trim()} ariaLabel={nameKind === 'phonetic' ? 'First name, said as' : 'Given name'} block disabled={submitting} /></label>
       <label>{nameKind === 'phonetic' ? 'Last name, said as' : 'Family name'}<TextInput bind:value={familyName} ariaLabel={nameKind === 'phonetic' ? 'Last name, said as' : 'Family name'} block disabled={submitting} /></label
       >
     {:else if section === 'contact_points'}

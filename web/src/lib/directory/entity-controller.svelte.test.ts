@@ -91,17 +91,20 @@ describe('DirectoryEntityController', () => {
       return defaultResponse(request);
     });
     const controller = new DirectoryEntityController(client, 7);
+    const prepare = vi.spyOn(controller, 'prepareOrganizationMutation');
     const opening = controller.load();
     try {
       await vi.waitFor(() => expect(organizationReads).toBe(1));
       expect(await controller.updateOrganization(21, { name: 'Renamed employer' })).toMatchObject({ ok: true });
       oldLookup.resolve(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
       await opening;
+      await Promise.allSettled([prepare.mock.results[0]!.value]);
       expect(controller.organizationRecords.get(21)?.organization.name).toBe('Renamed employer');
       expect(controller.organizationRecords.get(22)?.organization.name).toBe('Second employer');
     } finally {
       oldLookup.resolve(Response.json(organizationProfile()));
       await opening;
+      await Promise.allSettled([prepare.mock.results[0]!.value]);
       controller.destroy();
     }
   });
