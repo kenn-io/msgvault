@@ -87,7 +87,7 @@
             <button
               type="button"
               class="sidebar__item"
-              aria-label={item.label}
+              aria-label={item.id === 'relationships' && duplicateCount > 0 ? `${item.label} ${duplicateCount >= 500 ? '500+' : duplicateCount}` : item.label}
               aria-current={(item.id === active) ? 'page' : undefined}
               onclick={() => onNavigate(item.id)}
             >

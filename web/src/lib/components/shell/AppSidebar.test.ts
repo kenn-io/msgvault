@@ -30,7 +30,7 @@ const primary = () => within(screen.getByRole('navigation', { name: 'Primary' })
 describe('AppSidebar', () => {
   it.each([4, 500])('shows a waiting badge of %s', duplicateCount => {
     renderSidebar({ duplicateCount });
-    expect(primary().getByRole('button', { name: 'People' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
+    expect(primary().getByRole('button', { name: duplicateCount === 500 ? 'People 500+' : 'People 4' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
   });
 
   it('lists four places with the active one current', () => {

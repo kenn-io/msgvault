@@ -1,9 +1,5 @@
 import { identityBasisLabel } from '../relationships/identity-chip';
 
-export function messageCount(count: number): string {
-  return `${count.toLocaleString()} ${count === 1 ? 'message' : 'messages'}`;
-}
-
 /** The names and values that identify a match, joined for one quiet line. */
 export function joinParts(parts: Array<string | null | undefined | false>): string {
   return parts.filter(Boolean).join(' · ');

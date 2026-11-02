@@ -48,3 +48,14 @@ it('keeps an accepted pair read-only when refreshing the queue fails', async () 
     expect(screen.getByText(/Merged/)).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
+
+it('shows an interrupted accepted decision as pending in History', () => {
+  const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
+  controller.identityState = 'accepted';
+  controller.rows = [{ ...pair, state: 'accepted', application_pending: true, actionable: false }];
+  const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
+  try {
+    expect(screen.getByText(/Merge pending/)).toBeDefined();
+    expect(screen.queryByText(/^Merged ·/)).toBeNull();
+  } finally { view.unmount(); controller.destroy(); }
+});

@@ -17,8 +17,7 @@
   let disposed = false;
   onDestroy(() => disposed = true);
   const close = () => { if (!disposed) onClose(); };
-  // A successful promotion is retained when reading the profiles needs a retry.
-  const promoted = new Map<number, number>();
+  let promoted = false;
   async function savedPair(a: number, b: number): Promise<LinkOutcome> {
     try {
       const profiles = await Promise.all([a, b].map(id => getPersonProfile({ id }, client)));
@@ -34,14 +33,10 @@
       if (!profile.data) return { ok: false, code: 'error', message: profile.error?.message ?? 'Could not read this person.' };
       const representative = profile.data.participant_ids?.[0];
       if (representative !== undefined) { const outcome = await controller.linkParticipants(representative, other); if (!disposed) onLinked?.(representative, other, outcome); return outcome; }
-      let id = promoted.get(other);
-      if (!id) {
-        const result = await createPerson({ participant_id: other }, client);
-        if (!result.data) return { ok: false, code: 'error', message: result.error?.message ?? 'Could not save the selected person.' };
-        id = result.data.id;
-        promoted.set(other, id);
-      }
-      return savedPair(personID, id);
+      const result = await createPerson({ participant_id: other }, client);
+      if (!result.data) return { ok: false, code: 'error', message: result.error?.message ?? 'Could not save the selected person.' };
+      promoted = true;
+      return savedPair(personID, result.data.id);
     } catch { return { ok: false, code: 'error', message: 'Could not save the selected person.' }; }
   }
   async function pickSaved(other: number): Promise<LinkOutcome> {
@@ -51,9 +46,9 @@
       if (!result.data) return { ok: false, code: 'error', message: result.error?.message ?? 'Could not read the selected person.' };
       const ids = result.data.participant_ids as number[] | undefined;
       if (!ids?.length && participantID !== null) {
-        let id = promoted.get(participantID);
-        if (!id) { const saved = await createPerson({ participant_id: participantID }, client); if (!saved.data) return { ok: false, code: 'error', message: saved.error?.message ?? 'Could not save this person.' }; id = saved.data.id; promoted.set(participantID, id); }
-        return savedPair(other, id);
+        const saved = await createPerson({ participant_id: participantID }, client); if (!saved.data) return { ok: false, code: 'error', message: saved.error?.message ?? 'Could not save this person.' };
+        promoted = true;
+        return savedPair(other, saved.data.id);
       }
       if (!ids?.length) return { ok: false, code: 'error', message: 'This person has no addresses.' };
       return link(ids[0]!);
@@ -68,5 +63,5 @@
 {#if conflict}
   <PersonBindingConflictModal {client} {conflict} onOpenProfile={(id) => { close(); onOpenPerson?.(id); }} onSuccess={merged} onClose={close} />
 {:else}
-  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || promoted.size > 0) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || promoted.size > 0) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} onClose={close} />
+  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || promoted) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || promoted) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} onClose={close} />
 {/if}

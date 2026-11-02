@@ -7,8 +7,8 @@
     type EndpointSummary,
     endpointKey,
   } from '../../people/duplicates.svelte';
-  import { formatRelativeTime } from '../../util/format';
-  import { basisLine, blockerLine, joinParts, messageCount } from '../../people/format';
+  import { formatRelativeTime, messageCount } from '../../util/format';
+  import { basisLine, blockerLine, joinParts } from '../../people/format';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import { IDENTITY_REVIEW_PAGE_LIMIT, type DirectoryReviewController } from '../../directory/review-controller.svelte';
   import IdentityCandidateCard from '../directory/IdentityCandidateCard.svelte';
@@ -98,7 +98,7 @@
           <div class="footer">
             <span class="basis">
               {#if decided}
-                {decidedLabel[candidate.state] ?? candidate.state} · {formatRelativeTime(candidate.decided_at ?? candidate.updated_at)}
+                {candidate.application_pending ? 'Merge pending' : decidedLabel[candidate.state] ?? candidate.state} · {formatRelativeTime(candidate.decided_at ?? candidate.updated_at)}
               {:else if conflicted(candidate)}
                 {basisLine(candidate)}. {blockerLine(candidate.blocker)}
               {:else}

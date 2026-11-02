@@ -3042,3 +3042,30 @@ it('shows a failed duplicate decision after leaving the queue and offers a retur
     await screen.findByRole('button', { name: 'Keep separate' });
   } finally { rendered.unmount(); state.destroy(); }
 });
+
+it('refreshes cached duplicate cards after explicit reentry', async () => {
+  let changed = false;
+  const decisions: Array<{ review_token: string }> = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/17/review/reject')) { decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: changed ? 'fresh-17' : 'review-17' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await screen.findByRole('button', { name: 'Keep separate' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
+    changed = true;
+    await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
+    await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
+    await fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(decisions).toEqual([{ review_token: 'fresh-17' }]));
+  } finally { rendered.unmount(); state.destroy(); }
+});

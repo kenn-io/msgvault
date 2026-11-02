@@ -555,7 +555,7 @@
   // An epoch is a monotonically increasing restoration event, not a boolean
   // mode. Capture the initial value so ordinary URL commits do not turn into
   // repeated page-one reloads merely because the initial epoch is positive.
-  let appliedDirectoryReviewRestorationEpoch = untrack(() => exploreState.restorationEpoch);
+  let appliedDirectoryReviewContext = untrack(() => ({ epoch: exploreState.restorationEpoch, active: false }));
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
@@ -565,9 +565,9 @@
   // component tests, but normal app navigation reaches the controller here.
   $effect(() => {
     const restorationEpoch = exploreState.restorationEpoch;
-    const historyRestoration = restorationEpoch !== appliedDirectoryReviewRestorationEpoch;
-    appliedDirectoryReviewRestorationEpoch = restorationEpoch;
     const active = exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates;
+    const historyRestoration = !appliedDirectoryReviewContext.active || restorationEpoch !== appliedDirectoryReviewContext.epoch;
+    appliedDirectoryReviewContext = { epoch: restorationEpoch, active };
     const identityState = exploreState.current.identityState;
     untrack(() => {
       void directoryReviewController.settleDecision();

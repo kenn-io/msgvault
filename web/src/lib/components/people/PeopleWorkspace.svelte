@@ -13,7 +13,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PageHeader from '../shell/PageHeader.svelte';
   import PeopleList, { type PeopleRow } from './PeopleList.svelte';
-  import { messageCount } from '../../people/format';
+  import { messageCount } from '../../util/format';
   import PossibleDuplicates from './PossibleDuplicates.svelte';
   import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import PersonPage from './PersonPage.svelte';

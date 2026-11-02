@@ -67,7 +67,7 @@ it.each([
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
     expect(onReconcile).toHaveBeenLastCalledWith(context);
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
-    expect(promotions).toHaveLength(promote ? 1 : 0);
+    expect(promotions).toHaveLength(promote ? outcome === 'retry and merge' ? 2 : 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
   } finally { view.unmount(); controller.destroy(); }
 });
