@@ -241,7 +241,7 @@
   </div>
 {/snippet}
 {#snippet person()}
-  {#if selectedProfileID !== null && directory.selectedPersonID !== selectedProfileID}
+  {#if soloPerson !== null && directory.selectedPersonID !== soloPerson}
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies

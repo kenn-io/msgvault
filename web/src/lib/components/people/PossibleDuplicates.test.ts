@@ -71,5 +71,12 @@ it('Next shows the unseen pair after settling a decision that removes the first 
     await fireEvent.click(within(document.getElementById('duplicate-1')!).getByRole('button', { name: 'Merge' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(['duplicate-11', 'duplicate-12']));
+    expect.soft(screen.getByRole('navigation', { name: 'Duplicate pages' }).textContent).toContain('Page 2');
+    await fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    await waitFor(() => expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(Array.from({ length: 10 }, (_, index) => `duplicate-${index + 2}`)));
+    expect(screen.getByText('Page 1', { exact: true })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(['duplicate-12']));
+    expect(screen.getByText('Page 2', { exact: true })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });

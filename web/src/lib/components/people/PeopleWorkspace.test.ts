@@ -606,3 +606,39 @@ it('Escape dismisses bulk Delete while retaining the selected saved person', asy
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete people' })).toBeNull());
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
+
+it('keeps the survivor choice open after promoting the observed person during Merge', async () => {
+  let promoted = false;
+  let finishHydration!: () => void;
+  const hydration = new Promise<void>(resolve => { finishHydration = resolve; });
+  let createdReads = 0;
+  const hydrationStarted = vi.fn();
+  const saved = profile(7, 4, []), created = profile(9, 1, [1]);
+  const client = clientFor({
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Observed One', identifiers: [], activity_count: 1, file_count: 0, first_at: when, last_at: when, source_counts: [], ...(promoted ? { profile: created } : {}) }),
+    '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7)] }),
+    '/api/v1/participants/search': () => Response.json({ rows: [] }),
+    '/api/v1/people': async request => { expect(await request.json()).toEqual({ participant_id: 1 }); promoted = true; return Response.json(created); },
+    '/api/v1/people/7': () => Response.json(saved, { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/9': async () => {
+      if (++createdReads === 1) return Response.json(created, { headers: { ETag: '"person-9-r1"' } });
+      hydrationStarted();
+      await hydration;
+      return Response.json(created, { headers: { ETag: '"person-9-r1"' } });
+    },
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic One/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(hydrationStarted).toHaveBeenCalled());
+    await act(async () => finishHydration());
+    await waitFor(() => expect(directory.detailLoading).toBe(false));
+    expect(await screen.findByRole('dialog', { name: 'Resolve person merge' })).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});

@@ -132,7 +132,7 @@
   {#if controller.decisionError}<p role="alert">{controller.decisionError}</p>{/if}
   {#if controller.status && !controller.rows.some(row => row.id === controller.lastMerge?.candidateID)}<p role="status">{controller.status}</p>{/if}
   {#if controller.pageError}<p role="alert">{controller.pageError}<Button label="Retry page" onclick={() => void controller.retryPage()} /></p>{/if}
-  <nav aria-label="Duplicate pages"><Button label="Previous" disabled={controller.loading || !controller.hasPreviousPage} onclick={() => void controller.loadPreviousPage()} /><span>Page {controller.offset / IDENTITY_REVIEW_PAGE_LIMIT + 1}</span><Button label="Next" disabled={controller.loading || !controller.hasNextPage} onclick={() => void controller.loadNextPage()} /></nav>
+  <nav aria-label="Duplicate pages"><Button label="Previous" disabled={controller.loading || !controller.hasPreviousPage} onclick={() => void controller.loadPreviousPage()} /><span>Page {Math.ceil(controller.offset / IDENTITY_REVIEW_PAGE_LIMIT) + 1}</span><Button label="Next" disabled={controller.loading || !controller.hasNextPage} onclick={() => void controller.loadNextPage()} /></nav>
 </div>
 
 <style>

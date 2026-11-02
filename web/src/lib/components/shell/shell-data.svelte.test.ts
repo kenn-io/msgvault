@@ -266,3 +266,27 @@ it('keeps the post-decision badge when an earlier read completes late', async ()
     expect(data.duplicateCount).toBe(0);
   } finally { data.stop(); }
 });
+
+it('refreshes the waiting duplicate count while the app remains visible', async () => {
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let waiting = false;
+  const data = new ShellData(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: waiting ? [pair] : [], offset: 0, limit: 500 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+    throw new Error(`Unexpected ${path}`);
+  }));
+  try {
+    await data.refresh();
+    expect(data.duplicateCount).toBe(0);
+    data.start();
+    waiting = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(data.duplicateCount).toBe(1);
+  } finally { data.stop(); visibility.mockRestore(); vi.useRealTimers(); }
+});

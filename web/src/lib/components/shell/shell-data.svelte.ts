@@ -50,10 +50,10 @@ export class ShellData {
     this.jobs = new JobsStore(client, operations);
   }
 
-  /** Jobs poll while visible; saved views refresh on entry, focus, and writes. */
+  /** Jobs and the duplicate count poll while visible; saved views refresh on entry, focus, and writes. */
   start(): void {
     this.#timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') void this.jobs.refresh();
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') { void this.jobs.refresh(); void this.refreshDuplicates(); }
     }, REFRESH_MS);
   }
 
