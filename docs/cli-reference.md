@@ -850,7 +850,7 @@ and retries. Plan for additional API use and storage on large accounts.
 
 ## sync
 
-Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync.
+Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync. Each Gmail incremental sync first retries messages an earlier sync couldn't download or save, until they're archived or Gmail reports them gone.
 
 ```bash
 msgvault sync [account] [flags]
