@@ -281,6 +281,37 @@ it("passes the saved person's durable ID to Files when the first binding is draf
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
+it('refreshes the Saved last-contact date after linking an unprofiled identity from Details', async () => {
+  let linked = false;
+  const saved = { ...profile(7, 1, [1]), organizations: [], categories: [], contact_state: 'active' };
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [{ ...saved, last_contact_at: linked ? '2021-07-18T10:00:00Z' : '2020-07-18T10:00:00Z' }] }),
+    '/api/v1/people/7': () => Response.json(saved),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: { id: 7 }, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json({ ...emptyCalendar((await request.json()).year), identity_revision: linked ? 2 : 1 }),
+    '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/identity/links': () => { linked = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); },
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7, relationshipTarget: 'cluster:1' });
+  const directory = new DirectoryController(client);
+  const controller = new RelationshipsController(client, () => 'UTC');
+  await controller.openTarget('cluster:1', {}, false);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const list = within(await screen.findByRole('grid', { name: 'People results' }));
+    await list.findByText('2020');
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
+    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Bob' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Link another identity for Synthetic One' })).toBeNull());
+    expect(linked).toBe(true);
+    await list.findByText('2021');
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('refreshes the selected survivor and Saved list after merging', async () => {
   let merged = false;
   const one = { ...profile(7, 4, [1]), organizations: [], categories: [], contact_state: 'active' };

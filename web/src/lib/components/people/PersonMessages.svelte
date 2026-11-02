@@ -17,6 +17,7 @@
   import { EverythingSessionState } from '../shell/EverythingSessionState.svelte';
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
   import { relationshipMeetingScope } from '../../meetings/scopes';
+  import { narrowTimeFilters } from '../../explore/group-context';
   import type { MeetingRef } from '../../api/generated/models';
 
   let { client, identityScope, target, predicate, period = null, onOpenPerson, onOpenMeeting, onOpenFiles, onOpenSettings, onClearPeriod, onFiltersChange, onMessagesTableChange }:
@@ -61,8 +62,7 @@
   }, untrack(() => identityScope));
   function requestPredicate(): ExplorePredicate {
     const ordinary = exploreState.predicate();
-    return period ? { ...ordinary, filters: [...(ordinary.filters ?? []).filter((filter) => !['after', 'before'].includes(filter.dimension)),
-      { dimension: 'after', values: [period.after] }, { dimension: 'before', values: [period.before] }] } : ordinary;
+    return period ? { ...ordinary, filters: narrowTimeFilters(ordinary.filters ?? [], period.after, period.before) } : ordinary;
   }
   const meetingContext = $derived.by(() => {
     try { return { scope: relationshipMeetingScope(identityScope.kind === 'person' ? { participant_id: identityScope.id } : { domains: [identityScope.domain] }, requestPredicate()) }; }

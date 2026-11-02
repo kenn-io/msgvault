@@ -33,6 +33,7 @@ type peopleAPIEngine struct {
 	person               *query.PersonSummary
 	personClusterMembers []int64
 	domain               *query.DomainSummary
+	groupRequest         query.ExploreGroupRequest
 	timeline             query.ExploreRequest
 	timelineResult       *query.ExploreResponse
 	peopleErr            error
@@ -87,7 +88,8 @@ func (e *peopleAPIEngine) ExploreCoverage(context.Context, query.ExploreCoverage
 	return &query.ExploreCoverageResult{}, e.peopleErr
 }
 
-func (e *peopleAPIEngine) ExploreGroups(context.Context, query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {
+func (e *peopleAPIEngine) ExploreGroups(_ context.Context, request query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {
+	e.groupRequest = request
 	return &query.ExploreGroupResponse{}, e.peopleErr
 }
 
@@ -523,6 +525,7 @@ func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
 	}
 
 	timeline(primary)
+	assertions.True(engine.timeline.PersonInteractionsOnly)
 	assertions.ElementsMatch([]int64{primary, secondary}, engine.timeline.Context.ParticipantIDs,
 		"a linked participant's timeline must scope to every cluster member so alias-owned activity is included")
 

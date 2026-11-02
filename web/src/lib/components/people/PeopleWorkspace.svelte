@@ -210,7 +210,7 @@
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); }}
     onSplitCommitted={async (context) => { onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
-    onReconcilePersonMerge={reconcilePersonMerge} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
+    onReconcilePersonMerge={reconcilePersonMerge} onIdentityChange={() => directory.reloadFirstPage()} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
