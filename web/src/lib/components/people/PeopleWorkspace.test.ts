@@ -75,7 +75,7 @@ it('Escape from People results closes the reader before leaving the person', asy
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
   await controller.openTarget('cluster:1', {}, false);
   const onNavigate = vi.fn(patch => state.commitNavigation(patch));
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     const messages = await screen.findByRole('grid', { name: 'Messages results' });
     await fireEvent.click(await within(messages).findByText('Saved message'));
