@@ -295,8 +295,8 @@ it.each([
   const predicate = { filters: [{ dimension: 'source' as const, values: ['999'] }], presentation: 'table' as const };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
-    if (path === '/api/v1/participants/1') return Response.json(summary);
-    if (path.endsWith('/summary')) return Response.json({ summary: { ...summary, activity_count: 0, first_at: '', last_at: '' } });
+    if (path === '/api/v1/participants/1') return activity > 0 ? Response.json(summary) : Response.json({ error: 'participant_not_found', message: 'Participant cluster not found' }, { status: 404 });
+    if (path.endsWith('/summary')) return Response.json({ error: 'participant_not_found', message: 'Participant cluster not found in the active analytical context' }, { status: 404 });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC', days: [], annual: [], current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1 });
     if (path.endsWith('/timeline')) return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
