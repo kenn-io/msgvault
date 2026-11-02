@@ -3,13 +3,11 @@
 
   import type {
     AttributeChoice as GeneratedAttributeChoice,
-    AttributeDefinition as GeneratedAttributeDefinition,
     CreateAttributeDefinitionRequest as GeneratedCreateAttributeDefinitionRequest,
   } from '../../api/generated/models';
-  import { attributeTextLength, trimAttributeText } from '../../directory/attribute-text';
+  import { trimAttributeText } from '../../directory/attribute-text';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 
-  type AttributeDefinition = GeneratedAttributeDefinition;
   type CreateAttributeDefinitionRequest = GeneratedCreateAttributeDefinitionRequest;
 
   interface Props {
@@ -23,13 +21,10 @@
   let valueType = $state('text');
   let cardinality = $state<'single' | 'multi'>('single');
   let choices = $state('');
-  let unit = $state('');
-  let maxLength = $state('');
   let sensitive = $state(false);
   let pending = $state(false);
   let creating = $state(false);
   let error = $state<string>();
-  let created = $state<AttributeDefinition>();
   let validationActive = false;
 
   const hasChoices = $derived(choices.split(/\r?\n/).some((line) => trimAttributeText(line) !== ''));
@@ -57,20 +52,14 @@
     if (!body) return;
     pending = true;
     creating = true;
-    let completed: AttributeDefinition | undefined;
     try {
       await controller.createDefinition(body);
-      if (controller.createdDefinition && controller.conflict === null && controller.draft === null) {
-        completed = controller.createdDefinition;
-      } else {
+      if (!(controller.createdDefinition && controller.conflict === null && controller.draft === null)) {
         error = controller.conflict?.message ?? controller.definitionsError ?? 'Unable to create field.';
       }
     } finally {
       creating = false;
       pending = false;
-    }
-    if (completed) {
-      await showCreated(completed);
     }
   }
 
@@ -78,17 +67,14 @@
     if (pending) return;
     pending = true;
     error = undefined;
-    let completed: AttributeDefinition | undefined;
     try {
       await controller.retryDefinitionRefresh();
-      if (
+      if (!(
         controller.createdDefinition &&
         controller.definitionCreationCommit === null &&
         controller.conflict === null &&
         controller.draft === null
-      ) {
-        completed = controller.createdDefinition;
-      } else {
+      )) {
         error =
           controller.conflict?.message ??
           controller.definitionsError ??
@@ -97,15 +83,14 @@
     } finally {
       pending = false;
     }
-    if (completed) await showCreated(completed);
   }
 
-  async function reloadDirectory(): Promise<void> {
+  async function reloadFields(): Promise<void> {
     if (pending) return;
     pending = true;
     error = undefined;
     try {
-      await controller.reload();
+      await controller.reloadDefinitions();
       error =
         controller.conflict?.message ??
         controller.definitionsError ??
@@ -113,10 +98,6 @@
     } finally {
       pending = false;
     }
-  }
-
-  async function showCreated(definition: AttributeDefinition): Promise<void> {
-    created = definition;
   }
 
   function focusResult(node: HTMLElement): void {
@@ -130,19 +111,9 @@
       return undefined;
     }
     const normalizedDescription = trimAttributeText(description);
-    const parsedMaxLength = valueType === 'text' ? optionMaxLength() : null;
-    if (parsedMaxLength === undefined) return undefined;
-    const parsedChoices = choiceOptions(parsedMaxLength);
+    const parsedChoices = choiceOptions();
     if (!parsedChoices) return undefined;
-    const normalizedUnit = supportsUnit(valueType) && !parsedChoices.length ? trimAttributeText(unit) : '';
-    const options =
-      parsedChoices.length || normalizedUnit || parsedMaxLength !== null
-        ? {
-            ...(parsedChoices.length ? { choices: parsedChoices } : {}),
-            ...(normalizedUnit ? { unit: normalizedUnit } : {}),
-            ...(parsedMaxLength !== null ? { max_length: parsedMaxLength } : {}),
-          }
-        : undefined;
+    const options = parsedChoices.length ? { choices: parsedChoices } : undefined;
     const hasChoices = parsedChoices.length > 0;
     return {
       object_type: 'person',
@@ -157,7 +128,7 @@
     };
   }
 
-  function choiceOptions(textMaxLength: number | null): GeneratedAttributeChoice[] | undefined {
+  function choiceOptions(): GeneratedAttributeChoice[] | undefined {
     const lines = choices.split(/\r?\n/).filter((line) => trimAttributeText(line) !== '');
     if (!lines.length) return [];
     if (valueType === 'json' || valueType === 'record_reference') {
@@ -180,10 +151,6 @@
       }
       const canonical = canonicalChoiceValue(valueType, rawValue);
       if (canonical === undefined) return undefined;
-      if (valueType === 'text' && textMaxLength !== null && attributeTextLength(canonical) > textMaxLength) {
-        error = `Each text choice must be ${textMaxLength} characters or fewer.`;
-        return undefined;
-      }
       if (seen.has(canonical)) {
         error = 'Choice values must be unique.';
         return undefined;
@@ -296,21 +263,6 @@
     return day >= 1 && day <= daysInMonth[month - 1]!;
   }
 
-  function optionMaxLength(): number | null | undefined {
-    const normalized = trimAttributeText(maxLength);
-    if (!normalized || normalized === '0') return null;
-    if (!/^\d+$/.test(normalized)) {
-      error = 'Maximum length must be a positive whole number; use zero or blank for no limit.';
-      return undefined;
-    }
-    const parsed = Number(normalized);
-    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-      error = 'Maximum length must be a positive whole number; use zero or blank for no limit.';
-      return undefined;
-    }
-    return parsed;
-  }
-
   function fieldType(type: string): string {
     switch (type) {
       case 'integer':
@@ -330,37 +282,25 @@
     }
   }
 
-  function supportsUnit(type: string): boolean {
-    return type === 'integer' || type === 'real';
-  }
-
   function supportsChoices(type: string): boolean {
     return type !== 'json' && type !== 'record_reference';
   }
 
   function selectValueType(type: string): void {
     valueType = type;
-    if (type !== 'text') maxLength = '';
-    if (!supportsUnit(type)) unit = '';
     if (!supportsChoices(type)) choices = '';
     revalidate();
   }
 
   function updateChoices(value: string): void {
     choices = value;
-    if (value.split(/\r?\n/).some((line) => trimAttributeText(line) !== '')) unit = '';
     revalidate();
   }
 
   function requestClose(): void {
     if (pending) return;
-    if (created) controller.acknowledgeDefinitionCreation();
+    if (controller.createdDefinition) controller.acknowledgeDefinitionCreation();
     onClose();
-  }
-
-  function updateMaxLength(value: string): void {
-    maxLength = value;
-    revalidate();
   }
 
   function revalidate(): void {
@@ -376,7 +316,8 @@
   closeLabel="Close create attribute field"
   onclose={requestClose}
 >
-  {#if created}
+  {#if controller.createdDefinition}
+    {@const created = controller.createdDefinition}
     <div class="created" role="status" tabindex="-1" use:focusResult>
       <strong>Created {created.label}</strong>
       <span>Slug: {created.slug}</span>
@@ -411,17 +352,17 @@
       {:else}
         <p>
           The server accepted the create request without a usable identity. Do not create the field again. Reload
-          Directory before making another attempt.
+          fields before making another attempt.
         </p>
         {#if !creating}
           <div class="actions">
             <Button
-              label="Reload Directory"
+              label="Reload fields"
               tone="info"
               surface="solid"
               disabled={pending}
               onclick={() => {
-                void reloadDirectory();
+                void reloadFields();
               }}
             />
           </div>
@@ -470,18 +411,6 @@
           >Optional. Choices support text, integer, number, boolean, date, and timestamp values.</small
         >
       {/if}
-      {#if supportsUnit(valueType) && !hasChoices}<label
-          >Unit<TextInput ariaLabel="Unit" bind:value={unit} autocomplete="off" block /></label
-        >{/if}
-      {#if valueType === 'text'}<label
-          >Maximum length<TextInput
-            ariaLabel="Maximum length"
-            bind:value={maxLength}
-            oninput={updateMaxLength}
-            autocomplete="off"
-            block
-          /></label
-        >{/if}
       <Checkbox label="Sensitive" bind:checked={sensitive} disabled={pending} />
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="actions">
