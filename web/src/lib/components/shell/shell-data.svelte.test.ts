@@ -62,6 +62,40 @@ describe('ShellData', () => {
       expect(requests.some((request) => request.method === 'PATCH')).toBe(false);
     });
 
+    it.each(['rename', 'describe'])('resolves %s while the deletions refresh is stalled', async operation => {
+      let saved = view(1, 'Budget');
+      let stallDeletions = false;
+      let finish!: (response: Response) => void;
+      const pending = new Promise<Response>(resolve => { finish = resolve; });
+      const data = new ShellData(createAPIClient(async (input, init) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/v1/deletions') return stallDeletions ? pending : Response.json({ manifests: [] });
+        if (path === '/api/v1/saved-views/1' && request.method === 'PATCH') {
+          saved = { ...saved, ...await request.json(), revision: 2 };
+          return Response.json(saved);
+        }
+        if (path === '/api/v1/saved-views') return Response.json({ saved_views: [saved] });
+        return Response.json({}, { status: 404 });
+      }));
+      const resolved = vi.fn();
+      let editing: Promise<void> | undefined;
+      try {
+        await data.refresh();
+        stallDeletions = true;
+        editing = (operation === 'rename' ? data.renameView(saved, 'Q3 budget') : data.describeView(saved, 'Quarterly review')).then(resolved);
+
+        await vi.waitFor(() => expect(resolved).toHaveBeenCalledWith(undefined));
+        expect(data.views[0]).toMatchObject(operation === 'rename'
+          ? { name: 'Q3 budget', revision: 2 }
+          : { description: 'Quarterly review', revision: 2 });
+      } finally {
+        data.stop();
+        finish(Response.json({ manifests: [] }));
+        await editing;
+      }
+    });
+
     it('hides a deleted view at once and deletes it for real on commit', async () => {
       const answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
       const { data, requests } = setup(answers);
