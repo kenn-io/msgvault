@@ -74,6 +74,7 @@
     <ul class="cards">
       {#each controller.rows.filter(row => !controller.hidden.has(row.id)) as candidate (candidate.id)}
         {@const pair = [endpointKey(candidate, 'left'), endpointKey(candidate, 'right')] as const}
+        {@const decided = history || candidate.state in decidedLabel}
         <li id={`duplicate-${candidate.id}`} class="card" tabindex="-1" aria-label={`${nameOf(pair[0])} and ${nameOf(pair[1])}`}>
           <div class="people">
             {#each pair as id (id)}
@@ -96,7 +97,7 @@
           </div>
           <div class="footer">
             <span class="basis">
-              {#if history}
+              {#if decided}
                 {decidedLabel[candidate.state] ?? candidate.state} · {formatRelativeTime(candidate.decided_at ?? candidate.updated_at)}
               {:else if conflicted(candidate)}
                 {basisLine(candidate)}. {blockerLine(candidate.blocker)}
@@ -104,7 +105,7 @@
                 {basisLine(candidate)}
               {/if}
             </span>
-            {#if !history}
+            {#if !decided}
               <Button
                 label="Keep separate"
                 disabled={controller.submitting}
@@ -119,10 +120,10 @@
               />
             {/if}
           </div>
-          {#if !history && controller.lastMerge?.candidateID === candidate.id}<p class="status" role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
+          {#if !decided && controller.lastMerge?.candidateID === candidate.id}<p class="status" role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
           <details><summary>Evidence and notes</summary>
             <IdentityCandidateCard {candidate} pending={controller.isDecisionPending(candidate.id)} />
-            {#if !history}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}
+            {#if !decided}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}
           </details>
         </li>
       {/each}

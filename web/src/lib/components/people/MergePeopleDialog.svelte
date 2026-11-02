@@ -27,13 +27,13 @@
     } catch { return { ok: false, code: 'error', message: 'Could not read both people. Retry the merge.' }; }
   }
   async function link(other: number): Promise<LinkOutcome> {
-    if (participantID !== null) { const outcome = await controller.linkParticipants(participantID, other); onLinked?.(participantID, other, outcome); return outcome; }
+    if (participantID !== null) { const outcome = await controller.linkParticipants(participantID, other); if (!disposed) onLinked?.(participantID, other, outcome); return outcome; }
     if (personID === null) return { ok: false, code: 'error', message: 'Choose a person first.' };
     try {
       const profile = await getPersonProfile({ id: personID }, client);
       if (!profile.data) return { ok: false, code: 'error', message: profile.error?.message ?? 'Could not read this person.' };
       const representative = profile.data.participant_ids?.[0];
-      if (representative !== undefined) { const outcome = await controller.linkParticipants(representative, other); onLinked?.(representative, other, outcome); return outcome; }
+      if (representative !== undefined) { const outcome = await controller.linkParticipants(representative, other); if (!disposed) onLinked?.(representative, other, outcome); return outcome; }
       let id = promoted.get(other);
       if (!id) {
         const result = await createPerson({ participant_id: other }, client);

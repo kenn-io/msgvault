@@ -53,9 +53,9 @@
   }
   async function retryLink(): Promise<void> {
     if (!staleLink) return;
-    const { a, b } = staleLink;
+    const receipt = staleLink, { a, b } = receipt;
     const result = await controller.linkParticipants(a, b);
-    if (result.ok) linked(a, b, result);
+    if (result.ok && staleLink === receipt) linked(a, b, result);
   }
   async function savePerson(): Promise<void> {
     if (!person || saving) return;
