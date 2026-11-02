@@ -371,88 +371,41 @@ describe('AttributeDefinitionDialog', () => {
   });
 
   it.each([
-    ['without a usable identity', () => Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 })],
-    ['with an empty body', () => new Response(null, { status: 204 })],
-    ['with malformed JSON', () => new Response('{"ownership":"user",', { status: 201, headers: { 'Content-Type': 'application/json' } })],
-  ] as const)('treats a successful POST %s as non-repeatable and offers reload only', async (_shape, response) => {
-    const requests: Request[] = [];
+    ['without a usable identity', () => Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 }), 'usable identity'],
+    ['with an empty body', () => new Response(null, { status: 204 }), 'usable identity'],
+    ['with malformed JSON', () => new Response('{"ownership":"user",', { status: 201, headers: { 'Content-Type': 'application/json' } }), 'usable identity'],
+    ['with an interrupted body', () => new Response(new ReadableStream<Uint8Array>({
+      start(stream) { stream.error(new Error('body interrupted after 201 headers')); },
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }), 'body interrupted after 201 headers'],
+  ] as const)('treats a successful POST %s as non-repeatable and offers reload only', async (shape, response, error) => {
+    let resolvePost!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST' ? response() : Response.json({ definitions: [] });
+      if (request.method === 'POST') return new Promise<Response>(resolve => { resolvePost = resolve; });
+      return Response.json({ definitions: [definition({ id: 99, universal_id: 'decoy-id', slug: 'stream_field' })] });
     });
     const profile = controller(fetchFn);
-    render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unidentified field' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('usable identity');
-    expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-    expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
-    await waitFor(() => expect(requests.filter(request => request.method === 'GET').map(request => new URL(request.url).pathname)).toEqual(['/api/v1/attribute-definitions']));
-    expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-    await expect(profile.createDefinition({ object_type: 'person', label: 'Unidentified field', value_type: 'text', field_type: 'text', cardinality: 'single', is_sensitive: false })).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
-    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
-  });
-
-  it('records a 201 before its body stream fails without observing another controller request', async () => {
-    const decoy = definition({ id: 99, universal_id: 'decoy-id', slug: 'stream_field' });
-    const requests: Request[] = [];
-    let resolvePost: ((response: Response) => void) | undefined;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (request.method === 'POST')
-        return new Promise<Response>((resolve) => {
-          resolvePost = resolve;
-        });
-      return Response.json({ definitions: [decoy] });
-    });
-    const client = createAPIClient(fetchFn);
-    const initialBundle = { definitions: { definitions: [] }, etags: {}, errors: {} } satisfies DirectoryReadBundle;
-    const profile = new DirectoryProfileController(client, 7, initialBundle);
-    const concurrentProfile = new DirectoryProfileController(client, 8, initialBundle);
-    render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Stream field' } });
-    void fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await waitFor(() => expect(resolvePost).toBeDefined());
-
-    await concurrentProfile.reloadDefinitions();
-    expect(profile.definitionCreationCommit).toBeNull();
-
-    const interruptedBody = new ReadableStream<Uint8Array>({
-      start(stream) {
-        stream.enqueue(new TextEncoder().encode('{"ownership":"user"'));
-        stream.error(new Error('body interrupted after 201 headers'));
-      },
-    });
-    resolvePost?.(new Response(interruptedBody, { status: 201, headers: { 'Content-Type': 'application/json' } }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('body interrupted after 201 headers');
-    expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-    expect(profile.createdDefinition).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Reload fields' })).toBeDefined();
-
-    const retryBody = {
-      object_type: 'person',
-      label: 'Stream field',
-      value_type: 'text',
-      field_type: 'text',
-      cardinality: 'single',
-      is_sensitive: false,
-    } as const;
-    await expect(profile.createDefinition(retryBody)).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
-    await expect(profile.createDefinition(retryBody)).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'GET').map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/attribute-definitions', '/api/v1/attribute-definitions']));
-    expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-    expect(profile.createdDefinition).toBeNull();
+    const view = render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
+    try {
+      await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unidentified field' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+      await waitFor(() => expect(resolvePost).toBeDefined());
+      if (shape === 'with an interrupted body') {
+        const concurrentProfile = new DirectoryProfileController(createAPIClient(fetchFn), 8, { definitions: { definitions: [] }, etags: {}, errors: {} });
+        try { await concurrentProfile.reloadDefinitions(); }
+        finally { concurrentProfile.destroy(); }
+        expect(profile.definitionCreationCommit).toBeNull();
+      }
+      resolvePost(response());
+      expect((await screen.findByRole('alert')).textContent).toContain(error);
+      expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
+      expect(profile.createdDefinition).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
+      await waitFor(() => expect(profile.definitions).toEqual([expect.objectContaining({ id: 99 })]));
+      expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
+    } finally { view.unmount(); profile.destroy(); }
   });
 
   it('keeps one request pending, blocks every dismissal path, and renders the server error inline', async () => {

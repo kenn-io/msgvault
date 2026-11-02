@@ -45,21 +45,27 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText(/Recovered role/)).toBeDefined();
   });
 
-  it('creates an employment for the exact selected person with user provenance', async () => {
+  it.each([false, true])('creates work for the selected person and employer with user provenance (search beyond fifty=%s)', async search => {
     const requests: Request[] = [];
+    const queries: string[] = [];
+    const employerID = search ? 51 : 21;
+    const employerName = search ? 'Zebra Example' : 'Synthetic Org';
     let employmentReads = 0;
     const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      if (path === '/api/v1/organizations') {
+        const query = new URL(request.url).searchParams.get('q') ?? ''; queries.push(query);
+        return Response.json({ organizations: search && query !== 'Zebra' ? Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)) : [organization(employerID, 1, employerName)], total: search ? 51 : 1, limit: 50, offset: 0 });
+      }
       if (path === '/api/v1/employments' && request.method === 'POST') {
-        return new Response(JSON.stringify(employment(12, 1, { title: 'Architect', is_primary: true })), { status: 201, headers: { ETag: '"employment-12-r1"' } });
+        return new Response(JSON.stringify(employment(12, 1, { organization_id: employerID, title: 'Architect', is_primary: true })), { status: 201, headers: { ETag: '"employment-12-r1"' } });
       }
       if (path === '/api/v1/people/7/employments') {
         employmentReads += 1;
-        return collection([employment(11, 2, { is_primary: false }), employment(12, 1, { title: 'Architect', is_primary: true })], {
-          employment_id: 12, organization_id: 21, organization_name: 'Synthetic Org', title: 'Architect', vcard: {}
+        return collection([employment(11, 2, { is_primary: false }), employment(12, 1, { organization_id: employerID, title: 'Architect', is_primary: true })], {
+          employment_id: 12, organization_id: employerID, organization_name: employerName, title: 'Architect', vcard: {}
         });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
@@ -69,53 +75,27 @@ describe('OrganizationEmploymentTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
     await screen.findByRole('button', { name: /^Organization(:|$)/ });
-    await openTypeahead('Organization');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Org' }));
+    const input = await openTypeahead('Organization');
+    if (search) await fireEvent.input(input, { target: { value: 'Zebra' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: employerName }));
+    if (search) {
+      await screen.findByRole('button', { name: `Organization: ${employerName}` });
+      await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Example' } });
+      await waitFor(() => expect(queries).toContain('Example'));
+      await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Escape' });
+      expect(screen.getByRole('button', { name: `Organization: ${employerName}` })).toBeDefined();
+    }
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Architect' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add employment' })).toBeNull());
     const post = requests.find((request) => pathOf(request) === '/api/v1/employments' && request.method === 'POST')!;
     const postedBody = await post.json();
-    expect(postedBody).toMatchObject({ person_id: 7, organization_id: 21, source: 'user', title: 'Architect' });
+    expect(postedBody).toMatchObject({ person_id: 7, organization_id: employerID, source: 'user', title: 'Architect' });
     expect(postedBody.source_ref).toBeUndefined();
     expect(employmentReads).toBe(1);
     expect(screen.getByText(/Architect/).closest('.detail-row')?.textContent).toContain('Primary');
     expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).not.toContain('Primary');
-  });
-
-  it('finds an employer beyond the first fifty and retains the selected employer after another search', async () => {
-    const queries: string[] = [];
-    const posts: Request[] = [];
-    const controller = controllerWith(async input => {
-      const request = requestOf(input); const url = new URL(request.url);
-      if (url.pathname === '/api/v1/organizations') {
-        const query = url.searchParams.get('q') ?? ''; queries.push(query);
-        return Response.json({ organizations: query === 'Zebra' ? [organization(51, 1, 'Zebra Example')] : Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)), total: 51, limit: 50, offset: 0 });
-      }
-      if (url.pathname === '/api/v1/employments' && request.method === 'POST') {
-        posts.push(request.clone());
-        return Response.json(employment(12, 1, { organization_id: 51, title: 'Designer' }), { status: 201 });
-      }
-      if (url.pathname === '/api/v1/people/7/employments') return collection([employment(12, 1, { organization_id: 51, title: 'Designer' })], { employment_id: 12, organization_id: 51, organization_name: 'Zebra Example', title: 'Designer', vcard: {} });
-      throw new Error(`Unexpected ${request.method} ${url.pathname}`);
-    });
-    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
-    try {
-      await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
-      await screen.findByRole('button', { name: /^Organization(:|$)/ });
-      await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Zebra' } });
-      await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Zebra Example' }));
-      await screen.findByRole('button', { name: 'Organization: Zebra Example' });
-      await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Example' } });
-      await waitFor(() => expect(queries).toContain('Example'));
-      await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Escape' });
-      expect(screen.getByRole('button', { name: 'Organization: Zebra Example' })).toBeDefined();
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Employment title' }), { target: { value: 'Designer' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add employment' })).toBeNull());
-      await expect(posts[0]!.json()).resolves.toMatchObject({ organization_id: 51 });
-    } finally { view.unmount(); controller.destroy(); }
   });
 
   it('rejects a year-less employment date and keeps Create disabled until it is fixed', async () => {

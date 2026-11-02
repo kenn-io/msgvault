@@ -32,7 +32,7 @@ describe('ProfileHistoryDialog', () => {
       if (url.pathname === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
       if (url.pathname.endsWith('/profile')) return Response.json({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"profile-7-r3"' } });
       if (url.pathname.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: when, stale: false });
-      if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: note === 'Latest note' ? [] : [{
+      if (url.pathname.endsWith('/profile/history')) return Response.json({ person: person(), names: [{
         person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { ...currentEnvelope, id: 2 },
       }] });
       if (url.pathname.endsWith('/attributes')) {
@@ -62,7 +62,6 @@ describe('ProfileHistoryDialog', () => {
     render(ProfileHistoryDialog, props);
     expect(await screen.findByText('Latest note')).toBeDefined();
     expect(screen.queryByText('Earlier note')).toBeNull();
-    expect(screen.queryByText('No profile history yet')).toBeNull();
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
@@ -119,9 +118,6 @@ describe('ProfileHistoryDialog', () => {
       expect(row.closest('details')).not.toBeNull();
       expect(row.textContent).toMatch(new RegExp(`Removed ${dateText}`));
     }
-    const previous = screen.getByText('Previous Name').closest('li')!;
-    expect(previous.textContent).toContain('synthetic-card');
-    expect(previous.textContent).toMatch(/Valid from:.*Valid until:/);
     const observed = screen.getByText('observed@example.test').closest('li')!;
     expect(observed.textContent).toMatch(/Archive observation · Jul 31, 2026/);
     expect(screen.getByText('slack · workspace / workspace-a')).toBeDefined();

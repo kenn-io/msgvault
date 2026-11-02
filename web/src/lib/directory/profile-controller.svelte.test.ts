@@ -374,17 +374,24 @@ describe('DirectoryProfileController', () => {
     const seeded = bundle();
     seeded.attributes = { person_id: 7, attributes: [] };
     seeded.definitions = { definitions: [createdDefinition] };
-    const controller = new DirectoryProfileController(createAPIClient(vi.fn<typeof fetch>(async () =>
-      Response.json({ dry_run: false, value })
-    )), 7, seeded);
+    const group = { definition: createdDefinition, current: [value], history: [] };
+    const onDetailChange = vi.fn();
+    const controller = new DirectoryProfileController(createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (request.method === 'PUT') return Response.json({ dry_run: false, value });
+      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
+      if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r3"' } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [group] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [createdDefinition] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: '2026-08-01T00:00:00Z', stale: false });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    }), 7, seeded, { onDetailChange });
 
     await controller.setAttribute(createdDefinition.slug, { value: { type: 'text', text: 'First value' } });
 
-    expect(controller.attributes?.attributes).toEqual([{
-      definition: createdDefinition,
-      current: [value],
-      history: []
-    }]);
+    expect(onDetailChange.mock.calls[0]?.[0].attributes?.attributes).toEqual([group]);
+    expect(controller.attributes?.attributes).toEqual([group]);
   });
 
   it('rejects a rapid second rename without letting the first response erase its draft', async () => {

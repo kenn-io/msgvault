@@ -28,50 +28,49 @@ describe('OrganizationEditor', () => {
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   });
 
-  it('creates, renames, and deletes an unused organization', async () => {
+  it.each(['create', 'rename', 'delete'])('%s an unused organization', async operation => {
     const requests: Request[] = [];
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
+    let organizations = [organization()];
+    const controller = controllerWith(async input => {
+      const request = requestOf(input); requests.push(request.clone());
       const path = pathOf(request);
-      if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/organizations' && request.method === 'POST') return new Response(JSON.stringify(organization(22, 1, 'New Synthetic Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') return new Response(JSON.stringify({ ...organizationProfile(2), organization: { ...organization(21, 2), retired_at: '2026-08-02T00:00:00Z' } }), { headers: { ETag: '"organization-21-r2"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') return new Response(JSON.stringify({ ...organization(21, 3, 'Renamed Synthetic Org'), retired_at: '2026-08-02T00:00:00Z' }), { headers: { ETag: '"organization-21-r3"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return new Response(null, { status: 204 });
+      if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations, total: organizations.length, limit: 50, offset: 0 });
+      if (path === '/api/v1/organizations' && request.method === 'POST') {
+        const created = organization(22, 1, 'New Synthetic Org'); organizations.push(created);
+        return Response.json(created, { status: 201, headers: { ETag: '"organization-22-r1"' } });
+      }
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') return Response.json({ ...organizationProfile(2), organization: { ...organizations[0], revision: 2, retired_at: '2026-08-02T00:00:00Z' } }, { headers: { ETag: '"organization-21-r2"' } });
+      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') {
+        organizations = [organization(21, 3, 'Renamed Synthetic Org')];
+        return Response.json({ ...organizations[0], retired_at: '2026-08-02T00:00:00Z' }, { headers: { ETag: '"organization-21-r3"' } });
+      }
+      if (path === '/api/v1/organizations/21' && request.method === 'DELETE') { organizations = []; return new Response(null, { status: 204 }); }
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
+    });
+    controller.organizations = [...organizations];
     const onDone = vi.fn();
-    let view = render(OrganizationEditor, { controller, onDone });
-
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New Synthetic Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
-    expect(await requests.find((request) => request.method === 'POST')!.json()).toMatchObject({ name: 'New Synthetic Org' });
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    view.unmount();
-    onDone.mockClear();
-    view = render(OrganizationEditor, { controller, organization: organization(), onDone });
-
-    const dialog = await screen.findByRole('dialog', { name: 'Edit Synthetic Org' });
-    const organizationName = await within(dialog).findByRole('textbox', { name: 'Organization name' });
-    await fireEvent.input(organizationName, { target: { value: 'Renamed Synthetic Org' } });
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save organization' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
-    expect(requests.find((request) => request.method === 'PATCH')!.headers.get('If-Match')).toBe('"organization-21-r2"');
-    await expect(requests.find((request) => request.method === 'PATCH')!.clone().json()).resolves.toMatchObject({ name: 'Renamed Synthetic Org' });
-    expect((await requests.find((request) => request.method === 'PATCH')!.clone().json()).retired).toBeUndefined();
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    view.unmount();
-    onDone.mockClear();
-    view = render(OrganizationEditor, { controller, organization: organization(21, 3, 'Renamed Synthetic Org'), onDone });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(requests.some(request => request.method === 'DELETE')).toBe(true);
-    expect(controller.organizations).toEqual([organization(22, 1, 'New Synthetic Org')]);
-    view.unmount();
+    const view = render(OrganizationEditor, { controller, ...(operation === 'create' ? {} : { organization: organization() }), onDone });
+    try {
+      if (operation === 'delete') {
+        await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
+        await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
+      } else {
+        const name = await screen.findByRole('textbox', { name: 'Organization name' });
+        await fireEvent.input(name, { target: { value: operation === 'create' ? 'New Synthetic Org' : 'Renamed Synthetic Org' } });
+        await fireEvent.click(screen.getByRole('button', { name: operation === 'create' ? 'Create organization' : 'Save organization' }));
+      }
+      await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+      const write = requests.find(request => request.method === (operation === 'create' ? 'POST' : operation === 'rename' ? 'PATCH' : 'DELETE'))!;
+      expect(write).toBeDefined();
+      if (operation === 'create') await expect(write.json()).resolves.toMatchObject({ name: 'New Synthetic Org' });
+      if (operation === 'rename') {
+        expect(write.headers.get('If-Match')).toBe('"organization-21-r2"');
+        const body = await write.json();
+        expect(body).toMatchObject({ name: 'Renamed Synthetic Org' });
+        expect(body.retired).toBeUndefined();
+      }
+      expect(controller.organizations.map(item => item.id)).toEqual(operation === 'create' ? [21, 22] : operation === 'rename' ? [21] : []);
+    } finally { view.unmount(); controller.destroy(); }
   });
 
   it.each([false, true])('preserves profile draft changes and concurrent organization data (conflict=%s)', async conflict => {
@@ -117,7 +116,6 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
 
-    const put = requests.find((request) => request.method === 'PUT')!;
     if (conflict) {
       const alert = await screen.findByRole('alert');
       expect(alert.textContent).toContain('Concurrent Org Name');
@@ -132,9 +130,8 @@ describe('OrganizationEditor', () => {
 
       await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
       await waitFor(() => expect(puts).toBe(2));
-      return;
     }
-    const body = await put.json();
+    const body = await requests.filter(request => request.method === 'PUT').at(-1)!.json();
     expect(body.names).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4' }),
       expect.objectContaining({ name: 'Synthetic Works', name_kind: 'alias', source_ref: 'concurrent-alias', source_resource_uid: 'resource-concurrent-alias', vcard_property: 'NICKNAME' }),
