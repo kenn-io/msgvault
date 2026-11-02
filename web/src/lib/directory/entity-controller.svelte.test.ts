@@ -55,6 +55,38 @@ function deferredResponse() {
 }
 
 describe('DirectoryEntityController', () => {
+  it('keeps the renamed employer after a deferred Details lookup completes', async () => {
+    const oldLookup = deferredResponse();
+    let organizationReads = 0;
+    let renamed = false;
+    const client = createAPIClient(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
+        if (++organizationReads === 1) return oldLookup.promise;
+        return Response.json(organizationProfile(renamed ? 2 : 1, renamed ? 'Renamed employer' : 'Synthetic Org'), { headers: { ETag: renamed ? '"organization-21-r2"' : '"organization-21-r1"' } });
+      }
+      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') {
+        renamed = true;
+        return Response.json(organization(21, 2, 'Renamed employer'), { headers: { ETag: '"organization-21-r2"' } });
+      }
+      return defaultResponse(request);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    const opening = controller.load();
+    try {
+      await vi.waitFor(() => expect(organizationReads).toBe(1));
+      expect(await controller.updateOrganization(21, { name: 'Renamed employer' })).toMatchObject({ ok: true });
+      oldLookup.resolve(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+      await opening;
+      expect(controller.organizationRecords.get(21)?.organization.name).toBe('Renamed employer');
+    } finally {
+      oldLookup.resolve(Response.json(organizationProfile()));
+      await opening;
+      controller.destroy();
+    }
+  });
+
   it.each(['connection', 'work'])('refreshes an open Network after a %s write with the selected graph controls', async (kind) => {
     let changed = false;
     const reads: URL[] = [];
