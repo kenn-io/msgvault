@@ -1899,7 +1899,11 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("message not found"), nil
 	}
 
-	allMatches := findTermMatches(msg.BodyText, queryStr)
+	body := msg.BodyText
+	if body == "" {
+		body = msg.BodyHTML
+	}
+	allMatches := findTermMatches(body, queryStr)
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
 		return jsonResult(searchInMessageResponse{

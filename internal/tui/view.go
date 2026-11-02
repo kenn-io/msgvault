@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -772,6 +773,9 @@ func (m Model) buildDetailLines() []string {
 
 	// Body - wrap lines to fit width
 	body := msg.BodyText
+	if body == "" {
+		body = mime.StripHTML(msg.BodyHTML)
+	}
 	if body == "" {
 		body = "(No text content)"
 	}

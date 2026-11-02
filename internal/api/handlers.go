@@ -341,9 +341,10 @@ type MessageDetail struct {
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
-	Body     string `json:"body"`
-	BodyHTML string `json:"body_html,omitempty"`
-	IsFromMe bool   `json:"is_from_me,omitzero"`
+	Body     string  `json:"body"`
+	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback."`
+	BodyHTML string  `json:"body_html,omitempty"`
+	IsFromMe bool    `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left
 	// out to keep the response within the cumulative inline-body budget.
 	// The snippet is still present; fetch the full body via
@@ -595,6 +596,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		IsFromMe:          qMsg.IsFromMe,
 		Calendar:          qMsg.Calendar,
 		Body:              body,
+		BodyText:          new(qMsg.BodyText),
 		BodyHTML:          qMsg.BodyHTML,
 		Attachments:       attachments,
 	}
@@ -816,6 +818,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
 		Body:              msg.Body,
+		BodyText:          new(msg.BodyText),
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,
 		Calendar:          msg.Calendar,
