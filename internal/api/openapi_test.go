@@ -2240,6 +2240,7 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	// and can fail on checksum-service requests during an otherwise local test.
 	generator := filepath.Join(tmpRoot, "oapi-codegen.exe")
 	for _, name := range []string{"go.mod", "go.sum"} {
+		// This read makes Go's test cache rerun the test when the child's inputs change.
 		_, err := os.ReadFile(filepath.Join("..", "..", "tools", "oapi-codegen", name))
 		requirements.NoError(err)
 	}
@@ -2261,6 +2262,7 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	fixer, err := filepath.Abs("../codegenfix/cmd")
 	requirements.NoError(err, "resolve generated-client validator fixup")
 	for _, name := range []string{".", ".."} {
+		// This read makes Go's test cache rerun the test when the child's inputs change.
 		_, err := os.ReadDir(filepath.Join(fixer, name))
 		requirements.NoError(err)
 	}

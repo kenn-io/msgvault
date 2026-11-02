@@ -31,6 +31,7 @@ func SecretCommand(tb testing.TB, mode string) []string {
 		fixtureDir, err := exec.Command("go", "list", "-f", "{{.Dir}}", "go.kenn.io/msgvault/internal/testutil/secretcommand").Output()
 		require.NoError(tb, err)
 		for _, name := range []string{".", "cmd"} {
+			// This read makes Go's test cache rerun the test when the child's inputs change.
 			_, err := os.ReadDir(filepath.Join(strings.TrimSpace(string(fixtureDir)), name))
 			require.NoError(tb, err)
 		}

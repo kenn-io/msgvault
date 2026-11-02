@@ -20,6 +20,7 @@ func TestPackageShardsWindows(t *testing.T) {
 	r := require.New(t)
 	script, err := filepath.Abs("test-package-shards.ps1")
 	r.NoError(err)
+	// This read makes Go's test cache rerun the test when the child's inputs change.
 	_, err = os.ReadFile(script)
 	r.NoError(err)
 	pwsh, err := exec.LookPath("pwsh")
