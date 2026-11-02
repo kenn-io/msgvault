@@ -324,7 +324,7 @@ async function mergeAndSplit(page: Page, inspectSnapshot?: (fixture: Awaited<Ret
 }
 
 test('explicit merge and partial split open Synthetic One with fresh server state', async ({ page }) => {
-  const { split } = await mergeAndSplit(page, async fixture => {
+  const { fixture, split } = await mergeAndSplit(page, async fixture => {
     await page.getByRole('button', { name: 'View verified snapshot' }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('region', { name: 'Verified merge snapshot content' }))
@@ -332,11 +332,13 @@ test('explicit merge and partial split open Synthetic One with fresh server stat
     expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(1);
   });
   const completionAction = split.getByRole('button', { name: 'Open source profile Synthetic One (Person 7)' });
+  const personGETsBefore = fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/7').length;
   await completionAction.focus();
   await expect(completionAction).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'Profile history', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Synthetic One' })).toBeVisible();
+  expect(fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/7').length).toBe(personGETsBefore);
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'History', exact: true }).click();
   const updatedHistory = page.getByRole('list', { name: 'Person merge history' });

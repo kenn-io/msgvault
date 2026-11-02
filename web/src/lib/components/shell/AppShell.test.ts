@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
@@ -1259,7 +1260,7 @@ describe('AppShell', () => {
       const path = new URL(request.url).pathname;
       const person = { id: 42, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-42', created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z' };
       if (path === '/api/v1/people/42') return Response.json(person);
-      if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+      if (path.endsWith('/profile')) return Response.json(emptyProfile(person));
       if (path.endsWith('/attributes')) return Response.json({ person_id: 42, attributes: [] });
       if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (path.endsWith('/contact-state')) return Response.json({ person_id: 42, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-07-19T10:00:00Z', stale: false });
@@ -1586,7 +1587,7 @@ describe('AppShell', () => {
       if (meetingFixtureResponse(path)) return meetingFixtureResponse(path)!;
       const person = { id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
       if (path === '/api/v1/people/7') return Response.json(person);
-      if (path === '/api/v1/people/7/profile') return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+      if (path === '/api/v1/people/7/profile') return Response.json(emptyProfile(person));
       if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'ok', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false });
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
@@ -2140,11 +2141,11 @@ describe('AppShell', () => {
       if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
       return Response.json({ rows: [], total_count: 0, cache_revision: 'cache', search_provenance: {} });
     });
-    const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((...args) => ({
+    const settings = createRawSnippet<Parameters<NonNullable<ComponentProps<typeof AppShell>['settings']>>>((_request, _consumed, _target, _category, _chooseCategory, _sources, _openStatus, _statusChange, _operations, getDirectoryChange) => ({
       render: () => '<main aria-label="Settings fixture"><button>Report directory change</button></main>',
       setup: element => {
         const button = element.querySelector('button')!;
-        const report = () => { renamed = true; args[9]()(); };
+        const report = () => { renamed = true; getDirectoryChange()(); };
         button.addEventListener('click', report);
         return () => button.removeEventListener('click', report);
       }

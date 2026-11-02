@@ -1,3 +1,4 @@
+import { emptyProfile } from './profile-fixtures.test-support';
 import { pathOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -346,7 +347,7 @@ describe('DirectoryController', () => {
         return new Response(JSON.stringify({ id: 7, revision: 4, display_name: 'Zed Example', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r4"' } });
       }
       if (path === '/api/v1/people/7/profile') {
-        return new Response(JSON.stringify({ person: { id: 7, revision: renamed ? 4 : 3, display_name: renamed ? 'Zed Example' : 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: `"person-7-r${renamed ? 4 : 3}"` } });
+        return new Response(JSON.stringify(emptyProfile({ id: 7, revision: renamed ? 4 : 3, display_name: renamed ? 'Zed Example' : 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' })), { headers: { ETag: `"person-7-r${renamed ? 4 : 3}"` } });
       }
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
       return detailResponse(path);

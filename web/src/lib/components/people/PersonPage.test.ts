@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DirectoryController } from '../../directory/controller.svelte';
@@ -260,7 +261,7 @@ it.each([false, true])('uses delayed unfiltered activity while preserving explic
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
     if (path === '/api/v1/participants/1') return pending;
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
-    if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/profile')) return Response.json(emptyProfile(person), { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: true });
@@ -303,7 +304,7 @@ it.each([
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC', days: [], annual: [], current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1 });
     if (path.endsWith('/timeline')) return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
-    if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/profile')) return Response.json(emptyProfile(person), { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: activity, computed_at: when, stale: false });

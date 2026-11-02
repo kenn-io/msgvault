@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -63,7 +64,7 @@ describe('PersonRecordActions', () => {
       if (request.method !== 'GET') return pendingRename;
       await pendingReadback;
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/profile')) return Response.json({ person: renamed, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/profile')) return Response.json(emptyProfile(renamed), { headers: { ETag: '"person-7-r4"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
       if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });

@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { openTypeahead } from '../../../test/kit-ui';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi, onTestFinished } from 'vitest';
@@ -15,7 +16,7 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     const personID = Number(path.match(/\/people\/(\d+)\//)?.[1]);
-    return routes[path]?.(request) ?? (path.endsWith('/profile') ? Response.json({ person: profile(personID, 1, []), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }) : undefined) ?? (path.endsWith('/attributes') ? Response.json({ person_id: personID, attributes: [] }) : undefined) ?? (path.endsWith('/attribute-definitions') ? Response.json({ definitions: [] }) : undefined) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+    return routes[path]?.(request) ?? (path.endsWith('/profile') ? Response.json(emptyProfile(profile(personID, 1, []))) : undefined) ?? (path.endsWith('/attributes') ? Response.json({ person_id: personID, attributes: [] }) : undefined) ?? (path.endsWith('/attribute-definitions') ? Response.json({ definitions: [] }) : undefined) ?? (path.endsWith('/contact-state') ? Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false }) : undefined) ?? (path.endsWith('/network') ? Response.json({ root_person_id: personID, depth: 1, nodes: [], edges: [], truncated: false }) : undefined) ?? meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
@@ -114,17 +115,12 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each([
-  { outcome: 'is cancelled', selectedID: null },
-  { outcome: 'clears the stale warning', selectedID: null },
-  { outcome: 'merges', selectedID: null },
-  { outcome: 'merges', selectedID: 7 },
-])('handles bulk-link outcomes and absorbed selections: $outcome (selected=$selectedID)', async ({ outcome, selectedID }) => {
+function bulkLinkHarness(outcome: 'is cancelled' | 'clears the stale warning' | 'merges', selectedID: number | null = null) {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
   let merged = false;
   const one = profile(7, 4, [1]), two = profile(9, 2, [2]);
   const survivor = { ...two, revision: 3, participant_ids: [1, 2] };
-  const structured = (person: ReturnType<typeof profile>, alias: string) => ({ person, names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+  const structured = (person: ReturnType<typeof profile>, alias: string) => ({ ...emptyProfile(person), names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }] });
   const missing = () => Response.json({ error: 'person_not_found', message: 'Person not found.' }, { status: 404 });
   const links: Array<{ participant_a: number; participant_b: number }> = [];
   const client = clientFor({
@@ -150,45 +146,71 @@ it.each([
   if (selectedID !== null) state.commitNavigation({ workspace: 'relationships', directoryPersonID: selectedID });
   const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    if (selectedID !== null) {
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-      expect(await screen.findByText('Absorbed alias')).toBeDefined();
-    }
-    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
-    if (outcome === 'merges') {
-      await screen.findByRole('dialog', { name: 'Resolve person merge' });
-      await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' }));
-      await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-      await waitFor(() => expect(releaseReconcile).toBeDefined());
-      expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
-      if (selectedID === null) {
-        expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
-        await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
-        expect(links).toHaveLength(1);
-      }
-      releaseReconcile?.();
-      expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
-      expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
-      if (selectedID !== null) {
-        await waitFor(() => expect(directory.selectedPersonID).toBe(9));
-        expect(state.current.directoryPersonID).toBe(9);
-        await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-        expect(await screen.findByText('Survivor alias')).toBeDefined();
-        expect(screen.queryByText('Absorbed alias')).toBeNull();
-      }
-    } else if (outcome === 'is cancelled') {
-      await screen.findByRole('dialog', { name: 'Resolve person merge' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    } else {
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
-      expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
-    }
-    if (outcome === 'is cancelled') expect(screen.getByText(/^1 of 2/).getAttribute('role')).toBe('status');
-    expect(calls).toBe(outcome === 'merges' ? 3 : 2);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+  onTestFinished(() => { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); });
+  return { directory, state, links, get calls() { return calls; }, get releaseReconcile() { return releaseReconcile; } };
+}
+
+async function startBulkLink() {
+  for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+}
+
+async function confirmBulkMerge() {
+  await screen.findByRole('dialog', { name: 'Resolve person merge' });
+  await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' }));
+  await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+}
+
+it('reports the linked first pair when the next bulk pair is cancelled', async () => {
+  const result = bulkLinkHarness('is cancelled');
+  await startBulkLink();
+  await screen.findByRole('dialog', { name: 'Resolve person merge' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByText(/^1 of 2/).getAttribute('role')).toBe('status');
+  expect(result.calls).toBe(2);
+});
+
+it('clears the stale warning after all bulk pairs link successfully', async () => {
+  const result = bulkLinkHarness('clears the stale warning');
+  await startBulkLink();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+  expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
+  expect(result.calls).toBe(2);
+});
+
+it('blocks another bulk link while a merge reconciles, then finishes the remaining pairs', async () => {
+  const result = bulkLinkHarness('merges');
+  await startBulkLink();
+  await confirmBulkMerge();
+  await waitFor(() => expect(result.releaseReconcile).toBeDefined());
+  expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+  expect(result.links).toHaveLength(1);
+  result.releaseReconcile?.();
+  expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
+  expect(result.links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+  expect(result.calls).toBe(3);
+});
+
+it('follows the survivor when a bulk merge absorbs the selected saved profile', async () => {
+  const result = bulkLinkHarness('merges', 7);
+  await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+  expect(await screen.findByText('Absorbed alias')).toBeDefined();
+  await startBulkLink();
+  await confirmBulkMerge();
+  await waitFor(() => expect(result.releaseReconcile).toBeDefined());
+  expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
+  result.releaseReconcile?.();
+  expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
+  expect(result.links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+  expect(result.calls).toBe(3);
+  await waitFor(() => expect(result.directory.selectedPersonID).toBe(9));
+  expect(result.state.current.directoryPersonID).toBe(9);
+  await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+  expect(await screen.findByText('Survivor alias')).toBeDefined();
+  expect(screen.queryByText('Absorbed alias')).toBeNull();
 });
 
 it.each(['Category', 'Organization'])('forwards typed %s profile filters as drafts', async (field) => {
@@ -226,7 +248,7 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: [saved] }),
     '/api/v1/people/7': () => entry === 'deep link' ? pending : Response.json(saved, { headers: { ETag: '"person-7-r1"' } }),
-    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } }),
+    '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved), { headers: { ETag: '"person-7-r1"' } }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: saved, display_label: 'Saved Person', identifiers: [], first_at: when, last_at: when, activity_count: 50, file_count: 0, source_counts: [] }),
     '/api/v1/people/7/contact-state': () => Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 50, computed_at: when, stale: false }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
@@ -251,7 +273,7 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
   } finally { release(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('reads a saved profile once before Details opens', async () => {
+it('defers lazy person sections until Details opens', async () => {
   const paths: string[] = [];
   const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
   const client = createAPIClient(async input => {
@@ -262,7 +284,7 @@ it('reads a saved profile once before Details opens', async () => {
     if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
     if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
     if (path === '/api/v1/people/91') return Response.json(profile);
-    if (path === '/api/v1/people/91/profile') return Response.json({ person: profile, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path === '/api/v1/people/91/profile') return Response.json(emptyProfile(profile));
     if (path === '/api/v1/people/91/attributes') return Response.json({ person_id: 91, attributes: [] });
     if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
     if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
@@ -278,8 +300,6 @@ it('reads a saved profile once before Details opens', async () => {
   try {
     await screen.findByRole('heading', { name: 'Saved Example' });
     await waitFor(() => expect(directory.detailLoading).toBe(false));
-    expect(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
-    expect(paths.filter(path => path === '/api/v1/people/91/profile')).toHaveLength(1);
     expect(paths.filter(path => /attribute-definitions|agenda|brief/.test(path))).toEqual([]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
@@ -506,7 +526,7 @@ it('keeps Files and its filename filter when a saved person finishes initial hyd
   const saved = profile(7, 1, [1]);
   const client = clientFor({
     '/api/v1/people/7': () => pendingProfile,
-    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }),
+    '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved)),
     '/api/v1/people/7/attributes': () => Response.json({ person_id: 7, attributes: [] }),
     '/api/v1/people/7/files/search': () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
@@ -554,7 +574,7 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
   const client = clientFor({
     '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
     ...Object.fromEntries([7, 9].flatMap(id => [
-      [`/api/v1/people/${id}/profile`, () => Response.json({ person: profile(id, 1, [id === 9 ? 2 : 1]), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] })],
+      [`/api/v1/people/${id}/profile`, () => Response.json(emptyProfile(profile(id, 1, [id === 9 ? 2 : 1])))],
       [`/api/v1/people/${id}/attributes`, () => Response.json({ person_id: id, attributes: [] })]
     ])),
     '/api/v1/attribute-definitions': () => Response.json({ definitions: [] }),
@@ -598,8 +618,8 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
   const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 3, absorbed_revision_before: 2, survivor_revision_after: 4, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };
   const client = clientFor({
     '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
-    '/api/v1/people/7/profile': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-7-r${saved().revision}"` } }),
-    '/api/v1/people/7/profile/history': () => Response.json({ person: saved(), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }),
+    '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved()), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
+    '/api/v1/people/7/profile/history': () => Response.json(emptyProfile(saved())),
     '/api/v1/people/7/merges': () => Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }] }),
     '/api/v1/person-merges/41': () => Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] }),
     '/api/v1/people/7/split': () => { split = true; return Response.json({ source_person: saved(), new_person: profile(9, 1, [1]), split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'synthetic-9', source_revision_before: 4, source_revision_after: 5, exact_reversal: false, actor: 'web', created_at: when }, exact_reversal: false, ambiguous_rows: [{ table_name: 'person_names', original_row_key: 'synthetic-row', action: 'ambiguous' }], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }); },

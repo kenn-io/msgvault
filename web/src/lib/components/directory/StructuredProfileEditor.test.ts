@@ -800,6 +800,16 @@ describe('StructuredProfileEditor', () => {
     expect(screen.queryByRole('button', { name: 'Save media metadata' })).toBeNull();
   });
 
+  it('refuses to save a new pronunciation with both said-as fields empty', async () => {
+    const { controller, requests } = requestHarness();
+    const view = render(StructuredProfileEditor, { controller, section: 'names', nameKind: 'phonetic' });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+      expect(requests).toHaveLength(0);
+      expect(screen.getByRole('textbox', { name: 'First name, said as' })).toBeDefined();
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it.each([
     { label: 'parts', current: { original_value: 'Example', given_name: 'Ex', family_name: 'Ample', phonetic_system: 'ipa' }, initial: 'Ex', edit: 'Ecks', expected: { original_value: 'Ecks Ample', formatted: 'Ecks Ample', given_name: 'Ecks', family_name: 'Ample', phonetic_system: 'ipa' } },
     { label: 'formatted only', current: { formatted: 'Arisu', original_value: 'Arisu' }, initial: 'Arisu', edit: 'Arisu', expected: { formatted: 'Arisu', original_value: 'Arisu' } },
