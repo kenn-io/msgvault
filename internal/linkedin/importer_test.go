@@ -22,8 +22,8 @@ import (
 const ownerURL = "https://www.linkedin.com/in/alex-example/"
 
 func exportZIP(t *testing.T) string {
-	require := require.New(t)
 	t.Helper()
+	require := require.New(t)
 	file := filepath.Join(t.TempDir(), "export.zip")
 	f, err := os.Create(file)
 	require.NoError(err)
@@ -54,8 +54,8 @@ func exportZIP(t *testing.T) string {
 }
 
 func count(t *testing.T, st *store.Store, query string) int {
-	require := require.New(t)
 	t.Helper()
+	require := require.New(t)
 	var n int
 	require.NoError(st.DB().QueryRow(query).Scan(&n))
 	return n
@@ -112,8 +112,8 @@ func TestImportExport(t *testing.T) {
 }
 
 func writeCSV(t *testing.T, dir, name, content string) {
-	require := require.New(t)
 	t.Helper()
+	require := require.New(t)
 	require.NoError(os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0700))
 	require.NoError(os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
 }
@@ -200,8 +200,8 @@ func TestRecipientsURLLists(t *testing.T) {
 }
 
 func writeMessageRows(t *testing.T, dir string, rows [][]string) {
-	require := require.New(t)
 	t.Helper()
+	require := require.New(t)
 	var data bytes.Buffer
 	writer := csv.NewWriter(&data)
 	require.NoError(writer.WriteAll(append([][]string{{"CONVERSATION ID", "DATE", "CONTENT", "SENDER PROFILE URL", "TO", "RECIPIENT PROFILE URLS", "ATTACHMENTS"}}, rows...)))

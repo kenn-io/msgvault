@@ -123,21 +123,19 @@ func readRows(ctx context.Context, file csvFile, visit func(row, int) error) err
 		}
 	}
 	if file.kind == "comments.csv" {
-		standard, err := validCSV(ctx, data)
-		if err != nil {
-			return err
-		}
-		if !standard {
-			decoded := unescapeComments(data)
-			valid, err := validCSV(ctx, decoded)
-			if err != nil {
-				return err
+		if err := validateCSV(ctx, data); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
 			}
-			if valid {
+			decoded := unescapeComments(data)
+			if err := validateCSV(ctx, decoded); err == nil {
 				data = decoded
+			} else if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
 			}
 		}
 	}
+
 	csvReader := csv.NewReader(bytes.NewReader(data))
 	csvReader.FieldsPerRecord = -1
 	headers, err := csvReader.Read()
@@ -189,27 +187,27 @@ func hasHeader(fields []string, name string) bool {
 	return false
 }
 
-// validCSV checks CSV structure without retaining rows. A backslash next to a valid
-// closing or doubled CSV quote is literal text, not evidence of legacy escaping.
-func validCSV(ctx context.Context, data []byte) (bool, error) {
+// validateCSV checks CSV structure without retaining rows. A backslash next to
+// a valid closing or doubled CSV quote is literal text, not legacy escaping.
+func validateCSV(ctx context.Context, data []byte) error {
 	reader := csv.NewReader(bytes.NewReader(data))
 	reader.FieldsPerRecord = -1
 	width := -1
 	for {
 		if err := ctx.Err(); err != nil {
-			return false, err
+			return err
 		}
 		fields, err := reader.Read()
 		if errors.Is(err, io.EOF) {
-			return true, nil
+			return nil
 		}
 		if err != nil {
-			return false, nil
+			return fmt.Errorf("validate CSV structure: %w", err)
 		}
 		if width < 0 {
 			width = len(fields)
 		} else if len(fields) > width {
-			return false, nil
+			return errors.New("CSV record has more fields than its header")
 		}
 	}
 }
