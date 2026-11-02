@@ -3,6 +3,7 @@
  */
 import type { AttachmentInfo } from "./attachmentInfo";
 import type { CalendarProjection } from "./calendarProjection";
+import type { Metadata } from "./metadata";
 
 export interface MessageDetail {
   attachments: AttachmentInfo[];
@@ -35,5 +36,6 @@ export interface MessageDetail {
   source_message_id?: string;
   subject: string;
   to: string[];
+  verification?: Metadata;
   [key: string]: unknown;
 }

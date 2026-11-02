@@ -982,6 +982,9 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	for _, r := range results {
 		item := searchMessageItem{MessageSummary: r}
 		switch {
+		case r.Verification != nil && r.Verification.Masked:
+			// Canonical protection deliberately withholds unmappable excerpts.
+			item.Matches = nil
 		case len(r.BodyContextSnippets) > 0:
 			item.Matches, item.MatchesTruncated = bodyContextSnippetsToMatches(r.BodyContextSnippets, r.BodyContextSnippetsTruncated)
 		case r.BodyContextSnippetsTruncated:

@@ -488,8 +488,10 @@ type AttachmentInfo struct {
 	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
 	Filename    string                 `json:"filename" validate:"required"`
 	ID          int64                  `json:"id"`
+	MessageID   *int64                 `json:"message_id,omitempty"`
 	MimeType    string                 `json:"mime_type" validate:"required"`
 	SizeBytes   int64                  `json:"size_bytes"`
+	SourceID    *int64                 `json:"source_id,omitempty"`
 	URL         *string                `json:"url,omitzero"`
 }
 
@@ -944,6 +946,7 @@ type CLIQueryMessageSummary struct {
 	SourceMessageID      string     `json:"source_message_id" validate:"required"`
 	Subject              string     `json:"subject" validate:"required"`
 	To                   []Address  `json:"to,omitempty"`
+	Verification         *Metadata  `json:"verification,omitempty"`
 	WebURL               *string    `json:"web_url,omitzero"`
 }
 
@@ -991,6 +994,13 @@ func (c CLIQueryMessageSummary) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("To[%d]", i), err)
+			}
+		}
+	}
+	if c.Verification != nil {
+		if v, ok := any(c.Verification).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verification", err)
 			}
 		}
 	}
@@ -2713,9 +2723,11 @@ type CliMessageResponse struct {
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
 	SourceConversationID string                 `json:"source_conversation_id" validate:"required"`
+	SourceID             *int64                 `json:"source_id,omitempty"`
 	SourceMessageID      string                 `json:"source_message_id" validate:"required"`
 	Subject              string                 `json:"subject" validate:"required"`
 	To                   []CliMessageAddress    `json:"to" validate:"required"`
+	Verification         *Metadata              `json:"verification,omitempty"`
 }
 
 func (c CliMessageResponse) Validate() error {
@@ -2808,6 +2820,13 @@ func (c CliMessageResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("To[%d]", i), err)
+			}
+		}
+	}
+	if c.Verification != nil {
+		if v, ok := any(c.Verification).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verification", err)
 			}
 		}
 	}
@@ -6395,6 +6414,7 @@ type HybridSearchItem struct {
 	SourceMessageID   *string             `json:"source_message_id,omitzero"`
 	Subject           string              `json:"subject" validate:"required"`
 	To                []string            `json:"to" validate:"required"`
+	Verification      *Metadata           `json:"verification,omitempty"`
 }
 
 func (h HybridSearchItem) Validate() error {
@@ -6430,6 +6450,13 @@ func (h HybridSearchItem) Validate() error {
 	}
 	if err := typesValidator.Var(h.To, "required"); err != nil {
 		errors = errors.Append("To", err)
+	}
+	if h.Verification != nil {
+		if v, ok := any(h.Verification).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verification", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -7971,26 +7998,27 @@ type MessageDetail struct {
 	ConversationID *int64              `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
-	ConversationTitle *string  `json:"conversation_title,omitzero"`
-	DeletedAt         *string  `json:"deleted_at,omitzero"`
-	From              string   `json:"from" validate:"required"`
-	FromEmail         *string  `json:"from_email,omitzero"`
-	FromName          *string  `json:"from_name,omitzero"`
-	FromPhone         *string  `json:"from_phone,omitzero"`
-	HasAttachments    bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	ID                int64    `json:"id"`
-	IsFromMe          *bool    `json:"is_from_me,omitempty"`
-	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+	ConversationTitle *string   `json:"conversation_title,omitzero"`
+	DeletedAt         *string   `json:"deleted_at,omitzero"`
+	From              string    `json:"from" validate:"required"`
+	FromEmail         *string   `json:"from_email,omitzero"`
+	FromName          *string   `json:"from_name,omitzero"`
+	FromPhone         *string   `json:"from_phone,omitzero"`
+	HasAttachments    bool      `json:"has_attachments"`
+	HiddenTextPresent bool      `json:"hidden_text_present"`
+	ID                int64     `json:"id"`
+	IsFromMe          *bool     `json:"is_from_me,omitempty"`
+	Labels            []string  `json:"labels" validate:"required"`
+	MessageType       *string   `json:"message_type,omitzero"`
+	RelatedMessageID  *int64    `json:"related_message_id,omitempty"`
+	SentAt            string    `json:"sent_at" validate:"required"`
+	SizeBytes         int64     `json:"size_bytes"`
+	Snippet           string    `json:"snippet" validate:"required"`
+	SourceID          *int64    `json:"source_id,omitempty"`
+	SourceMessageID   *string   `json:"source_message_id,omitzero"`
+	Subject           string    `json:"subject" validate:"required"`
+	To                []string  `json:"to" validate:"required"`
+	Verification      *Metadata `json:"verification,omitempty"`
 }
 
 func (m MessageDetail) Validate() error {
@@ -8032,6 +8060,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.To, "required"); err != nil {
 		errors = errors.Append("To", err)
+	}
+	if m.Verification != nil {
+		if v, ok := any(m.Verification).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verification", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -8144,30 +8179,60 @@ func (m MessageReference) Validate() error {
 }
 
 type MessageSummary struct {
-	Bcc               []string `json:"bcc,omitempty"`
-	Cc                []string `json:"cc,omitempty"`
-	ConversationID    *int64   `json:"conversation_id,omitempty"`
-	DeletedAt         *string  `json:"deleted_at,omitzero"`
-	From              string   `json:"from" validate:"required"`
-	FromEmail         *string  `json:"from_email,omitzero"`
-	FromName          *string  `json:"from_name,omitzero"`
-	FromPhone         *string  `json:"from_phone,omitzero"`
-	HasAttachments    bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	ID                int64    `json:"id"`
-	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+	Bcc               []string  `json:"bcc,omitempty"`
+	Cc                []string  `json:"cc,omitempty"`
+	ConversationID    *int64    `json:"conversation_id,omitempty"`
+	DeletedAt         *string   `json:"deleted_at,omitzero"`
+	From              string    `json:"from" validate:"required"`
+	FromEmail         *string   `json:"from_email,omitzero"`
+	FromName          *string   `json:"from_name,omitzero"`
+	FromPhone         *string   `json:"from_phone,omitzero"`
+	HasAttachments    bool      `json:"has_attachments"`
+	HiddenTextPresent bool      `json:"hidden_text_present"`
+	ID                int64     `json:"id"`
+	Labels            []string  `json:"labels" validate:"required"`
+	MessageType       *string   `json:"message_type,omitzero"`
+	SentAt            string    `json:"sent_at" validate:"required"`
+	SizeBytes         int64     `json:"size_bytes"`
+	Snippet           string    `json:"snippet" validate:"required"`
+	SourceID          *int64    `json:"source_id,omitempty"`
+	SourceMessageID   *string   `json:"source_message_id,omitzero"`
+	Subject           string    `json:"subject" validate:"required"`
+	To                []string  `json:"to" validate:"required"`
+	Verification      *Metadata `json:"verification,omitempty"`
 }
 
 func (m MessageSummary) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.From, "required"); err != nil {
+		errors = errors.Append("From", err)
+	}
+	if err := typesValidator.Var(m.Labels, "required"); err != nil {
+		errors = errors.Append("Labels", err)
+	}
+	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
+		errors = errors.Append("SentAt", err)
+	}
+	if err := typesValidator.Var(m.Snippet, "required"); err != nil {
+		errors = errors.Append("Snippet", err)
+	}
+	if err := typesValidator.Var(m.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(m.To, "required"); err != nil {
+		errors = errors.Append("To", err)
+	}
+	if m.Verification != nil {
+		if v, ok := any(m.Verification).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verification", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MessageTag struct {
@@ -8401,6 +8466,24 @@ func (m MessagingRoutePage) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Metadata struct {
+	Confidence   string     `json:"confidence" validate:"required"`
+	Expired      bool       `json:"expired"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	Hosts        []string   `json:"hosts,omitempty"`
+	Kind         string     `json:"kind" validate:"required"`
+	Masked       bool       `json:"masked"`
+	MaskedFields []string   `json:"masked_fields,omitempty"`
+	ReceivedAt   time.Time  `json:"received_at" validate:"required"`
+	Reveal       string     `json:"reveal" validate:"required"`
+	Sender       *string    `json:"sender,omitzero"`
+	Signals      []string   `json:"signals,omitempty"`
+}
+
+func (m Metadata) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type Metrics struct {
@@ -16369,6 +16452,7 @@ type ThreadMessage struct {
 	SourceMessageID     string     `json:"source_message_id" validate:"required"`
 	Subject             string     `json:"subject" validate:"required"`
 	To                  []Address  `json:"to" validate:"required"`
+	Verification        *Metadata  `json:"verification,omitempty"`
 }
 
 func (t ThreadMessage) Validate() error {
@@ -16406,6 +16490,13 @@ func (t ThreadMessage) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("To[%d]", i), err)
+			}
+		}
+	}
+	if t.Verification != nil {
+		if v, ok := any(t.Verification).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verification", err)
 			}
 		}
 	}

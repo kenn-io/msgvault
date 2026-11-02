@@ -273,7 +273,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	t.Cleanup(srv.agentGrants.Close)
-	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	// These expectations stay independent of the production permission map.
 	reads := map[string]struct{ path, want string }{

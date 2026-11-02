@@ -541,9 +541,15 @@ components:
         id:
           format: int64
           type: integer
+        message_id:
+          format: int64
+          type: integer
         mime_type:
           type: string
         size_bytes:
+          format: int64
+          type: integer
+        source_id:
           format: int64
           type: integer
         url:
@@ -1128,6 +1134,8 @@ components:
           items:
             $ref: "#/components/schemas/Address"
           type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
         web_url:
           type: string
       required:
@@ -2870,6 +2878,9 @@ components:
           type: string
         source_conversation_id:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:
@@ -2878,6 +2889,8 @@ components:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
           type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
       required:
         - id
         - source_message_id
@@ -6736,6 +6749,8 @@ components:
           items:
             type: string
           type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
       required:
         - id
         - subject
@@ -8236,6 +8251,8 @@ components:
           items:
             type: string
           type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
       required:
         - body
         - attachments
@@ -8418,6 +8435,8 @@ components:
           items:
             type: string
           type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
       required:
         - id
         - subject
@@ -8653,6 +8672,47 @@ components:
         - items
         - has_more
         - next_after_id
+      type: object
+    Metadata:
+      additionalProperties: true
+      properties:
+        confidence:
+          type: string
+        expired:
+          type: boolean
+        expires_at:
+          format: date-time
+          type: string
+        hosts:
+          items:
+            type: string
+          type: array
+        kind:
+          type: string
+        masked:
+          type: boolean
+        masked_fields:
+          items:
+            type: string
+          type: array
+        received_at:
+          format: date-time
+          type: string
+        reveal:
+          type: string
+        sender:
+          type: string
+        signals:
+          items:
+            type: string
+          type: array
+      required:
+        - kind
+        - confidence
+        - received_at
+        - expired
+        - masked
+        - reveal
       type: object
     Metrics:
       additionalProperties: true
@@ -16515,6 +16575,8 @@ components:
           items:
             $ref: "#/components/schemas/Address"
           type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
       required:
         - id
         - source_message_id
@@ -17030,7 +17092,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.35.0
+  version: 3.36.0
 openapi: 3.1.0
 paths:
   /api/ping:

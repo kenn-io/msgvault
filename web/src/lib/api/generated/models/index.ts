@@ -579,6 +579,7 @@ export * from "./messageTranscriptUnit";
 export * from "./messagingRoute";
 export * from "./messagingRoutePage";
 export * from "./messagingRouteStatus";
+export * from "./metadata";
 export * from "./metrics";
 export * from "./monthTotals";
 export * from "./muesliRemoteMeeting";

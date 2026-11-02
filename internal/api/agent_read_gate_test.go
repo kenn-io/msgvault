@@ -99,7 +99,7 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			}
 			srv := NewServerWithOptions(opts)
 			t.Cleanup(srv.agentGrants.Close)
-			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
 			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.test", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.test", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
 			get := func() *httptest.ResponseRecorder {
@@ -327,7 +327,7 @@ func TestAgentSearchInputAndScopeMetadata(t *testing.T) {
 	defer release()
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger(), OperationGate: gate})
 	t.Cleanup(srv.agentGrants.Close)
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	for _, owner := range []bool{false, true} {
 		if owner {
@@ -616,7 +616,7 @@ func TestAgentFTSResponsesReportIndexState(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	t.Cleanup(srv.agentGrants.Close)
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	get := func(path string, agent bool) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -721,7 +721,7 @@ func TestAgentSearchDeadlineReleasesSnapshot(t *testing.T) {
 				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 				t.Cleanup(srv.agentGrants.Close)
 				srv.ftsIndexComplete.Store(true)
-				_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+				_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 				requirements.NoError(err)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
@@ -805,7 +805,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			// Background index verification would race the snapshot connection counts.
 			srv.ftsIndexComplete.Store(true)
-			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{tc.permission}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{tc.permission, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
 			responses := make(chan *httptest.ResponseRecorder, 4)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

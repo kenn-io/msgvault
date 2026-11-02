@@ -4,6 +4,7 @@
 import type { CalendarProjection } from "./calendarProjection";
 import type { CliMessageAddress } from "./cliMessageAddress";
 import type { CliMessageAttachment } from "./cliMessageAttachment";
+import type { Metadata } from "./metadata";
 
 export interface CliMessageResponse {
   attachments: CliMessageAttachment[];
@@ -29,8 +30,10 @@ export interface CliMessageResponse {
   size_estimate: number;
   snippet: string;
   source_conversation_id: string;
+  source_id?: number;
   source_message_id: string;
   subject: string;
   to: CliMessageAddress[];
+  verification?: Metadata;
   [key: string]: unknown;
 }

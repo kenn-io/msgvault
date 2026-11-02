@@ -28,10 +28,14 @@ func TestMaskVariants(t *testing.T) {
 		strings.ReplaceAll(html.EscapeString(link), "&amp;", "&#38;"),
 		"&#52;82&#x39;13",
 		"%34%38%32%39%31%33",
+		"<b>482</b><span>913</span>",
+		"&#52;82 <span>9&#x31;3</span>",
 		"界 " + link + " 482913 ü",
 	} {
 		masked := m.Text(text)
 		assert.NotContains(masked, "482913")
+		assert.NotContains(masked, "482")
+		assert.NotContains(masked, "913")
 		assert.NotContains(masked, "482 913")
 		assert.NotContains(masked, "482-913")
 		assert.NotContains(masked, "abcdEFGH12345678")

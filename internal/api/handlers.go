@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/verification"
 	"golang.org/x/oauth2"
 )
 
@@ -308,26 +309,27 @@ type BodySearchContext struct {
 
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
-	ID                int64    `json:"id"`
-	SourceID          int64    `json:"source_id,omitzero"`
-	SourceMessageID   string   `json:"source_message_id,omitempty"`
-	ConversationID    int64    `json:"conversation_id,omitzero"`
-	Subject           string   `json:"subject"`
-	MessageType       string   `json:"message_type,omitempty"`
-	From              string   `json:"from"`
-	FromEmail         string   `json:"from_email,omitempty"`
-	FromName          string   `json:"from_name,omitempty"`
-	FromPhone         string   `json:"from_phone,omitempty"`
-	To                []string `json:"to"`
-	Cc                []string `json:"cc,omitempty"`
-	Bcc               []string `json:"bcc,omitempty"`
-	SentAt            string   `json:"sent_at"`
-	DeletedAt         string   `json:"deleted_at,omitempty"`
-	Snippet           string   `json:"snippet"`
-	Labels            []string `json:"labels"`
-	HasAttach         bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	SizeBytes         int64    `json:"size_bytes"`
+	Verification      *verification.Metadata `json:"verification,omitempty"`
+	ID                int64                  `json:"id"`
+	SourceID          int64                  `json:"source_id,omitzero"`
+	SourceMessageID   string                 `json:"source_message_id,omitempty"`
+	ConversationID    int64                  `json:"conversation_id,omitzero"`
+	Subject           string                 `json:"subject"`
+	MessageType       string                 `json:"message_type,omitempty"`
+	From              string                 `json:"from"`
+	FromEmail         string                 `json:"from_email,omitempty"`
+	FromName          string                 `json:"from_name,omitempty"`
+	FromPhone         string                 `json:"from_phone,omitempty"`
+	To                []string               `json:"to"`
+	Cc                []string               `json:"cc,omitempty"`
+	Bcc               []string               `json:"bcc,omitempty"`
+	SentAt            string                 `json:"sent_at"`
+	DeletedAt         string                 `json:"deleted_at,omitempty"`
+	Snippet           string                 `json:"snippet"`
+	Labels            []string               `json:"labels"`
+	HasAttach         bool                   `json:"has_attachments"`
+	HiddenTextPresent bool                   `json:"hidden_text_present"`
+	SizeBytes         int64                  `json:"size_bytes"`
 }
 
 // MessageDetail represents a full message response.
@@ -351,6 +353,8 @@ type MessageDetail struct {
 
 // AttachmentInfo represents attachment metadata in API responses.
 type AttachmentInfo struct {
+	MessageID   int64                        `json:"message_id,omitzero"`
+	SourceID    int64                        `json:"source_id,omitzero"`
 	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
 	ID          int64                        `json:"id"`
 	Filename    string                       `json:"filename"`
@@ -567,6 +571,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	}
 
 	return MessageDetail{
+		Verification:      qMsg.Verification,
 		RelatedMessageID:  qMsg.RelatedMessageID,
 		ConversationTitle: qMsg.ConversationTitle,
 
@@ -608,6 +613,7 @@ func toMessageSummary(m APIMessage) MessageSummary {
 		labels = []string{}
 	}
 	return MessageSummary{
+		Verification:      m.Verification,
 		ID:                m.ID,
 		SourceID:          m.SourceID,
 		SourceMessageID:   m.SourceMessageID,
@@ -737,6 +743,11 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	protected, allowed := s.prepareAgentStored(w, r, messages)
+	if !allowed {
+		return
+	}
+	messages = protected
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
@@ -775,6 +786,11 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not_found", "Message not found")
 				return
 			}
+			qMsg, err = s.prepareAgentDetail(r, qMsg)
+			if err != nil {
+				verificationUnavailable(w)
+				return
+			}
 			detail := messageDetailFromQuery(qMsg)
 			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
 			writeJSON(w, http.StatusOK, detail)
@@ -808,6 +824,11 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
+	protected, allowed := s.prepareAgentStored(w, r, []APIMessage{*msg})
+	if !allowed {
+		return
+	}
+	msg = &protected[0]
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
@@ -1014,6 +1035,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	protected, allowed := s.prepareAgentStored(w, r, messages)
+	if !allowed {
+		return
+	}
+	messages = protected
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
@@ -2849,6 +2875,7 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 		from = m.FromName
 	}
 	return MessageSummary{
+		Verification:      m.Verification,
 		ID:                m.ID,
 		SourceID:          m.SourceID,
 		SourceMessageID:   m.SourceMessageID,
@@ -2912,6 +2939,10 @@ func formatDeletedAt(deletedAt *time.Time) string {
 // handleAggregates returns aggregate data for a view type.
 // GET /api/v1/aggregates?view_type=senders&sort=count&direction=desc&limit=100.
 func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
+	if s.maskedAgentScope(r) {
+		writeError(w, http.StatusForbidden, "verification_masked", "Content aggregates require verification.read on every requested source")
+		return
+	}
 	if s.writeIfAnalyticsInitializing(r.Context(), w) {
 		return
 	}
@@ -2964,6 +2995,10 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 // handleSubAggregates returns sub-aggregate data after drill-down.
 // GET /api/v1/aggregates/sub?view_type=labels&sender=foo@example.com.
 func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
+	if s.maskedAgentScope(r) {
+		writeError(w, http.StatusForbidden, "verification_masked", "Content aggregates require verification.read on every requested source")
+		return
+	}
 	if s.writeIfAnalyticsInitializing(r.Context(), w) {
 		return
 	}
@@ -3068,6 +3103,11 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		messages = messages[:requestLimit]
 	}
 
+	protected, allowed := s.prepareAgentSummaries(w, r, messages)
+	if !allowed {
+		return
+	}
+	messages = protected
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
 		summaries[i] = toMessageSummaryFromQuery(m)
@@ -3507,7 +3547,13 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	att, apiErr := s.prepareAgentAttachment(r, att, false)
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
 	writeJSON(w, http.StatusOK, AttachmentInfo{
+		MessageID: att.MessageID, SourceID: att.SourceID,
 		ID:          att.ID,
 		Filename:    att.Filename,
 		MimeType:    att.MimeType,
@@ -3531,6 +3577,13 @@ func (s *Server) attachmentCandidatesForRequest(r *http.Request, hash string) ([
 	}
 	// Agents see only attachments in granted accounts, so a hash held elsewhere reads as missing.
 	attachments = slices.DeleteFunc(attachments, func(att query.AttachmentInfo) bool { return !s.agentObjectSourceAllowed(r, att.SourceID) })
+	for i := range attachments {
+		prepared, apiErr := s.prepareAgentAttachment(r, &attachments[i], true)
+		if apiErr != nil {
+			return nil, apiErr
+		}
+		attachments[i] = *prepared
+	}
 	if len(attachments) == 0 {
 		return nil, newAPIHTTPError(http.StatusNotFound, "not_found", "Attachment not found")
 	}
@@ -3691,6 +3744,11 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	protected, allowed := s.prepareAgentSummaries(w, r, result.Messages)
+	if !allowed {
+		return
+	}
+	result.Messages = protected
 	summaries := make([]MessageSummary, len(result.Messages))
 	for i, m := range result.Messages {
 		summaries[i] = toMessageSummaryFromQuery(m)
@@ -3874,6 +3932,10 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		limit = maxPageSize
 	}
 
+	if statsGroupBy != query.ViewNoStats && s.maskedAgentScope(r) {
+		writeError(w, http.StatusForbidden, "verification_masked", "Content aggregates require verification.read on every requested source")
+		return
+	}
 	indexState := agentIndexState(r)
 	result, err := engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
@@ -3891,6 +3953,11 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	protected, allowed := s.prepareAgentSummaries(w, r, result.Messages)
+	if !allowed {
+		return
+	}
+	result.Messages = protected
 	summaries := make([]MessageSummary, len(result.Messages))
 	for i, m := range result.Messages {
 		summaries[i] = toMessageSummaryFromQuery(m)
@@ -4049,6 +4116,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		hasMore = totalCount > int64(offset+len(messages))
 	}
 
+	protected, allowed := s.prepareAgentSummaries(w, r, messages)
+	if !allowed {
+		return
+	}
+	messages = protected
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
 		summaries[i] = toMessageSummaryFromQuery(m)
@@ -4064,6 +4136,9 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	var warnings []string
 	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
+	}
+	if s.maskedAgentScope(r) {
+		stats = nil
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
 		Warnings:     warnings,

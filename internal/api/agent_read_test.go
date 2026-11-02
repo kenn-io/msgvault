@@ -163,7 +163,11 @@ func TestAgentReadAuthorization(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			requirements := require.New(t)
 
-			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.Permission(tc.permission)}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+			permissions := []agentgrant.Permission{agentgrant.Permission(tc.permission)}
+			if strings.HasPrefix(tc.path, "/api/v1/aggregates") {
+				permissions = append(permissions, agentgrant.PermissionVerificationRead)
+			}
+			_, secret, _, err := srv.agentGrants.Issue("reader", permissions, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
 			for _, access := range []struct {
 				name, token string
@@ -282,7 +286,7 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	t.Cleanup(srv.agentGrants.Close)
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, refs, time.Time{})
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead, agentgrant.PermissionVerificationRead}, refs, time.Time{})
 	requirements.NoError(err)
 	requests := 0
 	for _, route := range []struct {
