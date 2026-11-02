@@ -185,26 +185,29 @@ func TestImportAttachmentSchema(t *testing.T) {
 	}
 }
 
-// cancelOnceStored reports cancellation as soon as the first message is archived.
+// cancelOnceStored cancels its context as soon as the first message is archived.
 type cancelOnceStored struct {
 	context.Context
 
-	db *sql.DB
+	cancel context.CancelFunc
+	db     *sql.DB
 }
 
 func (c cancelOnceStored) Err() error {
 	var n int
 	if err := c.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n); err == nil && n > 0 {
-		return context.Canceled
+		c.cancel()
 	}
-	return nil
+	return c.Context.Err()
 }
 
 func TestImportCancellationIsNotAnAttachmentFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	c, st, source := importOnlyFixture(t)
-	summary, err := c.Import(cancelOnceStored{Context: t.Context(), db: st.DB()}, st, source)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	summary, err := c.Import(cancelOnceStored{Context: ctx, cancel: cancel, db: st.DB()}, st, source)
 	require.ErrorIs(err, context.Canceled)
 	require.NotErrorIs(err, ErrAttachmentImport)
 	assert.Zero(summary.AttachmentFailures)
