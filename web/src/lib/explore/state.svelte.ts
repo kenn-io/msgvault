@@ -950,14 +950,20 @@ export class ExploreState {
     return parsed;
   }
 
+  holdNavigation(patch: Partial<ExploreURLState>, leave: () => void): boolean {
+    this.pendingHeldLeaveRestore?.();
+    this.cancelHeldLeave?.();
+    const held = this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
+      (this.holdLeave?.(leave) ?? false);
+    if (held) this.clearHeldOperationHistory(patch);
+    return held;
+  }
+
   private navigate(
     patch: Partial<ExploreURLState>,
     mode: 'push' | 'replace'
   ): void {
-    this.pendingHeldLeaveRestore?.();
-    this.cancelHeldLeave?.();
-    if (this.current.workspace === 'settings' && patch.workspace !== undefined && patch.workspace !== 'settings' &&
-      this.holdLeave?.(() => this.navigate(patch, mode))) return this.clearHeldOperationHistory(patch);
+    if (this.holdNavigation(patch, () => this.navigate(patch, mode))) return;
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
