@@ -1041,6 +1041,29 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.activeElement).toBe(opener));
     });
 
+    it('focuses the workspace heading after Forward returns to Staged deletions on desktop', async () => {
+      window.innerWidth = 1280;
+      const state = shellState('everything');
+      const client = createAPIClient(async input => {
+        const path = new URL((input as Request).url).pathname;
+        if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+        if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+        return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      });
+      render(AppShell, { client, state });
+      await screen.findByText('Synthetic subject 1');
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      await fireEvent.click(await screen.findByRole('option', { name: 'Staged deletions' }));
+      await screen.findByRole('heading', { level: 1, name: 'Staged deletions' });
+
+      window.history.back();
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('grid', { name: 'Messages results' })));
+
+      window.history.forward();
+      const heading = await screen.findByRole('heading', { level: 1, name: 'Staged deletions' });
+      await waitFor(() => expect(document.activeElement).toBe(heading));
+    });
+
     it('focuses the navigation opener after Back on narrow screens', async () => {
       window.innerWidth = 480;
       const state = shellState('sources');

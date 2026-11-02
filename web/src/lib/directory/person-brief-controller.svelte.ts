@@ -187,6 +187,15 @@ export class PersonBriefController {
     await this.loadEnrollmentAndBrief(personID);
   }
 
+  async refresh(): Promise<void> {
+    const personID = this.personID;
+    if (personID === undefined || this.disposed || this.pending !== null) return;
+    const context = this.contextGeneration;
+    await this.loadEnrollmentAndBrief(personID);
+    if (!this.current(context, personID)) return;
+    await this.refreshVersions(personID);
+  }
+
   async retryBrief(): Promise<void> {
     const personID = this.personID;
     if (personID === undefined || this.disposed || this.briefLoading || this.pending !== null) return;

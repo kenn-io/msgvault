@@ -27,6 +27,8 @@
   const MAX_POLL_MS = 8000;
   const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
 
+  // Re-read idle scheduled sources to observe queued syncs.
+  const IDLE_POLL_MS = 30_000;
   let {
     client,
     requestTimeoutMs = 20_000,
@@ -142,7 +144,7 @@
           controller.status = connection.status;
           contactControllers.set(connection.connection, controller);
         }
-        if (connection.status.active) {
+        if (connection.status.active || connection.status.scheduled || connection.status.queued_at || connection.status.scheduler_running) {
           void controller.retryStatus();
         } else {
           controller.status = connection.status;
@@ -189,7 +191,7 @@
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
-      !sources.some((source) => syncRunning(source) || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
+      !sources.some((source) => syncRunning(source) || source.scheduler_queued || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
       return;
@@ -253,7 +255,7 @@
       }
       const hasActiveSync = next.some(syncRunning);
       const hasLockHold = next.some(schedulerHoldsSyncLock);
-      if (hasActiveSync) {
+      if (hasActiveSync || next.some((source) => source.scheduler_queued)) {
         lockHoldPolls = 0;
         lockStatusStale = false;
         pollDelay = advanced ? MIN_POLL_MS : Math.min(MAX_POLL_MS, pollDelay * 2);
@@ -273,6 +275,8 @@
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {
         schedulePoll(nextDelay, false, lockHoldPoll);
+      } else if (!lockStatusStale && next.some((source) => source.scheduled)) {
+        schedulePoll(IDLE_POLL_MS, true);
       }
     } catch (cause) {
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
@@ -283,7 +287,7 @@
       }
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
-        !sources.some(syncRunning) && awaitingSourceID === undefined) {
+        !sources.some((source) => syncRunning(source) || source.scheduler_queued) && awaitingSourceID === undefined) {
         lockStatusStale = true;
         return;
       }
@@ -302,7 +306,7 @@
         const nextDelay = pollDelay;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         schedulePoll(nextDelay, true, sources.some(schedulerHoldsSyncLock) &&
-          !sources.some(syncRunning));
+          !sources.some((source) => syncRunning(source) || source.scheduler_queued));
       }
     } finally {
       if (requestGeneration === generation) {
@@ -441,7 +445,11 @@
               <span class="muted">{sourceTypeLabel(source.source_type)}</span>
             </div>
           </td>
-          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}</div></td>
+          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}
+            {#if source.scheduler_queued_at && !source.active_sync}
+              <span class="muted">Queued since <time datetime={source.scheduler_queued_at} title={formatDateTime(source.scheduler_queued_at, 'long')}>{formatDateTime(source.scheduler_queued_at)}</time></span>
+            {/if}
+          </div></td>
           <td>{@render lastGood(source.last_successful_sync?.completed_at)}</td>
           <td class="action">
             {#if source.can_sync || syncing(source)}

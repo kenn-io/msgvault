@@ -5,8 +5,9 @@ type Status = CardDAVConnectionResponse['status'];
 
 /** The run state a contacts connection shows, or undefined when it has never synced. */
 export function contactRunState(status: Status): string | undefined {
-  if (status.active) return 'running';
+  if (status.active || status.scheduler_running) return 'running';
   const state = status.latest?.state;
+  if (status.queued_at && state !== 'failed' && state !== 'partial') return 'queued';
   if (state === 'succeeded' || state === 'partial' || state === 'failed' || state === 'cancelled') return state;
   return undefined;
 }
