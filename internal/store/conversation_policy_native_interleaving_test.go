@@ -5,13 +5,17 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -20,7 +24,7 @@ import (
 // The extra SQL handle is only a native-table blocker/lock observer. Both
 // participating Stores and the native backend's borrowed pool remain Max1.
 func TestPostgresColdPolicyNativeLanesSerializePublicationAndTransition(t *testing.T) {
-	for _, lane := range []string{"document", "visual"} {
+	for _, lane := range []string{"person", "document", "visual"} {
 		t.Run(lane, func(t *testing.T) {
 			f, documentGen := seedDocumentVectorGenerationWithChunks(t, 1)
 			st := f.Store
@@ -47,6 +51,63 @@ func TestPostgresColdPolicyNativeLanesSerializePublicationAndTransition(t *testi
 			var prune func(context.Context) (int64, error)
 			var checkDemoted func()
 			switch lane {
+			case "person":
+				source, err := st.GetOrCreateSource("slack", "native-person-interleave")
+				require.NoError(t, err)
+				room, err := st.EnsureConversation(source.ID, "person-room", "Synthetic person room")
+				require.NoError(t, err)
+				sourceID, roomKey = source.ID, "person-room"
+				require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, roomKey, conversationpolicy.Full))
+				participant, err := st.EnsureParticipantByIdentifier("slack", "native-person", "Native Person")
+				require.NoError(t, err)
+				person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+				require.NoError(t, err)
+				_, err = st.SetPersonTrackingContext(ctx, person.ID, true)
+				require.NoError(t, err)
+				message, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: room, SourceMessageID: "room-only-fact", MessageType: "chat", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: time.Now().UTC().Truncate(time.Second), Valid: true}})
+				require.NoError(t, err)
+				require.NoError(t, st.UpsertMessageBodyContext(ctx, message, sql.NullString{String: "Ask me about distributed systems.", Valid: true}, sql.NullString{}))
+				inputs, err := st.HydratePersonSweepMessages(ctx, person.ID, []int64{message}, 0)
+				require.NoError(t, err)
+				require.Len(t, inputs, 1)
+				evidence, err := peoplesweep.PersonFactEvidenceInput(inputs[0])
+				require.NoError(t, err)
+				catalog, err := st.BuildPersonFactCatalogContext(ctx, true)
+				require.NoError(t, err)
+				var target personfacts.TargetDescriptor
+				for _, candidate := range catalog.Targets {
+					if candidate.Slug == store.AttributeSlugAskMeAbout {
+						target = candidate
+					}
+				}
+				require.NotEmpty(t, target.Key)
+				result, err := st.ApplyPersonFactGenerationContext(ctx, personfacts.GenerationInput{
+					PersonID: person.ID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "native-interleave", End: "native-interleave-end"}},
+					ProgramID: "native-interleave", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "catalog-fixture",
+					Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: time.Now().UTC(),
+					Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "policy-v1"},
+					Claims: []personfacts.ProposedClaim{{Target: target, Relation: personfacts.RelationSupport, SubmittedValue: []byte(`"distributed systems"`), Evidence: []personfacts.EvidenceInput{evidence}, Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}}},
+				}, store.PersonSweepEvidenceAligner{Store: st})
+				require.NoError(t, err)
+				require.NotEmpty(t, result.Projections)
+				semantic, err := st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+				require.NoError(t, err)
+				require.Contains(t, semantic.Text, "distributed systems")
+				gen, err := backend.CreateGeneration(ctx, "native-person-interleave", 768, "")
+				require.NoError(t, err)
+				embedding := make([]float32, 768)
+				embedding[0] = 1
+				publish = func(work context.Context) error {
+					return backend.UpsertPersons(work, gen, []vector.PersonEmbedding{{PersonID: person.ID, Revision: semantic.Revision, Vector: embedding}})
+				}
+				prune = backend.PruneIneligiblePersons
+				table = "person_embeddings"
+				checkDemoted = func() {
+					current, err := st.LoadPersonSemanticDocumentContext(ctx, person.ID)
+					require.NoError(t, err)
+					assert.NotContains(t, current.Text, "distributed systems")
+					assert.NotEqual(t, semantic.Revision, current.Revision)
+				}
 			case "document":
 				claim, err := st.ClaimDocumentVectorChunk(ctx, documentGen.ID, 0, 10, "native-interleave", time.Now().UTC(), time.Minute)
 				require.NoError(t, err)

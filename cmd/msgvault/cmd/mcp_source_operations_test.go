@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
@@ -460,12 +462,28 @@ func TestMCPParticipantIdentityRetainsRealLinkedCluster(t *testing.T) {
 	st, dbPath := mcpSQLiteStoreWithPath(t)
 	primary, err := st.EnsureParticipantByIdentifier("email", "primary@example.com", "Primary Example")
 	requirements.NoError(err)
-	const secondaryKey = "beeper:example-account:whatsapp:example-service-account:@example:example.com"
+	const account = "example-account"
+	const beeperUser = "@example:example.com"
+	secondaryKey := fmt.Sprintf("beeper:%d:%s:%d:%s", len(account), account, len(beeperUser), beeperUser)
+	beeperSource, err := st.GetOrCreateSource("beeper", account)
+	requirements.NoError(err)
+	beeperConversation, err := st.EnsureConversationWithType(beeperSource.ID, "synthetic-chat", "direct_chat", "Synthetic Chat")
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), beeperSource.ID, "synthetic-chat", conversationpolicy.Full))
 	secondary, err := st.EnsureParticipantByIdentifier("beeper", secondaryKey, "Secondary Example")
 	requirements.NoError(err)
 	service, err := st.ResolveCommunicationServiceContext(t.Context(), "whatsapp")
 	requirements.NoError(err)
-	requirements.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "beeper", secondaryKey, &service.ID, new("account"), new("example-whatsapp-account")))
+	requirements.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "beeper", secondaryKey, &service.ID, nil, nil))
+	requirements.NoError(st.EnsureConversationParticipantContext(t.Context(), beeperConversation, secondary, "member"))
+	_, err = st.RecordContactObservationContext(t.Context(), secondary, store.ParticipantContactObservationInput{
+		SourceID: &beeperSource.ID, ConversationID: &beeperConversation,
+		AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("whatsapp"),
+		ProviderUserID: &secondaryKey,
+		OriginalValue:  secondaryKey,
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation, SourceRef: new("beeper:" + account + ":" + beeperUser)},
+	})
+	requirements.NoError(err)
 	_, err = st.LinkParticipants(primary, secondary)
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "sender@example.com")
@@ -508,8 +526,8 @@ func TestMCPParticipantIdentityRetainsRealLinkedCluster(t *testing.T) {
 	requirements.NotNil(secondaryIdentity)
 	assertions.Equal(secondaryKey, secondaryIdentity.Value)
 	assertions.Equal(new("whatsapp"), secondaryIdentity.ServiceSlug)
-	assertions.Equal(new("account"), secondaryIdentity.ScopeKind)
-	assertions.Equal(new("example-whatsapp-account"), secondaryIdentity.ScopeValue)
+	assertions.Nil(secondaryIdentity.ScopeKind)
+	assertions.Nil(secondaryIdentity.ScopeValue)
 }
 
 func TestMCPSourceToolsRequireActualRoutesAndRequestFields(t *testing.T) {

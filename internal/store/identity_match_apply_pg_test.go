@@ -493,8 +493,8 @@ func testPostgreSQLAcceptedApplicationDuringParticipantMerge(
 		}
 	}()
 
-	waitForPostgreSQLBlockedPID(ctx, t, st, mergePID, "archive_metadata",
-		"application must read the candidate and then wait for the merge identity lock")
+	waitForPostgreSQLBlockedPID(ctx, t, st, mergePID, "pg_advisory_xact_lock_shared",
+		"application must wait for the merge conversation-policy fence")
 
 	var unlocked bool
 	err = holder.QueryRowContext(ctx,

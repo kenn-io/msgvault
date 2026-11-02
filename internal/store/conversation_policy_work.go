@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 type conversationPolicyWorkKey struct{}
@@ -70,12 +72,20 @@ func CheckConversationPolicyAdmission(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+	if _, ok := ctx.Value(personSweepPolicyKey{}).(personSweepPolicyWork); ok {
+		return work.store.withConversationPolicyAdmissionLogged(ctx, func(*loggedTx) error { return nil })
+	}
 	if media, ok := ctx.Value(conversationPolicyMediaKey{}).(conversationPolicyMedia); ok {
 		return work.store.withConversationPolicyAdmission(ctx, func(tx *sql.Tx) error {
 			if media.visual {
 				return work.store.CheckConversationPolicyVisualTokensTx(ctx, tx, media.tokens)
 			}
 			return work.store.CheckConversationPolicyDocumentTokensTx(ctx, tx, media.generationID, media.tokens)
+		})
+	}
+	if persons, ok := ctx.Value(conversationPolicyPeopleKey{}).([]ConversationPolicyPersonVersion); ok {
+		return work.store.withConversationPolicyAdmission(ctx, func(tx *sql.Tx) error {
+			return work.store.CheckConversationPolicyPeopleTx(ctx, tx, work.revision, persons)
 		})
 	}
 	return work.store.CheckConversationPolicyWork(ctx, work.revision, work.messageIDs)
@@ -115,12 +125,27 @@ func (s *Store) withConversationPolicyAdmission(ctx context.Context, fn func(*sq
 }
 
 func (s *Store) withConversationPolicyAdmissionLogged(ctx context.Context, fn func(*loggedTx) error) error {
-	return s.withConversationPolicyTransaction(ctx, &sql.TxOptions{ReadOnly: true}, fn)
+	opts := &sql.TxOptions{ReadOnly: true}
+	if _, ok := ctx.Value(personSweepPolicyKey{}).(personSweepPolicyWork); ok {
+		// Sweep admission takes identity and cited-evidence row locks on PostgreSQL.
+		// Those reads need a short read/write transaction to acquire the locks.
+		opts = nil
+	}
+	if refs, _ := ctx.Value(personSweepPublicationRefsKey{}).([]peoplesweep.EvidenceRef); len(refs) > 0 {
+		opts = nil
+	}
+	return s.withConversationPolicyTransaction(ctx, opts, fn)
 }
 
 func (s *Store) withConversationPolicyTransaction(ctx context.Context, opts *sql.TxOptions, fn func(*loggedTx) error) error {
 	return s.withConversationPolicyLocked(ctx, opts, func(tx *loggedTx) error {
+		if err := s.lockPersonSweepPolicyInputsTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.CheckConversationPolicyPublicationTx(ctx, tx.Tx, nil); err != nil {
+			return err
+		}
+		if err := s.checkPersonSweepPolicyInputsTx(ctx, tx); err != nil {
 			return err
 		}
 		return fn(tx)
@@ -139,7 +164,15 @@ func (s *Store) withConversationPolicyLocked(ctx context.Context, opts *sql.TxOp
 	}
 	return s.withTxLockedContext(ctx, opts, func(tx *loggedTx) error {
 		if s.IsPostgreSQL() {
-			return s.LockPostgresConversationPolicyTx(ctx, tx.Tx, ConversationPolicyShared)
+			if err := s.LockPostgresConversationPolicyTx(ctx, tx.Tx, ConversationPolicyShared); err != nil {
+				return err
+			}
+		}
+		_, sweep := ctx.Value(personSweepPolicyKey{}).(personSweepPolicyWork)
+		refs, _ := ctx.Value(personSweepPublicationRefsKey{}).([]peoplesweep.EvidenceRef)
+		if sweep || len(refs) > 0 {
+			// Match attribution's identity-before-sync-generation ordering.
+			return s.shareIdentityLockTxContext(ctx, tx)
 		}
 		return nil
 	}, fn)

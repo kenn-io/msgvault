@@ -651,6 +651,12 @@ func (s *Store) hydratePersonFactEvidenceStatusTx(
 ) error {
 	for index := range evidence {
 		evidence[index].Supported = true
+		eligible, err := s.personFactConversationEligibleTx(ctx, tx, evidence[index].Input)
+		if err != nil {
+			return err
+		}
+		evidence[index].PolicyExcluded = !eligible
+		evidence[index].Supported = eligible
 		row := tx.QueryRowContext(ctx, `
 			SELECT latest.id, latest.person_id, latest.generation_id, latest.evidence_id,
 			       latest.evidence_key, latest.source_version, latest.supported,
@@ -668,7 +674,7 @@ func (s *Store) hydratePersonFactEvidenceStatusTx(
 		if err != nil {
 			return fmt.Errorf("hydrate latest person fact evidence status: %w", err)
 		}
-		evidence[index].Supported = event.Supported
+		evidence[index].Supported = event.Supported && !evidence[index].PolicyExcluded
 		evidence[index].LatestStatus = &event
 	}
 	return nil

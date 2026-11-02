@@ -118,6 +118,29 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 		WHERE m.source_id = ? AND b.body_text = ?`),
 		source.ID, "hello from Bob").Scan(&readReceiptImpliesDelivered))
 	assert.True(readReceiptImpliesDelivered)
+
+	var bobID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM participants WHERE email_address=?`), "bob@example.test").Scan(&bobID))
+	var recipientEmail string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT email_address FROM message_recipients
+		WHERE message_id=? AND recipient_type='to' AND participant_id=?`), messageID, bobID).Scan(&recipientEmail))
+	assert.Equal("BOB@EXAMPLE.TEST", recipientEmail,
+		"iMazing message recipients must retain the address present in the export")
+	observations, err := st.ListParticipantObservationsContext(t.Context(), bobID, true)
+	require.NoError(err)
+	require.Len(observations, 1,
+		"iMazing email identities must be recorded as source-qualified observations")
+	require.NotNil(observations[0].SourceID)
+	assert.Equal(source.ID, *observations[0].SourceID)
+	require.NotNil(observations[0].Envelope.SourceRef)
+	assert.Contains(*observations[0].Envelope.SourceRef, "imazing_csv:")
+
+	_, err = NewImporter(st, Options{Owner: "+1 (555) 000-0001", Timezone: "UTC"}).ImportPath(t.Context(), exportDir)
+	require.NoError(err, "reimport must recover and reuse existing email evidence")
+	observations, err = st.ListParticipantObservationsContext(t.Context(), bobID, true)
+	require.NoError(err)
+	assert.Len(observations, 1, "reimporting must not duplicate the source-qualified observation")
 }
 
 func TestImporterPreservesRemovedIdentityOptOut(t *testing.T) {

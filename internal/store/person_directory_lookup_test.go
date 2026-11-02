@@ -166,9 +166,6 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 	var matches []int64
 	for index := range 70 {
 		person := createDirectoryPerson(t, st, fmt.Sprintf("Person %03d", index), fmt.Sprintf("person-%03d@example.test", index), "friend", "active", "Example Co")
-		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ? WHERE person_id = ?`),
-			time.Date(2026, 1, 1, 0, index, 0, 0, time.UTC), person.ID)
-		require.NoError(err)
 		if index == 34 || index == 69 {
 			_, err := st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
 				AddressKind: store.ContactAddressUsername, OriginalValue: "shared-handle",
@@ -177,6 +174,10 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 			require.NoError(err)
 			matches = append(matches, person.ID)
 		}
+		// Seed refreshed contact state after contact-point edits invalidate it.
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ?, dirty_at = NULL WHERE person_id = ?`),
+			time.Date(2026, 1, 1, 0, index, 0, 0, time.UTC), person.ID)
+		require.NoError(err)
 	}
 	for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
 		t.Run(order, func(t *testing.T) {

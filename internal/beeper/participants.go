@@ -1,6 +1,7 @@
 package beeper
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -73,6 +74,41 @@ func (r *participantResolver) identifierForUser(userID string) string {
 		return userID
 	}
 	return beeperidentity.Fallback(r.accountID, userID)
+}
+
+func (r *participantResolver) resolveUserForPolicy(ctx context.Context, u *User, room int64) (int64, error) {
+	if u == nil || u.ID == "" {
+		return 0, nil
+	}
+	// Legacy namespace adoption remains archival normalization. Do not create a
+	// bare participant first: rich resolution binds the identifier itself, and
+	// a premature bare row would only be merged away, with archive-wide work
+	// under the policy and identity locks. The fallback below still creates a
+	// bare participant when admission fails.
+	identifier := r.identifierForUser(u.ID)
+	if _, err := r.adoptLegacyIdentifier(u.ID, identifier); err != nil {
+		return 0, err
+	}
+	identity := store.ConversationParticipantIdentity{IdentifierType: participantIdentifierType, IdentifierValue: identifier, DisplayName: u.FullName}
+	if strings.HasPrefix(u.PhoneNumber, "+") {
+		identity.Phone = u.PhoneNumber
+	} else if strings.Contains(u.Email, "@") {
+		identity.Email = u.Email
+	}
+	result, err := r.store.ResolveConversationParticipantContext(ctx, room, identity)
+	if errors.Is(err, store.ErrConversationPolicyStale) || errors.Is(err, store.ErrPersonBindingConflict) {
+		return r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, identity.IdentifierValue, "")
+	}
+	if err != nil {
+		return 0, err
+	}
+	if identity.Phone != "" || identity.Email != "" {
+		r.rich[identity.IdentifierValue] = richEntry{pid: result.ParticipantID, byPhone: result.ByPhone}
+		delete(r.fallback, identity.IdentifierValue)
+	} else {
+		r.fallback[identity.IdentifierValue] = result.ParticipantID
+	}
+	return result.ParticipantID, nil
 }
 
 func (r *participantResolver) resolveUser(u *User) (int64, error) {

@@ -115,7 +115,7 @@ func TestUsernameOnlyCandidateCannotBeAcceptedWithoutCorroboration(t *testing.T)
 	})
 	require.NoError(err)
 	assert.True(created)
-	for _, kind := range []string{"phone", "display_name"} {
+	for _, kind := range []string{"phone", "conversation_membership"} {
 		_, err := st.AddIdentityMatchEvidenceContext(ctx, candidate.ID, store.IdentityMatchEvidenceInput{
 			EvidenceKind: kind, Source: store.ProvenanceArchiveObservation,
 		})

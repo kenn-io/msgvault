@@ -362,12 +362,17 @@ func (c *Client) importMessage(
 			senderID = sql.NullInt64{Int64: ownerPID, Valid: true}
 		}
 	} else if msg.HandleID != nil {
-		pid, err := c.resolveParticipant(
-			s, *msg.HandleID, phoneCache, emailCache, summary,
+		pid, err := c.resolveImportedParticipant(
+			ctx, s, sourceID, *msg.HandleID, phoneCache, emailCache, summary,
 		)
-		if err == nil && pid > 0 {
+		if err != nil {
+			return fmt.Errorf("resolve message sender: %w", err)
+		}
+		if pid > 0 {
 			senderID = sql.NullInt64{Int64: pid, Valid: true}
-			_ = s.EnsureConversationParticipant(convID, pid, "member")
+			if err := s.EnsureConversationParticipant(convID, pid, "member"); err != nil {
+				return fmt.Errorf("link sender to conversation: %w", err)
+			}
 		}
 	}
 
@@ -441,7 +446,7 @@ func (c *Client) importMessage(
 
 	// Write message_recipients rows
 	if err := c.writeMessageRecipients(
-		s, msgID, msg, senderID, ownerPID,
+		ctx, s, sourceID, msgID, msg, senderID, ownerPID,
 		phoneCache, emailCache, summary,
 	); err != nil {
 		return fmt.Errorf("write message recipients: %w", err)
@@ -477,7 +482,9 @@ func (c *Client) importMessage(
 // For is_from_me: from=owner, to=other chat participants.
 // For !is_from_me: from=sender handle, to=owner.
 func (c *Client) writeMessageRecipients(
+	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	msgID int64,
 	msg *messageRow,
 	senderID sql.NullInt64,
@@ -489,38 +496,47 @@ func (c *Client) writeMessageRecipients(
 	if msg.IsFromMe != 0 {
 		// Sender is the device owner
 		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from", []int64{ownerPID}, nil,
-			); err != nil {
+			if err := s.ReplaceMessageRecipientSetContext(ctx, msgID, store.RecipientSet{
+				Type: "from", ParticipantIDs: []int64{ownerPID},
+				EmailAddresses: []string{originalEmailHandle(c.ownerHandle)},
+			}); err != nil {
 				return err
 			}
 		}
 		// Recipients are the other chat participants
-		toPIDs := c.getChatParticipantIDs(
-			s, msg, phoneCache, emailCache, summary,
+		toPIDs, toEmails, err := c.getChatParticipantIDs(
+			ctx, s, sourceID, msg, phoneCache, emailCache, summary,
 		)
+		if err != nil {
+			return err
+		}
 		if len(toPIDs) > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", toPIDs, nil,
-			); err != nil {
+			if err := s.ReplaceMessageRecipientSetContext(ctx, msgID, store.RecipientSet{
+				Type: "to", ParticipantIDs: toPIDs, EmailAddresses: toEmails,
+			}); err != nil {
 				return err
 			}
 		}
 	} else {
 		// Sender is the external handle
 		if senderID.Valid {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from",
-				[]int64{senderID.Int64}, nil,
-			); err != nil {
+			senderEmail := ""
+			if msg.HandleID != nil {
+				senderEmail = originalEmailHandle(*msg.HandleID)
+			}
+			if err := s.ReplaceMessageRecipientSetContext(ctx, msgID, store.RecipientSet{
+				Type: "from", ParticipantIDs: []int64{senderID.Int64},
+				EmailAddresses: []string{senderEmail},
+			}); err != nil {
 				return err
 			}
 		}
 		// Recipient is the device owner
 		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", []int64{ownerPID}, nil,
-			); err != nil {
+			if err := s.ReplaceMessageRecipientSetContext(ctx, msgID, store.RecipientSet{
+				Type: "to", ParticipantIDs: []int64{ownerPID},
+				EmailAddresses: []string{originalEmailHandle(c.ownerHandle)},
+			}); err != nil {
 				return err
 			}
 		}
@@ -528,57 +544,67 @@ func (c *Client) writeMessageRecipients(
 	return nil
 }
 
-// getChatParticipantIDs returns participant IDs for the chat members
-// (excluding the owner). Used for "to" recipients on is_from_me messages.
+// getChatParticipantIDs returns participant IDs and source envelope emails
+// for the chat members. Used for "to" recipients on is_from_me messages.
 func (c *Client) getChatParticipantIDs(
+	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	msg *messageRow,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
 	summary *ImportSummary,
-) []int64 {
+) ([]int64, []string, error) {
 	if msg.ChatROWID == nil {
 		// No chat info; fall back to handle if available
 		if msg.HandleID != nil {
-			pid, err := c.resolveParticipant(
-				s, *msg.HandleID,
+			pid, err := c.resolveImportedParticipant(
+				ctx, s, sourceID, *msg.HandleID,
 				phoneCache, emailCache, summary,
 			)
-			if err == nil && pid > 0 {
-				return []int64{pid}
+			if err != nil {
+				return nil, nil, err
+			}
+			if pid > 0 {
+				return []int64{pid}, []string{originalEmailHandle(*msg.HandleID)}, nil
 			}
 		}
-		return nil
+		return nil, nil, nil
 	}
 
-	rows, err := c.db.Query(`
+	rows, err := c.db.QueryContext(ctx, `
 		SELECT h.id
 		FROM chat_handle_join chj
 		JOIN handle h ON h.ROWID = chj.handle_id
 		WHERE chj.chat_id = ?
 	`, *msg.ChatROWID)
 	if err != nil {
-		return nil
+		return nil, nil, fmt.Errorf("query chat participant handles: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	var pids []int64
+	var emails []string
 	for rows.Next() {
 		var handleID string
 		if err := rows.Scan(&handleID); err != nil {
-			continue
+			return nil, nil, fmt.Errorf("scan chat participant handle: %w", err)
 		}
-		pid, err := c.resolveParticipant(
-			s, handleID, phoneCache, emailCache, summary,
+		pid, err := c.resolveImportedParticipant(
+			ctx, s, sourceID, handleID, phoneCache, emailCache, summary,
 		)
-		if err == nil && pid > 0 {
+		if err != nil {
+			return nil, nil, err
+		}
+		if pid > 0 {
 			pids = append(pids, pid)
+			emails = append(emails, originalEmailHandle(handleID))
 		}
 	}
 	if err := rows.Err(); err != nil {
-		c.logger.Warn("iterate chat participants", "error", err)
+		return nil, nil, fmt.Errorf("iterate chat participants: %w", err)
 	}
-	return pids
+	return pids, emails, nil
 }
 
 // writeMessageRaw serializes the message data as JSON and stores it.
@@ -670,10 +696,12 @@ func (c *Client) ensureConversation(
 
 	// Link chat participants to the conversation
 	if msg.ChatROWID != nil {
-		c.linkChatParticipants(
-			ctx, s, *msg.ChatROWID, convID,
+		if err := c.linkChatParticipants(
+			ctx, s, sourceID, *msg.ChatROWID, convID,
 			phoneCache, emailCache, summary,
-		)
+		); err != nil {
+			return 0, false, fmt.Errorf("link chat participants: %w", err)
+		}
 	}
 
 	// For group chats without a title, build one from participants
@@ -754,11 +782,12 @@ func (c *Client) buildGroupTitle(
 func (c *Client) linkChatParticipants(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	chatROWID, convID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
 	summary *ImportSummary,
-) {
+) error {
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT h.id
 		FROM chat_handle_join chj
@@ -766,30 +795,32 @@ func (c *Client) linkChatParticipants(
 		WHERE chj.chat_id = ?
 	`, chatROWID)
 	if err != nil {
-		c.logger.Warn(
-			"failed to get chat participants",
-			"chat_id", chatROWID, "error", err,
-		)
-		return
+		return fmt.Errorf("query chat participants for chat %d: %w", chatROWID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var handleID string
 		if err := rows.Scan(&handleID); err != nil {
-			continue
+			return fmt.Errorf("scan chat participant handle: %w", err)
 		}
-		pid, err := c.resolveParticipant(
-			s, handleID, phoneCache, emailCache, summary,
+		pid, err := c.resolveImportedParticipant(
+			ctx, s, sourceID, handleID, phoneCache, emailCache, summary,
 		)
-		if err != nil || pid == 0 {
+		if err != nil {
+			return fmt.Errorf("resolve chat participant: %w", err)
+		}
+		if pid == 0 {
 			continue
 		}
-		_ = s.EnsureConversationParticipant(convID, pid, "member")
+		if err := s.EnsureConversationParticipant(convID, pid, "member"); err != nil {
+			return fmt.Errorf("link participant %d to conversation: %w", pid, err)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		c.logger.Warn("iterate chat handles", "chat_id", chatROWID, "error", err)
+		return fmt.Errorf("iterate chat handles: %w", err)
 	}
+	return nil
 }
 
 // resolveParticipant resolves a handle ID to a participant ID in the
@@ -836,4 +867,45 @@ func (c *Client) resolveParticipant(
 	}
 
 	return 0, nil
+}
+
+func (c *Client) resolveImportedParticipant(
+	ctx context.Context,
+	s *store.Store,
+	sourceID int64,
+	handleID string,
+	phoneCache map[string]int64,
+	emailCache map[string]int64,
+	summary *ImportSummary,
+) (int64, error) {
+	_, email, _ := resolveHandle(handleID)
+	_, wasResolved := emailCache[email]
+	participantID, err := c.resolveParticipant(s, handleID, phoneCache, emailCache, summary)
+	if err != nil || participantID == 0 {
+		return participantID, err
+	}
+	if email == "" || wasResolved {
+		return participantID, nil
+	}
+	sourceRef := "imessage:handle:" + strings.TrimSpace(handleID)
+	_, err = s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+		SourceID: &sourceID, AddressKind: store.ContactAddressEmail,
+		OriginalValue: strings.TrimSpace(handleID),
+		Envelope: store.ValueEnvelopeInput{
+			Source: store.ProvenanceArchiveObservation, SourceRef: &sourceRef,
+		},
+	})
+	if err != nil {
+		delete(emailCache, email)
+		return 0, fmt.Errorf("record iMessage email evidence: %w", err)
+	}
+	return participantID, nil
+}
+
+func originalEmailHandle(handleID string) string {
+	_, email, _ := resolveHandle(handleID)
+	if email == "" {
+		return ""
+	}
+	return strings.TrimSpace(handleID)
 }

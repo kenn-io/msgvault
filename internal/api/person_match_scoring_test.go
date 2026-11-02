@@ -49,9 +49,13 @@ func newScorablePersonMatchCandidate(t *testing.T, st *store.Store) *store.Ident
 	require.NoError(t, err)
 	for _, input := range []struct{ kind, detail string }{
 		{"email", "review@example.test"},
-		{"display_name", "Review Example"},
+		{"stable_provider_id", "review-provider-id"},
 	} {
-		source, err := st.GetOrCreateSource("beeper", "review-"+input.kind)
+		sourceType := "beeper"
+		if input.kind == "stable_provider_id" {
+			sourceType = "gmail"
+		}
+		source, err := st.GetOrCreateSource(sourceType, "review-"+input.kind)
 		require.NoError(t, err)
 		_, err = st.AddIdentityMatchEvidenceContext(t.Context(), candidate.ID, store.IdentityMatchEvidenceInput{
 			EvidenceKind: input.kind, Detail: &input.detail,

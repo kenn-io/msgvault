@@ -34,6 +34,7 @@ type personEnrichmentCommandDeps struct {
 	bind               func(context.Context) personEnrichmentCommandDeps
 	config             func() personenrichment.Config
 	openStore          func() (*store.Store, func(), error)
+	openReadStore      func() (*store.Store, func(), error)
 	lookupEnv          personenrichment.CredentialLookup
 	proxyLookupEnv     personenrichment.CredentialLookup
 	isDaemonSubprocess func() bool
@@ -76,8 +77,9 @@ func defaultPersonEnrichmentCommandDeps(contexts ...context.Context) personEnric
 					personEnrichmentProviderCredentialLookup(currentCfg),
 				)
 			}
+			deps.openReadStore = func() (*store.Store, func(), error) { return openInitializedStoreForInvocation(ctx, state) }
 			deps.openStore = func() (*store.Store, func(), error) {
-				return openWritableStoreAndInitForInvocation(state)
+				return openConversationPolicyWriterForInvocation(ctx, state)
 			}
 			return deps
 		},
@@ -176,7 +178,11 @@ func newPersonEnrichmentStatusCommand(deps personEnrichmentCommandDeps) *cobra.C
 			if limit < 1 || limit > 200 {
 				return errors.New("status limit must be in [1,200]")
 			}
-			st, cleanup, err := deps.openStore()
+			open := deps.openReadStore
+			if open == nil {
+				open = deps.openStore
+			}
+			st, cleanup, err := open()
 			if err != nil {
 				return err
 			}
@@ -225,7 +231,11 @@ func newPersonEnrichmentProfilesCommand(deps personEnrichmentCommandDeps) *cobra
 			if !deps.isDaemonSubprocess() {
 				return proxyPersonEnrichmentCommand(command, args, deps)
 			}
-			st, cleanup, err := deps.openStore()
+			open := deps.openReadStore
+			if open == nil {
+				open = deps.openStore
+			}
+			st, cleanup, err := open()
 			if err != nil {
 				return err
 			}

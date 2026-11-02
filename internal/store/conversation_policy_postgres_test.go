@@ -32,7 +32,7 @@ func TestPostgreSQLConversationPolicyMaintenanceLocks(t *testing.T) {
 	_ = other.Rollback()
 	// Exercise the real archive-maintenance transaction, not a copied table list.
 	requirements.NoError(s.WithExclusiveLock(t.Context(), func() error {
-		for _, table := range []string{"conversation_policy"} {
+		for _, table := range []string{"conversation_policy", "participant_contact_observation_conversations"} {
 			var locked bool
 			err := s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT EXISTS (SELECT 1 FROM pg_locks WHERE relation=CAST(? AS regclass) AND mode='ExclusiveLock' AND granted)`), table).Scan(&locked)
 			if err != nil {

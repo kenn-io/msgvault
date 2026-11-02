@@ -13,6 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -723,4 +724,50 @@ func assertStoreCount(t *testing.T, db *sql.DB, table string, want int) {
 	var got int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got))
 	assert.Equal(t, want, got, table)
+}
+
+func TestAppleNamesRetainExactSourceProvenanceAfterColdBeeperSighting(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	path := createAppleMarkerFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(path))
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	summary, err := imp.Import(t.Context(), path, appleTestOptions())
+	requirements.NoError(err)
+	var participantID int64
+	var nativeName string
+	requirements.NoError(st.DB().QueryRow(`SELECT id, display_name FROM participants WHERE phone_number='+15555550101'`).Scan(&participantID, &nativeName))
+	beeper, err := st.GetOrCreateSource("beeper", "synthetic-account")
+	requirements.NoError(err)
+	room, err := st.EnsureConversationWithType(beeper.ID, "cold", "direct_chat", "")
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), beeper.ID, "cold", "cold"))
+	_, err = st.UpsertMessage(&store.Message{SourceID: beeper.ID, ConversationID: room, SourceMessageID: "cold-sighting", MessageType: "beeper", SenderID: sql.NullInt64{Int64: participantID, Valid: true}})
+	requirements.NoError(err)
+	check := func() {
+		var count int
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+store.FullParticipantNameWhere("p.id", "?")), participantID, nativeName, nativeName).Scan(&count))
+		assertions.Equal(1, count, "native Apple name remains independently eligible")
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND source_id=? AND address_kind='display_name' AND normalized_value=? AND source='archive_observation'`), participantID, summary.SourceID, nativeName).Scan(&count))
+		assertions.Equal(1, count, "exact name is qualified by its native source")
+	}
+	check()
+	// Simulate a pre-provenance import with old markers. Reimport must restore
+	// source evidence even when no messages have changed.
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM participant_contact_observations WHERE source_id=?`), summary.SourceID)
+	requirements.NoError(err)
+	var cursor string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT sync_cursor FROM sources WHERE id=?`), summary.SourceID).Scan(&cursor))
+	var state appleChatMarkerState
+	require.NoError(t, json.Unmarshal([]byte(cursor), &state))
+	state.Version = 1
+	legacyCursor, err := json.Marshal(state)
+	requirements.NoError(err)
+	cursor = string(legacyCursor)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET sync_cursor=? WHERE id=?`), cursor, summary.SourceID)
+	requirements.NoError(err)
+	_, err = imp.Import(t.Context(), path, appleTestOptions())
+	require.NoError(t, err)
+	check()
 }

@@ -18,6 +18,7 @@ import (
 // batch themselves; the coordinator must not hold an outer policy fence.
 type conversationPolicyCleanupLanes struct {
 	Embeddings    vector.IneligibleEmbeddingPruner
+	Persons       vector.IneligiblePersonPruner
 	Documents     vector.IneligibleDocumentPruner
 	Visuals       vector.IneligibleVisualPruner
 	nativeMissing bool
@@ -37,11 +38,14 @@ func reconcileConversationPolicyCleanup(ctx context.Context, st *store.Store, la
 			return err
 		}
 	} else {
-		if lanes.Embeddings == nil || lanes.Documents == nil || lanes.Visuals == nil {
+		if lanes.Embeddings == nil || lanes.Persons == nil || lanes.Documents == nil || lanes.Visuals == nil {
 			return errors.New("conversation-policy cleanup lane is unavailable")
 		}
 		if _, err := lanes.Embeddings.PruneIneligibleEmbeddings(ctx); err != nil {
 			return fmt.Errorf("clean policy message vectors: %w", err)
+		}
+		if _, err := lanes.Persons.PruneIneligiblePersons(ctx); err != nil {
+			return fmt.Errorf("clean policy person vectors: %w", err)
 		}
 		if _, err := lanes.Documents.PruneIneligibleDocuments(ctx); err != nil {
 			return fmt.Errorf("clean policy document vectors: %w", err)
@@ -80,7 +84,7 @@ func openConversationPolicyCleanupLanes(ctx context.Context, st *store.Store) (c
 		if err != nil {
 			return conversationPolicyCleanupLanes{}, nil, err
 		}
-		return conversationPolicyCleanupLanes{Embeddings: backend, Documents: backend.DocumentBackend(), Visuals: backend.Visual()}, backend.Close, nil
+		return conversationPolicyCleanupLanes{Embeddings: backend, Persons: backend, Documents: backend.DocumentBackend(), Visuals: backend.Visual()}, backend.Close, nil
 	}
 	dsn := cfg.Vector.DBPath
 	if dsn == "" {
@@ -100,5 +104,5 @@ func openConversationPolicyCleanupLanes(ctx context.Context, st *store.Store) (c
 	if err != nil {
 		return conversationPolicyCleanupLanes{}, nil, fmt.Errorf("open policy vector cleanup: %w", err)
 	}
-	return conversationPolicyCleanupLanes{Embeddings: backend, Documents: backend.DocumentBackend(), Visuals: backend.Visual()}, backend.Close, nil
+	return conversationPolicyCleanupLanes{Embeddings: backend, Persons: backend, Documents: backend.DocumentBackend(), Visuals: backend.Visual()}, backend.Close, nil
 }

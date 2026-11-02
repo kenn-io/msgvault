@@ -347,17 +347,21 @@ func (s *Store) applyIMAPMailboxDeltas(
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
 			}
 			if len(mailboxes) == 0 {
-				if _, err := tx.Exec(fmt.Sprintf(`
-					UPDATE messages SET deleted_from_source_at = %s
-					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
-				`, s.dialect.Now()), messageID, sourceID); err != nil {
+				if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
-			} else if _, err := tx.Exec(`
+			} else if result, err := tx.Exec(`
 				UPDATE messages SET deleted_from_source_at = NULL
 				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
 			`, messageID, sourceID); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
+			} else if restored, err := result.RowsAffected(); err != nil {
+				return err
+			} else if restored > 0 {
+				// The restored envelope supports shared participant values again.
+				if err := invalidateEnvelopeContextOnlyWith(boundQuerier{ctx: ctx, q: tx}, "support.id=?", messageID); err != nil {
+					return fmt.Errorf("invalidate restored IMAP message %d context: %w", messageID, err)
+				}
 			}
 		}
 

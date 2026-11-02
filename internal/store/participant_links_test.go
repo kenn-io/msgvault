@@ -19,10 +19,12 @@ func TestLinkParticipantsCreatesEdgeAndBumpsRevision(t *testing.T) {
 	f := storetest.New(t)
 	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+	beforeRevision, err := f.Store.IdentityRevision()
+	require.NoError(err)
 
 	rev, err := f.Store.LinkParticipants(b, a) // reversed order: must normalize
 	require.NoError(err)
-	assert.Equal(int64(1), rev)
+	assert.Equal(beforeRevision+1, rev)
 
 	clusters, err := f.Store.ParticipantClusters()
 	require.NoError(err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/personmatchpolicy"
 	"go.kenn.io/msgvault/internal/personmatchworker"
@@ -32,7 +33,7 @@ func captureAndMatch(
 	t.Helper()
 	require := require.New(t)
 
-	results, err := recorder.capture(context.Background(), participantID, u, cc)
+	results, err := captureFullTestObservations(context.Background(), t, recorder, participantID, u, cc)
 	require.NoError(err, "capture")
 	var combined matchOutcome
 	for _, result := range results {
@@ -120,7 +121,7 @@ func TestStableMatchRetainsEverySupportingObservationSource(t *testing.T) {
 		participantIdentifierType, "@source-right:beeper.local", "Right User",
 	)
 	require.NoError(err)
-	leftResults, err := recorder.capture(context.Background(), left, &User{
+	leftResults, err := captureFullTestObservations(context.Background(), t, recorder, left, &User{
 		ID:  "@source-left:beeper.local",
 		Raw: []byte(`{"id":"@source-left:beeper.local","providerID":"shared-source-id"}`),
 	}, captureContext{SourceID: firstSource, AccountID: "account-a", Network: "Telegram"})
@@ -129,7 +130,7 @@ func TestStableMatchRetainsEverySupportingObservationSource(t *testing.T) {
 	require.NotNil(leftResults[0].Observation.ProviderUserID)
 	_, err = matcher.match(context.Background(), left, leftResults[0])
 	require.NoError(err)
-	rightResults, err := recorder.capture(context.Background(), right, &User{
+	rightResults, err := captureFullTestObservations(context.Background(), t, recorder, right, &User{
 		ID:  "@source-right:beeper.local",
 		Raw: []byte(`{"id":"@source-right:beeper.local","providerID":"shared-source-id"}`),
 	}, captureContext{SourceID: secondSource, AccountID: "account-a", Network: "Telegram"})
@@ -189,7 +190,7 @@ func TestStableMatchRecordsIndependentAssertionsForTheSamePair(t *testing.T) {
 		sourceID := newBeeperTestSource(t, st, accountID)
 		recorder := newObservationRecorder(st)
 		capture := func(participantID int64, userID string) *store.RecordContactObservationResult {
-			results, captureErr := recorder.capture(t.Context(), participantID, &User{
+			results, captureErr := captureFullTestObservations(t.Context(), t, recorder, participantID, &User{
 				ID:  userID,
 				Raw: []byte(`{"id":"` + userID + `","providerID":"` + providerID + `"}`),
 			}, captureContext{
@@ -242,7 +243,7 @@ func TestStableMatchRetainsAlternateCompleteObservationPair(t *testing.T) {
 	require.NoError(err)
 
 	for _, sourceID := range leftSources {
-		results, captureErr := recorder.capture(t.Context(), left, &User{
+		results, captureErr := captureFullTestObservations(t.Context(), t, recorder, left, &User{
 			ID:  "@alternate-left:beeper.local",
 			Raw: []byte(`{"id":"@alternate-left:beeper.local","providerID":"alternate-shared-id"}`),
 		}, captureContext{SourceID: sourceID, AccountID: "account-a", Network: "Telegram"})
@@ -251,7 +252,7 @@ func TestStableMatchRetainsAlternateCompleteObservationPair(t *testing.T) {
 		_, matchErr := matcher.match(t.Context(), left, results[0])
 		require.NoError(matchErr)
 	}
-	rightResults, err := recorder.capture(t.Context(), right, &User{
+	rightResults, err := captureFullTestObservations(t.Context(), t, recorder, right, &User{
 		ID:  "@alternate-right:beeper.local",
 		Raw: []byte(`{"id":"@alternate-right:beeper.local","providerID":"alternate-shared-id"}`),
 	}, captureContext{SourceID: rightSource, AccountID: "account-a", Network: "Telegram"})
@@ -297,9 +298,9 @@ func TestIDOnlyUsersProduceNonExportableStableEvidenceAndMatch(t *testing.T) {
 		participantIdentifierType, "@telegram_id_only_right:beeper.local", "Test User")
 	require.NoError(err, "ensure right participant")
 
-	leftResults, err := recorder.capture(context.Background(), left, idOnlyUser, cc)
+	leftResults, err := captureFullTestObservations(context.Background(), t, recorder, left, idOnlyUser, cc)
 	require.NoError(err, "capture left")
-	rightResults, err := recorder.capture(context.Background(), right, &User{
+	rightResults, err := captureFullTestObservations(context.Background(), t, recorder, right, &User{
 		ID:  "@telegram_id_only_right:beeper.local",
 		Raw: []byte(`{"id":"@telegram_id_only_right:beeper.local","providerID":"native-id-only"}`),
 	}, cc)
@@ -355,12 +356,12 @@ func TestProviderIdentityIsScopedByAccountForScopedServices(t *testing.T) {
 		participantIdentifierType, "@slack_scope_right:beeper.local", "Test User")
 	require.NoError(err, "ensure right participant")
 
-	leftResults, err := recorder.capture(context.Background(), left, &User{
+	leftResults, err := captureFullTestObservations(context.Background(), t, recorder, left, &User{
 		ID:  "@slack_scope_left:beeper.local",
 		Raw: []byte(`{"id":"@slack_scope_left:beeper.local","providerID":"same-native-id"}`),
 	}, leftContext)
 	require.NoError(err, "capture left")
-	rightResults, err := recorder.capture(context.Background(), right, &User{
+	rightResults, err := captureFullTestObservations(context.Background(), t, recorder, right, &User{
 		ID:  "@slack_scope_right:beeper.local",
 		Raw: []byte(`{"id":"@slack_scope_right:beeper.local","providerID":"same-native-id"}`),
 	}, rightContext)
@@ -400,12 +401,12 @@ func TestProviderIdentityIsScopedByAccountForUnscopedServices(t *testing.T) {
 	right, err := st.EnsureParticipantByIdentifier(
 		participantIdentifierType, "@telegram_unscoped_right:beeper.local", "Test User")
 	require.NoError(err, "ensure right participant")
-	leftResults, err := recorder.capture(context.Background(), left, &User{
+	leftResults, err := captureFullTestObservations(context.Background(), t, recorder, left, &User{
 		ID:  "@telegram_unscoped_left:beeper.local",
 		Raw: []byte(`{"id":"@telegram_unscoped_left:beeper.local","providerID":"same-native-id"}`),
 	}, leftContext)
 	require.NoError(err, "capture left")
-	rightResults, err := recorder.capture(context.Background(), right, &User{
+	rightResults, err := captureFullTestObservations(context.Background(), t, recorder, right, &User{
 		ID:  "@telegram_unscoped_right:beeper.local",
 		Raw: []byte(`{"id":"@telegram_unscoped_right:beeper.local","providerID":"same-native-id"}`),
 	}, rightContext)
@@ -440,12 +441,12 @@ func TestUndocumentedProviderFieldsCannotCreateAutomaticLink(t *testing.T) {
 	right, err := st.EnsureParticipantByIdentifier(
 		participantIdentifierType, "@telegram_undocumented_right:beeper.local", "Test User")
 	require.NoError(err, "ensure right participant")
-	leftResults, err := recorder.capture(context.Background(), left, &User{
+	leftResults, err := captureFullTestObservations(context.Background(), t, recorder, left, &User{
 		ID:  "@telegram_undocumented_left:beeper.local",
 		Raw: []byte(`{"id":"@telegram_undocumented_left:beeper.local","remoteUserID":"same-remote-id","providerUserID":"same-provider-id"}`),
 	}, cc)
 	require.NoError(err, "capture left")
-	rightResults, err := recorder.capture(context.Background(), right, &User{
+	rightResults, err := captureFullTestObservations(context.Background(), t, recorder, right, &User{
 		ID:  "@telegram_undocumented_right:beeper.local",
 		Raw: []byte(`{"id":"@telegram_undocumented_right:beeper.local","remoteUserID":"same-remote-id","providerUserID":"same-provider-id"}`),
 	}, cc)
@@ -483,11 +484,11 @@ func TestBeeperFallbackIdentityIsScopedByAccount(t *testing.T) {
 	right, err := st.EnsureParticipantByIdentifier(
 		participantIdentifierType, "@same-id-b:beeper.local", "Test User")
 	require.NoError(err, "ensure right participant")
-	leftResults, err := recorder.capture(context.Background(), left, &User{
+	leftResults, err := captureFullTestObservations(context.Background(), t, recorder, left, &User{
 		ID: "@same-id:beeper.local",
 	}, leftContext)
 	require.NoError(err, "capture left")
-	rightResults, err := recorder.capture(context.Background(), right, &User{
+	rightResults, err := captureFullTestObservations(context.Background(), t, recorder, right, &User{
 		ID: "@same-id:beeper.local",
 	}, rightContext)
 	require.NoError(err, "capture right")
@@ -568,7 +569,7 @@ func TestStableProviderMatchRetriesMissingLinkAfterSameRunFailure(t *testing.T) 
 		PhoneNumber: "+12025550121",
 		Raw:         []byte(`{"providerID":"tg-retry-shared"}`),
 	}, cc)
-	results, err := recorder.capture(ctx, alsoAlice, &User{
+	results, err := captureFullTestObservations(ctx, t, recorder, alsoAlice, &User{
 		ID:          "@telegram_retry_b:beeper.local",
 		Username:    "@retry-b",
 		PhoneNumber: "+12025550122",
@@ -624,7 +625,7 @@ func TestStableProviderMatchContinuesAfterStaleReviewedAcceptance(t *testing.T) 
 		participant, err := st.EnsureParticipantByIdentifier(participantIdentifierType, id, "Stale Example")
 		require.NoError(err)
 		participants = append(participants, participant)
-		results, err := recorder.capture(ctx, participant, &User{
+		results, err := captureFullTestObservations(ctx, t, recorder, participant, &User{
 			ID: id, Username: "@stale-" + name, Raw: []byte(`{"providerID":"stale-shared"}`),
 		}, cc)
 		require.NoError(err)
@@ -1151,7 +1152,7 @@ func TestCrossScopeUsernameWithOneUnscopedObservationSurvivesUnrelatedCleanup(t 
 	providerLeft := "optional-provider-left"
 	providerRight := "optional-provider-right"
 	_, err = st.RecordContactObservationContext(ctx, left, store.ParticipantContactObservationInput{
-		SourceID: &supportSource, AddressKind: store.ContactAddressUsername,
+		SourceID: &supportSource, ConversationID: new(fullBeeperObservationRoom(t, st, supportSource)), AddressKind: store.ContactAddressUsername,
 		ServiceSlug: &service.Slug, ProviderUserID: &providerLeft, OriginalValue: "same-user",
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
 	})
@@ -1159,7 +1160,7 @@ func TestCrossScopeUsernameWithOneUnscopedObservationSurvivesUnrelatedCleanup(t 
 	scopeKind := "workspace"
 	scopeValue := "scoped-workspace"
 	result, err := st.RecordContactObservationContext(ctx, right, store.ParticipantContactObservationInput{
-		SourceID: &supportSource, AddressKind: store.ContactAddressUsername,
+		SourceID: &supportSource, ConversationID: new(fullBeeperObservationRoom(t, st, supportSource)), AddressKind: store.ContactAddressUsername,
 		ServiceSlug: &service.Slug, ScopeKind: &scopeKind, ScopeValue: &scopeValue,
 		ProviderUserID: &providerRight, OriginalValue: "same-user",
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
@@ -1270,7 +1271,7 @@ func TestCrossScopeEvidenceTracksItsExactObservationPair(t *testing.T) {
 	record := func(participantID, sourceID int64, scopeKind, scopeValue, providerID string) *store.RecordContactObservationResult {
 		result, recordErr := st.RecordContactObservationContext(
 			ctx, participantID, store.ParticipantContactObservationInput{
-				SourceID: &sourceID, AddressKind: store.ContactAddressUsername,
+				SourceID: &sourceID, ConversationID: new(fullBeeperObservationRoom(t, st, sourceID)), AddressKind: store.ContactAddressUsername,
 				ServiceSlug: &service, ScopeKind: &scopeKind, ScopeValue: &scopeValue,
 				ProviderUserID: &providerID, OriginalValue: "shared-user",
 				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
@@ -1382,8 +1383,10 @@ func TestPhoneEmailNameAndMembershipOnlyAddEvidence(t *testing.T) {
 	convID, err := st.EnsureConversationWithType(
 		conversationSource.ID, "!shared:beeper.local", "group_chat", "Shared")
 	require.NoError(err, "EnsureConversationWithType")
+	require.NoError(st.SetConversationPolicyOverride(ctx, conversationSource.ID, "!shared:beeper.local", conversationpolicy.Full))
 	require.NoError(st.EnsureConversationParticipant(convID, alice, "member"), "add alice")
 	require.NoError(st.EnsureConversationParticipant(convID, alsoAlice, "member"), "add the second alice")
+	addMatchingNameEnvelope(t, st, conversationSource.ID, convID, "shared-names", []int64{alice, alsoAlice}, []string{"Alice Example", "Alice Example"})
 
 	captureAndMatch(t, recorder, matcher, alice, &User{
 		ID: "@slack_alice:beeper.local", Username: "alice",
@@ -1514,6 +1517,7 @@ func TestConversationMembershipEvidenceTracksConversationSources(t *testing.T) {
 			source.ID, sourceConversationID, "group_chat", "Shared",
 		)
 		require.NoError(conversationErr)
+		require.NoError(st.SetConversationPolicyOverride(ctx, source.ID, sourceConversationID, conversationpolicy.Full))
 		require.NoError(st.EnsureConversationParticipant(conversationID, alice, "member"))
 		require.NoError(st.EnsureConversationParticipant(conversationID, alsoAlice, "member"))
 		conversation := sharedConversation{
@@ -1634,6 +1638,10 @@ func TestThreeParticipantCollisionExplainsAndReportsEveryConflict(t *testing.T) 
 		participants = append(participants, participantID)
 	}
 
+	nameSource := newBeeperTestSource(t, st, "collision-name-support")
+	nameRoom := fullBeeperObservationRoom(t, st, nameSource)
+	addMatchingNameEnvelope(t, st, nameSource, nameRoom, "collision-names", participants, []string{"Collision User", "Collision User", "Collision User"})
+
 	conflictCount := 0
 	for index, participantID := range participants {
 		providerID := "provider-" + strconv.Itoa(index)
@@ -1691,7 +1699,7 @@ func TestScoringBlocksOversizedBeeperServiceSlugs(t *testing.T) {
 			user := &User{ID: "@example:example.test", FullName: "Synthetic Person"}
 			left, err := newParticipantResolver(st, account).resolveUser(user)
 			require.NoError(err)
-			_, err = newObservationRecorder(st).capture(ctx, left, user, captureContext{
+			_, err = captureFullTestObservations(ctx, t, newObservationRecorder(st), left, user, captureContext{
 				SourceID: firstSource, AccountID: account, Network: "Synthetic Service",
 			})
 			require.NoError(err)
@@ -1706,7 +1714,7 @@ func TestScoringBlocksOversizedBeeperServiceSlugs(t *testing.T) {
 			require.NoError(err)
 			for _, evidence := range []store.IdentityMatchEvidenceInput{
 				{EvidenceKind: "email", Source: store.ProvenanceArchiveObservation, SourceID: &firstSource},
-				{EvidenceKind: "display_name", Source: store.ProvenanceArchiveObservation, SourceID: &secondSource.ID},
+				{EvidenceKind: "stable_provider_id", Source: store.ProvenanceArchiveObservation, SourceID: &secondSource.ID},
 			} {
 				_, err = st.AddIdentityMatchEvidenceContext(ctx, candidate.ID, evidence)
 				require.NoError(err)
