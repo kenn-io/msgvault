@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -35,7 +36,7 @@ type Client struct {
 }
 
 func NewClient(token string) (*Client, error) {
-	if token == "" || bytes.ContainsAny([]byte(token), "\r\n") {
+	if token == "" || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("TikTok access token is empty or invalid")
 	}
 	transport := &http.Transport{
@@ -78,7 +79,7 @@ func (c *Client) request(ctx context.Context, path string, query url.Values, pay
 	if retry {
 		attempts = 3
 	}
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := range attempts {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -137,13 +138,14 @@ func (c *Client) request(ctx context.Context, path string, query url.Values, pay
 			if resp.StatusCode == http.StatusTooManyRequests || code == 40100 {
 				return errors.Join(ErrRateLimited, c.limiter.Block(ctx))
 			}
-			if resp.StatusCode >= 500 && attempt+1 < attempts {
-				// Retry safe reads only. Refresh calls have attempts=1.
-			} else if resp.StatusCode < 200 || resp.StatusCode >= 300 || (envelope.Code != nil && code != 0) {
-				return &APIError{Status: resp.StatusCode, Code: code}
-			} else if decodeErr != nil || envelope.Code == nil || len(envelope.Data) == 0 || bytes.Equal(envelope.Data, []byte("null")) {
-				return errors.New("invalid TikTok API response envelope")
-			} else {
+			// Retry safe reads only. Refresh calls have attempts=1.
+			if !(resp.StatusCode >= 500 && attempt+1 < attempts) {
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 || (envelope.Code != nil && code != 0) {
+					return &APIError{Status: resp.StatusCode, Code: code}
+				}
+				if decodeErr != nil || envelope.Code == nil || len(envelope.Data) == 0 || bytes.Equal(envelope.Data, []byte("null")) {
+					return errors.New("invalid TikTok API response envelope")
+				}
 				if err := json.Unmarshal(envelope.Data, result, json.StringifyNumbers(false)); err != nil {
 					return errors.New("invalid TikTok API response data")
 				}

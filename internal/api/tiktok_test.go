@@ -7,6 +7,7 @@ import (
 )
 
 func TestTikTokDaemonCLIAllowlist(t *testing.T) {
+	assertions := assert.New(t)
 	for _, tc := range []struct {
 		args    []string
 		allowed bool
@@ -17,9 +18,9 @@ func TestTikTokDaemonCLIAllowlist(t *testing.T) {
 		{[]string{"source", "other", "sync"}, false},
 		{[]string{"source", "tiktok-comments"}, false},
 	} {
-		assert.Equal(t, tc.allowed, cliRunCommandAllowed(tc.args), tc.args)
+		assertions.Equal(tc.allowed, cliRunCommandAllowed(tc.args), tc.args)
 	}
 	job, ok := SchedulerJobNameForSource("tiktok_comments", "example")
-	assert.True(t, ok)
-	assert.Equal(t, "tiktok-comments:example", job)
+	assertions.True(ok)
+	assertions.Equal("tiktok-comments:example", job)
 }

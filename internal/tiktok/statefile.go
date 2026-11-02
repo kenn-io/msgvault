@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -20,7 +21,7 @@ func withFileLock(ctx context.Context, path string, fn func() error) (err error)
 	lock := flock.New(path+".lock", flock.SetPermissions(0600))
 	locked, err := lock.TryLockContext(ctx, 25*time.Millisecond)
 	if err != nil {
-		return err
+		return fmt.Errorf("lock TikTok state: %w", err)
 	}
 	if !locked {
 		return ctx.Err()

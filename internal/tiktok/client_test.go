@@ -27,22 +27,24 @@ func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
 }
 
 func TestClientCommentsPreserveIDsAndPaging(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "fixture-access-token", r.Header.Get("Access-Token"))
-		assert.Empty(t, r.URL.Query().Get("access_token"))
-		assert.Equal(t, "/business/comment/list/", r.URL.Path)
-		assert.Equal(t, "account+example/", r.URL.Query().Get("business_id"))
-		assert.Equal(t, "9007199254740993", r.URL.Query().Get("video_id"))
-		assert.Equal(t, "ALL", r.URL.Query().Get("status"))
-		assert.Equal(t, "30", r.URL.Query().Get("max_count"))
+		assertions.Equal("fixture-access-token", r.Header.Get("Access-Token"))
+		assertions.Empty(r.URL.Query().Get("access_token"))
+		assertions.Equal("/business/comment/list/", r.URL.Path)
+		assertions.Equal("account+example/", r.URL.Query().Get("business_id"))
+		assertions.Equal("9007199254740993", r.URL.Query().Get("video_id"))
+		assertions.Equal("ALL", r.URL.Query().Get("status"))
+		assertions.Equal("30", r.URL.Query().Get("max_count"))
 		_, _ = fmt.Fprint(w, `{"code":0,"data":{"comments":[{"comment_id":9007199254740999,"video_id":"9007199254740993","text":"Synthetic comment","unique_identifier":"actor+example/","create_time":1700000000}],"cursor":9007199254740997,"has_more":true}}`)
 	})
 	page, err := c.Comments(t.Context(), "account+example/", "9007199254740993", "", "")
-	require.NoError(t, err)
-	require.Len(t, page.Comments, 1)
-	assert.Equal(t, ID("9007199254740999"), page.Comments[0].ID)
-	assert.Equal(t, ID("9007199254740997"), page.Cursor)
-	assert.True(t, page.HasMore)
+	requirements.NoError(err)
+	requirements.Len(page.Comments, 1)
+	assertions.Equal(ID("9007199254740999"), page.Comments[0].ID)
+	assertions.Equal(ID("9007199254740997"), page.Cursor)
+	assertions.True(page.HasMore)
 }
 
 func TestClientFailuresAreBoundedAndSanitized(t *testing.T) {
@@ -56,6 +58,7 @@ func TestClientFailuresAreBoundedAndSanitized(t *testing.T) {
 		{"invalid", `private response`, 200, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
 			calls := 0
 			c := fixtureClient(t, func(w http.ResponseWriter, _ *http.Request) {
 				calls++
@@ -65,14 +68,15 @@ func TestClientFailuresAreBoundedAndSanitized(t *testing.T) {
 			c.wait = func(context.Context, time.Duration) error { return nil }
 			_, err := c.Account(t.Context(), "account-example")
 			require.Error(t, err)
-			assert.NotContains(t, err.Error(), "fixture-access-token")
-			assert.NotContains(t, err.Error(), "private")
-			assert.Equal(t, tc.calls, calls)
+			assertions.NotContains(err.Error(), "fixture-access-token")
+			assertions.NotContains(err.Error(), "private")
+			assertions.Equal(tc.calls, calls)
 		})
 	}
 }
 
 func TestLimiterPersistsPacingAndCooldown(t *testing.T) {
+	requirements := require.New(t)
 	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "rate.json")
 	l := NewLimiter("")
@@ -80,34 +84,35 @@ func TestLimiterPersistsPacingAndCooldown(t *testing.T) {
 	var waited time.Duration
 	l.wait = func(_ context.Context, d time.Duration) error { waited += d; now = now.Add(d); return nil }
 	for range 601 {
-		require.NoError(t, l.Wait(t.Context()))
+		requirements.NoError(l.Wait(t.Context()))
 	}
 	assert.GreaterOrEqual(t, waited, time.Minute)
 	l = NewLimiter(path)
 	l.now = func() time.Time { return now }
 	l.wait = func(_ context.Context, d time.Duration) error { now = now.Add(d); return nil }
-	require.NoError(t, l.Wait(t.Context()))
+	requirements.NoError(l.Wait(t.Context()))
 	shared := NewLimiter(path)
 	shared.now, shared.wait = l.now, l.wait
-	require.NoError(t, shared.Wait(t.Context()))
-	require.NoError(t, l.Block(t.Context()))
+	requirements.NoError(shared.Wait(t.Context()))
+	requirements.NoError(l.Block(t.Context()))
 	restarted := NewLimiter(path)
 	restarted.now = l.now
-	require.ErrorIs(t, restarted.Wait(t.Context()), ErrRateLimited)
+	requirements.ErrorIs(restarted.Wait(t.Context()), ErrRateLimited)
 	now = now.Add(5 * time.Minute)
-	require.NoError(t, restarted.Wait(t.Context()))
+	requirements.NoError(restarted.Wait(t.Context()))
 }
 
 func TestClientThrottleDoesNotRetryInsideLockout(t *testing.T) {
+	requirements := require.New(t)
 	calls := 0
 	c := fixtureClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		_, _ = fmt.Fprint(w, `{"code":40100,"message":"limited"}`)
 	})
 	_, err := c.Account(t.Context(), "account-example")
-	require.ErrorIs(t, err, ErrRateLimited)
+	requirements.ErrorIs(err, ErrRateLimited)
 	_, err = c.Account(t.Context(), "account-example")
-	require.ErrorIs(t, err, ErrRateLimited)
+	requirements.ErrorIs(err, ErrRateLimited)
 	assert.Equal(t, 1, calls)
 }
 

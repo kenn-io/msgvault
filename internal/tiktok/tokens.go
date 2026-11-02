@@ -16,8 +16,8 @@ import (
 type TokenBundle struct {
 	AccessToken      string    `json:"access_token"`
 	RefreshToken     string    `json:"refresh_token,omitempty"`
-	ExpiresAt        time.Time `json:"expires_at,omitempty"`
-	RefreshExpiresAt time.Time `json:"refresh_expires_at,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at,omitzero"`
+	RefreshExpiresAt time.Time `json:"refresh_expires_at,omitzero"`
 }
 type tokenState struct {
 	Bootstrap      string      `json:"bootstrap"`

@@ -12,9 +12,9 @@ import (
 )
 
 type CommentsAPI interface {
-	Account(context.Context, string) (Account, error)
-	Videos(context.Context, string, string) (VideoPage, error)
-	Comments(context.Context, string, string, string, string) (CommentPage, error)
+	Account(ctx context.Context, account string) (Account, error)
+	Videos(ctx context.Context, account, cursor string) (VideoPage, error)
+	Comments(ctx context.Context, account, video, parent, cursor string) (CommentPage, error)
 }
 type Importer struct {
 	store *store.Store

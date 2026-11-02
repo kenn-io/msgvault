@@ -8,13 +8,15 @@ import (
 )
 
 func TestTikTokProfiles(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	valid := TikTokSource{Identifier: "Example", AppID: "app-example", AccountID: "account+example/", TokenEnv: "EXAMPLE_TIKTOK_TOKEN", Enabled: true, Schedule: "*/30 * * * *"}
 	cfg := NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.TikTok = []TikTokSource{valid}
-	require.NoError(t, cfg.validateTikTokSources())
-	assert.Equal(t, &valid, cfg.GetTikTokSource("example"))
-	assert.Len(t, cfg.ScheduledTikTokSources(), 1)
+	requirements.NoError(cfg.validateTikTokSources())
+	assertions.Equal(&valid, cfg.GetTikTokSource("example"))
+	assertions.Len(cfg.ScheduledTikTokSources(), 1)
 	for _, tc := range []struct {
 		name   string
 		modify func(*TikTokSource)
@@ -32,5 +34,5 @@ func TestTikTokProfiles(t *testing.T) {
 		})
 	}
 	cfg.TikTok = []TikTokSource{valid, valid}
-	require.Error(t, cfg.validateTikTokSources())
+	requirements.Error(cfg.validateTikTokSources())
 }
