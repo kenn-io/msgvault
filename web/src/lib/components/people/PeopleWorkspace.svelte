@@ -51,6 +51,8 @@
   let bulkCompleted = $state(0);
   let bulkContext = $state<ReturnType<RelationshipsController['personMergeContextSnapshot']>>();
   let staleLink = $state<{ a: number; b: number } | null>(null);
+  // A bulk run that linked anyone moved activity between people, so Saved refreshes as it does after a Details link.
+  $effect(() => { if (!bulkPending && bulkCompleted > 0) untrack(() => void directory.reloadFirstPage()); });
   type SoloProfile = { id: number; display_name: string; targets: string[] };
   let soloProfile = $state<SoloProfile | null>(null);
   const profileFilters = $derived(Boolean(urlState.directoryContactState || urlState.directoryCategory || urlState.directoryOrganization || urlState.directoryPrimaryChannel || urlState.directoryLastContactAfter || urlState.directoryLastContactBefore));

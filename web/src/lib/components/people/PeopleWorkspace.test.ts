@@ -301,6 +301,46 @@ it('refreshes the Saved last-contact date after linking an unprofiled identity f
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
+it.each(['complete', 'partial'])('refreshes cached Saved dates and Most recent order after a %s bulk link', async (batch) => {
+  let linked = false;
+  const one = { ...profile(7, 1, [1]), organizations: [], categories: [], contact_state: 'active', last_contact_at: '2019-07-18T10:00:00Z' };
+  const two = { ...profile(9, 1, [4]), organizations: [], categories: [], contact_state: 'active', last_contact_at: '2020-07-18T10:00:00Z' };
+  const client = clientFor({
+    '/api/v1/people/directory': request => {
+      expect(new URL(request.url).searchParams.get('sort')).toBe('last_contact_desc');
+      return Response.json({ people: linked ? [{ ...one, participant_ids: [1, 2], last_contact_at: '2021-07-18T10:00:00Z' }, two] : [two, one] });
+    },
+    '/api/v1/participants/search': () => Response.json({ rows: ['Synthetic One', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ id: index + 1, display_label, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], ...(index === 0 ? { profile: { id: 7 } } : {}) })), total_count: 3, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/identity/links': async request => {
+      const pair = await request.json();
+      expect(pair).toEqual({ participant_a: 1, participant_b: linked ? 3 : 2 });
+      if (linked) return Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 });
+      linked = true;
+      return Response.json({ identity_revision: 2, cache_state: 'ready' });
+    },
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipSort: 'recent' });
+  const directory = new DirectoryController(client);
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: patch => state.commitNavigation(patch), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const list = within(await screen.findByRole('grid', { name: 'People results' }));
+    await list.findByText('2019');
+    expect(list.getAllByRole('row').map(row => row.textContent)).toEqual([expect.stringMatching(/Synthetic Two.*2020/), expect.stringMatching(/Synthetic One.*2019/)]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Saved' }));
+    await view.rerender({ urlState: state.current });
+    for (const name of batch === 'partial' ? ['Synthetic One', 'Bob Example', 'Cara Example'] : ['Synthetic One', 'Bob Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await screen.findByText(batch === 'partial' ? '1 of 2 linked. Synthetic link failed' : 'People are now treated as the same person.');
+    expect(linked).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: /Filter/ }));
+    await fireEvent.click(await screen.findByText('Saved', { exact: true }));
+    await view.rerender({ urlState: state.current });
+    await waitFor(() => expect(list.getAllByRole('row').map(row => row.textContent)).toEqual([expect.stringMatching(/Synthetic One.*2021/), expect.stringMatching(/Synthetic Two.*2020/)]));
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('refreshes the Saved list after merging profiles from Details', async () => {
   let merged = false;
   const one = { ...profile(7, 4, [1]), organizations: [], categories: [], contact_state: 'active' };
