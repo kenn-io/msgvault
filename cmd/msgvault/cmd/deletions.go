@@ -36,13 +36,14 @@ import (
 var listDeletionsJSON bool
 
 var listDeletionsCmd = &cobra.Command{
-	Use:   "list-deletions",
-	Short: "List pending and recent deletion batches",
+	Use:     "list-deletions",
+	Short:   "List pending and recent deletion batches",
+	Example: "  msgvault deletion list",
 	Long: `List all deletion batches across all statuses.
 
 Shows pending, in-progress, completed, and failed deletion batches
 with their ID, status, message count, and creation date. Use --json for
-full, untruncated batch IDs suitable for show-deletion and delete-staged.`,
+full, untruncated batch IDs suitable for deletion show and deletion execute.`,
 	Args: cobra.NoArgs,
 	RunE: runListDeletions,
 }
@@ -150,10 +151,12 @@ func writeDeletionsJSON(w io.Writer, groups ...[]*deletion.Manifest) error {
 }
 
 var showDeletionCmd = &cobra.Command{
-	Use:   "show-deletion <batch-id>",
-	Short: "Show details of a deletion batch",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runShowDeletion,
+	Use:     "show-deletion <batch-id>",
+	Short:   "Show details of a deletion batch",
+	Long:    "Inspect a staged deletion batch by the ID returned when staging or by deletion list. Review its messages and state before running deletion execute. This command does not delete anything.",
+	Example: "  msgvault deletion show batch-example",
+	Args:    cobra.ExactArgs(1),
+	RunE:    runShowDeletion,
 }
 
 func runShowDeletion(cmd *cobra.Command, args []string) error {
@@ -178,7 +181,7 @@ func runShowDeletion(cmd *cobra.Command, args []string) error {
 
 	manifest, _, err := manager.GetManifest(batchID)
 	if err != nil {
-		return fmt.Errorf("get manifest: %w", err)
+		return withHint(fmt.Errorf("get manifest: %w", err), "find batch IDs with 'msgvault deletion list'")
 	}
 
 	fmt.Print(manifest.FormatSummary())
@@ -188,13 +191,14 @@ func runShowDeletion(cmd *cobra.Command, args []string) error {
 var cancelAll bool
 
 var cancelDeletionCmd = &cobra.Command{
-	Use:   "cancel-deletion [batch-id]",
-	Short: "Cancel pending or in-progress deletion batches",
+	Use:     "cancel-deletion [batch-id]",
+	Short:   "Cancel pending or in-progress deletion batches",
+	Example: "  msgvault deletion cancel batch-example",
 	Long: `Cancel deletion batches by ID, or use --all to cancel all pending and in-progress batches.
 
 Examples:
-  msgvault cancel-deletion 20260202-195132-Senders-wingide-user
-  msgvault cancel-deletion --all`,
+  msgvault deletion cancel 20260202-195132-Senders-wingide-user
+  msgvault deletion cancel --all`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runCancelDeletion,
 }
@@ -475,9 +479,9 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 			totalMessages += len(m.GmailIDs)
 		}
 		fmt.Fprintf(&out, "\nTotal: %d messages across %d batch(es)\n", totalMessages, len(manifests))
-		out.WriteString("\nUse 'msgvault show-deletion <id>' for details.\n")
-		out.WriteString("To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'.\n")
-		out.WriteString("One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.\n")
+		out.WriteString("\nUse 'msgvault deletion show <id>' for details.\n")
+		out.WriteString("To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault deletion execute'.\n")
+		out.WriteString("One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute.\n")
 		plan.Stdout = out.String()
 		return plan, nil
 	}
@@ -625,9 +629,9 @@ func assertDeleteStagedMethodMatchesFlag(manifests []*deletion.Manifest, permane
 		if m.Execution.Method == wantMethod {
 			continue
 		}
-		rerun := "msgvault delete-staged --permanent"
+		rerun := "msgvault deletion execute --permanent"
 		if m.Execution.Method == deletion.MethodTrash {
-			rerun = "msgvault delete-staged"
+			rerun = "msgvault deletion execute"
 		}
 		return fmt.Errorf(
 			"batch %s was started with method %q and must be resumed with it; rerun with '%s'",
@@ -921,8 +925,9 @@ func newDeleteStagedScopeEscalation(
 }
 
 var deleteStagedCmd = &cobra.Command{
-	Use:   "delete-staged [batch-id]",
-	Short: "Execute staged deletions",
+	Use:     "delete-staged [batch-id]",
+	Short:   "Execute staged deletions",
+	Example: "  msgvault deletion execute --dry-run\n  msgvault deletion execute batch-example --yes",
 	Long: `Execute pending deletion batches.
 
 By default, messages are moved to the trash: Gmail Trash (recoverable for
@@ -942,15 +947,17 @@ Or enable one command with MSGVAULT_ENABLE_REMOTE_DELETE=1. Both mechanisms
 are permanent; there is no planned automatic removal of the guardrail. A
 remote daemon's deletion section is not policy for a command invoked
 elsewhere. Staging and read-only modes (--list, --dry-run) work without the
-gate.
+gate. Ask the archive owner to approve remote deletion; agent grants cannot enable it.
+--yes skips the ordinary trash prompt when stdin is closed. Permanent deletion
+always requires typing delete, even with --yes.
 
 Examples:
-  msgvault delete-staged --list         # Show staged batches (always allowed)
-  msgvault delete-staged --dry-run      # Preview without executing (always allowed)
-  msgvault delete-staged                 # With durable config consent
-  msgvault delete-staged batch-123       # With durable config consent
-  msgvault delete-staged --permanent     # With durable config consent
-  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes  # One command`,
+  msgvault deletion execute --list         # Show staged batches (always allowed)
+  msgvault deletion execute --dry-run      # Preview without executing (always allowed)
+  msgvault deletion execute                 # With durable config consent
+  msgvault deletion execute batch-123       # With durable config consent
+  msgvault deletion execute --permanent     # With durable config consent
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute --yes  # One command`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
@@ -1000,7 +1007,7 @@ Examples:
 			return err
 		}
 		if planFingerprint != "" && plan.PlanFingerprint != planFingerprint {
-			return errors.New("staged deletion plan changed since confirmation; run msgvault delete-staged again")
+			return errors.New("staged deletion plan changed since confirmation; run msgvault deletion execute again")
 		}
 		if !skipPrelude {
 			_, _ = fmt.Fprint(cmd.OutOrStdout(), plan.Stdout)
@@ -1009,7 +1016,7 @@ Examples:
 			return nil
 		}
 		if plan.BlockedError != "" {
-			return errors.New(plan.BlockedError)
+			return withHint(errors.New(plan.BlockedError), "ask the archive owner to approve remote deletion in the invoking CLI configuration; agent grants cannot enable it")
 		}
 		if plan.NeedsConfirmation && !confirmed {
 			ok, err := confirmDeleteStaged(cmd.InOrStdin(), cmd.OutOrStdout(), plan.ConfirmationMode)
@@ -1229,7 +1236,7 @@ Examples:
 					if src.SourceType == sourceTypeMSMail && isInsufficientScopeError(execErr) {
 						return fmt.Errorf(
 							"graph mail delete for %s was denied: add the delegated Mail.ReadWrite "+
-								"permission to the app registration, grant consent, then run delete-staged again: %w",
+								"permission to the app registration, grant consent, then run deletion execute again: %w",
 							account, execErr,
 						)
 					}
@@ -1240,7 +1247,7 @@ Examples:
 							return fmt.Errorf(
 								"service account lacks required Gmail deletion scope for %s: "+
 									"authorize https://mail.google.com/ for the service account client "+
-									"in Google Admin Console, then run delete-staged again",
+									"in Google Admin Console, then run deletion execute again",
 								account,
 							)
 						}
@@ -1250,7 +1257,7 @@ Examples:
 							}
 							return err
 						}
-						fmt.Println("Run delete-staged again to continue.")
+						fmt.Println("Run deletion execute again to continue.")
 						return nil
 					}
 
@@ -1308,7 +1315,7 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if plan.BlockedError != "" {
-		return errors.New(plan.BlockedError)
+		return withHint(errors.New(plan.BlockedError), "ask the archive owner to approve remote deletion in the invoking CLI configuration; agent grants cannot enable it")
 	}
 	promptInput := bufio.NewReader(cmd.InOrStdin())
 	if plan.NeedsConfirmation {
@@ -1336,7 +1343,7 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(plan.PlannedBatchIDs) == 0 || plan.PlanFingerprint == "" {
-		return errors.New("delete-staged plan response did not include pinned batch IDs; upgrade the daemon and retry")
+		return errors.New("deletion execute plan response did not include pinned batch IDs; upgrade the daemon and retry")
 	}
 	if err := cmd.Flags().Set(deleteStagedConfirmedFlag, "true"); err != nil {
 		return fmt.Errorf("set --%s after confirmation: %w", deleteStagedConfirmedFlag, err)
@@ -1423,7 +1430,10 @@ func confirmDeleteStaged(in io.Reader, out io.Writer, mode string) (bool, error)
 		if err != nil {
 			return false, fmt.Errorf("read confirmation: %w", err)
 		}
-		if !ok || strings.TrimSpace(answer) != "delete" {
+		if !ok {
+			return false, confirmationEOF(ConfirmModePermanent)
+		}
+		if strings.TrimSpace(answer) != "delete" {
 			_, _ = fmt.Fprintln(out, "Cancelled. Drop --permanent to use trash deletion without elevated permissions.")
 			return false, nil
 		}
@@ -1435,8 +1445,7 @@ func confirmDeleteStaged(in io.Reader, out io.Writer, mode string) (bool, error)
 			return false, fmt.Errorf("read confirmation: %w", err)
 		}
 		if !ok {
-			_, _ = fmt.Fprintln(out, "Cancelled.")
-			return false, nil
+			return false, confirmationEOF(ConfirmModeYesNo)
 		}
 		if !isYesAnswer(strings.TrimSpace(strings.ToLower(answer))) {
 			_, _ = fmt.Fprintln(out, "Cancelled.")
@@ -1444,7 +1453,7 @@ func confirmDeleteStaged(in io.Reader, out io.Writer, mode string) (bool, error)
 		}
 		return true, nil
 	default:
-		return false, fmt.Errorf("unknown delete-staged confirmation mode %q", mode)
+		return false, fmt.Errorf("unknown deletion execute confirmation mode %q", mode)
 	}
 }
 

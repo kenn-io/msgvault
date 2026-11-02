@@ -11,8 +11,9 @@ func newOpenAPICmd() *cobra.Command {
 	var version string
 	var format string
 	cmd := &cobra.Command{
-		Use:   "openapi",
-		Short: "Print the msgvault OpenAPI schema",
+		Use:     "openapi",
+		Short:   "Print the msgvault OpenAPI schema",
+		Example: "  msgvault openapi --format json > openapi.json",
 		Long: `Print the msgvault OpenAPI schema to stdout.
 
 The schema is generated in-process from the daemon's Huma route definitions; it

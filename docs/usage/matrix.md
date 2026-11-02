@@ -17,20 +17,20 @@ Create a password file readable only by your user, then register the account:
 
 ```bash
 chmod 600 /path/to/matrix-password
-msgvault add-matrix \
+msgvault source matrix add \
   --homeserver https://matrix.example.org \
   --user-id @archive:example.org \
   --password-file /path/to/matrix-password
 ```
 
-`add-matrix` creates a separate Matrix device named **msgvault (read-only)**.
+`source matrix add` creates a separate Matrix device named **msgvault (read-only)**.
 It stores the access token in an owner-only file under `tokens/`.
 
-To renew a revoked or expired login, run `add-matrix` again for the same user.
+To renew a revoked or expired login, run `source matrix add` again for the same user.
 It saves the new device's token in place, logs out the old device, and keeps
 the archived history and sync state. If renewal stops partway, for example on
 a full disk, the new login is kept in a pending file under `tokens/` and the
-next `add-matrix` run for that user finishes with that login instead of
+next `source matrix add` run for that user finishes with that login instead of
 creating another device. That run still reads `--password-file` or
 `--login-token-file` but doesn't use it, so an already-used SSO token file is
 fine.
@@ -44,13 +44,13 @@ flow depends on the homeserver and identity provider.
 
 ```bash
 # First run backfills joined rooms; later runs use the saved /sync token.
-msgvault sync-matrix
+msgvault source matrix sync
 
 # Re-read complete history to pick up anything missed.
-msgvault sync-matrix --full
+msgvault source matrix sync --full
 
 # Sync one registered Matrix user.
-msgvault sync-matrix --account @archive:example.org
+msgvault source matrix sync --account @archive:example.org
 ```
 
 The first run takes a Matrix `/sync` snapshot, then walks backward through each
@@ -62,7 +62,7 @@ previous sync token before committing the new one.
 
 Room include and exclude lists use exact Matrix room IDs. Configure them with
 the [`[matrix]` settings](../configuration.md#matrix). The exclude list wins
-when a room appears in both lists. Run `msgvault sync-matrix --full` after
+when a room appears in both lists. Run `msgvault source matrix sync --full` after
 changing either list so newly included quiet rooms are discovered immediately.
 
 Every `/sync` request sends `set_presence=offline`. The Matrix client-server

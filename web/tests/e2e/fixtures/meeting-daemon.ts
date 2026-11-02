@@ -199,7 +199,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
         const person = (await promoted.json()) as { id: number };
         const cache = await run(
           binary,
-          ["--home", archive, "build-cache", "--full-rebuild"],
+          ["--home", archive, "cache", "build", "--full-rebuild"],
           { cwd: repo, env, timeout: 120_000, maxBuffer: 256 * 1024 },
         );
         logs += `\nCache build:\n${cache.stdout}${cache.stderr}`;

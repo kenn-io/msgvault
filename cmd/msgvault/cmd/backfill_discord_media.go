@@ -59,6 +59,8 @@ func newBackfillDiscordMediaLocalCmd(deps discordCommandDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill-discord-media [guild-id-or-name]",
 		Short: "Retry pending Discord attachment downloads",
+		Example: `  msgvault source discord backfill-media
+  msgvault source discord backfill-media "Example Guild" --only-incomplete`,
 		Long: `Refresh Discord message attachment metadata and retry pending media.
 
 By default, every archived message with Discord attachments is scanned; already

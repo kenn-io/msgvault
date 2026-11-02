@@ -19,10 +19,10 @@ func TestCLIRunCommandAllowedSlackCommands(t *testing.T) {
 		{"import-slackdump", "--me=U0123456789", "/tmp/slackdump.zip"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
-			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
+			assert.True(t, CLIRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
 		})
 	}
-	assert.False(t, cliRunCommandAllowed([]string{"slack-not-a-command"}))
+	assert.False(t, CLIRunCommandAllowed([]string{"slack-not-a-command"}))
 }
 
 func TestCLIRunCommandAllowedNotionMeetingsCommands(t *testing.T) {
@@ -34,7 +34,7 @@ func TestCLIRunCommandAllowedNotionMeetingsCommands(t *testing.T) {
 		{"sync-notion-meetings", "notion-personal", "--full"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
-			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
+			assert.True(t, CLIRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
 		})
 	}
 }
@@ -48,7 +48,7 @@ func TestCLIRunCommandAllowedMuesliCommands(t *testing.T) {
 		{"sync-muesli", "mac", "--full"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
-			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
+			assert.True(t, CLIRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
 		})
 	}
 }

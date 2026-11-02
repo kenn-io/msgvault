@@ -42,22 +42,11 @@ Use --allow-insecure only for trusted local networks (e.g., Tailscale).
 
 Environment variables:
   MSGVAULT_REMOTE_URL      Remote server URL (alternative to --to)
-  MSGVAULT_REMOTE_API_KEY  API key (alternative to --api-key)
-
-Examples:
-  # Export token to NAS over HTTPS
-  msgvault export-token user@example.com --to https://archive.example:8080 --api-key YOUR_KEY
-
-  # Upload a Calendar token without registering a Gmail sync account
-  msgvault export-token user@example.com --upload-only
-
-  # Using environment variables
-  export MSGVAULT_REMOTE_URL=https://archive.example:8080
-  export MSGVAULT_REMOTE_API_KEY=your-key
-  msgvault export-token user@example.com
-
-  # With Tailscale (trusted network, HTTP allowed)
-  msgvault export-token user@example.com --to http://archive.example:8080 --api-key KEY --allow-insecure`,
+  MSGVAULT_REMOTE_API_KEY  API key (alternative to --api-key)`,
+	Example: `  # Set MSGVAULT_REMOTE_API_KEY in the environment before exporting
+  msgvault account export-token you@example.com --to https://archive.example:8080
+  msgvault account export-token you@example.com --upload-only
+  msgvault account export-token you@example.com --to http://archive.example:8080 --allow-insecure`,
 	Args: cobra.ExactArgs(1),
 	RunE: runExportToken,
 }
@@ -114,7 +103,7 @@ func (e *tokenExporter) export(
 
 	tokenData, err := oauth.NewTokenStore(e.tokensDir, e.tokenCommands).Read(ctx, email)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("no token found for %s\n\nRun 'msgvault add-account %s' first to authenticate", email, email)
+		return nil, fmt.Errorf("no token found for %s\n\nRun 'msgvault source gmail add %s' first to authenticate", email, email)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token: %w", err)

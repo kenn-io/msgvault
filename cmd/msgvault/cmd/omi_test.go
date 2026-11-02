@@ -243,7 +243,7 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	err := runConfiguredOmiSync(context.Background(), st, t.TempDir(), config.OmiSource{Identifier: "missing", AccountEmail: "owner@example.com", APIKey: "test"})
-	require.ErrorContains(err, "add-omi missing")
+	require.ErrorContains(err, "source omi add missing")
 	sources, err := st.ListSources(omi.SourceType)
 	require.NoError(err)
 	assert.Empty(sources)

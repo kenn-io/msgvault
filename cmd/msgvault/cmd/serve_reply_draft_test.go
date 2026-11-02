@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
@@ -277,8 +278,10 @@ func TestDraftRecipientInferenceIsReplyOnly(t *testing.T) {
 			if command == "draft-compose" {
 				args = append(args, "--subject", "Subject")
 			}
-			err := adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: args}, func(api.CLIRunEvent) error { return nil })
-			require.EqualError(t, err, "from_ambiguous")
+			for _, path := range [][]string{args, cligrammar.Canonical(args)} {
+				err := adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: path}, func(api.CLIRunEvent) error { return nil })
+				require.EqualError(t, err, "from_ambiguous", "%v", path)
+			}
 		})
 	}
 }
@@ -967,24 +970,36 @@ func TestDraftReplyCLIFailureOutput(t *testing.T) {
 					args = append(args, "--json")
 				}
 				root.SetArgs(args)
-				requirements.Error(root.ExecuteContext(testCtx))
+				err := executeRootContext(testCtx, root, args)
+				requirements.Error(err)
 				assertions.Empty(stdout.String())
-				assertions.Len(strings.Split(strings.TrimSpace(stderr.String()), "\n"), 1, stderr.String())
 				switch failure {
 				case "local persistence":
 					if asJSON {
+						code, details := cliErrorEnvelopeDetails(t, stderr.Bytes())
+						assertions.Equal("remote_accepted_local_failed", code)
 						var result draftReplyOutput
-						requirements.NoError(json.Unmarshal(stderr.Bytes(), &result), stderr.String())
+						requirements.NoError(json.Unmarshal(details, &result), stderr.String())
 						assertions.Equal(draftReplyStatusLocalFailed, result.Status)
 						assertions.NotEmpty(result.OperationRef)
 					} else {
 						assertions.Contains(stderr.String(), "remote accepted; local persistence failed, inspect operation ")
 					}
 				case "APPEND rejected":
-					assertions.Equal("append_rejected\n", stderr.String())
+					if asJSON {
+						code, _ := cliErrorEnvelopeDetails(t, stderr.Bytes())
+						assertions.Equal("append_rejected", code)
+					} else {
+						assertions.Contains(stderr.String(), "Error: append_rejected")
+						assertions.Contains(stderr.String(), "append_rejected")
+					}
 				case "no result":
-					assertions.Contains(stderr.String(), "Error:")
-					assertions.Contains(stderr.String(), "draft_disabled")
+					if asJSON {
+						code, _ := cliErrorEnvelopeDetails(t, stderr.Bytes())
+						assertions.Equal("draft_disabled", code)
+					} else {
+						assertions.Contains(stderr.String(), "Error: draft_disabled")
+					}
 				}
 			})
 		}

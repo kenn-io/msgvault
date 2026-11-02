@@ -436,8 +436,11 @@ func TestExportMessagesRequiredBoundsBeforeDaemonAccess(t *testing.T) {
 			root.SetErr(&output)
 			args := append([]string{"--home", home, "--config", configPath, "export-messages"}, test.args...)
 			root.SetArgs(args)
-			require.ErrorContains(executeRootContext(t.Context(), root), test.missing)
-			assert.Contains(output.String(), "Usage:")
+			err := executeRootContext(t.Context(), root)
+			require.ErrorContains(err, test.missing)
+			assert.Equal(2, ExitCode(err))
+			assert.NotContains(output.String(), "Usage:")
+			assert.Contains(output.String(), "msgvault export messages --help")
 			assert.NotContains(output.String(), "Starting local msgvault daemon")
 			assert.Zero(requests.Load(), "missing bounds must not contact the daemon")
 			for _, name := range []string{"daemon.json", "msgvault.db", "serve.log"} {

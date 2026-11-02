@@ -68,11 +68,9 @@ Reads db_path from the matching [[muesli]] entry in config.toml (default:
 ~/Library/Application Support/Muesli/muesli.db) and checks that it opens
 read-only as a Muesli database. In remote mode the client reads local files
 and securely registers the source with the configured daemon. In same-host
-mode the daemon reads the files.
-
-Examples:
-  msgvault add-muesli
-  msgvault add-muesli mac`,
+mode the daemon reads the files.`,
+	Example: `  msgvault source muesli add
+  msgvault source muesli add mac`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -121,7 +119,7 @@ Examples:
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nMuesli source %s registered.\n", source.Identifier)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault sync-muesli %s\n", source.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault source muesli sync %s\n", source.Identifier)
 		return nil
 	},
 }
@@ -135,13 +133,11 @@ synced.
 
 Every run reads the whole database read-only and updates meetings that
 changed in place. Meetings still recording or processing wait for a later run.
-Meetings deleted in Muesli stay archived.
-
-Examples:
-  msgvault sync-muesli
-  msgvault sync-muesli mac --limit 5
-  msgvault sync-muesli --after 2026-01-01   # UTC date
-  msgvault sync-muesli --full`,
+Meetings deleted in Muesli stay archived.`,
+	Example: `  msgvault source muesli sync
+  msgvault source muesli sync mac --limit 5
+  msgvault source muesli sync --after 2026-01-01   # UTC date
+  msgvault source muesli sync --full`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -262,7 +258,7 @@ func muesliImportOptions(source config.MuesliSource) muesli.ImportOptions {
 // [[muesli]] source.
 func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config.MuesliSource, attachmentsDir string) error {
 	notRegistered := fmt.Errorf(
-		"muesli source %q is not registered; run msgvault add-muesli %s first",
+		"muesli source %q is not registered; run msgvault source muesli add %s first",
 		source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
 	if err != nil {

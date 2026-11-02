@@ -32,15 +32,12 @@ are skipped automatically. The PST folder structure is preserved as labels
 (e.g. the Inbox folder becomes the "Inbox" label).
 
 The import is resumable: if interrupted with Ctrl+C, rerunning with the same
-arguments will continue from where it left off. Use --no-resume to start fresh.
-
-Examples:
-  msgvault init-db
-  msgvault import-pst you@company.com /path/to/archive.pst
-  msgvault import-pst you@outlook.com backup.pst --skip-folder "Deleted Items"
-  msgvault import-pst you@outlook.com backup.pst --no-resume
-`,
-	Args: cobra.ExactArgs(2),
+arguments will continue from where it left off. Use --no-resume to start fresh.`,
+	Example: `  msgvault database init
+  msgvault import pst you@company.com /path/to/archive.pst
+  msgvault import pst you@outlook.com backup.pst --skip-folder "Deleted Items"
+  msgvault import pst you@outlook.com backup.pst --no-resume`,
+	Args: sourceExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {

@@ -54,7 +54,7 @@ JSON object per line.`,
 					return fmt.Errorf("%s person %d: %w", action, personID, err)
 				}
 				if response.JSON200 == nil {
-					return fmt.Errorf("%s person %d: person tracking response was empty", action, personID)
+					return readDaemonResponseError(fmt.Errorf("%s person %d: person tracking response was empty", action, personID))
 				}
 				if err = writePersonTrackingState(cmd, personID, response); err != nil {
 					return err

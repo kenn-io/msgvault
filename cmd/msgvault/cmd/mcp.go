@@ -40,8 +40,9 @@ var mcpAllowSourceWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
-	Use:   "mcp",
-	Short: "Run MCP server for Claude Desktop integration",
+	Use:     "mcp",
+	Short:   "Run MCP server for Claude Desktop integration",
+	Example: "  msgvault mcp\n  msgvault --agent-url https://archive.example.com --agent-token-file /path/to/owner-only-token mcp",
 	Long: `Start an MCP (Model Context Protocol) server over stdio.
 
 This allows Claude Desktop (or any MCP client) to query your archive

@@ -12,13 +12,13 @@ description: Aggregate statistics and SQL analytics over a msgvault message arch
 ```bash
 msgvault stats
 msgvault stats --account you@gmail.com
-msgvault list-accounts --json
-msgvault list-senders --json -n 25 --after 2024-01-01 --before 2025-01-01
-msgvault list-domains --json
-msgvault list-labels --json
+msgvault account list --json
+msgvault sender list --json -n 25 --after 2024-01-01 --before 2025-01-01
+msgvault domain list --json
+msgvault label list --json
 ```
 
-`list-senders`/`list-domains`/`list-labels` JSON rows are
+`sender list`/`domain list`/`label list` JSON rows are
 `{key, count, total_size, attachment_size}`. `stats` is text-only
 (no `--json`).
 
@@ -65,7 +65,7 @@ recorded), `labels`, `message_labels`, `attachments` (`message_id`,
 ### Notes
 
 - Message bodies are not in the analytics cache; use
-  `msgvault show-message <id> --json` for content.
+  `msgvault show <id> --json` for content.
 - Analytics counts include messages already deleted from the source;
   filter with `WHERE deleted_from_source_at IS NULL` to match the
   active counts shown by `stats`.

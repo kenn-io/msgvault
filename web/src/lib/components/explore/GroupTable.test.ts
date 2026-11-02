@@ -71,12 +71,12 @@ describe('GroupTable', () => {
         error: 'cache_unavailable',
         message: 'The analytical cache has not been built.',
         readiness: 'absent',
-        recovery_action: 'msgvault build-cache'
+        recovery_action: 'msgvault cache build'
       },
       onRetry
     });
 
-    expect(screen.getByRole('alert').textContent).toContain('msgvault build-cache');
+    expect(screen.getByRole('alert').textContent).toContain('msgvault cache build');
     expect(screen.getByRole('grid', { name: 'Everything grouped by source' }).getAttribute('aria-rowcount')).toBeNull();
     expect(screen.queryByText('No groups match this view.')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry cache check' }));

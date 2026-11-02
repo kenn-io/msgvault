@@ -26,18 +26,18 @@ var exportAttachmentCmd = &cobra.Command{
 	Long: `Export an attachment binary by its SHA-256 content hash.
 
 Get the content hash from 'show-message --json':
-  msgvault show-message 45 --json | jq '.attachments[0].content_hash'
+  msgvault show 45 --json | jq '.attachments[0].content_hash'
 
 To export all attachments from a message with original filenames, use
-'msgvault export-attachments <message-id> -o <dir>', which sanitizes
+'msgvault export attachments <message-id> -o <dir>', which sanitizes
 filenames. Attachment filenames are sender-controlled: do not pass the
 JSON 'filename' field to -o (a name like ../../evil escapes the output
 directory). Use content hashes or your own fixed paths instead.`,
-	Example: `  msgvault export-attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0
-  msgvault export-attachment 61ccf192... --output invoice.pdf
-  msgvault export-attachment 61ccf192... -o -       # stdout (binary)
-  msgvault export-attachment 61ccf192... --base64  # stdout (base64)
-  msgvault export-attachment 61ccf192... --json    # JSON with base64 data`,
+	Example: `  msgvault export attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0
+  msgvault export attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0 --output invoice.pdf
+  msgvault export attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0 -o -       # stdout (binary)
+  msgvault export attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0 --base64  # stdout (base64)
+  msgvault export attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0 --json    # JSON with base64 data`,
 	Args: cobra.ExactArgs(1),
 	RunE: runExportAttachment,
 }
@@ -47,7 +47,7 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 
 	// Validate hash format using shared validation
 	if err := export.ValidateContentHash(contentHash); err != nil {
-		return err
+		return withHint(validationErr(cmd, err), "copy the full 64-character attachments[].content_hash from 'msgvault show <message-id> --json'")
 	}
 
 	// Validate flag combinations
@@ -235,7 +235,7 @@ func replaceOutputFile(tmpPath, outputPath string) error {
 		return err
 	}
 	if info.IsDir() {
-		return fmt.Errorf("output path is a directory: %s", outputPath)
+		return withHint(fmt.Errorf("output path is a directory: %s", outputPath), "pass a file path with -o, for example -o invoice.pdf; use -o - for binary stdout")
 	}
 
 	dir := filepath.Dir(outputPath)

@@ -40,7 +40,7 @@ func TestRunConfiguredMuesliSyncRefusesUnregisteredSource(t *testing.T) {
 	}, t.TempDir())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "add-muesli removed")
+	assert.Contains(t, err.Error(), "source muesli add removed")
 }
 
 func TestServeScheduledMuesliSyncCompletes(t *testing.T) {

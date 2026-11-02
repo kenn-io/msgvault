@@ -10,7 +10,7 @@ raw content, and downloaded attachments. Deletion has three separate steps:
 
 1. **Stage** a precise set of messages in a pending manifest.
 2. **Review** that manifest and check the archive.
-3. **Execute** with `delete-staged` and explicit remote-deletion consent.
+3. **Execute** with `deletion execute` and explicit remote-deletion consent.
 
 Executing a batch records which messages were deleted at the source. It does
 not purge their archived content. You can still open and export those messages:
@@ -29,9 +29,9 @@ a different operation and can remove archive content.
 Preview matching mail before creating a batch:
 
 ```bash
-msgvault stage-delete 'from:newsletter@example.com before:2024-01-01' --dry-run
-msgvault stage-delete 'from:newsletter@example.com before:2024-01-01'
-msgvault show-deletion BATCH_ID
+msgvault deletion stage 'from:newsletter@example.com before:2024-01-01' --dry-run
+msgvault deletion stage 'from:newsletter@example.com before:2024-01-01'
+msgvault deletion show BATCH_ID
 ```
 
 CLI query staging uses the same search language as `msgvault search` and considers
@@ -41,7 +41,7 @@ The remaining targets must belong to one source. Use `--source-id` to narrow a
 query when several accounts match:
 
 ```bash
-msgvault stage-delete 'label:Newsletters' --source-id 3 --dry-run
+msgvault deletion stage 'label:Newsletters' --source-id 3 --dry-run
 ```
 
 MCP query staging also includes IMAP mail; see [staged deletion via MCP](chat.md#staged-deletion-via-mcp).
@@ -49,8 +49,8 @@ MCP query staging also includes IMAP mail; see [staged deletion via MCP](chat.md
 If you already have internal message IDs, stage them directly:
 
 ```bash
-msgvault stage-delete --ids 123,456,789 --dry-run
-msgvault stage-delete --ids 123,456,789
+msgvault deletion stage --ids 123,456,789 --dry-run
+msgvault deletion stage --ids 123,456,789
 ```
 
 `--ids` accepts positive internal message IDs, not Gmail provider IDs. It cannot
@@ -60,7 +60,7 @@ without a ready analytical or full-text cache; query staging waits for a
 complete search index and requires daemon API schema `2.18.0` or newer.
 
 These CLI staging paths resolve Gmail and Microsoft Graph mail targets. Graph
-mail accounts are the ones added with `add-o365 --graph`. Creating a manifest never executes it.
+mail accounts are the ones added with `source o365 add --graph`. Creating a manifest never executes it.
 
 ## Staging in the Web UI
 
@@ -86,7 +86,7 @@ The fastest way to clean up your inbox is through the TUI's aggregate views. Nav
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-deletion.svg" alt="msgvault TUI deletion confirmation dialog showing bulk staging of all messages from a sender" loading="lazy">
 </figure>
-A confirmation dialog shows exactly how many messages will be staged. Nothing is deleted until you explicitly run `msgvault delete-staged`.
+A confirmation dialog shows exactly how many messages will be staged. Nothing is deleted until you explicitly run `msgvault deletion execute`.
 
 ## Selective Deletion
 
@@ -101,7 +101,7 @@ You can also stage deletions through the [MCP server](/docs/usage/chat/) by aski
 - *"Stage all messages from noreply@linkedin.com for deletion"*
 - *"Stage all promotional emails older than 2024-01-01"*
 
-The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/docs/usage/chat/#staged-deletion-via-mcp) for details.
+The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault deletion execute` from the CLI. See [MCP Server](/docs/usage/chat/#staged-deletion-via-mcp) for details.
 
 ## Staging via HTTP API
 
@@ -133,7 +133,7 @@ curl -X DELETE -H "Authorization: Bearer $MSGVAULT_API_KEY" \
 ```
 
 API staging still only creates or cancels local manifests. Remote deletion
-continues to require the explicit `delete-staged` execution step and invoking
+continues to require the explicit `deletion execute` execution step and invoking
 CLI consent, configured durably or supplied for one command as described
 below.
 
@@ -143,19 +143,19 @@ Staged deletions create manifests that record exactly which messages will be aff
 
 ```bash
 # List pending deletion batches
-msgvault delete-staged --list
+msgvault deletion execute --list
 
 # Execute deletion for a Gmail account (moves to trash by default)
-msgvault delete-staged --account you@gmail.com
+msgvault deletion execute --account you@gmail.com
 
 # Move staged IMAP messages to the server's Trash folder
-msgvault delete-staged --account you@fastmail.com
+msgvault deletion execute --account you@fastmail.com
 
 # Move staged Microsoft Graph mail messages to Deleted Items
-msgvault delete-staged --account you@company.com
+msgvault deletion execute --account you@company.com
 
 # Permanently delete Gmail messages instead of moving them to trash
-msgvault delete-staged --account you@gmail.com --permanent
+msgvault deletion execute --account you@gmail.com --permanent
 ```
 
 Gmail and IMAP both default to moving messages to Trash. Gmail retains trash
@@ -188,7 +188,7 @@ remote_enabled = true
 As a one-command alternative:
 
 ```bash
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@gmail.com
+MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute --account you@gmail.com
 ```
 
 When remote mode is configured, the invoking CLI forwards its effective
@@ -199,7 +199,7 @@ review exactly what is staged before enabling execution.
 
 ## Permission Upgrade
 
-When you first run `delete-staged --permanent`, your OAuth token likely only has read and modify permissions. Permanent Gmail batch deletion requires full Gmail access (the `mail.google.com` scope). msgvault detects this automatically and prompts you to upgrade:
+When you first run `deletion execute --permanent`, your OAuth token likely only has read and modify permissions. Permanent Gmail batch deletion requires full Gmail access (the `mail.google.com` scope). msgvault detects this automatically and prompts you to upgrade:
 
 ```
 ======================================================================
@@ -228,7 +228,7 @@ If you have a legacy token from before scope tracking was added, msgvault falls 
 Gmail trash deletion does not require this elevated scope.
 
 Microsoft Graph mail accounts sync with the `Mail.Read` permission. The first
-`delete-staged` for one of these accounts asks to upgrade the token to
+`deletion execute` for one of these accounts asks to upgrade the token to
 `Mail.ReadWrite`, for trash and for `--permanent`. If you answer `y`, msgvault
 opens your browser to grant it. Your existing token keeps working until the new
 grant succeeds. The Entra app registration must list the delegated
@@ -237,7 +237,7 @@ grant succeeds. The Entra app registration must list the delegated
 On a host without a browser, use device-code sign-in:
 
 ```bash
-msgvault delete-staged BATCH_ID --headless
+msgvault deletion execute BATCH_ID --headless
 ```
 
 Open the printed sign-in URL on another device and enter the code. The
@@ -248,7 +248,7 @@ upgrade before starting the deletion worker. With a remote daemon, sign-in runs
 on the daemon host because that host owns the token; `--headless` is forwarded
 to that worker for Microsoft Graph accounts.
 
-IMAP accounts do not require a permission upgrade. IMAP credentials already have full mailbox access, so `delete-staged` works without re-authorization.
+IMAP accounts do not require a permission upgrade. IMAP credentials already have full mailbox access, so `deletion execute` works without re-authorization.
 
 ## Resumable Execution
 
@@ -260,13 +260,13 @@ Cancel a specific batch or all pending batches:
 
 ```bash
 # List available batches
-msgvault cancel-deletion
+msgvault deletion cancel
 
 # Cancel a specific batch
-msgvault cancel-deletion <batch-id>
+msgvault deletion cancel <batch-id>
 
 # Cancel all pending batches
-msgvault cancel-deletion --all
+msgvault deletion cancel --all
 ```
 
 !!! danger
@@ -297,7 +297,7 @@ PostgreSQL archives.
 3. After a purge, rebuild each cache you use:
 
    ```bash
-   msgvault build-cache --full-rebuild
+   msgvault cache build --full-rebuild
    msgvault embeddings build --full-rebuild
    ```
 

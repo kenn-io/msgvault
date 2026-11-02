@@ -25,9 +25,11 @@ type slackdumpCLIOptions struct {
 func newImportSlackdumpCmd() *cobra.Command {
 	var opts slackdumpCLIOptions
 	cmd := &cobra.Command{
-		Use:   "import-slackdump <export-dir-or-zip>",
-		Short: "Import a Slackdump export",
-		Args:  cobra.ExactArgs(1),
+		Use:     "import-slackdump <export-dir-or-zip>",
+		Short:   "Import a Slackdump export",
+		Long:    `Import conversations and exported files from a Slackdump export directory or ZIP. Create the export with Slackdump first. --me is your Slack user ID or profile email; it marks outgoing messages and establishes your archive identity. This reads a local export; live Slack capture uses source slack add and source slack sync.`,
+		Example: `  msgvault import slackdump ./slackdump-export.zip --me you@example.com`,
+		Args:    sourceImportArgs("me", "your Slack user ID or profile email (for example you@example.com)", "msgvault import slackdump ./slackdump-export.zip --me you@example.com"),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			if opts.Limit < 0 {
 				return usageErr(cmd, errors.New("--limit must be non-negative"))

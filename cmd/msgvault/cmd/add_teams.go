@@ -76,13 +76,11 @@ device code to enter on any device), then stores the token for
 Teams message ingestion.
 
 Requires a [microsoft] section in config.toml with your Azure AD app's client_id.
-See the docs for Azure AD app registration setup.
-
-Examples:
-  msgvault add-teams user@company.com
-  msgvault add-teams user@company.com --headless
-  msgvault add-teams user@company.com --tenant my-tenant-id`,
-		Args: cobra.ExactArgs(1),
+See the docs for Azure AD app registration setup.`,
+		Example: `  msgvault source teams add user@company.com
+  msgvault source teams add user@company.com --headless
+  msgvault source teams add user@company.com --tenant my-tenant-id`,
+		Args: sourceExactArgs(1),
 		RunE: runAddTeamsLocal,
 	}
 	cmd.Flags().StringVar(&teamsTenantID, "tenant", "",
@@ -156,7 +154,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Email: %s\n", email)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	fmt.Printf("  msgvault sync-teams %s\n", email)
+	fmt.Printf("  msgvault source teams sync %s\n", email)
 
 	return nil
 }

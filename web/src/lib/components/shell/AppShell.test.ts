@@ -100,7 +100,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
     const client = createAPIClient(async (input) => {
       const request = input as Request, path = new URL(request.url).pathname;
-      if (path.endsWith('/explore')) return Response.json(cache ? { error: 'analytical_cache_unavailable', message: 'Browse unavailable', readiness: 'absent', recovery_action: 'msgvault build-cache' } : { message: 'Browse unavailable' }, { status: cache ? 503 : 500 });
+      if (path.endsWith('/explore')) return Response.json(cache ? { error: 'analytical_cache_unavailable', message: 'Browse unavailable', readiness: 'absent', recovery_action: 'msgvault cache build' } : { message: 'Browse unavailable' }, { status: cache ? 503 : 500 });
       return Response.json({});
     });
     const state = new ExploreState(window);

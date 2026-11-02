@@ -53,6 +53,8 @@ func newAddDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-discord",
 		Short: "Register Discord guilds for bot-based archival",
+		Example: `  printf '%s' "$DISCORD_BOT_TOKEN" | msgvault source discord add --guild 1234567890
+  msgvault source discord add --guild 1234567890`,
 		Long: `Validate a Discord bot token and register one or more accessible guilds.
 
 The token is read through a masked terminal prompt or piped stdin. It is never

@@ -352,7 +352,7 @@ func TestDraftLifecycleAcceptedReadFailureEvidence(t *testing.T) {
 					args = append(args, "--json")
 				}
 				root.SetArgs(args)
-				err := root.ExecuteContext(testCtx)
+				err := executeRootContext(testCtx, root, args)
 				requirements.NoError(faultErr)
 				requirements.ErrorContains(err, "accepted_local_failed")
 				assertions.Empty(stdout.String())
@@ -363,8 +363,10 @@ func TestDraftLifecycleAcceptedReadFailureEvidence(t *testing.T) {
 				}
 				requirements.NoError(err)
 				if asJSON {
+					code, details := cliErrorEnvelopeDetails(t, stderr.Bytes())
+					assertions.Equal("accepted_local_failed", code)
 					var output draftLifecycleOutput
-					requirements.NoError(json.Unmarshal(stderr.Bytes(), &output))
+					requirements.NoError(json.Unmarshal(details, &output))
 					assertions.Equal("accepted_local_failed", output.Status)
 					assertions.Equal(fixture.draft.DraftID, output.DraftID)
 					assertions.Contains(output.CandidateContent, "saved candidate")
@@ -422,12 +424,15 @@ func TestDraftLifecyclePublicationFailure(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "candidate", "--json"})
-	err = root.ExecuteContext(testCtx)
+	args := []string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "candidate", "--json"}
+	root.SetArgs(args)
+	err = executeRootContext(testCtx, root, args)
 	assertions.Empty(stdout.String())
-	events := []api.CLIRunEvent{{Type: cliStreamStderr, Data: stderr.String()}}
 	requirements.Error(err)
-	assertions.Equal("accepted_local_failed", err.Error())
+	requirements.ErrorContains(err, "accepted_local_failed")
+	code, details := cliErrorEnvelopeDetails(t, stderr.Bytes())
+	assertions.Equal("accepted_local_failed", code)
+	events := []api.CLIRunEvent{{Type: cliStreamStderr, Data: string(details)}}
 	requirements.Len(events, 1)
 	assertions.Equal(cliStreamStderr, events[0].Type)
 	var output struct {
@@ -479,11 +484,11 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{api.CLIRunDraftEditCommand, created.DraftID,
-		"--revision", "1", "--body", "candidate"})
-	err = root.ExecuteContext(testCtx)
+	args := []string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "candidate"}
+	root.SetArgs(args)
+	err = executeRootContext(testCtx, root, args)
 	requirements.Error(err)
-	assertions.Equal("accepted_local_failed", err.Error())
+	requirements.ErrorContains(err, "accepted_local_failed")
 	assertions.Empty(stdout.String())
 	assertions.Contains(stderr.String(), "status: accepted_local_failed")
 	assertions.Contains(stderr.String(), "pending operation: edit")
@@ -495,7 +500,7 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 	assertions.Contains(stderr.String(), "old draft ID remains blocked at revision 1")
 	assertions.Contains(stderr.String(), "manual action:")
 	assertions.NotContains(stderr.String(), "pending receipt:")
-	assertions.NotContains(stderr.String(), "Error: accepted_local_failed")
+	assertions.Equal(1, strings.Count(stderr.String(), "Error: accepted_local_failed"))
 
 	pending, err := fixture.store.GetIMAPDraftContext(testCtx, created.DraftID)
 	requirements.NoError(err)
@@ -534,7 +539,7 @@ func TestDraftLifecycleUnknownAppend(t *testing.T) {
 
 	events, err := runReviewLifecycle(t, fixture.adapter, api.CLIRunDraftEditCommand, fixture.draft.DraftID, "--revision", "1", "--body", "candidate", "--json")
 	requirements.Error(err)
-	assertions.Equal("remote_unknown", err.Error())
+	requirements.ErrorContains(err, "remote_unknown")
 	requirements.Len(events, 1)
 	assertions.Equal(cliStreamStderr, events[0].Type)
 	assertions.Contains(events[0].Data, `"candidate_content"`)
@@ -592,11 +597,11 @@ func TestDraftLifecycleHumanUnknownAppendThroughHTTP(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{api.CLIRunDraftEditCommand, fixture.draft.DraftID,
-		"--revision", "1", "--body", "candidate"})
-	err := root.ExecuteContext(testCtx)
+	args := []string{api.CLIRunDraftEditCommand, fixture.draft.DraftID, "--revision", "1", "--body", "candidate"}
+	root.SetArgs(args)
+	err := executeRootContext(testCtx, root, args)
 	requirements.Error(err)
-	assertions.Equal("remote_unknown", err.Error())
+	requirements.ErrorContains(err, "remote_unknown")
 	assertions.Empty(stdout.String())
 	assertions.Contains(stderr.String(), "status: pending")
 	assertions.Contains(stderr.String(), "pending operation: edit")
@@ -606,7 +611,7 @@ func TestDraftLifecycleHumanUnknownAppendThroughHTTP(t *testing.T) {
 	assertions.Contains(stderr.String(), "receipt (revision 1): Drafts")
 	assertions.Contains(stderr.String(), "old draft ID remains blocked at revision 1")
 	assertions.Contains(stderr.String(), "manual action:")
-	assertions.NotContains(stderr.String(), "Error: remote_unknown")
+	assertions.Equal(1, strings.Count(stderr.String(), "Error: remote_unknown"))
 	assertions.Equal(1, strings.Count(stderr.String(), "provider outcome:"))
 }
 
@@ -1014,11 +1019,11 @@ func TestDraftLifecycleHumanCleanupPartialThroughHTTP(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{api.CLIRunDraftDeleteCommand, fixture.draft.DraftID,
-		"--revision", "1"})
+	args := []string{api.CLIRunDraftDeleteCommand, fixture.draft.DraftID, "--revision", "1"}
+	root.SetArgs(args)
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- root.ExecuteContext(testCtx) }()
+	go func() { errCh <- executeRootContext(testCtx, root, args) }()
 	<-barrier.stored
 	_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
 		UPDATE imap_drafts SET revision = 2 WHERE draft_id = ?
@@ -1027,7 +1032,7 @@ func TestDraftLifecycleHumanCleanupPartialThroughHTTP(t *testing.T) {
 	close(barrier.release)
 	err = <-errCh
 	requirements.Error(err)
-	assertions.Equal("local_persistence_failed", err.Error())
+	requirements.ErrorContains(err, "local_persistence_failed")
 	assertions.Empty(stdout.String())
 	assertions.Contains(stderr.String(), "status: pending")
 	assertions.Contains(stderr.String(), "pending operation: delete")
@@ -1319,6 +1324,18 @@ func runReviewLifecycle(t *testing.T, adapter *storeAPIAdapter, args ...string) 
 		return nil
 	})
 	return events, err
+}
+
+func cliErrorEnvelopeDetails(t *testing.T, data []byte) (string, json.RawMessage) {
+	t.Helper()
+	var envelope struct {
+		Error struct {
+			Code    string          `json:"code"`
+			Details json.RawMessage `json:"details"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	return envelope.Error.Code, envelope.Error.Details
 }
 
 type reviewManagedLifecycleFixture struct {

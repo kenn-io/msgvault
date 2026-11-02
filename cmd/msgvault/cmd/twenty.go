@@ -65,7 +65,10 @@ func runTwentyProbe(ctx context.Context, out io.Writer, client twenty.Source) er
 }
 
 var addTwentyCmd = &cobra.Command{
-	Use: "add-twenty [identifier]", Short: "Register and validate a Twenty Call Recorder source", Args: cobra.MaximumNArgs(1),
+	Use:  "add-twenty [identifier]",
+	Long: "Register a configured Twenty Call Recorder source. The optional identifier selects the identifier value in a [[twenty]] config block. \n\n" + twentyConfigHint, Short: "Register and validate a Twenty Call Recorder source",
+	Example: `  msgvault source twenty add
+  msgvault source twenty add work`, Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
@@ -100,13 +103,15 @@ var addTwentyCmd = &cobra.Command{
 		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nTwenty source %s registered.\nRun: msgvault sync-twenty %s\n", source.Identifier, source.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nTwenty source %s registered.\nRun: msgvault source twenty sync %s\n", source.Identifier, source.Identifier)
 		return nil
 	},
 }
 
 var syncTwentyCmd = &cobra.Command{
 	Use: "sync-twenty [identifier]", Short: "Sync Twenty Call Recorder meetings",
+	Example: `  msgvault source twenty sync
+  msgvault source twenty sync work --full`,
 	Long: `Sync summaries and diarized transcripts from Twenty's read-only API.
 
 Each run reads recordings updated since the last successful run. --full
@@ -234,7 +239,7 @@ func writeTwentySummary(out io.Writer, summary *twenty.ImportSummary) {
 	}
 }
 func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config.TwentySource) error {
-	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
+	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault source twenty add %s first", source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered)
 	if err != nil {
 		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)

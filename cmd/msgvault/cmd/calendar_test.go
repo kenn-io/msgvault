@@ -158,7 +158,7 @@ func TestBuildCalendarClientRejectsLegacyTokenWithoutCalendarScope(t *testing.T)
 	}
 
 	require.Error(err)
-	require.ErrorContains(err, "add-calendar")
+	require.ErrorContains(err, "source calendar add")
 	require.ErrorContains(err, oauth.ScopeCalendarReadonly)
 	after, readErr := os.ReadFile(tokenPath)
 	require.NoError(readErr, "read token after rejected client build")
@@ -269,7 +269,7 @@ func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
 	out := getOutput()
 
 	require.NoError(err)
-	assert.Contains(out, "msgvault add-calendar alice.example@example.com",
+	assert.Contains(out, "msgvault source calendar add alice.example@example.com",
 		"headless instructions must use the normalized token key")
 	assert.Contains(out, "alice.example@example.com.json",
 		"token copy path must use the normalized token filename")
@@ -554,10 +554,10 @@ func TestCalendarTokenExpiredOrRevoked(t *testing.T) {
 
 func TestCalendarSyncNextCommandIncludesOAuthApp(t *testing.T) {
 	assert.Equal(t,
-		"msgvault sync-calendar --oauth-app personal user@example.com",
+		"msgvault source calendar sync --oauth-app personal user@example.com",
 		calendarSyncNextCommand("user@example.com", "personal", calendarSyncNextOptions{}))
 	assert.Equal(t,
-		"msgvault sync-calendar user@example.com",
+		"msgvault source calendar sync user@example.com",
 		calendarSyncNextCommand("user@example.com", "", calendarSyncNextOptions{}))
 }
 
@@ -565,13 +565,13 @@ func TestCalendarSyncNextCommandIncludesSelectionFlags(t *testing.T) {
 	assert := assert.New(t)
 
 	assert.Equal(
-		"msgvault sync-calendar --oauth-app personal --all-calendars user@example.com",
+		"msgvault source calendar sync --oauth-app personal --all-calendars user@example.com",
 		calendarSyncNextCommand("user@example.com", "personal", calendarSyncNextOptions{AllCalendars: true}))
 	assert.Equal(
-		"msgvault sync-calendar --min-access-role reader user@example.com",
+		"msgvault source calendar sync --min-access-role reader user@example.com",
 		calendarSyncNextCommand("user@example.com", "", calendarSyncNextOptions{MinAccessRole: "reader"}))
 	assert.Equal(
-		"msgvault sync-calendar --calendar primary --calendar team@example.com user@example.com",
+		"msgvault source calendar sync --calendar primary --calendar team@example.com user@example.com",
 		calendarSyncNextCommand("user@example.com", "", calendarSyncNextOptions{
 			Calendars: []string{"primary", "team@example.com"},
 		}))

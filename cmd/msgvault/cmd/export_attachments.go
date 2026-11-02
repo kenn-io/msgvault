@@ -25,9 +25,9 @@ var exportAttachmentsCmd = &cobra.Command{
 Takes a message ID (internal numeric or Gmail ID) and writes each attachment
 as a separate file. Filenames are sanitized and deduplicated automatically.
 Files are never overwritten — a numeric suffix is appended on conflict.`,
-	Example: `  msgvault export-attachments 45                  # all attachments → cwd
-  msgvault export-attachments 45 -o ~/Downloads   # all attachments → specific dir
-  msgvault export-attachments 18f0abc123def       # by Gmail ID`,
+	Example: `  msgvault export attachments 45                  # all attachments → cwd
+  msgvault export attachments 45 -o ~/Downloads   # all attachments → specific dir
+  msgvault export attachments 18f0abc123def       # by Gmail ID`,
 	Args: cobra.ExactArgs(1),
 	RunE: runExportAttachments,
 }
@@ -53,13 +53,13 @@ func runExportAttachmentsHTTP(cmd *cobra.Command, idStr string) error {
 
 	msg, err := s.GetCLIMessage(cmd.Context(), idStr)
 	if errors.Is(err, store.ErrMessageNotFound) {
-		return fmt.Errorf("message not found: %s", idStr)
+		return readMessageNotFound(idStr)
 	}
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
 	}
 	if msg == nil {
-		return fmt.Errorf("message not found: %s", idStr)
+		return readMessageNotFound(idStr)
 	}
 
 	if len(msg.Attachments) == 0 {

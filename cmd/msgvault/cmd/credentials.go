@@ -17,11 +17,15 @@ import (
 func init() { rootCmd.AddCommand(newCredentialsCommand()) }
 
 func newCredentialsCommand() *cobra.Command {
-	command := &cobra.Command{Use: "credentials", Short: "Manage provider credentials on the daemon host"}
+	command := &cobra.Command{Use: "credentials", Short: "Manage provider credentials on the daemon host",
+		Long:    "Store provider keys on the archive host without exposing values in listings. Set uses an owner-only file or explicit --stdin, and binds provider keys to the selected origin. Use list to discover stored IDs and origins.",
+		Example: "  msgvault credentials list --json"}
 	var fromFile, endpoint string
 	var fromStdin, asJSON bool
 	set := &cobra.Command{
-		Use: "set <id>", Short: "Store a provider key from an owner-only file or standard input", Args: cobra.ExactArgs(1),
+		Use: "set <id>", Short: "Store a provider key from an owner-only file or standard input",
+		Long:    "Store one provider key by its configured credential ID. Read it from --from-file or --stdin; --endpoint pins its allowed provider origin. Run this on the daemon host or pass --local to select this machine.",
+		Example: "  msgvault credentials set vector.embeddings --from-file /path/to/owner-only-key", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := credentialsCommandConfig(cmd)
 			if err != nil {
@@ -77,7 +81,9 @@ func newCredentialsCommand() *cobra.Command {
 	set.Flags().StringVar(&endpoint, "endpoint", "", "Bind the key to this provider URL (defaults to configured endpoint)")
 	set.MarkFlagsMutuallyExclusive("from-file", "stdin")
 	list := &cobra.Command{
-		Use: "list", Short: "List stored IDs and bound origins without key values", Args: cobra.NoArgs,
+		Use: "list", Short: "List stored IDs and bound origins without key values",
+		Long:    "List credential IDs and their bound provider origins on this archive host. Values are never printed; use this to check that setup selected the intended endpoint.",
+		Example: "  msgvault credentials list --json", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := credentialsCommandConfig(cmd)
 			if err != nil {
@@ -108,7 +114,9 @@ func newCredentialsCommand() *cobra.Command {
 	}
 	list.Flags().BoolVar(&asJSON, "json", false, "Print IDs and origins as JSON")
 	importEnv := &cobra.Command{
-		Use: "import-env", Short: "Import present configured provider keys without replacing stored keys", Args: cobra.NoArgs,
+		Use: "import-env", Short: "Import present configured provider keys without replacing stored keys",
+		Long:    "Import keys from the configured environment variables on the daemon host. Existing stored credentials are preserved. Inspect credentials list afterward to verify IDs and origins.",
+		Example: "  msgvault credentials import-env", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := credentialsCommandConfig(cmd)
 			if err != nil {
@@ -127,7 +135,7 @@ func credentialsCommandConfig(cmd *cobra.Command) (*config.Config, error) {
 		return nil, errors.New("configuration is unavailable")
 	}
 	if isRemoteModeFor(state) {
-		return nil, errors.New("credentials are stored on the daemon host; run there or pass --local")
+		return nil, withHint(usageErr(cmd, errors.New("credentials are stored on the daemon host; run there or pass --local")), "inspect 'msgvault daemon status'; run credentials on the archive host or pass --local to select this machine")
 	}
 	return state.cfg, nil
 }

@@ -10,8 +10,9 @@ import (
 )
 
 var repackAttachmentsCmd = &cobra.Command{
-	Use:   "repack-attachments",
-	Short: "Reclaim dead bytes from sparse attachment packs",
+	Use:     "repack-attachments",
+	Short:   "Reclaim dead bytes from sparse attachment packs",
+	Example: "  msgvault attachment repack",
 	Long: `Reclaim dead bytes from sparse immutable attachment pack files.
 
 This command always runs in the msgvault daemon so it can atomically swap live

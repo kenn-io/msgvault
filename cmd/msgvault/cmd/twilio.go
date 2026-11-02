@@ -60,7 +60,7 @@ func resolveTwilioSource(args []string, cfg *config.Config) (*config.TwilioSourc
 		return nil, errors.New("configuration is unavailable")
 	}
 	if len(cfg.Twilio) == 0 {
-		return nil, errors.New("no [[twilio]] sources configured\n\n" + twilioConfigHint)
+		return nil, sourceNotConfigured("twilio", errors.New("no [[twilio]] sources configured\n\n"+twilioConfigHint))
 	}
 	if len(args) > 0 {
 		source := cfg.GetTwilioSource(args[0])
@@ -93,7 +93,7 @@ func resolveTwilioSources(args []string, probe bool, cfg *config.Config) ([]conf
 		return []config.TwilioSource{*source}, nil
 	}
 	if len(cfg.Twilio) == 0 {
-		return nil, errors.New("no [[twilio]] sources configured\n\n" + twilioConfigHint)
+		return nil, sourceNotConfigured("twilio", errors.New("no [[twilio]] sources configured\n\n"+twilioConfigHint))
 	}
 	return cfg.Twilio, nil
 }
@@ -111,8 +111,11 @@ func runTwilioProbe(ctx context.Context, out io.Writer, client *twilio.Client) e
 
 var addTwilioCmd = &cobra.Command{
 	Use:   "add-twilio [identifier]",
+	Long:  "Register a configured Twilio source. The optional identifier selects the identifier value in a [[twilio]] config block. \n\n" + twilioConfigHint,
 	Short: "Register and validate a Twilio call source",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  msgvault source twilio add
+  msgvault source twilio add work`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
@@ -146,7 +149,7 @@ var addTwilioCmd = &cobra.Command{
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nTwilio source %s registered.\n", source.Identifier)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault sync-twilio %s\n", source.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault source twilio sync %s\n", source.Identifier)
 		return nil
 	},
 }
@@ -154,6 +157,8 @@ var addTwilioCmd = &cobra.Command{
 var syncTwilioCmd = &cobra.Command{
 	Use:   "sync-twilio [identifier]",
 	Short: "Sync Twilio calls and recordings",
+	Example: `  msgvault source twilio sync
+  msgvault source twilio sync work --full`,
 	Long: `Archive existing Twilio calls, recording audio, and retained transcripts as meetings.
 With no identifier, sync every configured [[twilio]] source. --limit bounds call
 processing, and a limited run that stops early prints the command that resumes
@@ -227,7 +232,7 @@ This command does not place calls or enable paid processing.`,
 			})
 			accumulateCallWrites(written, summary)
 			if summary != nil {
-				writeCallSyncSummary(cmd.OutOrStdout(), "Twilio", "sync-twilio", source.Identifier, summary, importErr != nil, callResumeFlags(syncTwilioLimit, syncTwilioAfter, syncTwilioFull))
+				writeCallSyncSummary(cmd.OutOrStdout(), "Twilio", "source twilio sync", source.Identifier, summary, importErr != nil, callResumeFlags(syncTwilioLimit, syncTwilioAfter, syncTwilioFull))
 			}
 			if importErr != nil {
 				errs = append(errs, fmt.Errorf("twilio sync %s failed: %w", source.Identifier, importErr))
@@ -241,7 +246,7 @@ func requireTwilioRegistered(st *store.Store, identifier string) (*store.Source,
 	registered, err := st.GetSourceByTypeAndIdentifier(twilio.SourceType, identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
-			return nil, fmt.Errorf("twilio source %q is not registered; run msgvault add-twilio %s first", identifier, identifier)
+			return nil, fmt.Errorf("twilio source %q is not registered; run msgvault source twilio add %s first", identifier, identifier)
 		}
 		return nil, err
 	}

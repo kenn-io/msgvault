@@ -135,7 +135,7 @@ func resolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
 	}
 
 	return scope, opserr.NotFound(fmt.Errorf(
-		"no account found for %q (try 'msgvault list-accounts')",
+		"no account found for %q (try 'msgvault account list')",
 		input,
 	))
 }

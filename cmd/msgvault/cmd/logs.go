@@ -28,8 +28,9 @@ var (
 )
 
 var logsCmd = &cobra.Command{
-	Use:   "logs",
-	Short: "View and tail msgvault's structured log files",
+	Use:     "logs",
+	Short:   "View and tail msgvault's structured log files",
+	Example: "  msgvault logs --run-id example-run --level error",
 	Long: `Show msgvault's structured log output from the selected daemon's
 on-disk logs: the JSON logs under <data dir>/logs and the background
 daemon's <data dir>/serve.log. With [remote].url configured, this shows the

@@ -27,12 +27,16 @@ func newAddCardDAVCmd() *cobra.Command {
 	var schedule, connection string
 	var disabled, google, msContacts, headless bool
 	var oauthApp string
-	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email> | --microsoft <email>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
-		if google || msContacts {
-			return cobra.ExactArgs(1)(cmd, args)
-		}
-		return cobra.ExactArgs(2)(cmd, args)
-	}}
+	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email> | --microsoft <email>", Short: "Discover and configure a CardDAV account",
+		Long: `Discover remote address books and save a contact-sync connection. For a CardDAV server, enter the password at the masked prompt or pipe it on stdin. --google uses an authorized Google Contacts token; --microsoft authorizes Microsoft contacts. After registration, inspect books with msgvault carddav books and run msgvault source carddav sync.`,
+		Example: `  msgvault source carddav add https://dav.example.com/ you@example.com
+  msgvault source carddav add --google you@gmail.com
+  msgvault source carddav add --microsoft you@example.com --headless`, Args: func(cmd *cobra.Command, args []string) error {
+			if google || msContacts {
+				return cobra.ExactArgs(1)(cmd, args)
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		}}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		selector, err := cardDAVCLIConnection(cmd, connection)
 		if err != nil {
@@ -114,7 +118,7 @@ func newAuthorizeMicrosoftCardDAVCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "authorize-microsoft <email>",
 		Short: "Authorize Microsoft contacts for CardDAV",
-		Long:  "Sign in to Microsoft for contacts on this machine, without saving a connection. Then save the connection in CardDAV settings, or run add-carddav --microsoft with this email. For a remote daemon, copy the token to that host.",
+		Long:  "Sign in to Microsoft for contacts on this machine, without saving a connection. Then save the connection in CardDAV settings, or run source carddav add --microsoft with this email. For a remote daemon, copy the token to that host.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return authorizeMicrosoftContacts(cmd, strings.ToLower(strings.TrimSpace(args[0])), headless, true)
@@ -182,7 +186,10 @@ func readCardDAVPassword() (string, error) {
 func newSyncCardDAVCmd() *cobra.Command {
 	var full bool
 	var connection string
-	cmd := &cobra.Command{Use: "sync-carddav", Short: "Synchronize enabled CardDAV connections", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "sync-carddav", Short: "Synchronize enabled CardDAV connections",
+		Long: `Synchronize enabled contact connections through the daemon. Incremental runs use saved server state; --full rechecks all cards. Select a saved connection with --connection, using names from msgvault carddav connections.`,
+		Example: `  msgvault source carddav sync
+  msgvault source carddav sync --full`, Args: cobra.NoArgs}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		selector, err := cardDAVCLIConnection(cmd, connection)
 		if err != nil {
@@ -329,7 +336,7 @@ func runCardDAVResolve(cmd *cobra.Command, args []string) error {
 	}
 	choice := generated.CardDAVResolveRequestChoice(args[1])
 	if err = choice.Validate(); err != nil {
-		return usageErr(cmd, err)
+		return validationErr(cmd, err)
 	}
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
@@ -345,7 +352,14 @@ func runCardDAVResolve(cmd *cobra.Command, args []string) error {
 func cardDAVCLIPositiveID(cmd *cobra.Command, raw string) (int64, error) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		return 0, usageErr(cmd, errors.New("ID must be a positive integer"))
+		hint := "find book IDs with 'msgvault carddav books'"
+		if strings.Contains(cmd.CommandPath(), "conflicts") {
+			hint = "find conflict IDs with 'msgvault carddav conflicts list'"
+		}
+		if strings.Contains(cmd.CommandPath(), "person") {
+			hint = "find person IDs with 'msgvault person list --json'"
+		}
+		return 0, withHint(validationErr(cmd, errors.New("ID must be a positive integer")), hint)
 	}
 	return id, nil
 }
@@ -416,7 +430,7 @@ func cardDAVCLIConnection(cmd *cobra.Command, name string) (*string, error) {
 		return nil, nil //nolint:nilnil // A nil selector deliberately means aggregate sync or an unfiltered read.
 	}
 	if err := config.ValidateCardDAVConnectionName(name); err != nil {
-		return nil, usageErr(cmd, fmt.Errorf("invalid CardDAV connection: %w", err))
+		return nil, validationErr(cmd, fmt.Errorf("invalid CardDAV connection: %w", err))
 	}
 	return &name, nil
 }

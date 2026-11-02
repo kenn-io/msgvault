@@ -39,14 +39,11 @@ and drives is_from_me on outbound messages.
 
 HTML exports do not expose timezone information; timestamps are stored as
 UTC. JSON exports have millisecond-precision timestamps that are preserved
-verbatim.
-
-Examples:
-  msgvault import-messenger --me test.user@facebook.messenger ~/downloads/facebook-export
-  msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
-  msgvault import-messenger --me test.user@facebook.messenger --limit 100 ./dyi
-  `,
-	Args: cobra.ExactArgs(1),
+verbatim.`,
+	Example: `  msgvault import messenger --me test.user@facebook.messenger ~/downloads/facebook-export
+  msgvault import messenger --me test.user@facebook.messenger --format both ./dyi
+  msgvault import messenger --me test.user@facebook.messenger --limit 100 ./dyi`,
+	Args: sourceImportArgs("me", "your Messenger identifier (for example archive.user@facebook.messenger)", "msgvault import messenger ./messenger-export --me archive.user@facebook.messenger"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)

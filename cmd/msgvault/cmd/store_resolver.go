@@ -52,7 +52,7 @@ func runStartupMigrationsContext(ctx context.Context, s *store.Store, state *inv
 	case res.Deferred:
 		currentLogger.Info("legacy [identity] block in config detected (migration deferred until a source exists)",
 			"address_count", res.AddressCount,
-			"hint", "run 'msgvault add-account ...' to create a source; the migration will retry on the next command")
+			"hint", "run 'msgvault source gmail add ...' to create a source; the migration will retry on the next command")
 	case res.Applied:
 		currentLogger.Info("legacy identity migrated",
 			"addresses", res.AddressCount,

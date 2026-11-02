@@ -706,7 +706,7 @@ func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T
 				LooseAttachmentBlobs: 1, AttachmentPacks: 1,
 				PackFallbacks: []packstore.ImportFallback{{PackID: restorePackAForOutput, Hash: packstore.Hash(strings.Repeat("a", 64)), Reason: packstore.FallbackBlobLimit}}},
 			contains: []string{"2 packed in 1 pack(s), 1 loose", "Pack fallbacks: blob_limit=1",
-				"1 attachment blob(s) remain loose", "msgvault pack-attachments"},
+				"1 attachment blob(s) remain loose", "msgvault attachment pack"},
 		},
 		{
 			name:      "explicit loose",
@@ -714,7 +714,7 @@ func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T
 			result: backup.RestoreResult{SnapshotID: "snap", DBPath: "/target/msgvault.db",
 				AttachmentBlobs: 3, AttachmentBytes: 30, LooseAttachmentBlobs: 3},
 			contains:    []string{"0 packed in 0 pack(s), 3 loose", "restored as loose files"},
-			notContains: []string{"msgvault pack-attachments"},
+			notContains: []string{"msgvault attachment pack"},
 		},
 		{
 			name: "whole pack fallback",

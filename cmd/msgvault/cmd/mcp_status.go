@@ -15,9 +15,11 @@ import (
 func newMCPStatusCommand() *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
-		Use:   "status",
-		Short: "List running HTTP MCP listeners",
-		Args:  cobra.NoArgs,
+		Use:     "status",
+		Short:   "List running HTTP MCP listeners",
+		Long:    "List HTTP MCP listeners recorded on this machine, including their endpoints and runtime state. An empty list is successful and exits zero. Start a listener with msgvault mcp --http after configuring its inbound authentication.",
+		Example: "  msgvault mcp status --json",
+		Args:    cobra.NoArgs,
 		PersistentPreRunE: func(command *cobra.Command, _ []string) error {
 			inv := prepareInvocation(command)
 			if inv == nil {

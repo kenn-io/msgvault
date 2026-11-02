@@ -16,31 +16,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 	"go.kenn.io/msgvault/internal/scheduler"
 )
-
-func testConfigValue() *config.Config { return config.NewDefaultConfig() }
-
-func testDiscardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
-
-func testInvocationWithConfig(cfg *config.Config) *invocation {
-	state := newInvocation()
-	state.cfg = cfg
-	state.logger = testDiscardLogger()
-	return state
-}
-
-func testLoggerValue() *slog.Logger { return slog.New(slog.DiscardHandler) }
-
-func testInvocationContext(ctx context.Context, cfg *config.Config, options invocationOptions) context.Context {
-	state := newInvocation()
-	state.cfg = cfg
-	state.options = options
-	return withInvocation(ctx, state)
-}
 
 func TestInvocationBoundJobRun(t *testing.T) {
 	assert := assert.New(t)
@@ -170,7 +149,7 @@ func TestInvocationLogLifecycle(t *testing.T) {
 	} {
 		logPath := filepath.Join(t.TempDir(), test.mode+".log")
 		root.SetArgs([]string{
-			"--home", home, "--log-file", logPath, "probe", test.mode,
+			"--home", home, "--log-file", logPath, "--log-level", "debug", "probe", test.mode,
 		})
 		err := executeRootContext(context.Background(), root)
 		if test.outcome == "ok" {
@@ -218,7 +197,7 @@ func TestInvocationPanicCleanup(t *testing.T) {
 	output, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	require.ErrorAs(err, &exitErr)
-	assert.Equal(2, exitErr.ExitCode(), string(output))
+	assert.Equal(1, exitErr.ExitCode(), string(output))
 	data, readErr := os.ReadFile(logPath)
 	require.NoError(readErr)
 	assert.Contains(string(data), `"msg":"msgvault panic"`)
@@ -240,8 +219,8 @@ func TestInvocationPanicHelper(t *testing.T) {
 		"--home", filepath.Dir(os.Getenv("MSGVAULT_INVOCATION_PANIC_LOG")),
 		"--log-file", os.Getenv("MSGVAULT_INVOCATION_PANIC_LOG"), "panic",
 	})
-	_ = executeRootContext(context.Background(), root)
-	os.Exit(3)
+	err := executeRootContext(context.Background(), root)
+	os.Exit(ExitCode(err))
 }
 
 func TestTUILoggerRestoration(t *testing.T) {
@@ -285,7 +264,8 @@ func TestInvocationUsageContract(t *testing.T) {
 		RunE: func(*cobra.Command, []string) error { return nil },
 	}, "required")
 	require.Error(err)
-	assert.Contains(usage, "Usage:")
+	assert.NotContains(usage, "Usage:")
+	assert.Contains(usage, "hint:")
 
 	usage, err = newRoot(&cobra.Command{
 		Use: "contract",
@@ -294,7 +274,8 @@ func TestInvocationUsageContract(t *testing.T) {
 		},
 	}, "--no-log-file", "--log-level", "error", "contract")
 	require.ErrorContains(err, "contract failure")
-	assert.Contains(usage, "Usage:")
+	assert.NotContains(usage, "Usage:")
+	assert.Contains(usage, "hint:")
 
 	usage, err = newRoot(&cobra.Command{
 		Use:  "runtime",

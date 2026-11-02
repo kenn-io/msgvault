@@ -607,6 +607,9 @@ func identityShowArgs(cmd *cobra.Command, args []string) error {
 }
 
 func identityAddArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return withHint(usageErr(cmd, errors.New("provide <identifier> with an account or --source-id")), "use 'msgvault identity add you@example.com +15551234567', or pass --source-id from 'msgvault account list --json'")
+	}
 	return identitySelectorArgs(cmd, args, 1, 2)
 }
 
@@ -624,7 +627,7 @@ func identityImportArgs(cmd *cobra.Command, args []string) error {
 	}
 	fileSet := cmd.Flags().Changed("file")
 	if fileSet == identityImportStdin {
-		return errors.New("exactly one of --file or --stdin is required")
+		return withHint(usageErr(cmd, errors.New("exactly one of --file or --stdin is required")), "use 'msgvault identity import you@example.com --file ids.txt', or pass --stdin to read identifiers from standard input")
 	}
 	if fileSet && strings.TrimSpace(identityImportFile) == "" {
 		return errors.New("identity import file path must not be empty")
@@ -641,7 +644,7 @@ func identitySelectorArgs(cmd *cobra.Command, args []string, sourceIDCount, acco
 			return nil
 		}
 		if len(args) == accountCount {
-			return errors.New("account and source ID are mutually exclusive")
+			return withHint(usageErr(cmd, errors.New("account and source ID are mutually exclusive")), "pass the account email or --source-id, then the identifier; source IDs come from 'msgvault account list --json'")
 		}
 		return cobra.ExactArgs(sourceIDCount)(cmd, args)
 	}
@@ -662,7 +665,7 @@ func identitySourceSelector(
 ) (daemonclient.CLIIdentitySourceSelector, error) {
 	if cmd.Flags().Changed("source-id") {
 		if sourceID <= 0 {
-			return daemonclient.CLIIdentitySourceSelector{}, errors.New("source ID must be positive")
+			return daemonclient.CLIIdentitySourceSelector{}, withHint(validationErr(cmd, errors.New("source ID must be positive")), "find source IDs with 'msgvault account list --json'")
 		}
 		return daemonclient.CLIIdentitySourceSelector{SourceID: sourceID}, nil
 	}

@@ -74,10 +74,10 @@ func runExportDiscord(
 ) error {
 	start, end, err := parseDiscordExportBounds(opts.Start, opts.End)
 	if err != nil {
-		return usageErr(cmd, err)
+		return err
 	}
 	if opts.Format != flagJSON {
-		return usageErr(cmd, fmt.Errorf("unsupported --format %q (expected json)", opts.Format))
+		return withHint(validationErr(cmd, fmt.Errorf("unsupported --format %q (expected json)", opts.Format)), "use --format json; export discord writes JSON to stdout")
 	}
 
 	st, cleanup, err := deps.openStore()
@@ -98,7 +98,7 @@ func runExportDiscord(
 	if err != nil {
 		if errors.Is(err, store.ErrSyncRunNotFound) {
 			return fmt.Errorf(
-				"discord guild %q has no successful Discord sync; run 'msgvault sync-discord %s' first",
+				"discord guild %q has no successful Discord sync; run 'msgvault source discord sync %s' first",
 				selector, source.Identifier,
 			)
 		}
@@ -137,24 +137,7 @@ func runExportDiscord(
 }
 
 func parseDiscordExportBounds(startValue, endValue string) (time.Time, time.Time, error) {
-	start, err := time.Parse(time.RFC3339, startValue)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf(
-			"invalid --start %q (expected RFC3339): %w", startValue, err,
-		)
-	}
-	end, err := time.Parse(time.RFC3339, endValue)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf(
-			"invalid --end %q (expected RFC3339): %w", endValue, err,
-		)
-	}
-	start = start.UTC()
-	end = end.UTC()
-	if !start.Before(end) {
-		return time.Time{}, time.Time{}, errors.New("--start must be before --end")
-	}
-	return start, end, nil
+	return parseMessageExportBounds(startValue, endValue)
 }
 
 func validateDiscordExport(

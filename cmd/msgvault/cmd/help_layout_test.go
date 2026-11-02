@@ -114,7 +114,8 @@ func TestGroupCommandRejectsUnknownSubcommand(t *testing.T) {
 				err := executeRootContext(t.Context(), rootCmd)
 				if unknown {
 					requirements.ErrorContains(err, `unknown command "bogus-subcmd"`)
-					assertions.Contains(output.String(), "Usage:")
+					assertions.NotContains(output.String(), "Usage:")
+					assertions.Contains(output.String(), "hint:")
 				} else {
 					requirements.NoError(err)
 					assertions.Contains(output.String(), "Usage:")
@@ -151,7 +152,7 @@ func TestAgentDelegatedGroupHelpBypassesCapabilityGate(t *testing.T) {
 	}{
 		{name: "bare group", args: []string{"person"}},
 		{name: "unknown subcommand", args: []string{"person", "proomte"}, wantErr: `unknown command "proomte"`},
-		{name: "gated subcommand", args: []string{"person", "list"}, wantErr: "list is not available in agent-delegated mode"},
+		{name: "gated subcommand", args: []string{"person", "list"}, wantErr: "person list is not available in agent-delegated mode"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -212,9 +213,9 @@ func TestSubcommandHelpHasCompactGlobalFlags(t *testing.T) {
 	var output bytes.Buffer
 	rootCmd.SetOut(&output)
 	rootCmd.SetErr(&output)
-	rootCmd.SetArgs([]string{"list-accounts", "--help"})
+	rootCmd.SetArgs([]string{"account", "list", "--help"})
 	requirements.NoError(executeRootContext(t.Context(), rootCmd))
-	assertions.Contains(output.String(), "Examples:\n  msgvault list-accounts --json\n")
+	assertions.Contains(output.String(), "Examples:\n  msgvault account list --json\n")
 	assertions.Contains(output.String(), "Global Flags: --")
 	assertions.NotContains(output.String(), "--log-sql-slow-ms int")
 	assertions.Contains(output.String(), "see 'msgvault --help'")

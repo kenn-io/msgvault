@@ -343,7 +343,7 @@ func TestAnalyticsCacheNotice(t *testing.T) {
 
 			notice := analyticsCacheNotice(context.Background(), client)
 			if tt.wantNotice {
-				assert.Contains(t, notice, "msgvault build-cache")
+				assert.Contains(t, notice, "msgvault cache build")
 			} else {
 				assert.Empty(t, notice)
 			}

@@ -130,7 +130,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	src, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
 	if err != nil {
-		return nil, fmt.Errorf("plaud source is not registered; run msgvault add-plaud %s: %w", opts.Identifier, err)
+		return nil, fmt.Errorf("plaud source is not registered; run msgvault source plaud add %s: %w", opts.Identifier, err)
 	}
 	if err := ValidateOwner(src, opts.AccountEmail); err != nil {
 		return nil, err

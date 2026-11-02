@@ -32,7 +32,7 @@ func TestBuilderErrorPreservesCause(t *testing.T) {
 		assertions.Contains(got.Error(), "analytics.builder_memory_limit=1MiB")
 		assertions.Contains(got.Error(), "analytics.builder_threads=1")
 		assertions.Contains(got.Error(), "analytics.builder_temp_limit=8MB")
-		assertions.Contains(got.Error(), "msgvault build-cache")
+		assertions.Contains(got.Error(), "msgvault cache build")
 		assertions.Same(got, BuilderError(got, BuilderPolicy(t.TempDir())),
 			"nested build paths must retain the actual failing connection's limits")
 	}

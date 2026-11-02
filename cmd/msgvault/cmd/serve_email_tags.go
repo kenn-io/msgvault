@@ -81,7 +81,7 @@ func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *ema
 	if err := a.store.SaveEmailTagsContext(evidenceCtx, target, result); err != nil {
 		return result, emailtags.Failure("remote_accepted_local_failed", "Provider tags were verified but could not be saved locally; sync the account", result, err)
 	}
-	if target.Provider == "gmail" || target.Provider == sourceTypeMSMail {
+	if target.Provider == sourceTypeGmail || target.Provider == sourceTypeMSMail {
 		a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	}
 	return result, nil
@@ -94,7 +94,7 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		if write {
 			granted, err := newGraphMailWriteManager(state).HasScopes(source.Identifier)
 			if err != nil || !granted {
-				return nil, emailtags.Failure("insufficient_scope", "Microsoft category editing requires Mail.ReadWrite; reauthorize with add-o365 --graph --mail-write", nil, err)
+				return nil, emailtags.Failure("insufficient_scope", "Microsoft category editing requires Mail.ReadWrite; reauthorize with source o365 add --graph --mail-write", nil, err)
 			}
 		}
 		factory := a.microsoftTagClientFactory
@@ -118,9 +118,9 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		return client.MessageTags(ctx, target.SourceMessageID, change)
 	}
 	scopes := []string{oauth.ScopeGmailModify, oauth.ScopeGmailFull}
-	if target.Provider == "gmail" && change != nil && !change.DryRun {
+	if target.Provider == sourceTypeGmail && change != nil && !change.DryRun {
 		if err := gmailDraftScopeGate(ctx, a.config, source, scopes); err != nil {
-			return nil, emailtags.Failure("insufficient_scope", "Gmail tag editing requires gmail.modify; reauthorize the account with add-account --force", nil, err)
+			return nil, emailtags.Failure("insufficient_scope", "Gmail tag editing requires gmail.modify; reauthorize the account with source gmail add --force", nil, err)
 		}
 	}
 	factory := a.emailTagClientFactory

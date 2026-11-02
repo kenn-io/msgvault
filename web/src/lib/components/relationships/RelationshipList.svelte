@@ -270,7 +270,7 @@
   {:else if degraded}
     <section class="named-state" role="status">
       <strong>Relationship ranking needs the analytical cache/engine</strong>
-      <span>Rebuild the analytical cache with <code>msgvault build-cache</code>, then retry.</span>
+      <span>Rebuild the analytical cache with <code>msgvault cache build</code>, then retry.</span>
       <div><Button label="Open Everything" surface="outline" onclick={() => onOpenEverything?.()} /></div>
     </section>
   {:else if error && views.length === 0}

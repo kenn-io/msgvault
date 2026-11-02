@@ -644,7 +644,7 @@ func TestAgentFTSResponsesReportIndexState(t *testing.T) {
 		if st.IsPostgreSQL() && strings.Contains(path, "scope=body") {
 			assertions.Equal(503, response.Code, response.Body.String())
 			assertions.Contains(response.Body.String(), "body_search_index_unavailable")
-			assertions.Contains(response.Body.String(), "rebuild-fts")
+			assertions.Contains(response.Body.String(), "fts rebuild")
 		} else {
 			requirements.Equal(200, response.Code, path+response.Body.String())
 			assertions.Contains(response.Body.String(), `"index_state":"awaiting_owner"`, path)

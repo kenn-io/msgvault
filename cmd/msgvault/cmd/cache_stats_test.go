@@ -23,7 +23,7 @@ func TestPrintCacheStatsInterrupted(t *testing.T) {
 	err := printCacheStats(&stdout, &stderr, &cacheops.CacheStats{Status: cacheops.StatusInterrupted})
 	require.NoError(t, err)
 	assert.Empty(t, stderr.String())
-	assert.Equal(t, "Analytics cache publication was interrupted.\nRun 'msgvault build-cache' to repair it.\n", stdout.String())
+	assert.Equal(t, "Analytics cache publication was interrupted.\nRun 'msgvault cache build' to repair it.\n", stdout.String())
 }
 
 func TestPrintCacheStatsRequiresFullRebuildForInvalidPublication(t *testing.T) {
@@ -31,8 +31,8 @@ func TestPrintCacheStatsRequiresFullRebuildForInvalidPublication(t *testing.T) {
 		status string
 		want   string
 	}{
-		{status: cacheops.StatusStaleSchema, want: "Analytics cache schema is stale.\nRun 'msgvault build-cache --full-rebuild' to upgrade it.\n"},
-		{status: cacheops.StatusDrifted, want: "Analytics cache files do not match the committed publication.\nRun 'msgvault build-cache --full-rebuild' to repair them.\n"},
+		{status: cacheops.StatusStaleSchema, want: "Analytics cache schema is stale.\nRun 'msgvault cache build --full-rebuild' to upgrade it.\n"},
+		{status: cacheops.StatusDrifted, want: "Analytics cache files do not match the committed publication.\nRun 'msgvault cache build --full-rebuild' to repair them.\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {

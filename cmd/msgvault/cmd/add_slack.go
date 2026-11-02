@@ -58,12 +58,10 @@ Without search:read, each sync revisits channel history to find replies on old
 threads. search:read can read private conversations through search; files:read
 and reactions:read also grant access beyond public-channel messages. Omit them
 for a public-channel-only token. Use a fresh app when reducing permissions;
-reinstalling an existing app can retain previously granted scopes.
-
-Examples:
-  msgvault add-slack
-  msgvault add-slack --token-file ~/slack-token.txt
-  MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault add-slack`,
+reinstalling an existing app can retain previously granted scopes.`,
+		Example: `  msgvault source slack add
+  msgvault source slack add --token-file ~/slack-token.txt
+  MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault source slack add`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -119,7 +117,7 @@ Examples:
 
 			writeAddedSlackWorkspace(cmd.OutOrStdout(), auth.Team, auth.TeamID, identifier)
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nYou can now run:")
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault sync-slack %s\n", auth.TeamID)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault source slack sync %s\n", auth.TeamID)
 			return nil
 		},
 	}

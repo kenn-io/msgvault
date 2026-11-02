@@ -19,6 +19,7 @@ func TestImportMboxCmd_GoogleGroupsTakeout(t *testing.T) {
 	logger := testLoggerValue()
 	verbose := false
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)
@@ -85,7 +86,7 @@ Synthetic attachment.
 	})
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", tmp, "import-mbox", "test-group@googlegroups.com", zipPath, "--source-type", "google-groups", "--label", "test-group", "--no-resume"})
+	rootCmd.SetArgs([]string{"--home", tmp, "import", "mbox", "test-group@googlegroups.com", zipPath, "--source-type", "google-groups", "--label", "test-group", "--no-resume"})
 	require.NoError(rootCmd.ExecuteContext(context.Background()))
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err)

@@ -479,6 +479,8 @@ components:
       properties:
         error:
           type: string
+        hint:
+          type: string
         message:
           type: string
       required:
@@ -1105,6 +1107,11 @@ components:
           type: string
         error:
           type: string
+        error_reported:
+          type: boolean
+        exit_code:
+          format: int64
+          type: integer
         type:
           type: string
       required:
@@ -1116,6 +1123,11 @@ components:
           type: string
         error:
           type: string
+        error_reported:
+          type: boolean
+        exit_code:
+          format: int64
+          type: integer
         type:
           type: string
       required:
@@ -1136,10 +1148,17 @@ components:
       type: object
     CLIRunEvent:
       properties:
+        code:
+          type: string
         data:
           type: string
         error:
           type: string
+        error_reported:
+          type: boolean
+        exit_code:
+          format: int64
+          type: integer
         type:
           type: string
       required:
@@ -1167,6 +1186,11 @@ components:
           type: string
         error:
           type: string
+        error_reported:
+          type: boolean
+        exit_code:
+          format: int64
+          type: integer
         type:
           type: string
       required:
@@ -1178,6 +1202,11 @@ components:
           type: string
         error:
           type: string
+        error_reported:
+          type: boolean
+        exit_code:
+          format: int64
+          type: integer
         type:
           type: string
       required:
@@ -5140,6 +5169,8 @@ components:
     ErrorResponse:
       properties:
         error:
+          type: string
+        hint:
           type: string
         message:
           type: string
