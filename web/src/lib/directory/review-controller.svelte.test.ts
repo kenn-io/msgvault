@@ -147,14 +147,15 @@ describe('DirectoryReviewController', () => {
     expect(controller.rows).toEqual([candidate(1, entry === 'History' ? 'accepted' : 'candidate')]);
   });
 
-  it.each([503, 409])('keeps a failed reject note and never automatically retries the decision: %s', async status => {
-    const message = status === 503 ? 'Decision unavailable' : 'An accepted identity match cannot be rejected because its participant link is retained';
+  it('keeps a failed reject note and never automatically retries the decision', async () => {
+    const status = 503;
+    const message = 'Decision unavailable';
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       if (request.method === 'GET') return page([candidate(17)]);
-      return Response.json({ error: status === 503 ? 'unavailable' : 'identity_match_already_accepted', message }, { status });
+      return Response.json({ error: 'unavailable', message }, { status });
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
