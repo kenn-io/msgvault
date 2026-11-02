@@ -571,6 +571,14 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if !time.Now().Before(deadline) {
 				return true, errors.Join(failures.reported, failures.streak)
 			}
+			if d.Fingerprint != profile.Fingerprint {
+				d.Fingerprint = profile.Fingerprint
+				if err := w.gated(ctx, func() error {
+					return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, time.Now().UTC())
+				}); err != nil {
+					return false, errors.Join(failures.reported, failures.streak, endMediaPass(err))
+				}
+			}
 			job, jobID, err := w.askProcessing(ctx, d, deadline)
 			if ctx.Err() != nil {
 				return false, ctx.Err()

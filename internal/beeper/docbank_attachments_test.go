@@ -1118,6 +1118,44 @@ func TestAttachmentMirrorBackfillBeforeProcessingFailureSave(t *testing.T) {
 	}
 }
 
+func TestAttachmentMirrorBackfillBeforeFirstProcessingResultSave(t *testing.T) {
+	for _, state := range []string{"refused", "accepted"} {
+		t.Run(state, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			r.delivered("a")
+			if state == "refused" {
+				r.processing.JobFaults["a"] = http.StatusConflict
+				r.processing.Reasons["a"] = "rendition_operator_required"
+			}
+			backfilled := false
+			r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+				if !backfilled && len(r.processing.Jobs) == 1 {
+					backfilled = true
+					delete(r.processing.JobFaults, "a")
+					delete(r.processing.Reasons, "a")
+					require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+				}
+				return func() {}, true
+			})
+			require.NoError(r.runBatch(t.Context()))
+			require.True(backfilled)
+			if state == "accepted" {
+				assert.Equal([]string{"a"}, r.processing.Jobs, "backfill preserves the newly accepted job")
+				id := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
+				r.processing.States[id] = [3]string{"failed", "rendition", "consent"}
+				r.processingDue()
+				require.NoError(r.runBatch(t.Context()))
+			}
+			assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+			counts := r.processingCounts()
+			assert.Equal(int64(1), counts.Requested)
+			assert.Empty(counts.Outcomes)
+		})
+	}
+}
+
 func TestAttachmentMirrorProcessingStartSavesConflictReason(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
