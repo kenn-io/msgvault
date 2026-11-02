@@ -51,6 +51,7 @@ type run struct {
 	// a second row claiming the same author and timestamp is reported
 	// instead of overwriting the first.
 	seenIDs map[string]int64
+	quotes  []pendingQuote
 	written int64
 }
 
@@ -155,6 +156,10 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		}
 	}
 
+	if err := r.linkQuotes(ctx); err != nil {
+		syncErr = err
+		return nil, err
+	}
 	if err := r.imp.store.RecomputeConversationStats(source.ID); err != nil {
 		imp.progress.OnError(fmt.Errorf("recompute conversation stats: %w", err))
 	}
@@ -163,34 +168,36 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	return r.summary, nil
 }
 
-// resolveSelf finds the account owner's recipient row: the author of the
-// outgoing messages, or the recipient with the owner's number when the
-// database holds no outgoing message. A backup of another number is refused.
+// resolveSelf finds the account owner's recipient row from the backup
+// itself: the author of outgoing messages and the recipient of incoming
+// direct messages. --phone must match that row's number. A backup whose
+// owner cannot be determined, or whose owner has another number, is refused
+// before anything is written.
 func (r *run) resolveSelf(ctx context.Context) error {
-	authors, err := selfRecipientIDs(ctx, r.db)
+	evidence, err := ownerEvidence(ctx, r.db)
 	if err != nil {
 		return err
 	}
 	r.selfRecipientID = -1
-	for _, id := range authors {
-		if r.recipients[id].E164 == r.opts.Phone {
-			r.selfRecipientID = id
-			break
+	var best int64
+	for id, count := range evidence {
+		recipient, found := r.recipients[id]
+		if !found || recipient.GroupID != "" {
+			continue
 		}
-	}
-	if r.selfRecipientID < 0 && len(authors) > 0 {
-		r.selfRecipientID = authors[0]
+		if count > best || count == best && id < r.selfRecipientID {
+			r.selfRecipientID, best = id, count
+		}
 	}
 	if r.selfRecipientID < 0 {
-		for id, recipient := range r.recipients {
-			if recipient.E164 == r.opts.Phone && recipient.GroupID == "" {
-				r.selfRecipientID = id
-				break
-			}
-		}
+		return errors.New("cannot determine which account made this Signal backup: " +
+			"it holds no sent messages and no received direct messages")
 	}
 	self := r.recipients[r.selfRecipientID]
-	if self.E164 != "" && self.E164 != r.opts.Phone {
+	if self.E164 == "" {
+		return errors.New("cannot verify --phone: the backup does not record its own account's number")
+	}
+	if self.E164 != r.opts.Phone {
 		return errors.New("--phone does not match the number of the account that made this Signal backup")
 	}
 	r.selfToken = self.ACI
@@ -202,18 +209,37 @@ func (r *run) resolveSelf(ctx context.Context) error {
 
 func (r *run) ensureSelf(ctx context.Context) error {
 	pid, err := r.imp.store.EnsureParticipantByPhone(r.opts.Phone, r.opts.DisplayName, SourceType)
+	if err == nil {
+		err = r.bindACI(ctx, pid, r.recipients[r.selfRecipientID].ACI)
+	}
 	if err != nil {
 		return fmt.Errorf("ensure self participant: %w", err)
-	}
-	if aci := r.recipients[r.selfRecipientID].ACI; aci != "" {
-		if err := r.imp.store.SetParticipantIdentifierContext(ctx, pid, ACIIdentifierType, aci); err != nil {
-			return fmt.Errorf("record own Signal identity: %w", err)
-		}
 	}
 	r.selfParticipant = pid
 	r.participants[r.selfRecipientID] = pid
 	r.summary.Participants++
 	return nil
+}
+
+// bindACI records a Signal ACI on the participant found by phone number. If
+// an earlier import created a separate ACI-only participant for the same
+// account (its number was hidden then), that participant is merged into the
+// phone participant through the Store merge path, so its bindings,
+// conversation memberships and message references move with it.
+func (r *run) bindACI(ctx context.Context, phoneParticipant int64, aci string) error {
+	if aci == "" {
+		return nil
+	}
+	existing, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, aci)
+	if err != nil {
+		return fmt.Errorf("look up Signal identity: %w", err)
+	}
+	if existing != 0 && existing != phoneParticipant {
+		if err := r.imp.store.MergeParticipantsContext(ctx, existing, phoneParticipant); err != nil {
+			return fmt.Errorf("merge Signal identity into phone participant: %w", err)
+		}
+	}
+	return r.imp.store.SetParticipantIdentifierContext(ctx, phoneParticipant, ACIIdentifierType, aci)
 }
 
 // participant returns the participant of a Signal recipient, creating it on
@@ -231,8 +257,8 @@ func (r *run) participant(ctx context.Context, recipientID int64) (int64, bool) 
 	case !found || recipient.GroupID != "":
 	case recipient.E164 != "":
 		pid, err = r.imp.store.EnsureParticipantByPhone(recipient.E164, recipient.Name, SourceType)
-		if err == nil && recipient.ACI != "" {
-			err = r.imp.store.SetParticipantIdentifierContext(ctx, pid, ACIIdentifierType, recipient.ACI)
+		if err == nil {
+			err = r.bindACI(ctx, pid, recipient.ACI)
 		}
 	case recipient.ACI != "":
 		pid, err = r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
@@ -246,6 +272,20 @@ func (r *run) participant(ctx context.Context, recipientID int64) (int64, bool) 
 	}
 	r.participants[recipientID] = pid
 	return pid, pid != 0
+}
+
+// legacyToken returns the number-based token earlier imports used for a
+// recipient that now has an ACI, or "" when its token did not change.
+func (r *run) legacyToken(recipientID int64) string {
+	recipient := r.recipients[recipientID]
+	phone := recipient.E164
+	if recipientID == r.selfRecipientID {
+		phone = r.opts.Phone
+	}
+	if recipient.ACI == "" || phone == "" {
+		return ""
+	}
+	return phone
 }
 
 // token returns the identity token of a recipient for message IDs.
@@ -285,6 +325,14 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 		title = r.groups[chat.GroupID]
 	}
 	r.summary.ChatsProcessed++
+	if convType == "direct_chat" && chat.ACI != "" && chat.E164 != "" {
+		// An earlier import knew this contact only by number. Move that
+		// conversation to the ACI identity instead of starting a second one.
+		if _, err := r.imp.store.ReassignSourceConversationIDContext(
+			ctx, r.sourceID, directE164Prefix+chat.E164, sourceConvID); err != nil {
+			return fmt.Errorf("move conversation %s to its Signal account ID: %w", sourceConvID, err)
+		}
+	}
 	conversationID, err := r.imp.store.EnsureConversationWithTypeContext(ctx, r.sourceID, sourceConvID, convType, title)
 	if err != nil {
 		r.summary.Errors++
@@ -356,14 +404,24 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 type pendingMessage struct {
 	row      sigMessage
 	id       string
+	legacyID string
 	rootID   int64
 	senderID int64
+}
+
+// pendingQuote is a reply whose quoted message is linked after every thread
+// is written, so the quoted message's newest revision no longer has to
+// precede the reply.
+type pendingQuote struct {
+	childID  string
+	parentID string
 }
 
 func (r *run) importBatch(ctx context.Context, conversationID int64, messages []sigMessage, senders map[int64]struct{}) (int64, error) {
 	var pending []pendingMessage
 	var ids []string
 	var lookupRows []int64
+	var legacyIDs []string
 	for _, m := range messages {
 		r.summary.MessagesProcessed++
 		if skipReason(m) != "" {
@@ -390,7 +448,12 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 			continue
 		}
 		r.seenIDs[id] = rootID
-		pending = append(pending, pendingMessage{row: m, id: id, rootID: rootID, senderID: author})
+		legacyID := ""
+		if legacy := r.legacyToken(author); legacy != "" {
+			legacyID = messageID(legacy, m.DateSent)
+			legacyIDs = append(legacyIDs, legacyID)
+		}
+		pending = append(pending, pendingMessage{row: m, id: id, legacyID: legacyID, rootID: rootID, senderID: author})
 		ids = append(ids, id)
 		lookupRows = append(lookupRows, m.RowID)
 		if m.OriginalRowID.Valid {
@@ -401,6 +464,9 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 		return 0, nil
 	}
 
+	if err := r.migrateLegacyIDs(conversationID, pending, legacyIDs); err != nil {
+		return 0, err
+	}
 	existing, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, ids)
 	if err != nil {
 		return 0, fmt.Errorf("look up archived Signal messages: %w", err)
@@ -418,10 +484,12 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 		visible[i] = p.row.RowID
 	}
 	reactions, err := fetchReactions(ctx, r.db, r.schema, roots)
+	reactionsRead := err == nil
 	if err != nil {
+		// Keep the archived reactions rather than replacing them with an
+		// empty snapshot the backup did not actually contain.
 		r.summary.Errors++
 		r.imp.progress.OnError(err)
-		reactions = map[int64][]sigReaction{}
 	}
 	mentions, err := fetchMentions(ctx, r.db, r.schema, visible)
 	if err != nil {
@@ -442,8 +510,12 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 			rowAttachments = attachments[p.row.OriginalRowID.Int64]
 		}
 		_, isExisting := existing[p.id]
+		var rowReactions []sigReaction
+		if reactionsRead {
+			rowReactions = reactions[p.rootID]
+		}
 		if err := r.writeMessage(ctx, conversationID, p, rowAttachments,
-			reactions[p.rootID], mentions[p.row.RowID]); err != nil {
+			reactionsRead, rowReactions, mentions[p.row.RowID]); err != nil {
 			if ctx.Err() != nil {
 				return added, ctx.Err()
 			}
@@ -467,7 +539,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 
 func (r *run) writeMessage(
 	ctx context.Context, conversationID int64, p pendingMessage,
-	attachments []sigAttachment, reactions []sigReaction, mentions []sigMention,
+	attachments []sigAttachment, reactionsRead bool, reactions []sigReaction, mentions []sigMention,
 ) error {
 	m := p.row
 	st := r.imp.store
@@ -506,10 +578,10 @@ func (r *run) writeMessage(
 	if err != nil {
 		return err
 	}
-	if body != "" {
-		if err := st.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
-			return fmt.Errorf("store body: %w", err)
-		}
+	// Write the body even when it is empty: a newer revision without text
+	// must clear the archived text and its search entry.
+	if err := st.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}); err != nil {
+		return fmt.Errorf("store body: %w", err)
 	}
 	if raw, err := json.Marshal(m, json.Deterministic(true)); err == nil {
 		_ = st.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawFormat)
@@ -526,19 +598,27 @@ func (r *run) writeMessage(
 			return err
 		}
 	}
-	r.linkQuote(ctx, p.id, m)
-	for _, reaction := range reactions {
-		pid, ok := r.participant(ctx, reaction.AuthorID)
-		if !ok || reaction.Emoji == "" {
-			continue
+	r.queueQuote(p.id, m)
+	if reactionsRead {
+		// The backup holds each message's current reactions; replace the
+		// archived set so removed and changed reactions disappear.
+		refs := make([]store.ReactionRef, 0, len(reactions))
+		for _, reaction := range reactions {
+			pid, ok := r.participant(ctx, reaction.AuthorID)
+			if !ok || reaction.Emoji == "" {
+				continue
+			}
+			refs = append(refs, store.ReactionRef{
+				ParticipantID: pid, Type: reactionTypeEmoji, Value: reaction.Emoji,
+				CreatedAt: millisTime(reaction.DateSent).Time,
+			})
 		}
-		created := millisTime(reaction.DateSent).Time
-		if err := st.UpsertReaction(messageID, pid, reactionTypeEmoji, reaction.Emoji, created); err != nil {
+		if err := st.ReplaceReactionsContext(ctx, messageID, refs); err != nil {
 			r.summary.Errors++
-			r.imp.progress.OnError(fmt.Errorf("store reaction: %w", err))
-			continue
+			r.imp.progress.OnError(fmt.Errorf("store reactions: %w", err))
+		} else {
+			r.summary.ReactionsAdded += int64(len(refs))
 		}
-		r.summary.ReactionsAdded++
 	}
 	if body != "" {
 		senderAddr := r.recipients[p.senderID].E164
@@ -553,10 +633,31 @@ func (r *run) writeMessage(
 	return nil
 }
 
-// linkQuote points a reply at the message it quotes. Signal records a quote
-// as the quoted message's author and sent timestamp, which is that message's
-// ID here.
-func (r *run) linkQuote(ctx context.Context, childID string, m sigMessage) {
+// migrateLegacyIDs renames messages an earlier import stored under a
+// number-based ID to their ACI-based ID, for authors whose ACI is now known.
+func (r *run) migrateLegacyIDs(conversationID int64, pending []pendingMessage, legacyIDs []string) error {
+	if len(legacyIDs) == 0 {
+		return nil
+	}
+	archived, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, legacyIDs)
+	if err != nil {
+		return fmt.Errorf("look up number-based Signal messages: %w", err)
+	}
+	for _, p := range pending {
+		if _, ok := archived[p.legacyID]; !ok || p.legacyID == "" {
+			continue
+		}
+		if err := r.imp.store.MigrateSourceMessageID(r.sourceID, conversationID, p.legacyID, p.id); err != nil {
+			return fmt.Errorf("move Signal message to its account ID: %w", err)
+		}
+	}
+	return nil
+}
+
+// queueQuote records a reply's quoted message for linkQuotes. Signal records
+// a quote as the quoted message's author and sent timestamp, which is that
+// message's ID here.
+func (r *run) queueQuote(childID string, m sigMessage) {
 	if m.QuoteID <= 0 || m.QuoteAuthor <= 0 {
 		return
 	}
@@ -565,18 +666,29 @@ func (r *run) linkQuote(ctx context.Context, childID string, m sigMessage) {
 		r.summary.RepliesUnresolved++
 		return
 	}
-	parentID := messageID(token, m.QuoteID)
-	found, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, []string{parentID})
-	if err != nil || len(found) == 0 {
-		r.summary.RepliesUnresolved++
-		return
+	r.quotes = append(r.quotes, pendingQuote{childID: childID, parentID: messageID(token, m.QuoteID)})
+}
+
+// linkQuotes points each queued reply at the message it quotes, once all
+// threads are written.
+func (r *run) linkQuotes(ctx context.Context) error {
+	for _, q := range r.quotes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		found, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, []string{q.parentID})
+		if err != nil || len(found) == 0 {
+			r.summary.RepliesUnresolved++
+			continue
+		}
+		if err := r.imp.store.SetReplyToContext(ctx, r.sourceID, q.childID, q.parentID); err != nil {
+			r.summary.Errors++
+			r.imp.progress.OnError(fmt.Errorf("link reply: %w", err))
+			continue
+		}
+		r.summary.RepliesLinked++
 	}
-	if err := r.imp.store.SetReplyToContext(ctx, r.sourceID, childID, parentID); err != nil {
-		r.summary.Errors++
-		r.imp.progress.OnError(fmt.Errorf("link reply: %w", err))
-		return
-	}
-	r.summary.RepliesLinked++
+	return nil
 }
 
 // writeAttachments stores the attachment files found next to the database.

@@ -34,9 +34,11 @@ const (
 	tReply   = int64(1_700_000_060_000)
 	tEditOld = int64(1_700_000_120_000)
 	tEditNew = int64(1_700_000_180_000)
-	tGroup   = int64(1_700_000_240_000)
-	tCarol   = int64(1_700_000_300_000)
-	tSMS     = int64(1_700_000_360_000)
+	// tQuoteDraft lies between the draft and its edit.
+	tQuoteDraft = int64(1_700_000_150_000)
+	tGroup      = int64(1_700_000_240_000)
+	tCarol      = int64(1_700_000_300_000)
+	tSMS        = int64(1_700_000_360_000)
 )
 
 // fixtureLayout selects the column names of a Signal database version.
@@ -122,8 +124,11 @@ func writeSignalFixture(t *testing.T, dir string, layout fixtureLayout, offset i
 	// Direct chat with Alice: a message, a reply quoting it, and an edit.
 	exec(msgSQL, id(100), tAlice1, tAlice1+1, id(10), id(2), id(1), typeIncoming, "Hello from Alice", 0, 0, nil, nil, 0)
 	exec(msgSQL, id(101), tReply, tReply+1, id(10), id(1), id(2), typeOutgoing, "Replying", tAlice1, id(2), nil, nil, 0)
-	exec(msgSQL, id(102), tEditOld, tEditOld+1, id(10), id(1), id(2), typeOutgoing, "Frist draft", 0, 0, id(103), nil, 0)
-	exec(msgSQL, id(103), tEditNew, tEditNew+1, id(10), id(1), id(2), typeOutgoing, "First draft", 0, 0, nil, id(102), 1)
+	exec(msgSQL, id(102), tEditOld, tEditOld+1, id(10), id(1), id(2), typeOutgoing, "Frist draft", 0, 0, id(106), nil, 0)
+	// Alice quotes the draft before it is edited, so her reply's row
+	// precedes the draft's newest revision.
+	exec(msgSQL, id(103), tQuoteDraft, tQuoteDraft+1, id(10), id(2), id(1), typeIncoming, "Nice draft", tEditOld, id(1), nil, nil, 0)
+	exec(msgSQL, id(106), tEditNew, tEditNew+1, id(10), id(1), id(2), typeOutgoing, "First draft", 0, 0, nil, id(102), 1)
 	exec(msgSQL, id(104), tSMS, tSMS+1, id(10), id(2), id(1), typeSMSIncoming, "Plain SMS", 0, 0, nil, nil, 0)
 	exec(msgSQL, id(105), tSMS+1, tSMS+2, id(10), id(2), id(1), typeCallIncoming, nil, 0, 0, nil, nil, 0)
 	// Group chat: a message from Bob mentioning Alice, with a photo.
@@ -138,7 +143,7 @@ func writeSignalFixture(t *testing.T, dir string, layout fixtureLayout, offset i
 		id(11), id(200), id(2))
 	exec(`INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
 		id(200), id(2), "\U0001F44D", tGroup+100, tGroup+101,
-		id(103), id(2), "\u2764", tEditNew+100, tEditNew+101)
+		id(106), id(2), "\u2764", tEditNew+100, tEditNew+101)
 
 	attachmentSQL := fmt.Sprintf(`INSERT INTO %s (_id, %s, %s, file_name, data_size, width, height, caption, quote)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, layout.attachment, layout.attachmentMessage, layout.attachmentType)

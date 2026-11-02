@@ -290,31 +290,41 @@ func fetchMentions(ctx context.Context, db *sql.DB, s *schema, messageIDs []int6
 	return out, nil
 }
 
-// selfRecipientIDs returns the distinct authors of outgoing messages. In
-// supported databases that is the account owner alone.
-func selfRecipientIDs(ctx context.Context, db *sql.DB) ([]int64, error) {
+// ownerEvidence counts, per recipient, the messages that name it as the
+// account owner: the author of outgoing messages and the recipient of
+// incoming messages outside groups. In supported databases both point at the
+// owner's own recipient row.
+func ownerEvidence(ctx context.Context, db *sql.DB) (map[int64]int64, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT from_recipient_id FROM message
-		WHERE (type & ?) IN (?, ?, ?, ?)
-		GROUP BY from_recipient_id
-		ORDER BY COUNT(*) DESC`,
-		baseTypeMask, baseOutboxType, baseSendingType, baseSentType, baseSentFailedType)
+		SELECT owner, COUNT(*) FROM (
+			SELECT from_recipient_id AS owner FROM message
+			WHERE (type & ?) IN (?, ?, ?, ?)
+			UNION ALL
+			SELECT m.to_recipient_id FROM message m
+			WHERE (m.type & ?) = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM recipient r
+				WHERE r._id = m.to_recipient_id AND COALESCE(r.group_id, '') <> '')
+		)
+		GROUP BY owner`,
+		baseTypeMask, baseOutboxType, baseSendingType, baseSentType, baseSentFailedType,
+		baseTypeMask, baseInboxType)
 	if err != nil {
-		return nil, fmt.Errorf("query own messages: %w", err)
+		return nil, fmt.Errorf("query backup owner: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var ids []int64
+	evidence := make(map[int64]int64)
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan own message author: %w", err)
+		var id, count int64
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, fmt.Errorf("scan backup owner: %w", err)
 		}
-		ids = append(ids, id)
+		evidence[id] = count
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate own message authors: %w", err)
+		return nil, fmt.Errorf("iterate backup owner: %w", err)
 	}
-	return ids, nil
+	return evidence, nil
 }
 
 var attachmentFileName = regexp.MustCompile(`^Attachment_(\d+)_(-?\d+)\.bin$`)

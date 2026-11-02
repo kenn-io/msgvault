@@ -156,8 +156,11 @@ import, and their attachments count as missing.
 | `--limit` | No | Limit number of messages (for testing) |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
-msgvault refuses a backup whose own account has a different number than
-`--phone`.
+msgvault identifies the backup's own account from its messages: the author
+of sent messages and the recipient of received direct messages. It refuses the
+backup when that account has a different number than `--phone`, when the
+backup does not record that account's number, or when it holds no sent and no
+received direct messages.
 
 ### What is imported
 
@@ -182,9 +185,15 @@ Run the command with each newer backup. Every message is identified by its
 author's Signal account ID and its sent timestamp, the way Signal itself
 identifies messages, so a rerun adds new messages and updates existing ones
 (edits, reactions, attachments) without duplicating them. This holds for a
-backup restored on a new phone. A contact Signal knows only by number gets the
-number in place of the account ID. Messages deleted in Signal stay in your
-archive.
+backup restored on a new phone. Each rerun replaces a message's reactions with
+the ones in the backup, and a message whose text was removed loses its archived
+text.
+
+A contact Signal knows only by number gets the number in place of the account
+ID. When a later backup knows that contact's account ID, the rerun moves the
+chat and the contact's messages to the account ID instead of duplicating them.
+When a contact known only by account ID later shows a number, the rerun merges
+the two participants. Messages deleted in Signal stay in your archive.
 
 ### Format limits
 

@@ -67,6 +67,9 @@ func expectedMessages() map[string]importedMessage {
 		},
 		// The edit keeps the original's identity and carries the newest text.
 		ownACI + ":" + ms(tEditOld): {conversation: direct, body: "First draft", fromMe: true, edited: true},
+		aliceACI + ":" + ms(tQuoteDraft): {
+			conversation: direct, body: "Nice draft", replyTo: ownACI + ":" + ms(tEditOld),
+		},
 		bobACI + ":" + ms(tGroup): {
 			conversation: "signal:group:" + groupB64, body: "Hi @Alice Example, look\n\nBeach",
 		},
@@ -85,13 +88,13 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 			summary := runImport(t, st, dbDir, t.TempDir())
 
 			assert.Equal(expectedMessages(), importedMessages(t, st))
-			assert.Equal(int64(5), summary.MessagesAdded)
+			assert.Equal(int64(6), summary.MessagesAdded)
 			assert.Equal(int64(0), summary.MessagesUpdated)
 			assert.Equal(int64(3), summary.MessagesSkipped, "SMS, call and group update")
 			assert.Equal(int64(3), summary.ChatsProcessed)
 			assert.Equal(int64(1), summary.ChatsSkipped)
 			assert.Equal(int64(1), summary.MessagesEdited)
-			assert.Equal(int64(1), summary.RepliesLinked)
+			assert.Equal(int64(2), summary.RepliesLinked)
 			assert.Equal(int64(2), summary.ReactionsAdded)
 			assert.Equal(int64(2), summary.AttachmentsFound, "quote thumbnails are not attachments")
 			assert.Equal(int64(1), summary.AttachmentsStored)
@@ -198,7 +201,7 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 	summary := runImport(t, st, restored, attachmentsDir)
 
 	assert.Equal(int64(0), summary.MessagesAdded)
-	assert.Equal(int64(5), summary.MessagesUpdated)
+	assert.Equal(int64(6), summary.MessagesUpdated)
 	assert.Equal(expectedMessages(), importedMessages(t, st))
 
 	var reactions, attachments, conversations int
