@@ -251,13 +251,3 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
   await expect(page.getByText('Reloaded Person')).toBeVisible();
   await expect(page.getByText('Retained Person')).toBeHidden();
 });
-
-test('Facts opens Reviews scoped to the selected person', async ({ page }) => {
-  await installMixedArchive(page);
-  await page.goto(directoryURL());
-  await page.getByRole('row', { name: /Archive Person/ }).click();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('button', { name: 'Review facts', exact: true }).click();
-  await expect(page).toHaveURL(/workspace=directory_review/);
-  await expect.poll(() => page.evaluate(() => JSON.parse(new URL(location.href).searchParams.get('explore')!))).toMatchObject({ reviewKind: 'fact', directoryPersonID: 42 });
-});

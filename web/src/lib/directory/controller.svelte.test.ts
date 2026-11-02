@@ -1145,20 +1145,20 @@ describe('DirectoryController', () => {
   });
 
   it('refreshes the selected profile and entity sections after a split', async () => {
+    const requests: Request[] = [];
     const controller = new DirectoryController(createAPIClient(async input => {
-      const path = pathOf(input instanceof Request ? input : new Request(input));
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
       if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
       return detailResponse(path);
     }));
     try {
       await controller.loadSelection(7);
-      const reload = vi.spyOn(controller.profile!, 'reload');
-      const load = vi.spyOn(controller.entity!, 'load');
-      const refreshNetwork = vi.spyOn(controller.entity!, 'refreshNetwork');
+      await controller.entity!.loadNetwork(1);
+      requests.length = 0;
       await controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
-      expect(reload).toHaveBeenCalledOnce();
-      expect(load).toHaveBeenCalledOnce();
-      expect(refreshNetwork).toHaveBeenCalledOnce();
+      expect(requests.filter(request => request.method === 'GET').map(pathOf)).toEqual(expect.arrayContaining(['/api/v1/people/7/profile', '/api/v1/people/7/employments', '/api/v1/people/7/network']));
     } finally { controller.destroy(); }
   });
 

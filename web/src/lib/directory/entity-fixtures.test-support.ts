@@ -61,8 +61,9 @@ export function collection(rows = [employment()], projection = { employment_id: 
   return Response.json({ employments: rows, projection });
 }
 
-export function controllerWith(fetchFn: typeof fetch): DirectoryEntityController {
-  return new DirectoryEntityController(createAPIClient(fetchFn), 7);
+export function controllerWith(fetchFn: typeof fetch, personID = 7) {
+  const client = createAPIClient(fetchFn);
+  return { client, controller: new DirectoryEntityController(client, personID) };
 }
 
 export function person(id: number, revision = id === 7 ? 4 : 2, participant_ids: number[] = id === 7 ? [] : [2]) {
