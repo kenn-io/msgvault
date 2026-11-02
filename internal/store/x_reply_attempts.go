@@ -83,6 +83,34 @@ func (s *Store) GetXReplyReceiptContext(ctx context.Context, draftID string) (XR
 	return a, nil
 }
 
+// XReplyConversationMatchesContext compares a frozen conversation pin with
+// provider evidence using literal identity or retained edit aliases in its source.
+func (s *Store) XReplyConversationMatchesContext(ctx context.Context, sourceID int64, pinnedID, providerID string) (bool, error) {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return false, err
+	}
+	return xReplyConversationMatches(ctx, s.db, sourceID, pinnedID, providerID)
+}
+
+func xReplyConversationMatches(ctx context.Context, q contextRowQuerier, sourceID int64, pinnedID, providerID string) (bool, error) {
+	if sourceID <= 0 || !validXControlID(pinnedID) || !validXControlID(providerID) {
+		return false, nil
+	}
+	if pinnedID == providerID {
+		return true, nil
+	}
+	var matches bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM x_post_versions pinned
+		WHERE pinned.source_id=? AND pinned.post_id=? AND EXISTS (
+			SELECT 1 FROM x_post_versions provider
+			WHERE provider.source_id=pinned.source_id AND provider.post_id=?
+			  AND provider.canonical_id=pinned.canonical_id
+		)
+	)`, sourceID, pinnedID, providerID).Scan(&matches)
+	return matches, err
+}
+
 // lockChatDraftTx is shared by edit/delete/admit/finalize. PostgreSQL must lock
 // the draft row itself before checking receipts; a NOT EXISTS predicate does
 // not serialize these operations under READ COMMITTED.
@@ -335,7 +363,14 @@ func (s *Store) FinishXReplyContext(ctx context.Context, key XAttemptKey) (XRepl
 			if err != nil {
 				return err
 			}
-			if !prior.MetadataKnown || prior.Metadata.AuthorID != a.OwnerID || prior.Metadata.ReferencedMessageID != a.TargetPostID || prior.Metadata.OriginalConversationID != a.SourceConversationID {
+			if !prior.MetadataKnown || prior.Metadata.AuthorID != a.OwnerID || prior.Metadata.ReferencedMessageID != a.TargetPostID {
+				return ErrXAttemptState
+			}
+			matches, err := xReplyConversationMatches(ctx, tx, a.SourceID, a.SourceConversationID, prior.Metadata.OriginalConversationID)
+			if err != nil {
+				return err
+			}
+			if !matches {
 				return ErrXAttemptState
 			}
 		}

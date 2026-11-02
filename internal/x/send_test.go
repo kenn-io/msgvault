@@ -74,7 +74,7 @@ func newSendFixture(t *testing.T) *sendFixture {
 				return
 			}
 			assert.Equal(t, f.draft.Body, body.Text)
-			assert.Equal(t, "102", body.Reply.ID)
+			assert.Equal(t, f.draft.ReplyToSourceMessageID, body.Reply.ID)
 			if f.post != nil {
 				f.post(w, r)
 				return

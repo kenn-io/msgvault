@@ -486,7 +486,14 @@ func (s *Sender) lookupAdoption(ctx context.Context, req SendRequest, a store.XR
 			}
 		}
 	}
-	if p.ID != req.AdoptPost || p.AuthorID != a.OwnerID || p.ConversationID != a.SourceConversationID || parents != 1 || p.Withheld {
+	if p.ID != req.AdoptPost || p.AuthorID != a.OwnerID || parents != 1 || p.Withheld {
+		return Post{}, replyError("adoption_mismatch", nil)
+	}
+	matches, err := s.store.XReplyConversationMatchesContext(ctx, a.SourceID, a.SourceConversationID, p.ConversationID)
+	if err != nil {
+		return Post{}, replyStoreError(err)
+	}
+	if !matches {
 		return Post{}, replyError("adoption_mismatch", nil)
 	}
 	// The fetched provider snapshot, including suppression effects, is durable

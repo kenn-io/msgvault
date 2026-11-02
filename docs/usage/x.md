@@ -1,7 +1,7 @@
 ---
 title: X posts and replies
 description: Collect public X conversations under a spending limit and send reviewed owner replies.
-last_edited: "2026-10-31"
+last_edited: "2026-11-02"
 ---
 
 Connect your own X account to keep its posts and returned replies and mentions
@@ -181,7 +181,9 @@ message/body invocation creates a new draft; use the returned draft form for
 recovery. There is no retry override or automatic body-hash adoption.
 If you identify the actual remote reply, add `--adopt-post <native-id>` to
 that draft command for explicit owner association. A budgeted lookup
-must verify its author and exact frozen parent. Adoption sends nothing.
+must verify its author, exact frozen parent, and conversation. Retained edit
+history in that source can link different IDs for the same conversation.
+Adoption sends nothing.
 
 `sent_archive_pending` means X accepted the reply and local archival needs
 repair. Submit that same draft ID/revision to repair locally. Durable receipts
