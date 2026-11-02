@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/store"
@@ -32,7 +35,7 @@ type lineAPIServerFixture struct {
 	wakes    *atomic.Int64
 }
 
-func newLineAPIServer(t *testing.T, apiKey string) lineAPIServerFixture {
+func newLineAPIServer(t *testing.T, apiKey string, configure ...func(*Server)) lineAPIServerFixture {
 	t.Helper()
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("line", "2000000000")
@@ -48,6 +51,9 @@ func newLineAPIServer(t *testing.T, apiKey string) lineAPIServerFixture {
 	cfg.Server.BindAddr = "127.0.0.1"
 	cfg.Server.APIKey = apiKey
 	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Logger: testLogger(), LineWebhook: receiver, OperationGate: &recordingOperationGate{allow: false}})
+	for _, configureServer := range configure {
+		configureServer(server)
+	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	done := make(chan error, 1)
@@ -137,4 +143,46 @@ func TestLineWebhookBurstWithAPIKey(t *testing.T) {
 	rows, err := fixture.st.DueLineEventsContext(t.Context(), fixture.sourceID, time.Now(), 100)
 	must.NoError(err)
 	checks.Len(rows, 40)
+}
+
+func TestLineWebhookCLIHeaderCannotDisableDeadlines(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	fixture := newLineAPIServer(t, "", func(server *Server) {
+		server.readTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: unfinished webhook bodies must release ingress without another client write
+	})
+
+	request := httptest.NewRequest(http.MethodPost, lineTestPath, nil)
+	request.RemoteAddr = "127.0.0.1:4242"
+	request.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	fixture.server.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		deadline, bounded := r.Context().Deadline()
+		checks.True(bounded, "webhooks keep a finite context deadline despite the CLI header")
+		checks.True(deadline.After(time.Now()))
+	})).ServeHTTP(httptest.NewRecorder(), request)
+
+	readers := make([]*bufio.Reader, 0, 16)
+	for range 16 {
+		conn, err := net.DialTimeout("tcp4", strings.TrimPrefix(fixture.base, "http://"), 5*time.Second)
+		must.NoError(err)
+		t.Cleanup(func() { _ = conn.Close() })
+		must.NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
+		_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: archive.example.com\r\n%s: %s\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n{", lineTestPath, apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+		must.NoError(err)
+		reader := bufio.NewReader(conn)
+		response, err := http.ReadResponse(reader, request)
+		must.NoError(err)
+		must.Equal(http.StatusContinue, response.StatusCode, "receiver has admitted the unfinished body")
+		must.NoError(response.Body.Close())
+		readers = append(readers, reader)
+	}
+	for _, reader := range readers {
+		response, err := http.ReadResponse(reader, request)
+		must.NoError(err, "unfinished unsigned requests must expire while their connections remain open")
+		checks.Equal(http.StatusBadRequest, response.StatusCode)
+		must.NoError(response.Body.Close())
+	}
+	body := lineEnvelope("[" + lineEvent("after-read-deadline") + "]")
+	status, response := lineAPIRequest(t, fixture.base, http.MethodPost, lineTestPath, body, lineSignedHeaders(body))
+	checks.Equal(http.StatusOK, status, response)
 }
