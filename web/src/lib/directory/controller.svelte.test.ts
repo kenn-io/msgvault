@@ -1,11 +1,8 @@
+import { pathOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryController } from './controller.svelte';
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
-}
 
 function directoryPerson(id: number) {
   return {

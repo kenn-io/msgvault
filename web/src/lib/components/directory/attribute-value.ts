@@ -66,21 +66,23 @@ export function isAttributeRevealed(definition: AttributeDefinition, revealed: R
   return !definition.is_sensitive || revealed[definition.universal_id] === true;
 }
 
+type EditorKind = 'boolean' | 'number' | 'date' | 'timestamp' | 'json' | 'choice' | 'person' | 'text' | 'unsupported';
+
+export function editorKind(value: AttributeDefinition): EditorKind {
+  if (value.options?.choices?.length) return ['text', 'integer', 'real', 'boolean', 'date', 'timestamp'].includes(value.value_type) ? 'choice' : 'unsupported';
+  if (value.value_type === 'boolean') return 'boolean';
+  if (value.value_type === 'integer' || value.value_type === 'real') return 'number';
+  if (value.value_type === 'date') return 'date';
+  if (value.value_type === 'timestamp') return 'timestamp';
+  if (value.value_type === 'json') return 'json';
+  if (value.value_type === 'record_reference' && value.record_target === 'person') return 'person';
+  if (value.value_type === 'text') return 'text';
+  return 'unsupported';
+}
+
 export function supportedAttribute(definition: AttributeDefinition): boolean {
-    if (definition.options?.choices?.length) {
-      return ['text', 'integer', 'real', 'boolean', 'date', 'timestamp'].includes(definition.value_type);
-    }
-    return (
-      definition.value_type === 'boolean' ||
-      definition.value_type === 'integer' ||
-      definition.value_type === 'real' ||
-      definition.value_type === 'date' ||
-      definition.value_type === 'timestamp' ||
-      definition.value_type === 'json' ||
-      definition.value_type === 'text' ||
-      (definition.value_type === 'record_reference' && definition.record_target === 'person')
-    );
-  }
+  return editorKind(definition) !== 'unsupported';
+}
 
 export function canAddAttribute(field: JoinedAttribute, controller: DirectoryProfileController, revealed: Record<string, boolean>): boolean {
     const definition = field.definition;

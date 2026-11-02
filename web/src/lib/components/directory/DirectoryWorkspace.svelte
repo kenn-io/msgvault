@@ -17,8 +17,6 @@
     client: APIClient;
     controller: DirectoryController;
     state: DirectoryURLState;
-    /** A caller may offer promotion only with an actual participant/cluster context. */
-    promotionParticipantID?: number;
     onOpenPerson?: (id: number) => void;
   }
 
@@ -26,7 +24,6 @@
     client,
     controller,
     state: urlState,
-    promotionParticipantID = undefined,
     onOpenPerson = undefined
   }: Props = $props();
   const listSelection = new ExploreSelectionState();
@@ -154,11 +151,6 @@
     confirmBulkDelete = false;
   });
 
-  async function promote(): Promise<void> {
-    if (promotionParticipantID === undefined) return;
-    await controller.promote(promotionParticipantID);
-  }
-
   function beginBulkDelete(): void {
     if (selectedPeople.length === 0 || bulkDeletePending) return;
     confirmBulkDelete = true;
@@ -215,13 +207,7 @@
 </script>
 
 <main class="directory-workspace" aria-label="Directory">
-  <PageHeader title="Directory" description="People you've saved, with profiles and contact details.">
-    {#snippet actions()}
-      {#if promotionParticipantID !== undefined}
-        <Button label="Promote to person" tone="info" surface="solid" onclick={() => void promote()} />
-      {/if}
-    {/snippet}
-  </PageHeader>
+  <PageHeader title="Directory" description="People you've saved, with profiles and contact details." />
   <div class="directory-controls">
     <div class="directory-toolbar">
       <SearchInput value={textFilters.directoryQuery} ariaLabel="Search directory" placeholder="Search people, email, or organization…" block oninput={(value) => editTextFilter('directoryQuery', value)} />
@@ -281,12 +267,6 @@
       </div>
     {/if}
   </div>
-  {#if controller.promotionResult && !controller.promotionResult.ok}
-    <div role="alert" class="promotion-error">
-      {controller.promotionResult.message}
-      {#if controller.promotionResult.code === 'person_binding_conflict'} This participant already belongs to another durable person; resolve that binding before promoting it.{/if}
-    </div>
-  {/if}
   <div class="directory-content">
     <DirectoryList
       rows={controller.rows}
@@ -345,5 +325,4 @@
   .filter-chips :global(.chip) { border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
-  .promotion-error { padding: var(--space-3); background: var(--bg-inset); color: var(--text-secondary); }
 </style>

@@ -1,3 +1,4 @@
+import { pathOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -36,10 +37,6 @@ function bundle(id = 7): DirectoryReadBundle {
 
 function requests(fetchFn: ReturnType<typeof vi.fn>): Request[] {
   return fetchFn.mock.calls.map(([input]) => input instanceof Request ? input : new Request(input));
-}
-
-function pathOf(request: Request): string {
-  return new URL(request.url, document.baseURI).pathname;
 }
 
 describe('DirectoryProfileController', () => {

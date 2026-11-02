@@ -233,18 +233,10 @@
   }
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitWorkspace(workspace);
-  }
-  function openDirectoryFromRelationship(participantID: number): void {
-    beforeCommit();
-    directoryController.resetForPromotion();
-    directoryPromotionParticipantID = participantID;
-    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: null, relationshipTarget: `cluster:${participantID}`, relationshipFiles: false });
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
@@ -378,11 +370,6 @@
     (patch) => commitNavigation(patch),
   );
   const factLedgerController = new FactLedgerController(untrack(() => client));
-  // Participant IDs only enter here from a successfully loaded
-  // /participants/{id} Relationship detail. It is intentionally ephemeral:
-  // browser restoration and ordinary Directory navigation never invent a
-  // promotion context.
-  let directoryPromotionParticipantID = $state<number>();
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
   let cardDAVSettingsRequestKey = 0;
   const settingsNavigationTarget = $derived(exploreState.current.workspace === 'settings'
@@ -532,7 +519,6 @@
       return;
     }
     beforeCommit();
-    directoryPromotionParticipantID = undefined;
     exploreState.commitSearchIn('everything', query, mode);
   }
   let paletteOpen = $state(false);
@@ -1345,7 +1331,6 @@
             })}
           onOpenPerson={openRelationship}
           onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
-          onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
           onReviewFacts={(personID) => commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
           onAnnounce={announceOperation}
@@ -1357,7 +1342,6 @@
         <DirectoryWorkspace
           {client}
           controller={directoryController}
-          promotionParticipantID={directoryPromotionParticipantID}
           onOpenPerson={openDirectoryPerson}
           state={{
             directoryQuery: exploreState.current.directoryQuery,

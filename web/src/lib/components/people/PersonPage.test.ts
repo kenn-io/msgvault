@@ -252,7 +252,7 @@ it('keeps Back to People available after an observed person fails to load', asyn
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('keeps an open field draft when the saved person activity finishes loading', async () => {
+it.each([false, true])('uses delayed unfiltered activity while preserving explicit Details and its draft (editing=%s)', async editing => {
   const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: [1], vcard_uid: 'saved-7', created_at: when, updated_at: when };
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
@@ -263,7 +263,7 @@ it('keeps an open field draft when the saved person activity finishes loading', 
     if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: true });
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
@@ -275,13 +275,16 @@ it('keeps an open field draft when the saved person activity finishes loading', 
   const opening = controller.openTarget('cluster:1', {});
   const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
-    const addPhone = await screen.findByRole('button', { name: 'Add phone' });
-    expect(addPhone).toHaveProperty('disabled', false);
-    await fireEvent.click(addPhone);
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+1 202 555 0199' } });
+    if (editing) {
+      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+      const addPhone = await screen.findByRole('button', { name: 'Add phone' });
+      expect(addPhone).toHaveProperty('disabled', false);
+      await fireEvent.click(addPhone);
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+1 202 555 0199' } });
+    }
     await act(async () => { release(Response.json({ id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })); await opening; });
-    expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
+    expect(screen.getByRole('radio', { name: editing ? 'Details' : 'Messages' }).getAttribute('aria-checked')).toBe('true');
+    if (editing) expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 

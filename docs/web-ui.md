@@ -237,7 +237,7 @@ filters stay visible as chips.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 
-In a person's Media & files section, choose a media gallery or file table and
+In a person's Files tab, choose a media gallery or file table and
 narrow the relationship to **From them**, **To them**, or **Group
 conversations**. These directions describe the containing messages; they do not
 identify people pictured in an image.
@@ -294,7 +294,7 @@ menu sorts by Name, Most recently contacted, or Least recently contacted.
 
 Selecting a Directory row opens the same person page as People: **Messages** and the calendar when the person has archived activity, **Details** otherwise. On Details, each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Editing a row opens its editor below the fields; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
-Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations.
+Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 nodes and 500 connections. An always-present list groups the same connections by hop for keyboard and screen reader use.
 
 Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
 

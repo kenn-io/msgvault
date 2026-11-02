@@ -26,7 +26,6 @@
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
-    onOpenDirectory?: (participantID: number) => void;
     capturePersonMergeContext?: () => RelationshipsMergeContext;
     onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
     onOpenDirectoryPerson?: (personID: number) => void;
@@ -42,7 +41,6 @@
     client,
     onLinkParticipants,
     onUnlinkParticipants,
-    onOpenDirectory = undefined,
     capturePersonMergeContext = undefined,
     onReconcilePersonMerge = undefined,
     onOpenDirectoryPerson = undefined,
@@ -301,15 +299,6 @@
       <h2>{displayLabel(detail)}</h2>{:else if title}<h3>{title}</h3>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
-          {#if showIdentity && (onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson))}
-            <Button
-              label="Open in Directory"
-              surface="outline"
-              onclick={() => detail.profile?.id && onOpenDirectoryPerson
-                ? onOpenDirectoryPerson(detail.profile.id)
-                : onOpenDirectory?.(detail.id)}
-            />
-          {/if}
           <Button
             label="Same person…"
             ariaLabel="Same person…"

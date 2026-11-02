@@ -218,6 +218,11 @@ it.each([
     await fireEvent.click(screen.getByRole('menuitem', { name: first }));
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: next }));
+    if (next === 'Pronunciation') {
+      await fireEvent.click(screen.getByRole('button', { name: save }));
+      expect(writes).toHaveLength(0);
+      expect(screen.getByRole('textbox', { name: input })).toBeDefined();
+    }
     await fireEvent.input(screen.getByRole('textbox', { name: input }), { target: { value } });
     await fireEvent.click(screen.getByRole('button', { name: save }));
     await waitFor(() => expect(writes).toHaveLength(1));
