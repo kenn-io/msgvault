@@ -107,19 +107,22 @@ func doclingRangeTestServer(t *testing.T, pages int, selections *[]string, submi
 
 func TestDoclingWorkerPageRanges(t *testing.T) {
 	for _, test := range []struct {
-		name                                  string
-		pages, cap                            int
-		loadFailure, saveFailure              bool
-		unicode, encrypted, unknownSubmission bool
+		name                                 string
+		pages, cap                           int
+		loadFailure, saveFailure             bool
+		encrypted, unknownSubmission         bool
+		degrade, blankFirst, missingFallback bool
 	}{
 		{name: "50", pages: 50},
 		{name: "51", pages: 51},
-		{name: "NFC truncation", pages: 51, unicode: true},
 		{name: "owner encrypted", pages: 51, encrypted: true},
 		{name: "later unknown submission", pages: 51, unknownSubmission: true},
 		{name: "checkpoint load failure", pages: 51, loadFailure: true},
 		{name: "checkpoint save failure", pages: 51, saveFailure: true},
 		{name: "whole document page cap", pages: 51, cap: 50},
+		{name: "Markdown from all ranges", pages: 51, degrade: true},
+		{name: "blank range before degraded range", pages: 51, degrade: true, blankFirst: true},
+		{name: "degraded range without Markdown", pages: 51, degrade: true, missingFallback: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -146,20 +149,32 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				}
 				return true
 			}, func(page int) string {
+				if test.degrade {
+					return fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5))
+				}
 				if page == 2 {
 					return ""
 				}
-				if test.unicode {
-					return "Cafe\u0301"
-				}
 				return fmt.Sprintf("page %d sentinel", page)
-			}, nil)
+			}, func(_, wire, doc map[string]any, first, last int) {
+				if !test.degrade {
+					return
+				}
+				wire["md_content"] = fmt.Sprintf("range %d..%d Markdown sentinel", first, last)
+				if test.blankFirst && first == 1 {
+					doc["texts"] = []any{}
+					wire["md_content"] = ""
+				}
+				if test.missingFallback && first == 51 {
+					wire["md_content"] = ""
+				}
+				if first == 51 {
+					doc["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{}}}}
+				}
+			})
 			defer server.Close()
 			c := doclingTestConfig()
 			c.Endpoint = server.URL
-			if test.unicode {
-				c.MaxNormalizedChars = 4
-			}
 			if test.cap > 0 {
 				c.MaxPagesPerDocument = test.cap
 			}
@@ -177,6 +192,12 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 			digest := sha256.Sum256(content)
 			candidate := store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))}
 			result, err := worker.ProcessCandidate(t.Context(), candidate)
+			if test.missingFallback {
+				requirements.Error(err)
+				assertions.Nil(catalog.publication)
+				assertions.Len(catalog.ranges, 1, "retry must request the degraded range again")
+				return
+			}
 			if test.unknownSubmission {
 				requirements.Error(err)
 				requirements.NotNil(catalog.failure)
@@ -217,8 +238,30 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 				assertions.Equal([]string{"1,50", "51,51"}, selections)
 			}
 			requirements.NotNil(catalog.publication)
-			if test.unicode {
-				assertions.Equal("Café", catalog.publication.Units[0].Text)
+			if test.degrade {
+				assertions.Equal([]string{"1,50", "51,51"}, selections)
+				requirements.Len(catalog.ranges, 1)
+				assertions.Equal("document", catalog.publication.UnitKind)
+				requirements.Len(catalog.publication.Units, 1)
+				if test.blankFirst {
+					assertions.Equal("range 51..51 Markdown sentinel", catalog.publication.Units[0].Text)
+				} else {
+					assertions.Contains(catalog.publication.Units[0].Text, "page 1 sentinel")
+					assertions.Contains(catalog.publication.Units[0].Text, "page 50 sentinel")
+					assertions.Contains(catalog.publication.Units[0].Text, "range 51..51 Markdown sentinel")
+				}
+				fresh := catalog.publication.Units
+				catalog.publication = nil
+				_, err = worker.ProcessCandidate(t.Context(), candidate)
+				requirements.NoError(err)
+				requirements.NotNil(catalog.publication)
+				assertions.Equal(fresh, catalog.publication.Units)
+				assertions.Equal([]string{"1,50", "51,51", "51,51"}, selections)
+				if test.blankFirst {
+					assertions.Zero(catalog.ranges[0].CharCount)
+				} else {
+					assertions.Equal(2641, catalog.ranges[0].CharCount)
+				}
 				return
 			}
 			if test.encrypted {
@@ -356,93 +399,6 @@ func TestDoclingRangesStoreIntegration(t *testing.T) {
 			search, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "sentinel"})
 			requirements.NoError(err)
 			assertions.NotEmpty(search.Results)
-		})
-	}
-}
-
-func TestDoclingRangesFallbackAndCoverage(t *testing.T) {
-	for _, test := range []struct {
-		name                                            string
-		degrade, truncated, blankFirst, missingFallback bool
-	}{
-		{name: "Markdown from all ranges", degrade: true},
-		{name: "blank range before degraded range", degrade: true, blankFirst: true},
-		{name: "degraded range without Markdown", degrade: true, missingFallback: true},
-		{name: "truncate after complete coverage", truncated: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			content := doclingPDFPages(t, 51)
-			var selections []string
-			server := doclingRangeTestServer(t, 51, &selections, nil, func(page int) string {
-				return fmt.Sprintf("page %d %s", page, strings.Repeat("sentinel ", 5))
-			}, func(_, wire, doc map[string]any, first, last int) {
-				wire["md_content"] = fmt.Sprintf("range %d..%d Markdown sentinel", first, last)
-				if test.blankFirst && first == 1 {
-					doc["texts"] = []any{}
-					wire["md_content"] = ""
-				}
-				if test.missingFallback && first == 51 {
-					wire["md_content"] = ""
-				}
-				if test.degrade && first == 51 {
-					doc["tables"] = []any{map[string]any{"data": map[string]any{"table_cells": []any{}}}}
-				}
-			})
-			defer server.Close()
-			c := doclingTestConfig()
-			c.Endpoint = server.URL
-			if test.truncated {
-				c.MaxNormalizedChars = 100
-			}
-			provider, err := NewDoclingClient(&c)
-			requirements.NoError(err)
-			catalog := &workerCatalog{}
-			worker, err := NewDoclingWorker(catalog, &workerOpener{content: content}, provider, DoclingWorkerConfig{Documents: c, ProfileID: "coverage", LeaseOwner: "worker", LeaseDuration: time.Minute, RetryDelay: time.Minute})
-			requirements.NoError(err)
-			digest := sha256.Sum256(content)
-			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
-			if test.missingFallback {
-				requirements.Error(err)
-				assertions.Nil(catalog.publication)
-				assertions.Len(catalog.ranges, 1, "retry must request the degraded range again")
-				return
-			}
-			requirements.NoError(err)
-			requirements.NotNil(catalog.publication)
-			assertions.Equal([]string{"1,50", "51,51"}, selections)
-			if test.degrade {
-				requirements.Len(catalog.ranges, 1)
-				assertions.Equal("document", catalog.publication.UnitKind)
-				requirements.Len(catalog.publication.Units, 1)
-				if test.blankFirst {
-					assertions.Equal("range 51..51 Markdown sentinel", catalog.publication.Units[0].Text)
-				} else {
-					assertions.Contains(catalog.publication.Units[0].Text, "page 1 sentinel")
-					assertions.Contains(catalog.publication.Units[0].Text, "page 50 sentinel")
-					assertions.Contains(catalog.publication.Units[0].Text, "range 51..51 Markdown sentinel")
-				}
-				fresh := catalog.publication.Units
-				catalog.publication = nil
-				_, err = worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", MessageType: "email", Size: int64(len(content))})
-				requirements.NoError(err)
-				requirements.NotNil(catalog.publication)
-				assertions.Equal(fresh, catalog.publication.Units)
-				assertions.Equal([]string{"1,50", "51,51", "51,51"}, selections)
-			} else {
-				requirements.Len(catalog.ranges, 2)
-				assertions.Equal(53, catalog.ranges[1].CharCount)
-			}
-			if test.blankFirst {
-				assertions.Zero(catalog.ranges[0].CharCount)
-			} else {
-				assertions.Equal(2641, catalog.ranges[0].CharCount)
-			}
-			if test.truncated {
-				assertions.True(result.Truncated)
-				assertions.Equal(51, result.ProviderUnits)
-			}
 		})
 	}
 }

@@ -91,6 +91,9 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 	defer func() { require.NoError(restored.Close()) }()
 	var text string
 	if chunks {
+		assert.Equal(int64(2), disclosure.CurrentHeads)
+		assert.Equal(int64(1), disclosure.Chunks)
+		assert.Equal(int64(40), disclosure.Characters)
 		require.NoError(restored.QueryRow(`SELECT text FROM document_chunks`).Scan(&text))
 		assert.Equal("synthetic normalized attachment evidence", text)
 	} else {

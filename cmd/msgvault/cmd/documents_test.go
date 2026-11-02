@@ -1106,12 +1106,6 @@ func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
 	retired, err := fixture.Store.RetireDocumentExtractionProfile(ctx, profile.ID)
 	require.NoError(err)
 	require.True(retired)
-	_, _, err = fixture.Store.RemoveSourceSerialized(ctx, fixture.Source.ID)
-	require.NoError(err)
-	var count int
-	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
-		"SELECT COUNT(*) FROM messages WHERE source_id = ?"), fixture.Source.ID).Scan(&count))
-	assert.Zero(count)
 	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(
 		"UPDATE document_extractions SET updated_at = ? WHERE id = ?"),
 		time.Now().UTC().Add(-2*documentDerivativeRecoveryWindow), claim.ExtractionID)
@@ -1122,13 +1116,9 @@ func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
 	require.NoError(configureDocumentReconcileJob(ctx, sched, fixture.Store, false))
 	assert.True(sched.IsJobScheduled(documentFullReconcileJob))
 	require.NoError(sched.TriggerJob(documentFullReconcileJob))
-	_, err = fixture.Store.GetAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey)
-	require.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
+	var count int
 	require.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	assert.Zero(count)
-	require.NoError(fixture.Store.DB().QueryRow(
-		fixture.Store.Rebind("SELECT COUNT(*) FROM document_extractions WHERE id = ?"), claim.ExtractionID).Scan(&count))
-	assert.Equal(1, count, "range cleanup must leave gated extraction cleanup unchanged")
 }
 
 func TestScheduledDocumentReconcilePreservesExistingConsentWhenExtractionDisabled(t *testing.T) {

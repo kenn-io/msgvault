@@ -11,7 +11,10 @@ import (
 // DocumentRangeCheckpoint builds canonical evidence for a completed PDF range.
 func DocumentRangeCheckpoint(t *testing.T) store.DocumentExtractionRange {
 	t.Helper()
-	source := document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage}
+	source := document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidencePartial, Family: "pdf", UnitKind: document.EvidenceUnitPage,
+		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "page_range", Reason: "requested page selection"}},
+	}
 	for page := 1; page <= 50; page++ {
 		source.Units = append(source.Units, document.SourceEvidenceUnitV1{Order: page - 1, Text: "saved sentinel", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(page), End: int64(page)}})
 	}
