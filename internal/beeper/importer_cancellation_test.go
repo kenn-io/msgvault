@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -357,4 +359,67 @@ func TestProcessMessageCancellation(t *testing.T) {
 			assert.False(deletedFromSourceAt.Valid)
 		})
 	}
+}
+
+// A stop that cancels a reply-link write must leave the chat's pending pairs
+// in its state. The stopped run still saves that state, so clearing the pairs
+// there would lose the links for good.
+func TestFlushRepliesCancellationKeepsPendingReplies(t *testing.T) {
+	require := require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!flush:beeper.local", AccountID: "signal", Network: "Signal", Title: "Flush", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+	}
+	for i := range 3 {
+		ch.Msgs = append(ch.Msgs, fakeMsg{
+			ID: fmt.Sprintf("f%d", i), SortKey: i,
+			Timestamp: base.Add(time.Duration(i) * time.Minute),
+			Text:      fmt.Sprintf("flush %d", i),
+			SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
+		})
+	}
+	ch.Msgs[2].LinkedMessageID = "f0"
+	ch.LastActivity = ch.Msgs[2].Timestamp
+	f.addChat(ch)
+
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	// The first page holds every message and the empty second page ends the
+	// backfill, so the next transaction after that page is the reply-link
+	// write. A stop request cancels the run as that transaction begins.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var walked atomic.Bool
+	f.cancelAfterPages = 2
+	f.cancelFn = func() { walked.Store(true) }
+	installCancelOnLog(t, cancel, 1, func(record slog.Record) bool {
+		return record.Message == "sql tx begin" && walked.Load()
+	})
+
+	sum, err := imp.Import(ctx, ImportOptions{AccountID: "signal", ShouldStop: walked.Load})
+	require.NoError(err)
+	require.True(sum.Stopped)
+
+	cs := latestBeeperState(t, imp).Chats[ch.ID]
+	require.NotNil(cs)
+	require.True(cs.Done, "the backfill must finish before cancellation lands")
+	require.Equal([][2]string{{"f2", "f0"}}, cs.PendingReplies)
+
+	// The next run flushes the kept pair.
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var parentID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "f0").Scan(&parentID))
+	var linked sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "f2").Scan(&linked))
+	require.Equal(sql.NullInt64{Int64: parentID, Valid: true}, linked)
 }

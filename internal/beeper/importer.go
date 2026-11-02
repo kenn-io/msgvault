@@ -1746,10 +1746,14 @@ func (imp *Importer) persistReactions(ctx context.Context, messageID int64, m *M
 
 // flushReplies links the chat's buffered reply pairs now that both sides of
 // each pair have been archived. SetReplyTo is idempotent; pairs whose parents
-// are beyond locally-available history resolve to NULL.
+// are beyond locally-available history resolve to NULL. A canceled write
+// keeps every pair buffered so the checkpointed state lets a later run retry.
 func (imp *Importer) flushReplies(ctx context.Context, cc *chatScope, sum *ImportSummary) {
 	for _, pr := range cc.cs.PendingReplies {
 		if err := imp.store.SetReplyToContext(ctx, cc.sourceID, pr[0], pr[1]); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			sum.Errors++
 		}
 	}

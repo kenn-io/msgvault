@@ -276,3 +276,52 @@ func TestArchiveJPEGContentTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestArchiveRecordsSavedImagesWhenCancelledAfterSave(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("eml", "user@example.com")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Images")
+	require.NoError(err)
+	html := `<img src="http://images.example/saved"><img src="http://images.example/slow">`
+	id, err := st.PersistMessage(&store.MessagePersistData{
+		Message:  &store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email"},
+		BodyHTML: sql.NullString{String: html, Valid: true},
+	})
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			// The archive deadline or a stopped sync ends the run while
+			// this fetch is in flight, after the first image was saved.
+			cancel()
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nsynthetic"))
+	}))
+	defer upstream.Close()
+	f := NewFetcher()
+	f.LookupNetIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	}
+	f.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+
+	result := f.Archive(ctx, st, t.TempDir(), id, html)
+
+	assert.Equal(1, result.Downloaded)
+	for _, err := range result.Errors {
+		assert.NotContains(err.Error(), "update remote image metadata")
+	}
+	saved, err := st.GetMessage(id)
+	require.NoError(err)
+	assert.True(saved.HasAttachments, "a saved image must mark the message as having attachments")
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&count))
+	assert.Equal(1, count, "the saved image must be counted")
+}

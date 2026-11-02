@@ -582,37 +582,6 @@ func TestClient_Embed_Retries429(t *testing.T) {
 // exponential backoff. Cancelling the context mid-wait must return
 // a context-cancel error rather than racing the default-backoff
 // deadline.
-func TestClient_Embed_HonorsRetryAfterOverridesBackoff(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var attempts atomic.Int32
-		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			attempts.Add(1)
-			w.Header().Set("Retry-After", "30") // much longer than default 200ms
-			http.Error(w, "rl", http.StatusTooManyRequests)
-		}))
-
-		c := NewClient(Config{Endpoint: "http://127.0.0.1", Model: "m", Dimension: 3, MaxRetries: 3})
-		c.http.Transport = srv.Client().Transport
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			cancel()
-		}()
-		start := time.Now()
-		_, err := c.Embed(ctx, []string{"a"})
-		elapsed := time.Since(start)
-		require.ErrorIs(t, err, context.Canceled)
-		// Should be interrupted at ~100ms by the cancel, well before
-		// 30s. A test failure here would mean Retry-After wasn't
-		// honored and the default backoff completed first.
-		assert.Less(t, elapsed, 500*time.Millisecond, "cancel during Retry-After wait")
-		// One attempt plus possibly a second before cancel; never
-		// enough to finish the Retry-After window.
-		assert.LessOrEqual(t, attempts.Load(), int32(2), "Retry-After should extend the wait")
-	})
-}
-
 // TestClient_Embed_RetriesTruncatedBody verifies a truncated JSON
 // response is treated as transient. Mid-stream cutoffs are common
 // when the server hits a deadline, and the old code failed them

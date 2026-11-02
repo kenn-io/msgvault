@@ -375,6 +375,52 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	require.ErrorContains(err, "refresh analytics cache")
 }
 
+// Import commands refresh the cache with their own context after Ctrl-C.
+// Rows the import already committed must still reach the cache.
+func TestRebuildCacheAfterWriteRefreshesWithCancelledContext(t *testing.T) {
+	cfg := testConfigValue()
+
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	analyticsDir := cfg.AnalyticsDir()
+
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "!interrupted-import:example.org", "direct_chat", "Interrupted import",
+	)
+	require.NoError(err)
+	sentAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	_, err = st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "interrupted-import-1",
+		MessageType:     "beeper",
+		SentAt:          sql.NullTime{Time: sentAt, Valid: true},
+		ReceivedAt:      sql.NullTime{Time: sentAt, Valid: true},
+		Snippet:         sql.NullString{String: "committed before cancel", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.Close())
+	require.True(cacheNeedsBuildContext(t.Context(), dbPath, analyticsDir).NeedsBuild,
+		"committed rows without a cache must need a build")
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.NoError(rebuildCacheAfterWrite(cancelled, dbPath, invocationFromContext(testCtx)))
+
+	assert.False(cacheNeedsBuildContext(t.Context(), dbPath, analyticsDir).NeedsBuild,
+		"the refresh must publish committed rows despite the cancelled context")
+}
+
 func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	cfg := testConfigValue()
 

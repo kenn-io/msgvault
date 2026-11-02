@@ -3286,3 +3286,66 @@ func TestSelfChatProbeCancellationStopsSync(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrSyncRunNotFound)
 	assert.Nil(t, last, "a canceled probe must not complete the sync")
 }
+
+// A cancellation that lands while channel replies are being linked must leave
+// the channel's delta cursor where it was. Otherwise the checkpoint records a
+// delta past messages whose reply links were never written, and the resumed
+// run's delta returns nothing to relink them.
+func TestChannelReplyLinkCancellationRelinksOnResume(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	serverURL := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/joinedTeams":
+			_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/channels"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"root","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z","body":{"contentType":"text","content":"root"}}]}`))
+		case strings.Contains(r.URL.Path, "/replies"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"reply","replyToId":"root","createdDateTime":"2025-02-01T00:00:01Z","lastModifiedDateTime":"2025-02-01T00:00:01Z","body":{"contentType":"text","content":"reply"},
+			  "reactions":[{"reactionType":"like","createdDateTime":"2025-02-01T00:00:02Z","user":{"user":{"id":"reactor","displayName":"Reactor","userIdentityType":"aadUser"}}}]}]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+			_, _ = w.Write([]byte(`{"value":[],"@odata.deltaLink":"` + serverURL + `/teams/team1/channels/chanA/messages/delta?token=next"}`))
+		case r.URL.Path == "/users/reactor":
+			// The reaction on the last collected message is resolved after
+			// both messages are stored and before replies are linked.
+			cancel()
+			http.Error(w, "404", http.StatusNotFound)
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	opts := ImportOptions{Email: "me@example.com", IncludeChannels: true}
+
+	_, err := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(ctx, opts)
+	require.ErrorIs(err, context.Canceled)
+
+	_, err = NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(t.Context(), opts)
+	require.NoError(err)
+
+	var replyTo, rootID sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(),
+		st.Rebind(`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`),
+		channelSourceMessageID("team1", "chanA", "reply"),
+	).Scan(&replyTo))
+	require.NoError(st.DB().QueryRowContext(t.Context(),
+		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
+		channelSourceMessageID("team1", "chanA", "root"),
+	).Scan(&rootID))
+	assert.Equal(sql.NullInt64{Int64: rootID.Int64, Valid: true}, replyTo)
+}

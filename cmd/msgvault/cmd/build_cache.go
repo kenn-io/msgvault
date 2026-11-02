@@ -2339,6 +2339,9 @@ func exportToCSV(db sqlRunner, query string, dest string, identityCols map[strin
 // write operation. Cache maintenance is part of the operation result: SQLite
 // remains authoritative, but callers must surface any refresh failure.
 func rebuildCacheAfterWrite(ctx context.Context, dbPath string, state *invocation) error {
+	// Callers refresh after interrupted writes too. Rows the write already
+	// committed must reach the cache even when its context was cancelled.
+	ctx = context.WithoutCancel(ctx)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}

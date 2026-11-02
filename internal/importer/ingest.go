@@ -211,6 +211,9 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	if err != nil {
 		return err
 	}
+	// The message row is committed. Finish its local attachment and search
+	// writes so a cancellation cannot leave it permanently incomplete.
+	postCommit := context.WithoutCancel(ctx)
 
 	// Attachments: best-effort outside the transaction (file I/O).
 	// Failures are logged but don't fail the ingest — the message,
@@ -219,7 +222,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	for i := range parsed.Attachments {
 		att := &parsed.Attachments[i]
 		if err := storeAttachment(
-			ctx,
+			postCommit,
 			st, attachmentsDir, messageID, att, strict,
 		); err != nil {
 			incomplete(fmt.Errorf("store attachment: %w", err))
@@ -235,7 +238,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
 		if err := st.DB().QueryRowContext(
-			ctx,
+			postCommit,
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
@@ -244,7 +247,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 				"message", messageID, "error", err,
 			)
 		} else if storedCount != attachmentCount {
-			if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+			if err := st.RecomputeMessageAttachmentStatsContext(postCommit, messageID); err != nil {
 				incomplete(fmt.Errorf("attachment metadata: %w", err))
 				log.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err,
@@ -266,7 +269,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		toAddrs := joinEmails(parsed.To)
 		ccAddrs := joinEmails(parsed.Cc)
 		if err := st.UpsertFTSContext(
-			ctx,
+			postCommit,
 			messageID, subject, bodyText,
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {

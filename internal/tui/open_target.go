@@ -26,7 +26,9 @@ func openSystemTarget(ctx context.Context, target string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("start %s: %w", command, err)
 	}
-	cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // fixed command catalog; target is a single argument
+	// The launcher hands the target to another application after Start
+	// returns, so the caller's cancellation must not kill it mid-handoff.
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), command, args...) //nolint:gosec // fixed command catalog; target is a single argument
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", command, err)
 	}

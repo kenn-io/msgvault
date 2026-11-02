@@ -1972,25 +1972,28 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		return 0, err
 	}
 	delete(s.pendingAcquisitions, data.message.SourceMessageID)
+	// The message row is committed. Finish its local attachment and search
+	// writes so a cancellation cannot leave it permanently incomplete.
+	postCommit := context.WithoutCancel(ctx)
 
 	// Store attachments (best-effort, file I/O outside transaction)
 	if s.opts.AttachmentsDir != "" && len(data.attachments) > 0 {
 		for _, att := range data.attachments {
-			if err := s.storeAttachment(ctx, messageID, &att); err != nil {
+			if err := s.storeAttachment(postCommit, messageID, &att); err != nil {
 				s.logger.Warn("failed to store attachment", "message", messageID, "filename", att.Filename, "error", err)
 			}
 		}
 
 		// Correct metadata if any attachments failed to store
 		var storedCount int
-		if err := s.store.DB().QueryRowContext(ctx, // #nosec G701 -- Rebind only rewrites placeholders in this literal; messageID is bound separately.
+		if err := s.store.DB().QueryRowContext(postCommit, // #nosec G701 -- Rebind only rewrites placeholders in this literal; messageID is bound separately.
 			s.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
 			s.logger.Warn("failed to count stored attachments",
 				"message", messageID, "error", err)
 		} else if storedCount != len(data.attachments) {
-			if err := s.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+			if err := s.store.RecomputeMessageAttachmentStatsContext(postCommit, messageID); err != nil {
 				s.logger.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err)
 			}
@@ -2006,7 +2009,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		fromAddr := joinEmails(data.from)
 		toAddrs := joinEmails(data.to)
 		ccAddrs := joinEmails(data.cc)
-		if err := s.store.UpsertFTSContext(ctx, messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
+		if err := s.store.UpsertFTSContext(postCommit, messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
 			s.logger.Warn("failed to upsert FTS", "message", messageID, "error", err)
 		}
 	}

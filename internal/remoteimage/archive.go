@@ -204,7 +204,10 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 		result.Downloaded++
 	}
 	if result.Downloaded > 0 || result.Reused > 0 {
-		if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+		// The saved attachment rows are already committed. Their message
+		// statistics must match them even after the archive deadline or a
+		// cancellation; this is one local update.
+		if err := st.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("update remote image metadata: %w", err))
 		}
 	}

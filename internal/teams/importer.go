@@ -629,6 +629,11 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				if serr := imp.store.SetReplyToContext(ctx, sourceID,
 					channelSourceMessageID(team.ID, ch.ID, toLink[i].ID),
 					channelSourceMessageID(team.ID, ch.ID, toLink[i].ReplyToID)); serr != nil {
+					// Stop before the delta advances: a checkpoint past
+					// unlinked replies would never re-collect them.
+					if cerr := ctx.Err(); cerr != nil {
+						return cerr
+					}
 					sum.Errors++
 				}
 			}
