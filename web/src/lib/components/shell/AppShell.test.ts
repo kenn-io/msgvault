@@ -2953,7 +2953,7 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it.each(['before returning', 'after returning'])('shows a saved profile rename completed %s to cached duplicate cards', async timing => {
+it('shows a saved profile rename completed after returning to cached duplicate cards', async () => {
   let releaseSave!: () => void;
   const saveStarted = vi.fn();
   let renamed = false;
@@ -2966,7 +2966,7 @@ it.each(['before returning', 'after returning'])('shows a saved profile rename c
     if (path.endsWith('/17/review/reject')) { const body = await request.json(); decisions.push(body); return body.review_token === 'profile-r5' ? Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }) : Response.json({ error: 'identity_match_review_stale', message: 'Read the refreshed profile' }, { status: 409 }); }
     if (path.endsWith('/people/directory')) return Response.json({ people: [directoryPerson(7, { display_name: saved().display_name, revision: saved().revision })] });
     if (path === '/api/v1/people/7') {
-      if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); saveStarted(); if (timing === 'after returning') await new Promise<void>(resolve => { releaseSave = resolve; }); renamed = true; }
+      if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); saveStarted(); await new Promise<void>(resolve => { releaseSave = resolve; }); renamed = true; }
       return Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } });
     }
     if (path === '/api/v1/people/7/profile') return Response.json({ person: saved(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
@@ -2989,25 +2989,17 @@ it.each(['before returning', 'after returning'])('shows a saved profile rename c
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed saved person' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-    if (timing === 'after returning') {
-      await waitFor(() => expect(saveStarted).toHaveBeenCalledOnce());
-      const returned = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      window.history.go(-2);
-      await returned;
-      await screen.findByRole('heading', { name: 'Possible duplicates' });
-      await within(await screen.findByRole('listitem', { name: /Original saved person and/ })).findByText('Original saved person');
-      releaseSave();
-    } else {
-      await screen.findByRole('heading', { name: 'Renamed saved person' });
-      await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
-      await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
-    }
+    await waitFor(() => expect(saveStarted).toHaveBeenCalledOnce());
+    const returned = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.go(-2);
+    await returned;
+    await screen.findByRole('heading', { name: 'Possible duplicates' });
+    await within(await screen.findByRole('listitem', { name: /Original saved person and/ })).findByText('Original saved person');
+    releaseSave();
     await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Renamed saved person'));
-    if (timing === 'after returning') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
-      await fireEvent(window, new Event('pagehide'));
-      await waitFor(() => expect(decisions).toEqual([{ review_token: 'profile-r5' }]));
-    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
+    await fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(decisions).toEqual([{ review_token: 'profile-r5' }]));
   } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
 });
 

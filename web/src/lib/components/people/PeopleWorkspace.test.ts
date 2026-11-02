@@ -717,7 +717,7 @@ it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %
     if (entry === 'remount') view.unmount();
     synced = true;
     if (entry === 'remount') view = render(PeopleWorkspace, { props });
-    else await view.rerender({ ...props, restorationEpoch: 1 });
+    else await view.rerender({ ...props, urlState: { ...state.current }, restorationEpoch: 1 });
     const grid = await screen.findByRole('grid', { name: 'People results' });
     await within(grid).findByText('After sync');
     expect(within(grid).queryByText('Before sync')).toBeNull();
