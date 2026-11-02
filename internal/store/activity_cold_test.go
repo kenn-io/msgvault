@@ -51,6 +51,60 @@ func retractTimelineActivity(t *testing.T, f *timelineActivityFixture, messageID
 	require.NoError(t, err)
 }
 
+// A recipient alias inherits the person's strongest role for contact counting,
+// but only an actual sender exclusion makes the message noise.
+func TestColdAdapterExcludedRecipientAliasIsNotSenderNoise(t *testing.T) {
+	for _, excludedSender := range []bool{false, true} {
+		t.Run(fmt.Sprintf("excluded-sender=%t", excludedSender), func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			f := newTimelineActivityFixture(t)
+			alias := f.EnsureParticipant("no-reply@example.com", "Automated alias", "example.com")
+			_, err := f.Store.LinkParticipants(f.peer, alias)
+			requirements.NoError(err)
+			person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+			requirements.NoError(err)
+			id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
+			sender, recipient := f.peer, alias
+			if excludedSender {
+				sender, recipient = alias, f.peer
+			}
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, recipient}, nil))
+			projectColdTimeline(t, f, "UTC")
+			q := timelineBurstQuery()
+			q.Subject.PersonID = person.ID
+			q.Filters.Exclusions = persontiers.DefaultConfig()
+			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			want := 1
+			if excludedSender {
+				want = 0
+			}
+			requirements.Len(warm.Bursts, want)
+			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
+			retractTimelineActivity(t, f, id)
+			for _, includeNoise := range []bool{false, true} {
+				q.Filters.IncludeNoise = includeNoise
+				cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+				requirements.NoError(err)
+				expected := want
+				if includeNoise {
+					expected = 1
+				}
+				assertions.Len(cold.Bursts, expected)
+				count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+				requirements.NoError(err)
+				assertions.Equal(expected, count)
+				if expected == 1 {
+					requirements.Len(cold.Bursts, 1)
+					assertions.Equal(id, cold.Bursts[0].AnchorMessageID)
+					assertions.Equal(1, cold.Bursts[0].Inbound)
+				}
+			}
+		})
+	}
+}
+
 // Removing cold-message selection or depending on retracted spine rows loses this room.
 func TestColdAdapterReturnsRetractedColdRoomMessages(t *testing.T) {
 	f := newTimelineActivityFixture(t)

@@ -50,8 +50,12 @@ type BurstPage struct {
 }
 
 type activityReadMessage struct {
-	ID           int64
-	Counterparts []ActivityMessageCounterpart
+	ID                                     int64
+	Direction                              ActivityDirection
+	Meeting, List, Encrypted, LargeInbound bool
+	ContactEligible                        bool
+	ExcludedSender                         bool
+	Counterparts                           []ActivityMessageCounterpart
 }
 
 func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
@@ -194,6 +198,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 	indices := make(map[int64]int, len(messages))
 	for i := range messages {
 		messages[i].Counterparts = []ActivityMessageCounterpart{}
+		messages[i].ExcludedSender = false
 		indices[messages[i].ID] = i
 	}
 	ids := make([]int64, 0, len(indices))
@@ -212,7 +217,8 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 		}
 		counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "f.direction", RefKind: "f.ref_kind", ListExcluded: listExcluded, LargeInbound: "f.large_inbound"})
 		rows, err := s.db.QueryContext(ctx, s.Rebind(cte+`, counterpart_flags AS (
- SELECT f.*,CASE WHEN f.contact_eligible=1 AND f.encrypted=0 AND f.excluded='' AND `+counted+` THEN 1 ELSE 0 END AS counterpart_counted
+ SELECT f.*,MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id) AS excluded_sender,
+ CASE WHEN f.contact_eligible=1 AND f.encrypted=0 AND f.excluded='' AND `+counted+` THEN 1 ELSE 0 END AS counterpart_counted
  FROM facts f WHERE f.participant_id IS NOT NULL
  ), ranked_counterparts AS (
  SELECT *,ROW_NUMBER() OVER (PARTITION BY message_id,participant_id ORDER BY counterpart_counted DESC,
@@ -220,7 +226,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
  FROM counterpart_flags
  ) SELECT f.message_id,p.id,COALESCE(f.person_id,0),COALESCE(p.display_name,''),
  COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),
- f.role,f.evidence,f.excluded,f.counterpart_counted
+ f.role,f.evidence,f.excluded,f.counterpart_counted,f.excluded_sender
  FROM ranked_counterparts f JOIN participants p ON p.id=f.participant_id
  WHERE counterpart_rank=1 ORDER BY f.message_id,p.id`), args...)
 		if err != nil {
@@ -229,13 +235,14 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 		for rows.Next() {
 			var id int64
 			var cp ActivityMessageCounterpart
-			var counted int
-			if err = rows.Scan(&id, &cp.ParticipantID, &cp.PersonID, &cp.DisplayName, &cp.Address, &cp.Role, &cp.Evidence, &cp.Excluded, &counted); err != nil {
+			var counted, excludedSender int
+			if err = rows.Scan(&id, &cp.ParticipantID, &cp.PersonID, &cp.DisplayName, &cp.Address, &cp.Role, &cp.Evidence, &cp.Excluded, &counted, &excludedSender); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("scan activity counterpart: %w", err)
 			}
 			cp.Counted = counted != 0
 			i := indices[id]
+			messages[i].ExcludedSender = excludedSender != 0
 			messages[i].Counterparts = append(messages[i].Counterparts, cp)
 		}
 		err = rows.Err()

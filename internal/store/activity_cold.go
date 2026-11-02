@@ -251,12 +251,10 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		if m.channel < g.burst.Channel {
 			g.burst.Channel = m.channel
 		}
-		counted, nonNoise := coldActivityCounted(m, q.Subject), !m.List || !filters.Exclusions.ExcludeListMessages
-		for _, cp := range m.Counterparts {
-			if (cp.Role == RoleSender || cp.Role == RoleOrganizer) && cp.Excluded != "" && cp.Excluded != "owner" {
-				nonNoise = false
-			}
-		}
+		counted := coldActivityCounted(m, q.Subject)
+		// A saved person's recipient aliases inherit the strongest contact
+		// role; noise follows original sender membership, as in the warm SQL.
+		nonNoise := (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
 		if counted {
 			if m.Direction == DirectionInbound {
 				g.burst.Inbound++
