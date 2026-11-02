@@ -49,15 +49,19 @@ describe('PersonAgenda', () => {
     expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'agenda' });
   });
 
-  it('reuses the idempotency key for unchanged retries and rotates it when the payload changes', async () => {
+  it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {
     const requests: Request[] = [];
     let attempts = 0;
+    let releasePost: ((response: Response) => void) | undefined;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       if (isStatus(request)) return readyStatus();
       if (request.method === 'POST') {
         attempts += 1;
+        if (attempts === 1 && outcome === 'pending') {
+          return new Promise<Response>(resolve => { releasePost = resolve; });
+        }
         if (attempts < 3) {
           return Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 });
         }
@@ -66,14 +70,25 @@ describe('PersonAgenda', () => {
       return Response.json({ project: 'msgvault', items: attempts >= 3 ? [item('new', 'Send notes')] : [] });
     }));
 
-    render(PersonAgenda, { client, personID: 7 });
+    const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1' });
     await screen.findByText('No tasks yet');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
-    expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
+    if (outcome === 'pending') {
+      await waitFor(() => expect(releasePost).toBeDefined());
+      await rerender({ client, personID: 7, refreshKey: '2' });
+      expect(requests.filter(isStatus)).toHaveLength(1);
+      releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
+    } else {
+      expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
+      await rerender({ client, personID: 7, refreshKey: '2' });
+    }
+    await waitFor(() => expect(requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7/agenda')).toHaveLength(2));
+    await screen.findByText('No tasks yet');
+    expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', 'Send notes');
 
-    // Same person, title, and list: an unknown-outcome retry must reuse the key.
+    // The profile revision changed, but the submission stayed the same.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
     await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
@@ -91,6 +106,47 @@ describe('PersonAgenda', () => {
     expect(rotated.length).toBe(3);
     expect(rotated[2]).not.toBe(rotated[0]);
     await waitFor(() => expect(screen.getByText('Send notes')).toBeDefined());
+  });
+
+  it.each(['create', 'unlink'] as const)('defers profile refreshes during a pending %s and applies its completion', async operation => {
+    const onAnnounce = vi.fn();
+    const requests: Request[] = [];
+    let releaseWrite!: (response: Response) => void;
+    let settled = false;
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'POST' || request.method === 'DELETE') {
+        return new Promise<Response>(resolve => { releaseWrite = resolve; });
+      }
+      return Response.json({ project: 'msgvault', items: settled
+        ? [item('merged', 'Merged task'), ...(operation === 'create' ? [item('new', 'Send notes')] : [])]
+        : [item('one', 'Ask about launch')]
+      });
+    }));
+
+    const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1', onAnnounce });
+    await screen.findByText('Ask about launch');
+    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
+    await fireEvent.click(screen.getByRole('button', { name: operation === 'create' ? 'Add item' : 'Unlink Ask about launch' }));
+    await waitFor(() => expect(releaseWrite).toBeDefined());
+
+    await rerender({ client, personID: 7, refreshKey: '2', onAnnounce });
+    await rerender({ client, personID: 7, refreshKey: '3', onAnnounce });
+    expect(requests.filter(isStatus)).toHaveLength(1);
+    expect(screen.getByLabelText('New agenda item')).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Unlink Ask about launch' })).toHaveProperty('disabled', true);
+    expect(onAnnounce).not.toHaveBeenCalled();
+
+    settled = true;
+    releaseWrite(Response.json({ item: operation === 'create' ? item('new', 'Send notes') : item('one', 'Ask about launch') }));
+    await screen.findByText('Merged task');
+    await waitFor(() => expect(screen.getByLabelText('New agenda item')).toHaveProperty('disabled', false));
+    expect(onAnnounce).toHaveBeenCalledExactlyOnceWith(operation === 'create' ? 'Agenda item added.' : 'Agenda item unlinked.');
+    expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', operation === 'create' ? '' : 'Send notes');
+    if (operation === 'create') expect(screen.getByText('Send notes')).toBeDefined();
+    expect(screen.queryByText('Ask about launch')).toBeNull();
   });
 
   it('canonicalizes the list before fingerprinting so case or spacing changes keep the retry key', async () => {

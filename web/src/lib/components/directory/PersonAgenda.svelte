@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, IconButton, TextInput } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
+  import { onDestroy, untrack } from 'svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import {
     createPersonAgendaItem,
@@ -34,6 +35,9 @@
   let controller: AbortController | null = null;
   let retryRequestID = '';
   let retryFingerprint = '';
+  let selectedPersonID: number | undefined;
+  let selectedClient: APIClient | undefined;
+  let loadedRefreshKey: string | undefined;
 
   const mutationReady = $derived(integrationState === 'ready');
   const stateMessage = $derived.by(() => {
@@ -45,32 +49,40 @@
   });
 
   $effect(() => {
-    const selectedPersonID = personID;
-    void client;
-    void refreshKey;
-    // Clear task data when the selection or profile changes so actions use
-    // current UID aliases. Keep draft inputs while status and list reload;
-    // load() restores each piece only for the current generation.
-    items = [];
-    error = '';
-    integrationState = 'loading';
-    integrationMessage = '';
-    truncated = false;
-    retryRequestID = '';
-    retryFingerprint = '';
-    // Mutation requests carry no abort signal, so one may still be in flight
-    // when the selection changes. Invalidate its ownership of the mutating
-    // flag and release this person's controls immediately instead of leaving
-    // them disabled until a request that may never settle returns; the stale
-    // completion handler no longer matches the token, so it can neither clear
-    // a newer mutation's state nor unlock mid-flight.
-    mutationToken++;
-    mutating = false;
-    void load(selectedPersonID);
-    return () => controller?.abort();
+    const nextPersonID = personID;
+    const nextClient = client;
+    const nextRefreshKey = refreshKey;
+    const pending = mutating;
+    untrack(() => {
+      const selectionChanged = selectedPersonID !== nextPersonID || selectedClient !== nextClient;
+      if (selectionChanged) {
+        selectedPersonID = nextPersonID;
+        selectedClient = nextClient;
+        retryRequestID = '';
+        retryFingerprint = '';
+        // Release the new person's controls while the prior person's write
+        // settles. Its token can no longer change this selection's state.
+        mutationToken++;
+        mutating = false;
+      }
+      // Same-person revisions keep write ownership and retry protection.
+      // Revisit a deferred revision when the pending write releases the form.
+      if (selectionChanged || (nextRefreshKey !== loadedRefreshKey && !pending)) {
+        items = [];
+        error = '';
+        integrationState = 'loading';
+        integrationMessage = '';
+        truncated = false;
+        void load(nextPersonID);
+      }
+    });
   });
 
+  onDestroy(() => controller?.abort());
+
   async function load(selectedPersonID = personID): Promise<void> {
+    // A successful write's reload also covers revisions deferred during it.
+    loadedRefreshKey = refreshKey;
     const current = ++generation;
     controller?.abort();
     controller = new AbortController();
