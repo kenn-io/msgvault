@@ -139,7 +139,7 @@
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
     {#if !details && (scope || (filesOpen && profileID !== null))}
-      {#key `${target}:${controller.activityRevision}`}
+      {#key `${target}:${controller.activityRevision}:${detail?.cache_revision}`}
         {#if filesOpen}
           {@render files()}
         {:else if scope}

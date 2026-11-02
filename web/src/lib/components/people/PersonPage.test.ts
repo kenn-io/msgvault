@@ -51,6 +51,48 @@ it('refreshes the open person after linking and profile reconciliation', async (
   } finally { view.unmount(); controller.destroy(); }
 });
 
+it('reloads Messages after calendar revision recovery with no selected day', async () => {
+  let rebuilt = false;
+  const calendarYears: number[] = [];
+  const timelineRequests: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    const cacheRevision = rebuilt ? 'cache-2' : 'cache-1';
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: rebuilt ? 'Refreshed person' : 'Original person', identifiers: [], first_at: '2025-01-01T00:00:00Z', last_at: when, activity_count: 1, file_count: 0, source_counts: [], cache_revision: cacheRevision });
+    if (path === '/api/v1/relationships/1/calendar') {
+      const { year } = await request.json();
+      calendarYears.push(year);
+      return Response.json({ participant_id: 1, canonical_id: 1, year, timezone: 'UTC', current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', days: [], annual: [], identity_revision: 1, cache_revision: cacheRevision } satisfies RelationshipCalendar);
+    }
+    if (path === '/api/v1/participants/1/timeline') {
+      timelineRequests.push(await request.json());
+      return Response.json({ rows: [{ key: 'message:1', kind: 'email', match: {}, title: rebuilt ? 'Refreshed message' : 'Original message', occurred_at: when, message_count: 1, participant_labels: [], participant_ids: [1], message_type: 'email', conversation_type: 'email', attachment_count: 0, attachment_size: 0, deleted_from_source: false, source_identifier: 'owner@example.com', source_type: 'gmail', source_id: 1 }], total_count: 1, cache_revision: cacheRevision, search_provenance: {} });
+    }
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const directory = new DirectoryController(client);
+  const predicate = { filters: [], presentation: 'table' as const };
+  await controller.openTarget('cluster:1', predicate, false);
+  const view = render(PersonPage, { props: { client, directory, controller, target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  try {
+    await screen.findByText('Original message');
+    await waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+    expect(calendarYears).toEqual([2026]);
+    expect(screen.queryByRole('button', { name: 'Clear date' })).toBeNull();
+    rebuilt = true;
+    await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
+    await screen.findByRole('heading', { name: 'Refreshed person' });
+    await waitFor(() => expect(controller.relationshipCalendar?.cache_revision).toBe('cache-2'));
+    expect(calendarYears).toEqual([2026, 2025, 2025]);
+    await screen.findByText('Refreshed message');
+    expect(screen.queryByText('Original message')).toBeNull();
+    expect(timelineRequests).toHaveLength(2);
+    expect(timelineRequests.at(-1)).toMatchObject({ filters: [] });
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
+});
+
 it('opening Files drops the selected day from the conversation reader', async () => {
   const at = '2026-07-18T10:00:00Z';
   vi.stubEnv('TZ', 'UTC');

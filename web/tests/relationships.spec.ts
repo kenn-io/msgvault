@@ -74,7 +74,7 @@ const imageFile = {
   }
 };
 
-const timelineRows = [{ ...messageRow, kind: 'message', message_type: 'email', conversation_type: 'email',
+const timelineRows = [{ ...messageRow, kind: 'email', message_type: 'email', conversation_type: 'email',
       source_identifier: 'archive@example.com', source_type: 'gmail', participant_labels: ['Alice Example'], participant_ids: [1],
       attachment_count: 0, attachment_size: 0, deleted_from_source: false, anchor_message_id: 1, match: {} },
       { ...chatBurstRow, key: 'conversation:70', kind: 'conversation', message_type: 'slack', conversation_type: 'chat',
@@ -111,7 +111,7 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
       const count = date.endsWith('-07-18') ? 2 : index % 13 === 0 ? 3 : index % 5 === 0 ? 1 : 0;
       return { date, total: count, email: count, chat: 0, meetings: 0, sent: 0, received: count, modality_mask: count ? 1 : 0, level: count === 3 ? 'FOURTH_QUARTILE' : count ? 'FIRST_QUARTILE' : 'NONE' };
     }), annual: [],
-    current: { temperature: 62 }, peak_temperature: 62, peak_year: 2026,
+    current: { temperature: 62, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 62, peak_year: 2026,
     scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-relationships', identity_revision: 1
   } }));
   await page.route('**/api/v1/participants/1/files/search', async (route) => {

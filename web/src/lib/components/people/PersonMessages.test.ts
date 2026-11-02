@@ -28,7 +28,7 @@ function setup(paged: boolean, row = saved) {
   const props = { client, identityScope: { kind: 'person' as const, id: 1 }, target: 'cluster:1', predicate: {}, onOpenFiles: vi.fn(), onFiltersChange: vi.fn(), onClearPeriod: vi.fn() };
   return { props, requests };
 }
-it('shows person messages without selection or presentation controls', async () => {
+it('shows person messages without selection controls', async () => {
   const { props } = setup(false);
   const view = render(PersonMessages, { props });
   try {
