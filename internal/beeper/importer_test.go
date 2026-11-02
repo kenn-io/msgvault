@@ -103,6 +103,14 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 	return imp, st, srv.Close
 }
 
+func newHandlerTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store) {
+	t.Helper()
+	st := testutil.NewTestStore(t)
+	client := NewClient("http://beeper.test", testToken, 10000)
+	client.http.Transport = handlerTransport(f.handler())
+	return NewImporter(st, client), st
+}
+
 func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 	t.Parallel()
 	for _, unknown := range []bool{false, true} {
@@ -405,10 +413,7 @@ func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 	active.LastActivity = time.Now().UTC()
 	active.Msgs = nil
 	f.addChat(active)
-	st := testutil.NewTestStore(t)
-	client := NewClient("http://beeper.test", testToken, 10000)
-	client.http.Transport = handlerTransport(f.handler())
-	imp := NewImporter(st, client)
+	imp, st := newHandlerTestImporter(t, f)
 
 	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	requirements.NoError(err)

@@ -131,10 +131,7 @@ func TestImportStopDuringConversationStatsCompletesSync(t *testing.T) {
 				f := newFakeBeeper(t)
 				chat := budgetTestChat("!stats-yield:beeper.local", 2, time.Now().Add(-24*time.Hour))
 				f.addChat(chat)
-				client := NewClient("http://beeper.test", testToken, 10000)
-				client.http.Transport = handlerTransport(f.handler())
-				st := testutil.NewTestStore(t)
-				imp := NewImporter(st, client)
+				imp, st := newHandlerTestImporter(t, f)
 				st.DB().SetMaxOpenConns(1)
 
 				_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
@@ -253,10 +250,7 @@ func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
 		active.LastActivity = time.Now().UTC()
 		active.Msgs = nil
 		f.addChat(active)
-		client := NewClient("http://beeper.test", testToken, 10000)
-		client.http.Transport = handlerTransport(f.handler())
-		st := testutil.NewTestStore(t)
-		imp := NewImporter(st, client)
+		imp, st := newHandlerTestImporter(t, f)
 		st.DB().SetMaxOpenConns(1)
 		_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", NoMedia: true})
 		require.NoError(err)
@@ -540,9 +534,7 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!deadline:beeper.local", 2, base)
 	f.addChat(chat)
-	client := NewClient("http://beeper.test", testToken, 10000)
-	client.http.Transport = handlerTransport(f.handler())
-	imp := NewImporter(testutil.NewTestStore(t), client)
+	imp, _ := newHandlerTestImporter(t, f)
 	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.NoError(t, err)
 	f.appendMsg(chat.ID, fakeMsg{
@@ -750,53 +742,54 @@ func TestImportRunsTailsBeforeBackfill(t *testing.T) {
 
 // serial: changes tailScanInterval.
 func TestImportTailScanProgressesAcrossBudgetedRuns(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	base := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(time.Second)
-	f := newFakeBeeper(t)
-	for i := range 4 {
-		f.addChat(budgetTestChat("!quiet"+strconv.Itoa(i)+":beeper.local", 3, base.Add(time.Duration(i)*time.Hour)))
-	}
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err, "first run finishes every chat and a tail scan")
-
-	oldInterval := tailScanInterval
-	tailScanInterval = 0
-	t.Cleanup(func() { tailScanInterval = oldInterval })
-	src, err := st.GetOrCreateSource("beeper", "signal")
-	require.NoError(err)
-	lastTailScan := func() string {
-		run, err := st.GetLastSuccessfulSync(src.ID)
-		require.NoError(err)
-		state, err := LoadSyncState(run.CursorAfter.String)
-		require.NoError(err)
-		return state.LastTailScan
-	}
-	before := lastTailScan()
-	time.Sleep(1100 * time.Millisecond) //nolint:kennlint // sleeptest: waits for SQLite's second-precision tail-scan timestamp to advance
-
-	// Stop after three completed chats, then finish the remaining probe on the
-	// next scheduled run.
-	completedChats := 0
-	budgetedRun := func() ImportOptions {
-		completedChats = 0
-		return ImportOptions{
-			AccountID:  "signal",
-			ShouldStop: func() bool { return completedChats >= 3 },
-			Progress:   func(string) { completedChats++ },
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		base := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(time.Second)
+		f := newFakeBeeper(t)
+		for i := range 4 {
+			f.addChat(budgetTestChat("!quiet"+strconv.Itoa(i)+":beeper.local", 3, base.Add(time.Duration(i)*time.Hour)))
 		}
-	}
-	sum, err := imp.Import(context.Background(), budgetedRun())
-	require.NoError(err)
-	require.True(sum.Stopped)
-	assert.Equal(before, lastTailScan(), "an unfinished tail scan is not recorded")
+		imp, st := newHandlerTestImporter(t, f)
+		_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+		require.NoError(err, "first run finishes every chat and a tail scan")
 
-	sum, err = imp.Import(context.Background(), budgetedRun())
-	require.NoError(err)
-	assert.False(sum.Stopped, "the second run resumes the scan instead of restarting it")
-	assert.NotEqual(before, lastTailScan(), "the scan completes across budgeted runs")
+		oldInterval := tailScanInterval
+		tailScanInterval = 0
+		t.Cleanup(func() { tailScanInterval = oldInterval })
+		src, err := st.GetOrCreateSource("beeper", "signal")
+		require.NoError(err)
+		lastTailScan := func() string {
+			run, err := st.GetLastSuccessfulSync(src.ID)
+			require.NoError(err)
+			state, err := LoadSyncState(run.CursorAfter.String)
+			require.NoError(err)
+			return state.LastTailScan
+		}
+		before := lastTailScan()
+		time.Sleep(1100 * time.Millisecond)
+
+		// Stop after three completed chats, then finish the remaining probe on the
+		// next scheduled run.
+		completedChats := 0
+		budgetedRun := func() ImportOptions {
+			completedChats = 0
+			return ImportOptions{
+				AccountID:  "signal",
+				ShouldStop: func() bool { return completedChats >= 3 },
+				Progress:   func(string) { completedChats++ },
+			}
+		}
+		sum, err := imp.Import(context.Background(), budgetedRun())
+		require.NoError(err)
+		require.True(sum.Stopped)
+		assert.Equal(before, lastTailScan(), "an unfinished tail scan is not recorded")
+
+		sum, err = imp.Import(context.Background(), budgetedRun())
+		require.NoError(err)
+		assert.False(sum.Stopped, "the second run resumes the scan instead of restarting it")
+		assert.NotEqual(before, lastTailScan(), "the scan completes across budgeted runs")
+	})
 }
 
 // Every tick gets the same small budget. Completed chats must not consume
