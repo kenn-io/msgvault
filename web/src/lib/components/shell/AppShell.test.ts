@@ -3069,3 +3069,58 @@ it('refreshes cached duplicate cards after explicit reentry', async () => {
     await waitFor(() => expect(decisions).toEqual([{ review_token: 'fresh-17' }]));
   } finally { rendered.unmount(); state.destroy(); }
 });
+
+it.each([false, true])('preserves focus when Undo settles, navigating away=%s', async navigate => {
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/17/review/reject')) return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
+    const undo = await screen.findByRole('button', { name: 'Undo' });
+    undo.focus();
+    const messages = within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' });
+    if (navigate) { messages.focus(); await fireEvent.click(messages); }
+    else await fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(navigate ? messages : screen.getByRole('radio', { name: 'To review' })));
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it('retains the survivor choice in People after a duplicate decision settles in Messages', async () => {
+  let finish!: (response: Response) => void;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/17/review/accept')) return new Promise<Response>(resolve => { finish = resolve; });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
+    await screen.findByRole('main', { name: 'Messages' });
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    vi.useFakeTimers();
+    finish(Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: person(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) }, { status: 409 }));
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    await tick();
+    expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
+    await screen.findByRole('dialog', { name: 'Resolve person merge' });
+  } finally { rendered.unmount(); state.destroy(); vi.useRealTimers(); }
+});

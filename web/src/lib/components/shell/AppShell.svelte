@@ -414,14 +414,14 @@
   function stageUndo(message: string, undo: () => Promise<void>, expire: () => void): () => void {
     const flashID = showFlash(message, { durationMs: 8000, action: { label: 'Undo', onclick: () => void undo() } });
     const timer = setTimeout(expire, 8000);
+    const refocus = (target: () => HTMLElement | null | undefined) => void tick().then(() => document.activeElement === document.body && target()?.focus());
     window.addEventListener('pagehide', expire);
-    void tick().then(() => {
-      if (document.activeElement === document.body) [...flashRoot?.querySelectorAll<HTMLElement>('.kit-flash-banner__action') ?? []].at(-1)?.focus();
-    });
+    refocus(() => [...flashRoot?.querySelectorAll<HTMLElement>('.kit-flash-banner__action') ?? []].at(-1));
     return () => {
       clearTimeout(timer);
       window.removeEventListener('pagehide', expire);
       dismissFlash(flashID);
+      refocus(() => shellRoot?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ?? navigationFocusTarget());
     };
   }
 
@@ -1552,7 +1552,7 @@
     onConfigure={openVisualAttachmentSettings} />
 {/if}
 <div bind:this={flashRoot}><FlashBanner /></div>
-{#if directoryReviewController.mergeRequired}
+{#if exploreState.current.workspace === 'relationships' && directoryReviewController.mergeRequired}
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}

@@ -34,7 +34,7 @@ test('refreshes the duplicate queue and badge after Unlink', async ({ page }) =>
     unlinked = true;
     return route.fulfill({ json: { identity_revision: 10, cache_state: 'ready' } });
   });
-  const badge = page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'People', exact: true });
+  const badge = page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: /^People(?: |$)/ });
   const reads = () => fixture.requests.filter(request => request.query.limit === '11').length;
   const badgeReads = () => fixture.requests.filter(request => request.query.limit === '500').length;
   async function showDuplicates() {

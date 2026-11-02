@@ -1,34 +1,17 @@
+import { person, requestOf } from './entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as requestID from '../api/request-id';
 import { createAPIClient } from '../api/client';
 import type {
-  Person as GeneratedPerson,
   PersonMergeDetail as GeneratedPersonMergeDetail,
   PersonSplitResult as GeneratedPersonSplitResult,
 } from '../api/generated/models';
 import { PERSON_MERGE_HISTORY_LIMIT, PersonMergeHistoryController } from './person-merge-history-controller.svelte';
 
-type Person = GeneratedPerson;
 type PersonMergeDetail = GeneratedPersonMergeDetail;
 
 afterEach(() => vi.restoreAllMocks());
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
-
-function person(id: number, revision = 4, name = `Synthetic Person ${id}`): Person {
-  return {
-    id,
-    revision,
-    display_name: name,
-    participant_ids: [701, 702],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`,
-  };
-}
 
 function detail(
   overrides: Partial<PersonMergeDetail['merge']> = {},
@@ -78,8 +61,8 @@ function splitResult(exact = true): GeneratedPersonSplitResult {
     exact_reversal: exact,
     cache_state: 'ready',
     identity_revision: 8,
-    source_person: person(12, 5, 'Synthetic Source'),
-    new_person: person(19, 1, 'Synthetic Restored'),
+    source_person: person(12, 5, [701, 702], 'Synthetic Source'),
+    new_person: person(19, 1, [701, 702], 'Synthetic Restored'),
     split: {
       id: 55,
       merge_id: 41,
@@ -161,7 +144,7 @@ describe('PersonMergeHistoryController', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
       if (path === '/api/v1/people/12' && request.method === 'GET') {
-        return Response.json(person(12, 4, 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
+        return Response.json(person(12, 4, [701, 702], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       }
       return Response.json(splitResult(), {
         headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' },
@@ -188,7 +171,7 @@ describe('PersonMergeHistoryController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (new URL(request.url).pathname === '/api/v1/people/12') {
-        return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+        return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       }
       return Response.json(detail({}, zeroLineage ? [] : undefined));
     });
@@ -215,7 +198,7 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       postAttempts += 1;
       if (postAttempts === 1) throw new TypeError('connection reset');
       return Response.json(splitResult());
@@ -248,7 +231,7 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       postAttempts += 1;
       if (postAttempts === 1) throw new SyntaxError('invalid response JSON');
       return Response.json(splitResult());
@@ -287,7 +270,7 @@ describe('PersonMergeHistoryController', () => {
       if (path === '/api/v1/people/12') {
         sourceReads += 1;
         const revision = sourceReads === 1 ? 4 : 5;
-        return Response.json(person(12, revision), { headers: { ETag: `"person-12-r${revision}"` } });
+        return Response.json(person(12, revision, [701, 702], 'Synthetic Person 12'), { headers: { ETag: `"person-12-r${revision}"` } });
       }
       return Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 });
     });
@@ -325,11 +308,11 @@ describe('PersonMergeHistoryController', () => {
       }
       if (path === '/api/v1/people/12') {
         sourceReads += 1;
-        if (sourceReads === 2) return Response.json(person(12, 5, 'Unpublishable Source'));
+        if (sourceReads === 2) return Response.json(person(12, 5, [701, 702], 'Unpublishable Source'));
         if (sourceReads === 3)
           return Response.json({ error: 'unavailable', message: 'Source still unavailable' }, { status: 503 });
         const revision = sourceReads === 1 ? 4 : 6;
-        return Response.json(person(12, revision, revision === 4 ? 'Synthetic Source' : 'Fresh Synthetic Source'), {
+        return Response.json(person(12, revision, [701, 702], revision === 4 ? 'Synthetic Source' : 'Fresh Synthetic Source'), {
           headers: { ETag: `"person-12-r${revision}"` },
         });
       }
@@ -395,7 +378,7 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       return Response.json({ error, message: 'Application failure' }, { status });
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
@@ -424,7 +407,7 @@ describe('PersonMergeHistoryController', () => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       return Response.json(splitResult(false), { headers: { ETag: 'bad', 'X-New-Person-ETag': 'also-bad' } });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7, reconcile);
@@ -453,7 +436,7 @@ describe('PersonMergeHistoryController', () => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (path === '/api/v1/people/12') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       if (request.method === 'POST') return Response.json(splitResult());
       return Response.json({ merges: [], limit: 100, offset: 0 });
     });
@@ -512,7 +495,7 @@ describe('PersonMergeHistoryController', () => {
       }
       if (path.endsWith('/snapshot')) return lateSnapshot.promise;
       if (request.method === 'POST') return lateSplit.promise;
-      if (path === '/api/v1/people/12') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       return Response.json({ merges: [], limit: 100, offset: 0 });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);

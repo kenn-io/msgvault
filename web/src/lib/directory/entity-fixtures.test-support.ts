@@ -66,8 +66,8 @@ export function controllerWith(fetchFn: typeof fetch, personID = 7) {
   return { client, controller: new DirectoryEntityController(client, personID) };
 }
 
-export function person(id: number, revision = id === 7 ? 4 : 2, participant_ids: number[] = id === 7 ? [] : [2]) {
-  return { id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z', vcard_uid: `synthetic-${id}` };
+export function person(id: number, revision = id === 7 ? 4 : 2, participant_ids: number[] = id === 7 ? [] : [2], display_name = id === 7 ? 'Synthetic One' : 'Synthetic Two') {
+  return { id, revision, participant_ids, display_name, created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z', vcard_uid: `synthetic-${id}` };
 }
 
 export function mergeResult(survivor: import('../api/generated/models').Person, cacheState: 'ready' | 'stale' = 'ready'): import('../api/generated/models').PersonMergeResult {

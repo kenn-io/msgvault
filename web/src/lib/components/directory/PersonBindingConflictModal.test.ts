@@ -1,40 +1,25 @@
-import { mergeResult, requestOf } from '../../directory/entity-fixtures.test-support';
+import { mergeResult, person, requestOf } from '../../directory/entity-fixtures.test-support';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as requestID from '../../api/request-id';
 import { createAPIClient } from '../../api/client';
-import type { Person as GeneratedPerson } from '../../api/generated/models';
 import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
 import PersonBindingConflictModal from './PersonBindingConflictModal.svelte';
-
-type Person = GeneratedPerson;
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-function person(id: number, revision: number, displayName: string): Person {
-  return {
-    id,
-    revision,
-    display_name: displayName,
-    participant_ids: [id * 10],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`,
-  };
-}
-
 function conflict(): ValidatedPersonMergeRequired {
   return {
     error: 'person_merge_required',
     message: 'Choose a survivor',
     profiles: [
-      { person: person(7, 4, 'Synthetic One'), etag: '"person-7-r4"' },
-      { person: person(9, 2, 'Synthetic Two'), etag: '"person-9-r2"' },
+      { person: person(7, 4, [70], 'Synthetic One'), etag: '"person-7-r4"' },
+      { person: person(9, 2, [90], 'Synthetic Two'), etag: '"person-9-r2"' },
     ],
   };
 }
@@ -69,7 +54,7 @@ async function selectSurvivor(label = 'Synthetic One (Person 7)'): Promise<void>
 describe('PersonBindingConflictModal', () => {
   it('sends the exact survivor-first merge request and reports operation-result metadata once', async () => {
     const requests: Request[] = [];
-    const merged = person(7, 5, 'Synthetic One');
+    const merged = person(7, 5, [70], 'Synthetic One');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
@@ -98,7 +83,7 @@ describe('PersonBindingConflictModal', () => {
 
   it('reuses one UUID only for an explicit unchanged transport retry', async () => {
     const requests: Request[] = [];
-    const merged = person(7, 5, 'Synthetic One');
+    const merged = person(7, 5, [70], 'Synthetic One');
     let attempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(requestOf(input));
@@ -157,8 +142,8 @@ describe('PersonBindingConflictModal', () => {
 
   it('reloads both exact profiles atomically and requires a fresh survivor selection and confirmation', async () => {
     const requests: Request[] = [];
-    const refreshedSeven = person(7, 5, 'Synthetic One Updated');
-    const refreshedNine = person(9, 3, 'Synthetic Two Updated');
+    const refreshedSeven = person(7, 5, [70], 'Synthetic One Updated');
+    const refreshedNine = person(9, 3, [90], 'Synthetic Two Updated');
     let mergeAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -174,7 +159,7 @@ describe('PersonBindingConflictModal', () => {
       if (mergeAttempts === 1) {
         return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
       }
-      return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
+      return Response.json(mergeResult(person(7, 6, [70], 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('123-456-789-12')
@@ -256,15 +241,15 @@ describe('PersonBindingConflictModal', () => {
     {
       name: 'a wrong self-consistent person ID',
       responses: {
-        7: { body: person(8, 5, 'Wrong Person'), etag: '"person-8-r5"' },
-        9: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' },
+        7: { body: person(8, 5, [80], 'Wrong Person'), etag: '"person-8-r5"' },
+        9: { body: person(9, 3, [90], 'Synthetic Two Updated'), etag: '"person-9-r3"' },
       },
     },
     {
       name: 'swapped self-consistent person IDs',
       responses: {
-        7: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' },
-        9: { body: person(7, 5, 'Synthetic One Updated'), etag: '"person-7-r5"' },
+        7: { body: person(9, 3, [90], 'Synthetic Two Updated'), etag: '"person-9-r3"' },
+        9: { body: person(7, 5, [70], 'Synthetic One Updated'), etag: '"person-7-r5"' },
       },
     },
   ])('rejects the entire stale reload when it returns $name', async ({ responses }) => {
@@ -303,9 +288,9 @@ describe('PersonBindingConflictModal', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (request.method === 'GET' && path === '/api/v1/people/7') {
-        return Response.json(person(7, 5, 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
+        return Response.json(person(7, 5, [70], 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
       }
-      if (request.method === 'GET') return Response.json(person(9, 3, 'Synthetic Two Updated'));
+      if (request.method === 'GET') return Response.json(person(9, 3, [90], 'Synthetic Two Updated'));
       return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
     });
     renderModal(fetchFn);
@@ -329,9 +314,9 @@ describe('PersonBindingConflictModal', () => {
         return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
       }
       if (path === '/api/v1/people/7') {
-        return Response.json(person(7, 5, 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
+        return Response.json(person(7, 5, [70], 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
       }
-      return Response.json(person(9, 3, 'Synthetic Two Updated'));
+      return Response.json(person(9, 3, [90], 'Synthetic Two Updated'));
     });
     renderModal(fetchFn);
 
@@ -404,8 +389,8 @@ describe('PersonBindingConflictModal', () => {
 
   it('uses only fresh tags after an explicit reload, fresh survivor selection, and reconfirmation', async () => {
     const requests: Request[] = [];
-    const refreshedSeven = person(7, 5, 'Synthetic One Updated');
-    const refreshedNine = person(9, 3, 'Synthetic Two Updated');
+    const refreshedSeven = person(7, 5, [70], 'Synthetic One Updated');
+    const refreshedNine = person(9, 3, [90], 'Synthetic Two Updated');
     const getCounts = new Map<number, number>();
     let mergeAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -420,7 +405,7 @@ describe('PersonBindingConflictModal', () => {
             { status: 409 },
           );
         }
-        return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), {
+        return Response.json(mergeResult(person(7, 6, [70], 'Synthetic One Updated')), {
           headers: { ETag: '"person-7-r6"' },
         });
       }
