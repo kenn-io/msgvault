@@ -122,18 +122,19 @@ func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *test
 	assertPersonMergeTableInventory(t, newPGStoreInternal(t, dbURL))
 }
 
-const postgresPersonMergeReferenceQuery = `SELECT child.relname, column_info.attname
-	FROM pg_catalog.pg_constraint reference
-	JOIN pg_catalog.pg_class child ON child.oid = reference.conrelid
-	JOIN pg_catalog.pg_namespace child_schema ON child_schema.oid = child.relnamespace
-	JOIN pg_catalog.pg_class target ON target.oid = reference.confrelid
-	JOIN pg_catalog.pg_namespace target_schema ON target_schema.oid = target.relnamespace
-	CROSS JOIN LATERAL unnest(reference.conkey) AS key_column(attnum)
-	JOIN pg_catalog.pg_attribute column_info
-	  ON column_info.attrelid = child.oid AND column_info.attnum = key_column.attnum
-	WHERE reference.contype = 'f' AND child_schema.nspname = current_schema()
-	  AND target_schema.nspname = current_schema() AND target.relname = 'persons'
-	ORDER BY child.relname, column_info.attname`
+const postgresPersonMergeReferenceQuery = `SELECT child.relname, columns.attname
+	FROM pg_catalog.pg_constraint constraints
+	JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
+	JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
+	JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+	CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
+	JOIN pg_catalog.pg_attribute columns
+	  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
+	WHERE constraints.contype = 'f'
+	  AND namespace.nspname = current_schema()
+	  AND target.relnamespace = namespace.oid
+	  AND target.relname = 'persons'
+	ORDER BY child.relname, columns.attname`
 
 func TestPostgresPersonMergeInventoryIncludesCompositeColumns(t *testing.T) {
 	require := require.New(t)
