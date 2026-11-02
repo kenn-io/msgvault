@@ -368,12 +368,7 @@ func (s *Syncer) incrementalWithRecovery(
 
 	// Advance past item errors, including during recovery catch-up, so one
 	// permanently failing message cannot block the source. Failed fetches carry
-	// forward to the next incremental run through their recorded errors, so a
-	// run that could not record one keeps the old cursor instead.
-	if err := s.acquisitionRecordErr; err != nil {
-		s.failStoppedSync(syncID, err)
-		return nil, err
-	}
+	// forward to the next incremental run.
 	historyIDStr := strconv.FormatUint(profile.HistoryID, 10)
 	if checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("incremental sync completed with errors",

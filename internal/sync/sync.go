@@ -98,10 +98,6 @@ type Syncer struct {
 
 	acquisitionSyncID   int64
 	pendingAcquisitions map[string]struct{}
-	// acquisitionRecordErr is the first failed write of a retryable fetch or
-	// ingest error this run. Without that row no later sync retries the
-	// message, so the run must fail rather than publish progress past it.
-	acquisitionRecordErr error
 
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
@@ -1446,9 +1442,6 @@ func (s *Syncer) full(
 
 		// Process batch
 		result, err := s.processBatch(ctx, state.syncID, source.ID, listResp, labelMap, state.checkpoint, summary)
-		if err == nil {
-			err = s.acquisitionRecordErr
-		}
 		if err != nil {
 			if checkpointErr := s.saveFullCheckpoint(ctx, state); checkpointErr != nil {
 				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
