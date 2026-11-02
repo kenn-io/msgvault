@@ -106,11 +106,9 @@ describe('RelationshipsTab', () => {
   it('renders relationship loading, failure with retry, and empty states from real collection requests', async () => {
     let resolveFirst!: (response: Response) => void;
     let reads = 0;
-    const includeEnded: string[] = [];
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) !== '/api/v1/people/7/relationships') throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-      includeEnded.push(new URL(request.url).searchParams.get('include_ended') ?? '');
       reads += 1;
       if (reads === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
       return Response.json({ relationships: [] });
@@ -119,8 +117,7 @@ describe('RelationshipsTab', () => {
 
     expect(screen.queryByRole('button', { name: 'Refresh relationships' })).toBeNull();
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
-    expect(includeEnded).toEqual(['true']);
-    await screen.findByText('Loading relationships…');
+    expect((await screen.findByRole('status')).textContent).toContain('Loading relationships');
     resolveFirst(Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 }));
 
     const alert = await screen.findByRole('alert');

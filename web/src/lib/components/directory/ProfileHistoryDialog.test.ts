@@ -127,7 +127,7 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
-  it.each([false, true])('loads history before offering splits and refreshes after reconciliation (initial history pending=%s)', async initialPending => {
+  it('loads history before offering splits and refreshes after reconciliation', async () => {
     let reconciled = false;
     let historyReads = 0;
     let initialResponse: Response | undefined;
@@ -148,7 +148,7 @@ describe('ProfileHistoryDialog', () => {
           observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
           addresses: [], dates: [], categories: [], media: [],
         });
-        if (++historyReads === 1 && initialPending) {
+        if (++historyReads === 1) {
           initialResponse = response;
           return pendingInitial;
         }
@@ -163,14 +163,10 @@ describe('ProfileHistoryDialog', () => {
     const onSplitCommitted = vi.fn(async () => { reconciled = true; });
     const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
     try {
-      if (initialPending) {
-        await act(async () => { await vi.waitFor(() => expect(initialResponse).toBeDefined()); });
-        expect(screen.getByText('Loading profile history…')).toBeDefined();
-        expect(screen.queryByRole('button', { name: 'Inspect merge 41' })).toBeNull();
-        await act(async () => { releaseInitial(initialResponse!); });
-        expect(await screen.findByRole('button', { name: 'Inspect merge 41' })).toBeDefined();
-        return;
-      }
+      await act(async () => { await vi.waitFor(() => expect(initialResponse).toBeDefined()); });
+      expect(screen.getByText('Loading profile history…')).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'Inspect merge 41' })).toBeNull();
+      await act(async () => { releaseInitial(initialResponse!); });
       for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
       await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Split merged profile' }));

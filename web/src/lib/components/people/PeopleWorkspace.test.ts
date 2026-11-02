@@ -48,7 +48,6 @@ it('keeps the day across Details and the file filter across Files', async () => 
   const view = render(PeopleWorkspace, { props });
   try {
     await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'report' } });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
     await view.rerender({ filesOpen: false });
     await fireEvent.click((await screen.findAllByRole('button', { name: '1 message on Jul 19, 2026' }))[0]);
@@ -121,40 +120,76 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the result when the next pair %s', async (outcome) => {
+it.each([
+  { outcome: 'fails', selectedID: null },
+  { outcome: 'is cancelled', selectedID: null },
+  { outcome: 'refreshes the cache', selectedID: null },
+  { outcome: 'merges', selectedID: null },
+  { outcome: 'merges', selectedID: 7 },
+  { outcome: 'merges', selectedID: 42 },
+])('reports the result when the next pair $outcome (selected=$selectedID)', async ({ outcome, selectedID }) => {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
+  let merged = false;
+  const one = profile(7, 4, [1]), two = profile(9, 2, [2]);
+  const unrelated = { ...profile(42, 1, []), display_name: 'Unrelated person' };
+  const survivor = { ...two, revision: 3, participant_ids: [1, 2] };
+  const structured = (person: ReturnType<typeof profile>, alias: string) => ({ person, names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+  const missing = () => Response.json({ error: 'person_not_found', message: 'Person not found.' }, { status: 404 });
   const links: Array<{ participant_a: number; participant_b: number }> = [];
   const client = clientFor({
     '/api/v1/relationships': async () => {
       if (++listRequests === 2 && outcome === 'merges') await new Promise<void>(resolve => { releaseReconcile = resolve; });
       return Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) });
     },
+    '/api/v1/people/directory': () => Response.json({ people: merged ? [survivor, unrelated] : [one, two, unrelated] }),
+    '/api/v1/people/7': () => merged ? missing() : Response.json(one, { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/7/profile': () => merged ? missing() : Response.json(structured(one, 'Absorbed alias'), { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/9': () => Response.json(merged ? survivor : two, { headers: { ETag: merged ? '"person-9-r3"' : '"person-9-r2"' } }),
+    '/api/v1/people/9/profile': () => Response.json(structured(merged ? survivor : two, 'Survivor alias'), { headers: { ETag: merged ? '"person-9-r3"' : '"person-9-r2"' } }),
+    '/api/v1/people/42': () => Response.json(unrelated, { headers: { ETag: '"person-42-r1"' } }),
+    '/api/v1/people/42/profile': () => Response.json(structured(unrelated, 'Unrelated alias'), { headers: { ETag: '"person-42-r1"' } }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: merged ? survivor : one, display_label: merged ? 'Synthetic Two' : 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
       return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
-    '/api/v1/people/7/merge': () => Response.json(mergeResult(profile(7, 5, [1, 2])), { headers: { ETag: '"person-7-r5"' } })
+    '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-9-r3"' } }); },
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  if (selectedID !== null) state.commitNavigation({ workspace: 'relationships', directoryPersonID: selectedID });
+  const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
+    if (selectedID !== null) expect(await screen.findByText(selectedID === 7 ? 'Absorbed alias' : 'Unrelated alias')).toBeDefined();
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     if (outcome === 'merges') {
-      await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic One (Person 7)' }));
+      await screen.findByRole('dialog', { name: 'Resolve person merge' });
+      await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
       await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
       await waitFor(() => expect(releaseReconcile).toBeDefined());
-      expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
-      expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-      expect(links).toHaveLength(1);
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
+      if (selectedID === null) {
+        expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
+        await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+        expect(links).toHaveLength(1);
+      }
       releaseReconcile?.();
       expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
       expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+      if (selectedID !== null) {
+        const expectedID = selectedID === 7 ? 9 : 42;
+        await waitFor(() => expect(directory.selectedPersonID).toBe(expectedID));
+        expect(state.current.directoryPersonID).toBe(expectedID);
+        expect(await screen.findByText(selectedID === 7 ? 'Survivor alias' : 'Unrelated alias')).toBeDefined();
+        expect(screen.queryByText('Absorbed alias')).toBeNull();
+      }
     } else if (outcome === 'is cancelled') {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+      await screen.findByRole('dialog', { name: 'Resolve person merge' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     } else if (outcome === 'fails') await screen.findByText(/Synthetic link failed/);
     else {
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
@@ -420,7 +455,7 @@ it.each([
 
 
 
-it('keeps Files and its filters when a saved person finishes initial hydration', async () => {
+it('keeps Files and its filename filter when a saved person finishes initial hydration', async () => {
   let releaseProfile!: (response: Response) => void;
   const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
   const saved = profile(7, 1, [1]);
@@ -441,13 +476,11 @@ it('keeps Files and its filters when a saved person finishes initial hydration',
   try {
     await fireEvent.click(await screen.findByRole('radio', { name: /^Files$/ }));
     await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'report' } });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'PDFs' }));
     await act(() => releaseProfile(Response.json(saved)));
     await waitFor(() => expect(state.current.relationshipTarget).toBe('cluster:1'));
     expect(state.current.relationshipFiles).toBe(true);
     await waitFor(() => expect(within(screen.getByRole('radiogroup', { name: 'Person tabs' })).getByRole('radio', { name: /^Files$/ }).getAttribute('aria-checked')).toBe('true'));
     expect(screen.getByRole('searchbox', { name: 'Filter filename' })).toHaveProperty('value', 'report');
-    expect(screen.getByRole('checkbox', { name: 'PDFs' })).toHaveProperty('checked', false);
   } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

@@ -1126,7 +1126,7 @@ describe('DirectoryController', () => {
     expect(controller.selectedPersonID).toBeNull();
   });
 
-  it('clears failed promotion feedback when selecting a saved person', async () => {
+  it.each(['saved person', 'new candidate'])('clears failed promotion feedback when opening a %s', async destination => {
     const client = createAPIClient(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'POST' && pathOf(request) === '/api/v1/people') return Response.json({ message: 'Save unavailable' }, { status: 503 });
@@ -1137,8 +1137,8 @@ describe('DirectoryController', () => {
       await expect(controller.promote(11)).resolves.toMatchObject({ ok: false });
       expect(controller.promotionError).toBe('Save unavailable');
       expect(controller.promotionResult).toMatchObject({ ok: false });
-      await controller.selectPerson(7);
-      expect(controller.selectedPersonID).toBe(7);
+      if (destination === 'saved person') await controller.selectPerson(7); else controller.resetForPromotion();
+      expect(controller.selectedPersonID).toBe(destination === 'saved person' ? 7 : null);
       expect(controller.promotionError).toBeNull();
       expect(controller.promotionResult).toBeNull();
     } finally { controller.destroy(); }
