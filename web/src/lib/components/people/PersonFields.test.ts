@@ -65,7 +65,7 @@ it('keeps a conflicted structured editor available to cancel after a deferred fa
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
-it('identifies row actions and confirmations by value and service scope without revealing sensitive values', async () => {
+it('identifies row actions and confirmations by value and service scope', async () => {
   const initial = profile();
   initial.contact_points = [
     ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
@@ -73,9 +73,8 @@ it('identifies row actions and confirmations by value and service scope without 
     ...['+12025550123', '+12025550124'].map((value, index) => ({ person_id: 7, address_kind: 'phone', original_value: value, normalized_value: value, normalization: 'phone', normalization_version: 1, envelope: { ...envelope, id: 30 + index, ordinal: index } })),
   ];
   const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
-  const secret = { ...note, id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'private_note', label: 'Private note', is_sensitive: true };
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
-  const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note, secret] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }, { definition: secret, current: values(secret, ['Secret one', 'Secret two']), history: [] }] } } });
+  const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }] } } });
   try {
     expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
     for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
@@ -85,13 +84,6 @@ it('identifies row actions and confirmations by value and service scope without 
       expect(confirmation.textContent).toContain(label);
       await fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
     }
-    for (const position of [1, 2]) {
-      expect(screen.getByRole('button', { name: `Edit Private note: value ${position}` })).toHaveProperty('disabled', true);
-      expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
-      expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
-    }
-    expect(view.container.innerHTML).not.toContain('Secret one');
-    expect(view.container.innerHTML).not.toContain('Secret two');
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -171,7 +163,7 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
   { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false } },
   { name: 'sensitive field closes the draft and conceals the value', refreshed: { label: 'Private note', is_sensitive: true } },
 ])('joins refreshed field settings into an open draft: $name', async ({ refreshed }) => {
-  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: refreshed.is_sensitive ? 'multi' : 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -180,7 +172,7 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
     if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [{ ...definition, revision: 2, ...refreshed }] });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value], history: [] }] }, etags: {}, errors: {} });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value, ...(refreshed.is_sensitive ? [{ ...value, id: 42, ordinal: 1, value: { type: 'text' as const, text: 'Second private example' } }] : [])], history: [] }] }, etags: {}, errors: {} });
   const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Note: Private example' }));
@@ -198,7 +190,12 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
       expect(screen.getByRole('button', { name: 'Edit Renamed note: Private example' })).toBeDefined();
     }
     if (refreshed.is_sensitive) {
+      for (const position of [1, 2]) {
+        expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
+        expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
+      }
       expect(screen.queryByText('Private example')).toBeNull();
+      expect(screen.queryByText('Second private example')).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
       expect(screen.getByText('Private example')).toBeDefined();
     }

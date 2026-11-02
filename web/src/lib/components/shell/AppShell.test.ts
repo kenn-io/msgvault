@@ -2149,7 +2149,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
-  it('opens a new People candidate from the selected saved person', async () => {
+  it('clears a failed Save alert when switching People candidates', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryPersonID: 7
     }))}`);
@@ -2200,7 +2200,7 @@ describe('AppShell', () => {
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
 
-    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
 
     rendered.unmount();

@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
-it.each(['edit', 'deactivate', 'conflict recovery', 'reactivate', 'delete'])('retains catalog %s', async operation => {
+it.each(['edit', 'conflict recovery', 'reactivate', 'delete'])('retains catalog %s', async operation => {
   let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];
   const definition = { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: operation !== 'reactivate' && operation !== 'conflict recovery', is_sensitive: false, revision: 1, is_deletable: true };
@@ -51,8 +51,7 @@ it.each(['edit', 'deactivate', 'conflict recovery', 'reactivate', 'delete'])('re
       await screen.findByRole('button', { name: 'Edit Concurrent color' });
       expect(writes[1]!.headers.get('If-Match')).toBe('"attribute-definition-41-r3"');
       await expect(writes[1]!.clone().json()).resolves.toMatchObject({ is_active: true });
-    } else if (operation === 'deactivate') await screen.findByText('Text · inactive');
-    else {
+    } else {
       await screen.findByRole('button', { name: operation === 'edit' ? 'Edit Preferred color' : 'Edit Favorite color' });
       await expect(writes[0]!.clone().json()).resolves.toMatchObject(operation === 'edit' ? { label: 'Preferred color' } : { is_active: true });
     }

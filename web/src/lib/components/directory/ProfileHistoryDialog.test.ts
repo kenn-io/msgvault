@@ -65,7 +65,7 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
-  it('retains current structured provenance alongside superseded rows and observations', async () => {
+  it('shows current values compactly and earlier values with removal provenance', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
