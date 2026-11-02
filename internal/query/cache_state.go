@@ -42,9 +42,10 @@ import (
 // Version 32 marks merged archive-only messages so deletion preflight counts
 // only messages that can still be deleted from their source.
 // Version 33 flags unsent messages in the relationship activity dataset.
+// Version 34 carries hidden_text_present in message rows.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 33
+const CacheSchemaVersion = 34
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

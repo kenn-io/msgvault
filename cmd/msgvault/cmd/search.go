@@ -153,6 +153,11 @@ Examples:
 		}
 		if searchMode == fullTextSearchMode {
 			parsed := search.ParseOR(queryStr)
+			for _, warning := range search.LiteralORWarnings(queryStr) {
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning:", warning); err != nil {
+					return fmt.Errorf("write search warning: %w", err)
+				}
+			}
 			parsed.MessageTypes = append(parsed.MessageTypes, searchMessageTypes...)
 			if parsed.IsEmpty() && searchAccount == "" && searchCollection == "" {
 				return withHint(usageErr(cmd, errors.New("empty search query")), "try 'msgvault search invoice --json', or select --account you@example.com")
@@ -378,6 +383,7 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 			"source_conversation_id": msg.SourceConversationID,
 			"subject":                msg.Subject,
 			"snippet":                msg.Snippet,
+			"hidden_text_present":    msg.HiddenTextPresent,
 			"from_email":             msg.FromEmail,
 			"from_name":              msg.FromName,
 			"sent_at":                msg.SentAt.Format(time.RFC3339),

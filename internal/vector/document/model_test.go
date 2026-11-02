@@ -135,3 +135,31 @@ func TestParseSearchMode(t *testing.T) {
 	_, err := ParseSearchMode("unsupported")
 	require.ErrorContains(t, err, "unsupported")
 }
+
+func TestLocalPolicyIdentitySurvivesServerRestart(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	cfg := vector.Config{Embeddings: vector.EmbeddingsConfig{Model: "nomic-embed-text", Dimension: 768, BatchSize: 32, MaxInputChars: 1000}}
+	cfg.People.RetentionPosture, cfg.People.TrainingPosture = "operator_asserted", "operator_asserted"
+	const a, b = "http://127.0.0.1:19001/v1", "http://127.0.0.1:19002/v1"
+	for local, endpoints := range map[bool][]string{true: {a, b, ""}, false: {a, b}} {
+		cfg.Embeddings.LocalOnly = local
+		var baseline []string
+		for _, endpoint := range endpoints {
+			cfg.Embeddings.Endpoint = endpoint
+			require.NoError(cfg.Embeddings.Validate())
+			generation, err := Fingerprint("extract-v1", cfg)
+			require.NoError(err)
+			document, err := EgressFingerprint("extract-v1", cfg)
+			require.NoError(err)
+			query, err := QueryEgressFingerprint("extract-v1", cfg)
+			require.NoError(err)
+			person, err := cfg.SemanticPersonEmbeddingProfile()
+			require.NoError(err)
+			identities := []string{generation, document, query, person.Fingerprint}
+			for i := range baseline {
+				assert.Equal(local, baseline[i] == identities[i], "identity %d at %s", i, endpoint)
+			}
+			baseline = identities
+		}
+	}
+}

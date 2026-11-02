@@ -4,7 +4,7 @@ import { createAPIClient } from '../api/client';
 import type { MessageDetail } from '../api/generated/models';
 import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from './archive-navigation.svelte';
 
-const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Archived' };
+const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Archived' };
 
 function eligibility(count = 1): Response {
   return Response.json(meetingMetrics({ totals: { meeting_count: count, known_duration_count: 0, unknown_duration_count: count, total_known_seconds: 0, average_known_seconds: null } }));

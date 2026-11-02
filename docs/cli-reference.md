@@ -2862,6 +2862,9 @@ attachments of the message. JSON includes `snippet` (the stored preview) and `co
 The `filename:` operator requires daemon API schema 3.14.0 or newer.
 FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
 its array output; vector/hybrid keep their object containing `results`.
+On newer `main` builds, every JSON result includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. False does not guarantee that text is visible.
+See `show-message` below for the detector and one-time backfill.
 
 Use hybrid for natural-language intent with lexical clues, and vector for
 meaning alone. Date operators filter before ranking; `--sort date` only sorts
@@ -3415,7 +3418,7 @@ grant consent to a provider or enroll a person in briefs.
 
 | Command | Purpose |
 |---|---|
-| `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person track <person-id>...` / `person untrack <person-id>...` | Enable or stop future profile maintenance for one or more people, in order. Stops at the first person the daemon rejects; `--json` prints one object per person per line |
 | `person tiers preview [--json]` | List saved people in tier 1 or 2 (two-way contact or meetings), whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
 | `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
@@ -4220,7 +4223,7 @@ Use this if `verify` reports FTS5 shadow-table corruption such as a malformed in
 
 ## embeddings
 
-Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and a configured `[vector.embeddings]` endpoint. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
+Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and configured `[vector.embeddings]` settings. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
 
 ```bash
 msgvault embeddings <subcommand> [flags]
@@ -4314,13 +4317,12 @@ generation, and a size rejection the worker recovers from by splitting or
 truncating a document. Messages can change while the sample is read.
 
 The job state is `idle`, `queued`, or `running`. `queued` means a scheduled run is
-waiting for the slot. A post-sync pass uses the sync's slot and goes straight
-to `running`; a manual build waiting for the slot shows as `idle` with the
-current holder. Scheduler state shows the
+waiting for the slot, including a post-sync pass after the sync releases it;
+a manual build waiting for the slot shows as `idle` with the current holder. Scheduler state shows the
 configured schedule, whether embeddings run after sync, and the current slot
 holder (`none`, `sync`, `embeddings`, or `other`). `sync` covers account syncs
-and scheduled source syncs such as Slack or CardDAV. A post-sync embedding pass
-holds the sync slot until it completes. No source names appear in slot labels.
+and scheduled source syncs such as Slack or CardDAV. No source names appear in
+slot labels.
 
 The latest 20 finished batches and current batch report attempted and newly
 covered messages, input characters the provider accepted, provider-call time, HTTP request time,
@@ -4809,7 +4811,7 @@ Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
 configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
-available loopback Ollama model at `[chat].server`. Hosted people inference
+available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
 select it. Without an OpenAI key or explicit provider choice, setup can offer
 the configured local Ollama chat model. The running daemon does not fall back
@@ -4839,7 +4841,9 @@ search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
 
-An existing text model or endpoint is preserved even if the feature is disabled.
+`--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
+
+Without that flag, an existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
 schedule keys, including an empty cron and `run_after_sync = false`, are also
 preserved. Setup does not configure source syncs, track people, enroll briefs,
@@ -4933,6 +4937,20 @@ preserved. With JSON, cleaning changes
 
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
+On newer `main` builds, JSON includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. The check uses a set of
+inline-style heuristics, plus `hidden` and legacy color attributes. Non-blank
+HTML that fails to parse also sets the flag. Text output writes
+`Warning: this message's HTML may hide text.` to stderr when flagged, including
+with `--body-only`. Message bodies stay unchanged. The check excludes
+stylesheets and browser layout. False does not guarantee that text is visible.
+Many newsletters hide a preview line, called a preheader, and those set the flag
+too. The flag marks hidden text rather than malicious intent.
+MCP `get_message` and `search_in_message`
+return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
+also include it on every result row. Archive schema 16 flags older mail during
+a one-time backfill at archive initialization; new HTML writes refresh the flag.
+
 <a id="show-thread"></a>
 
 ## thread show
@@ -4957,6 +4975,10 @@ JSON includes `conversation_id`, `total`, `offset`, `has_more`, and `messages`
 containing message details with cleaned `body_text`. Text and JSON use the same
 `--strip-quoted` policy. Pass `--strip-quoted=false` to
 keep the archived body text unchanged.
+
+Each message in `show-thread --json` includes `hidden_text_present`, using the
+same check as `show-message`. Text output prints the same stderr warning once
+when any message on the shown page is flagged.
 
 ---
 

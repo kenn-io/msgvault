@@ -1713,6 +1713,11 @@ func upsertMessageBody(
 	if err != nil {
 		return err
 	}
+	hiddenTextPresent := bodyHTML.Valid && mime.HTMLHasHiddenText(bodyHTML.String)
+	if _, err := q.Exec(`UPDATE messages SET hidden_text_present = ? WHERE id = ? AND hidden_text_present <> ?`,
+		hiddenTextPresent, messageID, hiddenTextPresent); err != nil {
+		return fmt.Errorf("update message hidden text flag: %w", err)
+	}
 	if !embeddingChanged {
 		return nil
 	}

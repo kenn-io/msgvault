@@ -62,6 +62,9 @@ components:
           type: boolean
         queued:
           type: boolean
+        queued_at:
+          format: date-time
+          type: string
         running:
           type: boolean
         schedule:
@@ -1046,6 +1049,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -1081,6 +1086,7 @@ components:
         web_url:
           type: string
       required:
+        - hidden_text_present
         - id
         - source_message_id
         - conversation_id
@@ -2216,6 +2222,9 @@ components:
         next_scheduled_at:
           format: date-time
           type: string
+        queued_at:
+          format: date-time
+          type: string
         repair_reason:
           enum:
             - account_missing
@@ -2230,6 +2239,8 @@ components:
           type: string
         scheduled:
           type: boolean
+        scheduler_running:
+          type: boolean
       required:
         - configured
         - available
@@ -2237,6 +2248,7 @@ components:
         - enabled
         - scheduled
         - schedule
+        - scheduler_running
       type: object
     CardDAVSyncRequest:
       additionalProperties: false
@@ -2753,6 +2765,8 @@ components:
           type: array
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -2801,6 +2815,7 @@ components:
         - deleted_at
         - size_estimate
         - has_attachments
+        - hidden_text_present
         - from
         - to
         - cc
@@ -3554,6 +3569,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - query
         - messages
@@ -5526,6 +5545,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - rows
         - total_count
@@ -5602,6 +5625,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - rows
         - cache_revision
@@ -6621,6 +6648,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -6665,6 +6694,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     HybridSearchMatch:
@@ -8054,6 +8084,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -8097,6 +8129,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     MessageListResponse:
@@ -8241,6 +8274,8 @@ components:
           type: string
         has_attachments:
           type: boolean
+        hidden_text_present:
+          type: boolean
         id:
           format: int64
           type: integer
@@ -8277,6 +8312,7 @@ components:
         - snippet
         - labels
         - has_attachments
+        - hidden_text_present
         - size_bytes
       type: object
     MessageTag:
@@ -13346,6 +13382,193 @@ components:
         - last_at
         - cache_revision
       type: object
+    PersonTierExplanation:
+      properties:
+        as_of:
+          type: string
+        display_name:
+          nullable: true
+          type: string
+        exclusion:
+          nullable: true
+          type: string
+        last_contact_date:
+          nullable: true
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        projection:
+          $ref: "#/components/schemas/PersonTierProjection"
+        readiness:
+          $ref: "#/components/schemas/PersonTierReadiness"
+        rule:
+          type: string
+        signals:
+          $ref: "#/components/schemas/PersonTierSignals"
+        thresholds:
+          items:
+            $ref: "#/components/schemas/PersonTierThresholdCheck"
+          type: array
+        tier:
+          format: int64
+          type: integer
+        tracked:
+          type: boolean
+      required:
+        - person_id
+        - display_name
+        - tier
+        - rule
+        - exclusion
+        - tracked
+        - last_contact_date
+        - as_of
+        - readiness
+        - projection
+        - signals
+        - thresholds
+      type: object
+    PersonTierPreview:
+      properties:
+        as_of:
+          type: string
+        people:
+          items:
+            $ref: "#/components/schemas/PersonTierRow"
+          type: array
+        projection:
+          $ref: "#/components/schemas/PersonTierProjection"
+        readiness:
+          $ref: "#/components/schemas/PersonTierReadiness"
+      required:
+        - people
+        - as_of
+        - readiness
+        - projection
+      type: object
+    PersonTierProjection:
+      properties:
+        max_direct:
+          format: int64
+          type: integer
+        timezone:
+          type: string
+      required:
+        - timezone
+        - max_direct
+      type: object
+    PersonTierReadiness:
+      properties:
+        ready:
+          type: boolean
+        reasons:
+          items:
+            type: string
+          type: array
+      required:
+        - ready
+        - reasons
+      type: object
+    PersonTierRow:
+      properties:
+        display_name:
+          nullable: true
+          type: string
+        last_contact_date:
+          nullable: true
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        rule:
+          type: string
+        tier:
+          format: int64
+          type: integer
+        tracked:
+          type: boolean
+      required:
+        - person_id
+        - display_name
+        - tier
+        - rule
+        - tracked
+        - last_contact_date
+      type: object
+    PersonTierSignals:
+      properties:
+        active_days_long:
+          format: int64
+          type: integer
+        active_days_short:
+          format: int64
+          type: integer
+        calls_long:
+          format: int64
+          type: integer
+        calls_short:
+          format: int64
+          type: integer
+        channels_long:
+          format: int64
+          type: integer
+        excluded_list_events:
+          format: int64
+          type: integer
+        inbound_long:
+          format: int64
+          type: integer
+        inbound_short:
+          format: int64
+          type: integer
+        large_audience_inbound_events:
+          format: int64
+          type: integer
+        meeting_days_long:
+          format: int64
+          type: integer
+        outbound_long:
+          format: int64
+          type: integer
+        outbound_short:
+          format: int64
+          type: integer
+      required:
+        - outbound_short
+        - outbound_long
+        - inbound_short
+        - inbound_long
+        - active_days_short
+        - active_days_long
+        - meeting_days_long
+        - calls_short
+        - calls_long
+        - channels_long
+        - excluded_list_events
+        - large_audience_inbound_events
+      type: object
+    PersonTierThresholdCheck:
+      properties:
+        enabled:
+          type: boolean
+        met:
+          type: boolean
+        name:
+          type: string
+        observed:
+          format: int64
+          type: integer
+        required:
+          format: int64
+          type: integer
+      required:
+        - name
+        - observed
+        - required
+        - enabled
+        - met
+      type: object
     PersonTracking:
       properties:
         person_id:
@@ -14442,6 +14665,10 @@ components:
         total_count:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - query
         - messages
@@ -14499,6 +14726,10 @@ components:
         total:
           format: int64
           type: integer
+        warnings:
+          items:
+            type: string
+          type: array
       required:
         - query
         - total
@@ -15109,6 +15340,8 @@ components:
           type: boolean
         scheduler_queued:
           type: boolean
+        scheduler_queued_at:
+          type: string
         scheduler_started_at:
           type: string
         source_type:
@@ -16487,7 +16720,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.29.0
+  version: 3.34.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -26831,6 +27064,39 @@ paths:
       summary: Search durable people semantically
       tags:
         - API
+  /api/v1/people/tiers:
+    get:
+      operationId: previewPersonTiers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierPreview"
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List saved people in tier 1 or 2
+      tags:
+        - API
   /api/v1/people/{id}:
     delete:
       description: "Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID."
@@ -29432,6 +29698,53 @@ paths:
       security:
         - apiKey: []
       summary: Split absorbed participant lineage into a new person
+      tags:
+        - API
+  /api/v1/people/{id}/tier:
+    get:
+      operationId: explainPersonTier
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierExplanation"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Show every count behind one person's tier
       tags:
         - API
   /api/v1/people/{id}/tracking:

@@ -95,13 +95,14 @@ func TestPolicyAppliesEffectiveSettings(t *testing.T) {
 
 	require.NoError(db.Ping())
 	assert.DirExists(tempDir)
-	var threads int
+	var threads, asyncThreads int
 	var preserveOrder bool
 	var spillDir string
-	require.NoError(db.QueryRow(`SELECT current_setting('threads'),
+	require.NoError(db.QueryRow(`SELECT current_setting('threads'), current_setting('async_threads'),
 		current_setting('preserve_insertion_order'), current_setting('temp_directory')`).
-		Scan(&threads, &preserveOrder, &spillDir))
+		Scan(&threads, &asyncThreads, &preserveOrder, &spillDir))
 	assert.Equal(policy.Threads, threads)
+	assert.Equal(policy.Threads, asyncThreads)
 	assert.False(preserveOrder, "exports must be able to stream unordered results")
 	assert.Equal(tempDir, spillDir)
 }

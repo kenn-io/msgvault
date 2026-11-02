@@ -182,3 +182,18 @@ CREATE TABLE IF NOT EXISTS document_vector_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_document_vector_embeddings_generation
     ON document_vector_embeddings(generation_id, dimension, token);
+
+-- Completed provider requests awaiting message or contextual publication.
+CREATE TABLE IF NOT EXISTS embedding_checkpoints (
+    generation_id BIGINT NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+    owner TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    input_key TEXT NOT NULL,
+    vectors TEXT NOT NULL,
+    PRIMARY KEY (generation_id, owner, input_key)
+);
+CREATE TRIGGER IF NOT EXISTS embedding_checkpoints_retired
+AFTER UPDATE OF state ON index_generations WHEN NEW.state = 'retired'
+BEGIN
+    DELETE FROM embedding_checkpoints WHERE generation_id = NEW.id;
+END;

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/cligrammar"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -194,7 +195,7 @@ func embeddingSlotKind(label string, held bool) string {
 	switch {
 	case !held:
 		return "none"
-	case label == "scheduled embedding" || isManualEmbeddingGateLabel(label):
+	case label == jobctx.ScheduledEmbeddingLabel || isManualEmbeddingGateLabel(label):
 		return "embeddings"
 	case strings.HasPrefix(label, "scheduled sync of ") || strings.HasPrefix(label, "msgvault sync") ||
 		isSourceSyncJobName(label):

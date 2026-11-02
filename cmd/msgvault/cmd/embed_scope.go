@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
@@ -223,4 +224,38 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 	}
 	defer func() { _ = s.Close() }()
 	return resolvedVectorConfig(context.Background(), s, cfg.Vector)
+}
+
+var localEmbeddingsDir = embedlocal.DefaultDir
+
+var errLocalEmbeddingDownloadRequired = errors.New("local embedding download required")
+
+// resolveLocalVectorConfig resolves transport without changing message identity.
+// Only setup can approve downloads; runtime reuses an installed server.
+func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Config, error) {
+	if !cfg.Enabled || !cfg.Embeddings.LocalOnly {
+		return cfg, nil
+	}
+	dir, err := localEmbeddingsDir()
+	if err != nil {
+		return vector.Config{}, fmt.Errorf("local embedding directory: %w", err)
+	}
+	endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
+	if errors.Is(err, embedlocal.ErrNotFound) {
+		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(context.Context, int64) (bool, error) {
+			return false, errLocalEmbeddingDownloadRequired
+		}})
+		if errors.Is(installErr, errLocalEmbeddingDownloadRequired) {
+			return vector.Config{}, errors.New("local embeddings need setup: run msgvault setup providers --local-embeddings")
+		}
+		if installErr != nil {
+			return vector.Config{}, fmt.Errorf("install local embeddings: %w", installErr)
+		}
+		endpoint, err = embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
+	}
+	if err != nil {
+		return vector.Config{}, fmt.Errorf("resolve local embeddings: %w", err)
+	}
+	cfg.Embeddings.Endpoint = endpoint
+	return cfg, nil
 }
