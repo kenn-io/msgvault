@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/sensitive"
 )
 
@@ -169,7 +170,29 @@ func draftSensitiveFindings(command string, args map[string]any) []sensitive.Fin
 	if !draftContentMutation(command) {
 		return nil
 	}
-	findings := sensitive.Scan(stringArgument(args, "body"))
+	body := stringArgument(args, "body")
+	findings := sensitive.Scan(body)
+	if len(findings) > 0 {
+		segments := msgsegment.Split(body, msgsegment.Text, msgsegment.Options{Subject: stringArgument(args, "subject")})
+		segmentIndex := 0
+		for i := range findings {
+			// Both ranges are ordered. Advance by the finding's start so that
+			// overlapping findings still inspect every segment they touch.
+			for segmentIndex < len(segments.Segments) && segments.Segments[segmentIndex].End <= findings[i].Start {
+				segmentIndex++
+			}
+			quoted := segmentIndex < len(segments.Segments) && segments.Segments[segmentIndex].Start < findings[i].End
+			for j := segmentIndex; j < len(segments.Segments) && segments.Segments[j].Start < findings[i].End; j++ {
+				if kind := segments.Segments[j].Kind; kind != msgsegment.Quoted && kind != msgsegment.Forwarded {
+					quoted = false
+					break
+				}
+			}
+			if quoted {
+				findings[i].Origin = "quoted"
+			}
+		}
+	}
 	return append(findings, sensitive.Scan(stringArgument(args, "subject"))...)
 }
 
@@ -207,9 +230,13 @@ func addSensitiveDraftWarnings(raw jsontext.Value, findings []sensitive.Finding)
 		}
 	}
 	for _, finding := range findings {
+		message := "Submitted draft content may contain " + sensitiveKindLabel(finding.Kind) + ". Review it before sending; remove it unless the recipient must receive it."
+		if finding.Origin == "quoted" {
+			message = "Quoted or forwarded draft content may contain " + sensitiveKindLabel(finding.Kind) + ". Review it before sending; quote markers do not prove who wrote it or authorize disclosure."
+		}
 		warning, err := json.Marshal(sensitiveDraftWarning{
 			Code: "sensitive_content", Kind: finding.Kind, Origin: finding.Origin, Hint: finding.Hint,
-			Message: "Submitted draft content may contain " + sensitiveKindLabel(finding.Kind) + ". Review it before sending; remove it unless the recipient must receive it.",
+			Message: message,
 		})
 		if err != nil {
 			return raw
