@@ -55,6 +55,22 @@ function deferredResponse() {
 }
 
 describe('DirectoryEntityController', () => {
+  it('creates an organization from Settings without reading a person employment collection', async () => {
+    const requests: Request[] = [];
+    const onDirectoryChange = vi.fn();
+    const client = createAPIClient(async input => {
+      const request = requestOf(input); requests.push(request);
+      if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return Response.json(organization(22), { status: 201, headers: { ETag: '"organization-22-r1"' } });
+      return Response.json({ message: 'Person not found.' }, { status: 404 });
+    });
+    const controller = new DirectoryEntityController(client, 0, { onDirectoryChange });
+    try {
+      expect(await controller.createOrganization({ name: 'Synthetic Org', kind: 'company' })).toMatchObject({ ok: true });
+      expect(requests.map(request => `${request.method} ${pathOf(request)}`)).toEqual(['POST /api/v1/organizations']);
+      expect(onDirectoryChange).toHaveBeenCalledOnce();
+    } finally { controller.destroy(); }
+  });
+
   it('keeps the renamed employer after a deferred Details lookup completes', async () => {
     const oldLookup = deferredResponse();
     let organizationReads = 0;
