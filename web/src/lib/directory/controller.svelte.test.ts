@@ -1,20 +1,11 @@
 import { emptyProfile } from './profile-fixtures.test-support';
-import { pathOf } from './entity-fixtures.test-support';
+import { directoryPerson as fixtureDirectoryPerson, pathOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryController } from './controller.svelte';
 
-function directoryPerson(id: number) {
-  return {
-    id,
-    revision: 1,
-    contact_state: 'active',
-    categories: [],
-    organizations: [],
-    display_name: `Person ${id}`
-  };
-}
+const directoryPerson = (id: number) => fixtureDirectoryPerson(id, { revision: 1, display_name: `Person ${id}` });
 
 function detailResponse(path: string, personID = 7): Response {
   if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });

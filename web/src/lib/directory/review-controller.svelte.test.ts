@@ -62,7 +62,9 @@ describe('DirectoryReviewController', () => {
     let failedAttempts = 0;
     const offsets: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const offset = new URL(requestOf(input).url).searchParams.get('offset') ?? '';
+      const url = new URL(requestOf(input).url);
+      if (url.pathname.includes('/participants/')) return Response.json({ id: Number(url.pathname.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 1 });
+      const offset = url.searchParams.get('offset') ?? '';
       offsets.push(offset);
       if (offset === failedOffset && offsets.length > 1) {
         failedAttempts += 1;
@@ -514,5 +516,37 @@ it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination
       expect(controller.offset).toBe(0);
       expect(controller.rows.map(row => row.id)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     }
+  } finally { controller.destroy(); }
+});
+
+it.each([false, true])('Next continues beyond the displayed page after a queued decision, write fails=%s', async failDecision => {
+  let rows = Array.from({ length: 11 }, (_, index) => ({ ...pair, id: index + 1, left_id: index * 2 + 1, right_id: index * 2 + 2, review_token: `review-${index + 1}` }));
+  const offsets: number[] = [];
+  const writes: Array<{ path: string; body: unknown }> = [];
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url);
+    if (request.method === 'POST') {
+      writes.push({ path: url.pathname, body: await request.json() });
+      if (failDecision) return Response.json({ message: 'Decision unavailable' }, { status: 503 });
+      const decided = rows.find(row => row.id === 3)!;
+      rows = rows.filter(row => row.id !== 3);
+      return Response.json({ candidate: { ...decided, state: 'rejected' }, cache_state: 'ready' });
+    }
+    const offset = Number(url.searchParams.get('offset'));
+    const limit = Number(url.searchParams.get('limit'));
+    offsets.push(offset);
+    return Response.json({ candidates: rows.slice(offset, offset + limit), limit, offset });
+  }));
+  try {
+    await controller.loadIdentityPage();
+    expect(controller.rows.map(row => row.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    await controller.queueDecision(controller.rows[2]!, 'reject');
+    await controller.loadNextPage();
+    expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/3/review/reject', body: { review_token: 'review-3' } }]);
+    expect(controller.hidden.size).toBe(0);
+    expect(controller.decisionError).toBe(failDecision ? 'Decision unavailable' : null);
+    expect(offsets.at(-1)).toBe(failDecision ? 10 : 9);
+    expect(controller.rows.map(row => row.id)).toEqual([11]);
   } finally { controller.destroy(); }
 });

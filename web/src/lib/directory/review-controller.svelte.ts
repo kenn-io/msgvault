@@ -194,7 +194,7 @@ export class DirectoryReviewController {
   }
   async loadNextPage(): Promise<void> {
     if (this.loading || !this.hasNextPage) return;
-    await this.loadPageAfterSettlement(this.offset + this.rows.filter(row => !this.hidden.has(row.id)).length);
+    await this.loadPageAfterSettlement(this.offset + this.rows.length, this.rows.filter(row => this.hidden.has(row.id)).length);
   }
   async loadPreviousPage(): Promise<void> {
     if (this.loading || !this.hasPreviousPage) return;
@@ -204,10 +204,10 @@ export class DirectoryReviewController {
     await this.loadPageAfterSettlement(targetOffset);
   }
   /** A page move made before a decision settles yields to any newer review context. */
-  private async loadPageAfterSettlement(targetOffset: number): Promise<void> {
+  private async loadPageAfterSettlement(targetOffset: number, hiddenRows = 0): Promise<void> {
     const context = this.reviewContextSnapshot();
-    await this.settleDecision();
-    if (this.isReviewContextCurrent(context)) await this.loadIdentityPage(targetOffset);
+    const result = await this.settleDecision();
+    if (this.isReviewContextCurrent(context)) await this.loadIdentityPage(targetOffset - (result?.ok ? hiddenRows : 0));
   }
   async acceptIdentity(
     candidateID: number,
@@ -445,8 +445,8 @@ export class DirectoryReviewController {
   }
   private retainPageFailure(targetOffset: number, message: string): void {
     this.retryOffset = targetOffset;
-    if (this.rows.length > 0) this.pageError = message;
-    else this.error = message;
+    this[this.rows.length > 0 ? 'pageError' : 'error'] = message;
+    this.requestSummaries();
   }
   private resetIdentityContext(identityState: IdentityReviewState): void {
     ++this.reviewContextGeneration;

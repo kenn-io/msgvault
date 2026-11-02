@@ -3142,7 +3142,7 @@ it('refreshes duplicate evidence when saving an observed person finishes after l
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
   const rendered = render(AppShell, { client, state });
   try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Save', exact: true }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
     await waitFor(() => expect(finish).toBeTypeOf('function'));
     await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
     await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
