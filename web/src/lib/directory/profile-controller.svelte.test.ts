@@ -563,6 +563,48 @@ describe('DirectoryProfileController', () => {
     expect(controller.canWriteProfile).toBe(true);
   });
 
+  it.each(['person', 'structuredProfile', 'all'])('publishes a failed %s refresh with cached data and clears the error on retry', async section => {
+    let unavailable = true;
+    const initial = bundle();
+    initial.structuredProfile!.names = [{
+      person_id: 7, name_kind: 'nickname', formatted: 'Moved nickname', original_value: 'Moved nickname', is_derived: false,
+      envelope: { id: 81, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} },
+    }];
+    const onDetailChange = vi.fn();
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/7') return unavailable && section !== 'structuredProfile'
+        ? Response.json({ message: 'Person unavailable' }, { status: 503 })
+        : Response.json(person(7, 4), { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/profile')) return unavailable && section !== 'person'
+        ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
+        : Response.json(profile(7, 4), { headers: { ETag: '"profile-7-r4"' } });
+      if (unavailable && section === 'all') return Response.json({ message: 'Section unavailable' }, { status: 503 });
+      if (path.endsWith('/attributes')) return Response.json(attributes());
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-08-20T00:00:00Z', stale: false });
+      throw new Error(`Unexpected ${path}`);
+    });
+    const controller = new DirectoryProfileController(client, 7, initial, { onDetailChange });
+    try {
+      await controller.reload();
+      expect(onDetailChange).toHaveBeenLastCalledWith(expect.objectContaining({
+        person: section === 'structuredProfile' ? person(7, 4) : initial.person,
+        structuredProfile: section === 'person' ? profile(7, 4) : initial.structuredProfile,
+        errors: expect.objectContaining(section === 'person'
+          ? { person: 'Person unavailable' }
+          : section === 'structuredProfile'
+            ? { structuredProfile: 'Profile unavailable' }
+            : { person: 'Person unavailable', structuredProfile: 'Profile unavailable' }),
+      }));
+
+      unavailable = false;
+      await controller.reload();
+      expect(onDetailChange).toHaveBeenLastCalledWith(expect.objectContaining({ person: person(7, 4), structuredProfile: profile(7, 4), errors: {} }));
+    } finally { controller.destroy(); }
+  });
+
   it('restores write capabilities after reload failure leaves the prior ETags intact', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -685,6 +727,51 @@ describe('DirectoryProfileController', () => {
 
     expect(controller.draft).toEqual({ kind: 'profile', body: patch });
     expect(controller.conflict).toMatchObject({ code: 'request_failed', status: 503 });
+  });
+
+  it.each([
+    ['registry retry', 'success'],
+    ['registry retry', 'failure'],
+    ['profile reload', 'success'],
+    ['profile reload', 'failure'],
+  ])('ignores a superseded %s registry response (%s)', async (olderRead, outcome) => {
+    const stale = { id: 41, slug: 'favorite_color', label: 'Favorite color' };
+    const current = { ...stale, label: 'Preferred color' };
+    let reads = 0;
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path.endsWith('/attribute-definitions')) {
+        reads += 1;
+        return reads === 1 ? pending : Response.json({ definitions: [current] });
+      }
+      if (path === '/api/v1/people/7') return Response.json(person(7, 3, [], 'Test User'), { headers: { ETag: '"person-7-r3"' } });
+      if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r3"' } });
+      if (path.endsWith('/attributes')) return Response.json(attributes());
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-08-20T00:00:00Z', stale: false });
+      throw new Error(`Unexpected ${path}`);
+    });
+    const controller = new DirectoryProfileController(client, 7, bundle());
+    const older = olderRead === 'registry retry' ? controller.reloadDefinitions() : controller.reload();
+    try {
+      await vi.waitFor(() => expect(reads).toBe(1));
+      if (olderRead === 'registry retry') await controller.reload();
+      else await controller.reloadDefinitions();
+      expect(controller.definitions).toEqual([current]);
+
+      release(outcome === 'success'
+        ? Response.json({ definitions: [stale] })
+        : Response.json({ message: 'Registry unavailable' }, { status: 503 }));
+      await older;
+      expect(controller.definitions).toEqual([current]);
+      expect(controller.definitionsError).toBeNull();
+    } finally {
+      release(Response.json({ definitions: [] }));
+      await older;
+      controller.destroy();
+    }
   });
 
   it.each([false, true])('loads and refreshes definitions after creating a user definition (initial read pending=%s)', async pending => {
