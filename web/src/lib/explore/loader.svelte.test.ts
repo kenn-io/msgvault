@@ -74,6 +74,27 @@ function setup(
 }
 
 describe('ExploreLoader', () => {
+  it('closes Past runs over loaded Messages without another archive request', async ({ onTestFinished }) => {
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window);
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 })));
+    const { loader, cleanup } = setup(fetchFn, state);
+    onTestFinished(() => { cleanup(); state.destroy(); });
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+    expect(fetchFn).toHaveBeenCalledOnce();
+    state.openOperationHistory({});
+    state.openOperationHistory({ operationRunID: `op2.${'a'.repeat(32)}.exampleRun` });
+    flushSync();
+    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    state.closeOperationHistory();
+    await popped;
+    flushSync();
+    await vi.waitFor(() => expect(loader.loading).toBe(false));
+    expect(state.current.operationHistory).toBe(false);
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(loader.rows.map(row => row.key)).toEqual(['message:1']);
+  });
+
   it('consumes an empty search submission once and excludes grouping changes and retries', async ({ onTestFinished }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window), onSearchAccepted = vi.fn();

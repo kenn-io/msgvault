@@ -1,7 +1,6 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
   import { Button, Chip, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
-  import type { Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
@@ -33,7 +32,6 @@
     countLabel,
     sort = undefined,
     presentation = 'table',
-    extra = undefined,
     extraChips = [],
     onAddGroup,
     onRemoveGroup,
@@ -51,7 +49,6 @@
     countLabel: string;
     sort?: SortConfig;
     presentation?: ExploreURLState['presentation'];
-    extra?: Snippet;
     extraChips?: ExtraChip[];
     onAddGroup: (dimension: ExploreGroupDimension) => void;
     onRemoveGroup: (index: number) => void;
@@ -125,7 +122,6 @@
         />
       </div>
     {/if}
-    {@render extra?.()}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 

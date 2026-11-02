@@ -174,7 +174,7 @@ test('Directory list stays in its flexible row when a promotion alert appears', 
   await installMixedArchive(page);
   await installTallDirectory(page);
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page.goto('/');
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
   await page.getByRole('grid', { name: 'Relationship results' }).getByText('Archive Person').click();
   await page.getByRole('button', { name: 'Open in Directory' }).click();
   const directory = page.getByRole('main', { name: 'Directory' });
@@ -328,7 +328,7 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
 
 test('Relationships supplies its selected participant to Directory promotion and commits the returned person', async ({ page }) => {
   await installMixedArchive(page);
-  await page.goto('/');
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
 
   const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
   await relationshipList.getByText('Archive Person').click();

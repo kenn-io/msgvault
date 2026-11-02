@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { KbdBadge, Modal, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, KbdBadge, Modal, SearchInput } from '@kenn-io/kit-ui';
 
   import type { AppCommand } from '../../commands/registry';
 
-  let { commands, onclose }: { commands: AppCommand[]; onclose: () => void } = $props();
+  let { commands, onclose, onOpenCommands }: { commands: AppCommand[]; onclose: () => void; onOpenCommands: () => void } = $props();
   let query = $state('');
   const shortcuts = $derived(commands.filter((command) => command.keys.length > 0));
   const filtered = $derived.by(() => {
@@ -16,6 +16,7 @@
 </script>
 
 <Modal title="Keyboard shortcuts" ariaLabel="Keyboard shortcuts" width="min(680px, calc(100vw - 32px))" {onclose}>
+  <Button label="Commands" onclick={onOpenCommands} />
   <div class="keyboard-help-search">
     <SearchInput
       value={query}

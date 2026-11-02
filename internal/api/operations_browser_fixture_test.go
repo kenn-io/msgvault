@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -29,19 +30,26 @@ type browserOperationPrivateSentinels struct {
 
 func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 	t.Parallel()
+	requirements := require.New(t)
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "web", "tests", "e2e", "fixtures", "operations-public.json"))
-	require.NoError(t, err)
-	var fixture OperationRunsResponse
-	require.NoError(t, json.Unmarshal(raw, &fixture))
-	require.Len(t, fixture.Runs, 5)
+	requirements.NoError(err)
+	var fixture struct {
+		OperationRunsResponse
+
+		JobRuns []OperationRunSummary `json:"job_runs"`
+	}
+	requirements.NoError(json.Unmarshal(raw, &fixture))
+	requirements.Len(fixture.Runs, 5)
+	requirements.Len(fixture.JobRuns, 8)
+	runs := slices.Concat(fixture.Runs, fixture.JobRuns)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}
 	codec := operationTokenCodec{
 		keyring: archive,
-		random:  bytes.NewReader(bytes.Repeat([]byte{0x24}, operationTokenNonceBytes*len(fixture.Runs))),
+		random:  bytes.NewReader(bytes.Repeat([]byte{0x24}, operationTokenNonceBytes*len(runs))),
 	}
-	for index, browserRun := range fixture.Runs {
+	for index, browserRun := range runs {
 		t.Run(string(browserRun.Kind), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)

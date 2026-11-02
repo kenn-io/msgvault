@@ -64,7 +64,7 @@ mail accounts are the ones added with `add-o365 --graph`. Creating a manifest ne
 
 ## Staging in the Web UI
 
-In Everything, select individual rows or all rows matching the current
+In Messages, select individual rows or all rows matching the current
 canonical filter, then press `d` or `D` to open the Deletions workspace. The UI
 runs a server-side preflight before it enables staging and requires a separate
 confirmation to create the manifest. The Deletions workspace also lists,
