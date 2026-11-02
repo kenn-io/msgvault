@@ -72,20 +72,22 @@ for ((i = 0; i < active_shards; i++)); do
 	: >"$work/shard-$i.names"
 done
 backend=sqlite
-if [ -n "${MSGVAULT_TEST_DB:-}" ]; then backend=postgres; fi
+case "${MSGVAULT_TEST_DB:-}" in
+	postgres://*|postgresql://*) backend=postgres ;;
+esac
 weights_file="$package_dir/testdata/shard-weights-$backend.txt"
 if [ -f "$weights_file" ]; then
 	# Keep current top-level tests only, ordered by duration for the median.
-	awk 'NR == FNR { names[$0] = 1; next }
+	LC_ALL=C awk 'NR == FNR { names[$0] = 1; next }
 		/^--- (PASS|SKIP|FAIL): / && ($3 in names) {
 			seconds = $4; gsub(/[()s]/, "", seconds); print seconds, $3
-		}' "$names_file" "$weights_file" | sort -k1,1g >"$work/weights"
-	awk 'FILENAME == ARGV[1] { weights[$2] = $1; ordered[++n] = $1; next }
+		}' "$names_file" "$weights_file" | LC_ALL=C sort -k1,1g >"$work/weights"
+	LC_ALL=C awk 'FILENAME == ARGV[1] { weights[$2] = $1; ordered[++n] = $1; next }
 		{
 			median = n % 2 ? ordered[(n + 1) / 2] : (ordered[n / 2] + ordered[n / 2 + 1]) / 2
 			print ($0 in weights ? weights[$0] : median), FNR, $0
-		}' "$work/weights" "$names_file" | sort -k1,1gr -k2,2n |
-		awk -v shards="$active_shards" -v prefix="$work/shard-" '{
+		}' "$work/weights" "$names_file" | LC_ALL=C sort -k1,1gr -k2,2n |
+		LC_ALL=C awk -v shards="$active_shards" -v prefix="$work/shard-" '{
 			lightest = 0
 			for (i = 1; i < shards; i++) if (total[i] < total[lightest]) lightest = i
 			print $3 >> (prefix lightest ".names")
@@ -134,7 +136,7 @@ for ((i = 0; i < active_shards; i++)); do
 	if [ "$status" -eq 0 ]; then
 		awk '/^[[:space:]]*--- (PASS|SKIP): /' "$work/shard-$i.out"
 		printf 'ok  \t%s\t%s\n' "$import_path" "$(elapsed "$i")"
-		seconds=$(awk '/^--- (PASS|SKIP|FAIL): / { seconds += substr($4, 2) } END { print seconds + 0 }' "$work/shard-$i.out")
+		seconds=$(LC_ALL=C awk '/^--- (PASS|SKIP|FAIL): / { seconds += substr($4, 2) } END { print seconds + 0 }' "$work/shard-$i.out")
 		echo "ok shard $((i + 1)): $count tests, ${seconds}s"
 	else
 		failed=1
