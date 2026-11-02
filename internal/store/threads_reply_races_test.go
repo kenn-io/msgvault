@@ -121,13 +121,18 @@ func TestThreadsReceiptConcurrentClaimsAndTransitions(t *testing.T) {
 	}
 	close(start)
 	winners := 0
+	var conflicts []error
 	for range 2 {
 		result := <-results
 		if result.err == nil {
 			winners++
 		} else {
-			assertions.ErrorIs(result.err, store.ErrThreadsReplyConflict)
+			conflicts = append(conflicts, result.err)
 		}
+	}
+	// Drain both worker results before a fatal assertion can end the test.
+	for _, err := range conflicts {
+		requirements.ErrorIs(err, store.ErrThreadsReplyConflict)
 	}
 	assertions.Equal(1, winners)
 }

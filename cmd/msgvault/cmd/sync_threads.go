@@ -87,7 +87,7 @@ func importThreadsSource(ctx context.Context, st *store.Store, source *store.Sou
 		return nil, err
 	}
 	if source == nil || source.SourceType != sourceTypeThreads {
-		return nil, errors.New("Threads source is required")
+		return nil, errors.New("threads source is required")
 	}
 	if _, _, err := threads.ParseSourceIdentifier(source.Identifier); err != nil {
 		return nil, err

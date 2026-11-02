@@ -23,18 +23,17 @@ func importCheckpoint(t *testing.T, f *importFixture) (*store.SyncRun, *SyncStat
 	require.NoError(t, err)
 	return run, state
 }
-func finishImport(t *testing.T, f *importFixture, attemptLimit int) *ImportSummary {
+func finishImport(t *testing.T, f *importFixture, attemptLimit int) {
 	t.Helper()
 	for range 200 {
 		imp, opts := f.importer(t, attemptLimit)
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(t, err)
 		if sum.Status == store.SyncStatusCompleted {
-			return sum
+			return
 		}
 	}
 	require.FailNow(t, "finite fixture did not complete within its bounded page-work allowance")
-	return nil
 }
 func TestThreadsImportPageFailureKeepsCheckpoint(t *testing.T) {
 	assert := assert.New(t)

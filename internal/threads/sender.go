@@ -175,8 +175,8 @@ func (s *Sender) Send(ctx context.Context, request SendRequest) (SendResult, err
 				createErr = ErrDecodeResponse
 			}
 			// A definite create rejection cannot have published anything. Release
-			// the draft; lost responses and server errors remain resumable claims.
-			if rejected, ok := errors.AsType[*APIError](createErr); ok && rejected.StatusCode >= 400 && rejected.StatusCode < 500 && rejected.StatusCode != http.StatusRequestTimeout {
+			// the draft; throttling, lost responses and server errors remain resumable claims.
+			if rejected, ok := errors.AsType[*APIError](createErr); ok && rejected.StatusCode >= 400 && rejected.StatusCode < 500 && rejected.StatusCode != http.StatusRequestTimeout && !retryable(rejected) {
 				terminal, saveErr := s.store.AdvanceThreadsReplySendContext(ctx, receipt.DraftID, receipt.RowRevision, store.ThreadsReplyTransition{State: quotaFailureStatus(createErr)})
 				if saveErr != nil {
 					return result, errors.Join(createErr, saveErr)

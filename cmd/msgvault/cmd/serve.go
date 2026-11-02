@@ -4208,7 +4208,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	// row exists).
 	if len(srcs) == 0 {
 		if strings.HasPrefix(identifier, "threads:") && !retiredMatch {
-			return errors.New("Threads account is not registered")
+			return errors.New("threads account is not registered")
 		}
 		if retiredMatch {
 			logger.Info("skipping scheduled sync for retired source", "identifier", identifier)

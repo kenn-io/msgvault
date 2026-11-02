@@ -10,6 +10,7 @@ import (
 
 func TestSendReplyStrictArguments(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	for _, tc := range []struct {
 		args []string
 		want SendReplyIntent
@@ -32,7 +33,7 @@ func TestSendReplyStrictArguments(t *testing.T) {
 		},
 	} {
 		got, err := ParseCLIRunSendReply(CLIRunRequest{Args: tc.args})
-		require.NoError(t, err)
+		require.NoError(err)
 		assert.Equal(tc.want, got)
 		assert.True(cliRunCommandAllowed(tc.args))
 	}
@@ -60,7 +61,7 @@ func TestSendReplyStrictArguments(t *testing.T) {
 	}
 	for _, args := range invalid {
 		_, err := ParseCLIRunSendReply(CLIRunRequest{Args: args})
-		assert.Error(err, "%v", args)
+		require.Error(err, "%v", args)
 		assert.False(cliRunCommandAllowed(args))
 	}
 	valid := []string{"send-reply", "--draft=chat-draft-synthetic", "--revision=1"}
@@ -70,7 +71,7 @@ func TestSendReplyStrictArguments(t *testing.T) {
 		{Args: valid, GrantDecided: true},
 	} {
 		_, err := ParseCLIRunSendReply(req)
-		assert.Error(err)
+		require.Error(err)
 	}
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{
 		agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete,

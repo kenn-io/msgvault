@@ -226,13 +226,14 @@ func TestThreadsRootKeysetAndPause(t *testing.T) {
 
 func TestThreadsRootKeysetAndPauseCancellation(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	st, source := threadsStore(t)
 	id, err := st.StartSyncContext(t.Context(), source, store.ThreadsSyncBaseline)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, st.FailSync(id, "cleanup")) }()
+	require.NoError(err)
+	defer func() { require.NoError(st.FailSync(id, "cleanup")) }()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	assert.ErrorIs(st.PauseSyncWithCheckpointContext(ctx, id, &store.Checkpoint{PageToken: "state"}), context.Canceled)
+	require.ErrorIs(st.PauseSyncWithCheckpointContext(ctx, id, &store.Checkpoint{PageToken: "state"}), context.Canceled)
 	assert.ErrorIs(st.UpdateSourceSyncConfigContext(ctx, source, `{"version":1}`), context.Canceled)
 	_, err = st.ThreadsOwnRootUpperKeyContext(ctx, source)
 	assert.ErrorIs(err, context.Canceled)

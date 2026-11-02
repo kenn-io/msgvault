@@ -70,7 +70,8 @@ func (c *Client) ContainerStatus(ctx context.Context, id string) (string, error)
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
-	err := c.getJSON(ctx, "/"+id, url.Values{"fields": {"status,error_message"}}, &wire)
+	// The durable NextPollAt reservation controls every status attempt.
+	err := c.getJSONWithAttempts(ctx, "/"+id, url.Values{"fields": {"status,error_message"}}, &wire, 1)
 	if err != nil {
 		return "", err
 	}

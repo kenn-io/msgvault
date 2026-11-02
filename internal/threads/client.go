@@ -211,12 +211,16 @@ func (c *Client) page(ctx context.Context, path string, params url.Values, after
 func isPause(err error) bool { var pause *PauseError; return errors.As(err, &pause) }
 
 func (c *Client) getJSON(ctx context.Context, path string, params url.Values, out any) error {
+	return c.getJSONWithAttempts(ctx, path, params, out, 3)
+}
+
+func (c *Client) getJSONWithAttempts(ctx context.Context, path string, params url.Values, out any, attempts int) error {
 	u := *c.base
 	u.Path += path
 	u.RawQuery = params.Encode()
 	var retryErr error
 	attempt := 0
-	res, err := httpretry.Do(ctx, 3, c.maxRetryWait, func() (*http.Response, error) {
+	res, err := httpretry.Do(ctx, attempts, c.maxRetryWait, func() (*http.Response, error) {
 		attempt++
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		if err != nil {

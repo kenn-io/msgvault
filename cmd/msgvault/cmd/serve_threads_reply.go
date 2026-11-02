@@ -224,7 +224,7 @@ func (a *storeAPIAdapter) runCLIThreadsSendReply(
 		}
 	}
 	if result.LocalStatus != "complete" && runErr == nil {
-		runErr = errors.New("Threads reply requires inspection or completion")
+		runErr = errors.New("threads reply requires inspection or completion")
 	}
 	outputErr := emitSendReplyJSON(emit, result)
 	if runErr != nil {

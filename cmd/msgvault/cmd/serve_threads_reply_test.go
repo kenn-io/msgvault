@@ -80,7 +80,9 @@ func newThreadsSendDaemonFixture(t *testing.T, disk ...bool) *threadsSendDaemonF
 			_, _ = fmt.Fprint(w, `{"data":[{"reply_quota_usage":0,"reply_config":{"quota_total":1000,"quota_duration":86400}}]}`)
 		case "/v1.0/me/threads":
 			f.creates.Add(1)
-			require.NoError(t, r.ParseForm())
+			if !assert.NoError(t, r.ParseForm()) {
+				return true
+			}
 			assert.Equal(t, f.draft.Body, r.PostForm.Get("text"))
 			assert.Equal(t, f.draft.ReplyToSourceMessageID, r.PostForm.Get("reply_to_id"))
 			_, _ = fmt.Fprint(w, `{"id":"400"}`)
@@ -93,8 +95,10 @@ func newThreadsSendDaemonFixture(t *testing.T, disk ...bool) *threadsSendDaemonF
 			}
 			if f.mode == "drop" {
 				conn, _, err := http.NewResponseController(w).Hijack()
-				require.NoError(t, err)
-				require.NoError(t, conn.Close())
+				if !assert.NoError(t, err) {
+					return true
+				}
+				assert.NoError(t, conn.Close())
 			} else {
 				_, _ = fmt.Fprint(w, `{"id":"500"}`)
 			}

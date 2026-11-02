@@ -32,6 +32,8 @@ type sendFixture struct {
 	mediaRaw                  map[string]string
 	recoveryReplies           []string
 	recoveryListCalls         int
+	createErrors              []APIError
+	statusErrors              []APIError
 	statuses                  []string
 	statusTimes               []time.Time
 	quotaUsage                int64
@@ -69,6 +71,12 @@ func newSendFixture(t *testing.T) *sendFixture {
 			assert.Equal(t, f.draft.ReplyToSourceMessageID, r.PostForm.Get("reply_to_id"))
 			assert.Equal(t, f.draft.Body, r.PostForm.Get("text"))
 			id := 400 + f.creates.Add(1) - 1
+			if len(f.createErrors) > 0 {
+				failure := f.createErrors[0]
+				f.createErrors = f.createErrors[1:]
+				respond(w, failure.StatusCode, fmt.Sprintf(`{"error":{"code":%d}}`, failure.Code))
+				return
+			}
 			if f.createMode == "drop" {
 				hijacker, ok := w.(http.Hijacker)
 				if !assert.True(t, ok) {
@@ -113,6 +121,12 @@ func newSendFixture(t *testing.T) *sendFixture {
 				return
 			}
 			f.statusTimes = append(f.statusTimes, f.clock.Now())
+			if len(f.statusErrors) > 0 {
+				failure := f.statusErrors[0]
+				f.statusErrors = f.statusErrors[1:]
+				respond(w, failure.StatusCode, fmt.Sprintf(`{"error":{"code":%d}}`, failure.Code))
+				return
+			}
 			status := f.statuses[0]
 			if len(f.statuses) > 1 {
 				f.statuses = f.statuses[1:]
@@ -275,6 +289,77 @@ func TestThreadsPublishProtocolQuotaFailureCategories(t *testing.T) {
 			assert.Equal("unpublished", result.RemoteStatus)
 			assert.Zero(f.creates.Load())
 			assert.Zero(f.publishes.Load())
+		})
+	}
+}
+
+// A real retryable HTTP response must yield to the persisted poll reservation.
+func TestThreadsContainerStatusRetryUsesDurableReservation(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newSendFixture(t)
+			f.statusErrors = []APIError{{StatusCode: status, Code: 1}}
+			_, err := NewSender(f.st, f.options).Send(t.Context(), f.request())
+			require.Error(err, "retryable polling response must yield instead of issuing hidden requests")
+			assert.Zero(f.publishes.Load())
+			f.mu.Lock()
+			times := append([]time.Time(nil), f.statusTimes...)
+			f.mu.Unlock()
+			require.Len(times, 1, "one durable reservation permits exactly one status request")
+			receipt, err := f.st.GetThreadsReplySendContext(t.Context(), f.draft.DraftID)
+			require.NoError(err)
+			require.NotNil(receipt.NextPollAt)
+			assert.GreaterOrEqual(receipt.NextPollAt.Sub(times[0]), time.Minute)
+			result, err := NewSender(f.st, f.options).Send(t.Context(), f.request())
+			require.NoError(err)
+			assert.Equal("sent", result.RemoteStatus)
+			f.mu.Lock()
+			times = append([]time.Time(nil), f.statusTimes...)
+			f.mu.Unlock()
+			require.Len(times, 2)
+			assert.GreaterOrEqual(times[1].Sub(times[0]), time.Minute, "a new sender must honor the saved reservation")
+			assert.Equal(int32(1), f.creates.Load())
+			assert.Equal(int32(1), f.publishes.Load())
+		})
+	}
+}
+
+func TestThreadsRetryableCreationCanResumeSameRequest(t *testing.T) {
+	for _, failure := range []APIError{
+		{StatusCode: http.StatusTooManyRequests},
+		{StatusCode: http.StatusBadRequest, Code: 4},
+		{StatusCode: http.StatusBadRequest, Code: 17},
+		{StatusCode: http.StatusBadRequest, Code: 32},
+		{StatusCode: http.StatusBadRequest, Code: 613},
+		{StatusCode: http.StatusForbidden, Code: 4},
+		{StatusCode: http.StatusServiceUnavailable, Code: 1},
+	} {
+		t.Run(fmt.Sprintf("%d-code%d", failure.StatusCode, failure.Code), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newSendFixture(t)
+			f.createErrors = []APIError{failure}
+			request := f.request()
+			_, err := NewSender(f.st, f.options).Send(t.Context(), request)
+			require.Error(err)
+			assert.Equal(int32(1), f.creates.Load(), "POST itself must never retry automatically")
+			assert.Zero(f.publishes.Load())
+			receipt, err := f.st.GetThreadsReplySendContext(t.Context(), f.draft.DraftID)
+			require.NoError(err)
+			assert.Equal("claimed", receipt.State, "throttling is resumable, not a terminal rejection")
+			assert.Empty(receipt.ContainerID)
+			assert.Nil(receipt.PublishDispatchedAt)
+			result, err := NewSender(f.st, f.options).Send(t.Context(), request)
+			require.NoError(err)
+			assert.Equal("sent", result.RemoteStatus)
+			assert.Equal(int32(2), f.creates.Load())
+			assert.Equal(int32(1), f.publishes.Load())
+			again, err := NewSender(f.st, f.options).Send(t.Context(), request)
+			require.NoError(err)
+			assert.Equal(result.MediaID, again.MediaID)
+			assert.Equal(int32(1), f.publishes.Load(), "known outcome must not publish again")
 		})
 	}
 }
