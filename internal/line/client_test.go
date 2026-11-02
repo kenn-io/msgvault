@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
 )
@@ -141,7 +142,7 @@ func TestClientRefusesRedirects(t *testing.T) {
 			var err error
 			if strings.HasSuffix(path, "content") {
 				var response *http.Response
-				response, err = client.Content(context.Background(), "123")
+				response, err = client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
 				if response != nil {
 					require.NoError(t, response.Body.Close())
 				}
@@ -329,7 +330,7 @@ func TestClientSeparateDataHost(t *testing.T) {
 	defer apiServer.Close()
 	defer dataServer.Close()
 	client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs(apiServer.URL, dataServer.URL))
-	response, err := client.Content(context.Background(), "123")
+	response, err := client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
 	must.NoError(err)
 	must.NoError(response.Body.Close())
 	checks.Equal(1, api.Count("POST", "/oauth2/v3/token"))
@@ -360,7 +361,7 @@ func TestClientContentUsesAttachmentDownloadTimeout(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
 	})}))
-	response, err := client.Content(context.Background(), "123")
+	response, err := client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.True(t, downloadDeadline.After(time.Now().Add(30*time.Second)))
@@ -398,7 +399,7 @@ func TestClientResponseOwnership(t *testing.T) {
 				}
 				return response, err
 			})}))
-			response, err := client.Content(context.Background(), "123")
+			response, err := client.Content(context.Background(), "123", attachmentpolicy.DefaultChatMaxBytes)
 			if status == 200 || status == 202 || status == 404 || status == 410 {
 				must.NoError(err)
 				checks.Equal(status, response.StatusCode)

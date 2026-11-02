@@ -79,7 +79,7 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 			return err
 		}
 	}
-	response, err := p.client.content(ctx, m.ID, p.mediaPolicy.MaxBytes)
+	response, err := p.client.Content(ctx, m.ID, p.mediaPolicy.MaxBytes)
 	if err != nil {
 		if saveErr := save(attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure); saveErr != nil {
 			return saveErr

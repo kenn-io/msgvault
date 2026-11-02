@@ -108,7 +108,7 @@ func TestLineInboxDueAndRetention(t *testing.T) {
 	checks.Equal(strings.Repeat("界", 166), mutations[0].LastError)
 	status, err := st.LineInboxStatusContext(ctx, src.ID)
 	must.NoError(err)
-	checks.Equal(int64(1), status.Failed)
+	checks.Zero(status.Failed, "retained orphan mutations do not report inbox failures")
 	checks.Zero(status.Pending)
 	must.NotNil(status.LastReceivedAt)
 	checks.True(old.Equal(*status.LastReceivedAt))

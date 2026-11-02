@@ -230,7 +230,7 @@ func (s *Store) PruneLineEventsContext(ctx context.Context, sourceID int64, befo
 func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (LineInboxStatus, error) {
 	var out LineInboxStatus
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(SUM(CASE WHEN state IN ('pending','retry') THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END),0) FROM line_webhook_events WHERE source_id=? AND state IN ('pending','retry','failed')`), sourceID).Scan(&out.Pending, &out.Failed)
+ COALESCE(SUM(CASE WHEN state='failed' AND (event_type NOT IN ('messageEdited','unsend') OR EXISTS(SELECT 1 FROM messages m WHERE m.source_id=line_webhook_events.source_id AND m.source_message_id=line_webhook_events.target_message_id AND m.message_type='line')) THEN 1 ELSE 0 END),0) FROM line_webhook_events WHERE source_id=? AND state IN ('pending','retry','failed')`), sourceID).Scan(&out.Pending, &out.Failed)
 	if err != nil {
 		return out, fmt.Errorf("count LINE inbox: %w", err)
 	}

@@ -15,6 +15,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/httpretry"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 const (
@@ -122,33 +124,32 @@ func (c *Client) accessToken(ctx context.Context, rejected string) (string, erro
 	if c.token != "" && c.now().Before(c.refreshAt) {
 		return c.token, nil
 	}
-	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {c.channelID}, "client_secret": {c.secret}}
-	response, err := c.send(ctx, http.MethodPost, c.apiURL, "/oauth2/v3/token", []byte(form.Encode()), "application/x-www-form-urlencoded", "")
+	config := clientcredentials.Config{ClientID: c.channelID, ClientSecret: c.secret, TokenURL: c.apiURL + "/oauth2/v3/token", AuthStyle: oauth2.AuthStyleInParams}
+	token, err := config.Token(context.WithValue(ctx, oauth2.HTTPClient, c.http))
 	if err != nil {
-		return "", err
+		return "", c.tokenError(ctx, err)
 	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return "", c.statusError(response)
-	}
-	var token struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
-		TokenType   string `json:"token_type"`
-	}
-	if err := decodeJSON(ctx, response.Body, &token); err != nil {
-		return "", err
-	}
-	if token.AccessToken == "" || token.ExpiresIn <= 0 || token.ExpiresIn > math.MaxInt32 || !strings.EqualFold(token.TokenType, "Bearer") {
+	lifetime, ok := token.Extra("expires_in").(float64)
+	if !ok || lifetime <= 0 || lifetime > math.MaxInt32 || !strings.EqualFold(token.TokenType, "Bearer") {
 		return "", errors.New("line: invalid token response")
 	}
 	c.token = token.AccessToken
-	c.refreshAt = c.now().Add(time.Duration(token.ExpiresIn)*time.Second - time.Minute)
+	c.refreshAt = c.now().Add(time.Duration(lifetime)*time.Second - time.Minute)
 	return c.token, nil
 }
 
-func (c *Client) send(ctx context.Context, method, base, path string, body []byte, contentType, token string) (*http.Response, error) {
-	return c.sendWithHTTPClient(ctx, method, base, path, body, contentType, token, c.http)
+// OAuth errors can contain provider bodies or credential-bearing URLs.
+func (c *Client) tokenError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("line: request timed out: %w", context.DeadlineExceeded)
+	}
+	if response, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
+		return c.statusError(response.Response)
+	}
+	return errors.New("line: token request failed")
 }
 
 func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path string, body []byte, contentType, token string, client *http.Client) (*http.Response, error) {
@@ -296,12 +297,8 @@ func (c *Client) GroupSummary(ctx context.Context, groupID string) (GroupSummary
 }
 
 // Content transfers ownership of Body to the caller for 200, 202, 404 and 410.
-// Its download deadline uses the default attachment cap; processing uses the configured cap.
-func (c *Client) Content(ctx context.Context, messageID string) (*http.Response, error) {
-	return c.content(ctx, messageID, attachmentpolicy.DefaultChatMaxBytes)
-}
-
-func (c *Client) content(ctx context.Context, messageID string, maxBytes int64) (*http.Response, error) {
+// Its download deadline uses the configured attachment cap.
+func (c *Client) Content(ctx context.Context, messageID string, maxBytes int64) (*http.Response, error) {
 	if messageID == "" {
 		return nil, errors.New("line: missing message ID")
 	}

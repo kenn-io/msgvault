@@ -368,13 +368,16 @@ func TestProcessorUnsendBeforeMessage(t *testing.T) {
 	}
 	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	require.NoError(t, err)
-	checks.Equal(int64(2), status.Failed)
+	checks.Zero(status.Failed, "expired edits and unsends awaiting an original are retained evidence, not inbox failures")
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 	archived := f.archived(t, "1")
 	body, deleted := archived.body, archived.deleted
 	checks.Equal("retained unsent text", body)
 	checks.True(deleted)
+	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	require.NoError(t, err)
+	checks.Equal(int64(1), status.Failed, "the wrong-chat edit becomes a real failure once its original is available")
 	base.WebhookEventID = "late-original"
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
