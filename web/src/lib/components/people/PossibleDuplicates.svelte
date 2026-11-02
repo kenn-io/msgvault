@@ -51,11 +51,13 @@
   $effect(() => { void controller.rows; untrack(() => controller.requestSummaries()); });
   const history = $derived(controller.identityState === 'accepted' || controller.identityState === 'rejected');
 
+  // Focus returns to a merged pair once per merge, not on each later reload of its page.
+  let focusedMerge: DirectoryReviewController['lastMerge'] = null;
   $effect(() => {
-    const id = controller.lastMerge?.candidateID;
-    if (id && !controller.loading && controller.rows.some(row => row.id === id)) {
-      void tick().then(() => document.getElementById(`duplicate-${id}`)?.querySelector<HTMLButtonElement>('.footer button:last-child')?.focus());
-    }
+    const merge = controller.lastMerge, id = merge === focusedMerge ? undefined : merge?.candidateID;
+    if (!id || controller.loading || !controller.rows.some(row => row.id === id)) return;
+    focusedMerge = merge;
+    void tick().then(() => document.getElementById(`duplicate-${id}`)?.querySelector<HTMLButtonElement>('.footer button:last-child')?.focus());
   });
 
   function summaryOf(key: string): EndpointSummary | 'failed' | undefined {
