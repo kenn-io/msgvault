@@ -2,8 +2,6 @@ package query
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -142,9 +140,6 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 		{name: "offset beyond end", request: ExploreRequest{Page: PageSpec{Limit: 3, Offset: 500}}},
 		{name: "source filter", request: ExploreRequest{
 			Context: Context{SourceIDs: []int64{ids.chatSource}}, Page: PageSpec{Limit: 50},
-		}},
-		{name: "participant filter", request: ExploreRequest{
-			Context: Context{ParticipantIDs: []int64{ids.alice}}, Page: PageSpec{Limit: 50},
 		}},
 		{name: "domain sender recipient and roster membership", request: ExploreRequest{
 			Context: Context{Domains: []string{"example.com"}}, Page: PageSpec{Limit: 50},
@@ -326,35 +321,40 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 	}
 }
 
-func TestExploreFastPathBoundsParticipantEnrichment(t *testing.T) {
+// TestExploreParticipantContextKeepsLegacyPath pins the fork rule: participant
+// and domain context filters render list_contains predicates whose evaluation
+// already assembles participant lists archive-wide, so the two-phase rescan
+// would pay that twice.
+func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSource("owner@example.com")
-	person := b.AddParticipant("person@example.com", "example.com", "Person")
-	other := b.AddParticipant("other@example.org", "example.org", "Other")
-	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
-	for i := range 3 {
-		b.AddMessage(MessageOpt{SourceID: source, SenderID: &person, SentAt: at.Add(time.Duration(i) * time.Minute)})
+	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{}))
+	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
+		Context: Context{SourceIDs: []int64{1}, MessageTypes: []string{"email"}},
+	}))
+	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID: 1, ParticipantIDs: []int64{7}, Direction: IdentityDirectionAny,
+		}},
+	}), "identity predicates use bounded header-row existence checks, not participant lists")
+	assert.True(exploreConditionsTouchParticipantLists(ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{7}},
+	}))
+	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
+		Context: Context{Domains: []string{"example.com"}},
+	}))
+}
+
+// TestExploreParticipantFilterListingStillCorrect exercises the legacy path
+// the fork preserves for participant-scoped listings.
+func TestExploreParticipantFilterListingStillCorrect(t *testing.T) {
+	engine, ids := buildFastPathEquivalenceEngine(t)
+	response, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{ids.alice}},
+		Page:    PageSpec{Limit: 50},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, response.Rows)
+	for _, row := range response.Rows {
+		assert.Contains(t, row.ParticipantIDs, ids.alice, "row %s must include the filtered participant", row.Key)
 	}
-	for range 32 {
-		b.AddMessage(MessageOpt{SourceID: source, SenderID: &other, SentAt: at.Add(3 * time.Minute)})
-	}
-	engine := b.BuildEngine()
-	request := ExploreRequest{Context: Context{ParticipantIDs: []int64{person}}, Page: PageSpec{Limit: 1}}
-	profile, err := profileDomainPopulation(t, engine, request)
-	require.NoError(err)
-	matchedOperators := 0
-	var check func(domainPopulationProfile)
-	check = func(operator domainPopulationProfile) {
-		if strings.Contains(fmt.Sprint(operator.ExtraInfo["Aggregates"]), "list(") {
-			matchedOperators++
-			assert.LessOrEqual(operator.IntermediateRows, int64(1), "participant lists must be enriched only for the selected page")
-		}
-		for _, child := range operator.Children {
-			check(child)
-		}
-	}
-	check(profile)
-	require.Positive(matchedOperators, "profile must include participant list enrichment")
 }

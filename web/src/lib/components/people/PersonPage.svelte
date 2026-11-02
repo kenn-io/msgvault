@@ -84,16 +84,16 @@
   {:else if !detail}
     <EmptyState title={controller.timelineError ?? 'Select a person or domain'} />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-    {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
+    {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} />{/if}
   {:else}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true} />
     {#if controller.timelineError}
-      <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>
+      <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
     {#if !filesOpen && !details}
       <div class="calendar">
         {#if domain}
-          <DomainCalendar bind:year={domainYear} {client} {domain} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
+          <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail.cache_revision} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
         {:else}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}
@@ -108,7 +108,7 @@
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
     <div class="details" hidden={!details}>
-      <RelationshipHeader showIdentity={false} showTabs={false} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
+      <RelationshipHeader {detail} loading={false} missing={false} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
         loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
         {onReconcilePersonMerge}

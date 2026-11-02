@@ -7,14 +7,9 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
+import { emptyCalendar } from './fixtures.test-support';
 
 const when = '2026-07-19T10:00:00Z';
-const emptyCalendar = (year: number) => ({
-  participant_id: 1, canonical_id: 1, year, timezone: 'UTC', days: [], annual: [],
-  current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } },
-  peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1,
-  effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1,
-});
 function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>) {
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -40,7 +35,7 @@ it('keeps the day across Details and the file filter across Files', async () => 
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: true, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   const view = render(PeopleWorkspace, { props });
   try {
@@ -76,7 +71,7 @@ it('Escape from People results closes the reader before leaving the person', asy
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const onNavigate = vi.fn(patch => state.commitNavigation(patch));
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
@@ -103,7 +98,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const onNavigate = vi.fn();
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
@@ -262,7 +257,7 @@ it("passes the saved person's durable ID to Files when the first binding is draf
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 91, relationshipTarget: 'cluster:1', relationshipFiles: true });
   const directory = new DirectoryController(client);
   const controller = new RelationshipsController(client, () => 'UTC');
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: true, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await waitFor(() => expect(screen.queryByText('second-address.pdf'), requests.join(', ')).not.toBeNull());
@@ -334,7 +329,7 @@ it.each(['link', 'merge'])('refreshes the Saved list after a %s from Details', a
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7, relationshipTarget: 'cluster:1' });
   const directory = new DirectoryController(client);
   const controller = new RelationshipsController(client, () => 'UTC');
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const onOpenDirectoryPerson = vi.fn();
   const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
   let view = render(PeopleWorkspace, { props });
@@ -378,7 +373,7 @@ it.each([false, true])('offers Retry without the previous person page when a Dir
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const onNavigate = vi.fn(patch => state.commitNavigation(patch));
   const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   let view = render(PeopleWorkspace, { props });
@@ -407,7 +402,7 @@ it('loads a saved person deep link before showing its person page', async () => 
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7, relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
+  await controller.openTarget('cluster:1', {});
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByText('Loading person…');
