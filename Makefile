@@ -122,6 +122,15 @@ GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
 .PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
+.PHONY: agent-guide agent-guide-check
+
+# The embedded guide is canonical; publish the same source in the docs site.
+agent-guide:
+	go run ./internal/agentguide/gen
+
+agent-guide-check:
+	go run ./internal/agentguide/gen -check
+
 # Build the binary (debug)
 build: web-embed
 ifeq ($(shell go env GOOS),linux)

@@ -1,5 +1,8 @@
 # msgvault Agent Quickstart
 
+For MCP access, run `msgvault quickstart --mcp` or read
+https://msgvault.io/docs/guides/agent-quickstart.md.
+
 You have access to `msgvault`, an offline email, chat, and meeting archive
 tool. The user's archive is stored locally in a SQLite database with
 Parquet-based analytics. Use the commands below to help the user set up, sync,
