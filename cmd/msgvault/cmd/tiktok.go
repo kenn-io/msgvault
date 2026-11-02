@@ -54,6 +54,23 @@ func selectedTikTokProfiles(cfg *config.Config, args []string) ([]config.TikTokS
 	return profiles, nil
 }
 
+func selectedTikTokCommentProfiles(cfg *config.Config, args []string) ([]config.TikTokSource, error) {
+	profiles, err := selectedTikTokProfiles(cfg, args)
+	if err != nil {
+		return nil, err
+	}
+	var comments []config.TikTokSource
+	for _, profile := range profiles {
+		if profile.CommentsAllowed() {
+			comments = append(comments, profile)
+		}
+	}
+	if len(comments) == 0 {
+		return nil, errors.New("no enabled TikTok comment profiles\nhint: enable comments_enabled on the selected [[tiktok]] profile")
+	}
+	return comments, nil
+}
+
 type tikTokResult struct {
 	Profile  string                `json:"profile"`
 	SourceID int64                 `json:"source_id,omitempty"`
@@ -109,7 +126,7 @@ func newTikTokCommentsAction(operation string) *cobra.Command {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		profiles, err := selectedTikTokProfiles(state.cfg, args)
+		profiles, err := selectedTikTokCommentProfiles(state.cfg, args)
 		if err != nil {
 			return err
 		}

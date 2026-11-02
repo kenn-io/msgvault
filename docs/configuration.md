@@ -22,12 +22,19 @@ sections; it is not a required starting configuration.
 
 ### TikTok
 
-`[[tiktok]]` selects an account for [TikTok comment sync](usage/tiktok-comments.md).
+`[[tiktok]]` selects an account for [TikTok comment sync](usage/tiktok-comments.md)
+and optional [Business Messaging capture](usage/tiktok-messages.md).
 This integration is unreleased. Each profile requires `identifier`, `app_id`,
 `account_id` (the OAuth `open_id`), and `token_env`. Set `enabled = true` to
 allow manual commands and scheduled sync. A disabled profile cannot be selected.
 Optional `schedule` uses the standard five-field cron grammar. Only enabled
 profiles with a schedule run automatically.
+
+`comments_enabled` defaults to true. Set it to false for messaging-only
+authorization. `messages_enabled` defaults to false and must be true for
+messaging commands, polling, and webhook routing. `max_media_mb` bounds each
+messaging attachment: zero uses the 50 MiB default; values from 1 through 1,024
+set an explicit cap. A schedule drives each enabled surface independently.
 
 ```toml
 [[tiktok]]
@@ -45,6 +52,36 @@ access token or the [JSON token bundle](usage/tiktok-comments.md#keep-authorizat
 with absolute expiry times. Automatic refresh also requires `app_secret_env`.
 Rotated tokens and app-wide rate state live in private files under
 `<data_dir>/tiktok/`. Restart the daemon after changing its environment or profiles.
+
+### TikTok webhooks
+
+`[tiktok_webhooks]` configures a separate signed Business Messaging receiver.
+It is disabled unless `listen_addr` and at least one app are configured. Missing
+named app-secret variables disable the listener and appear in its status snapshot.
+The receiver runs with the daemon. See [setup, delivery recovery, and history limits](usage/tiktok-messages.md).
+
+```toml
+[tiktok_webhooks]
+listen_addr = "127.0.0.1:8788"
+max_body_bytes = 1048576
+max_spool_bytes = 134217728
+done_retention = "720h"
+
+[[tiktok_webhooks.apps]]
+app_id = "100001"
+app_secret_env = "EXAMPLE_TIKTOK_APP_SECRET"
+```
+
+Expose `/webhooks/tiktok/<app_id>` through your own public HTTPS proxy. The
+receiver uses that app's secret and the signed `user_openid` to select an enabled
+messaging profile. Keep raw bytes and the signature header intact. Signatures
+have a strict five-second window.
+
+`max_body_bytes` defaults to 1 MiB and may not exceed 8 MiB. `max_spool_bytes`
+defaults to 128 MiB and must be at least twice the body limit plus 4,096 bytes.
+`done_retention` defaults to 720 hours. Only successful raw deliveries are
+pruned. The private spool and listener snapshot live under
+`<data_dir>/tiktok-webhooks/`; archived messages use the ordinary archive.
 
 ### Validation
 

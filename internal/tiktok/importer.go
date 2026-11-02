@@ -36,40 +36,46 @@ func (imp *Importer) Register(ctx context.Context, app, account string) (*store.
 	return imp.register(ctx, app, account, CommentsSourceType)
 }
 func (imp *Importer) register(ctx context.Context, app, account, kind string) (*store.Source, error) {
+	return registerTikTokAccount(ctx, imp.store, imp.api, app, account, kind)
+}
+
+func registerTikTokAccount(ctx context.Context, st *store.Store, api interface {
+	Account(ctx context.Context, account string) (Account, error)
+}, app, account, kind string) (*store.Source, error) {
 	if !ValidID(app) || !ValidID(account) {
 		return nil, errors.New("invalid TikTok app or account selector")
 	}
-	profile, err := imp.api.Account(ctx, account)
+	profile, err := api.Account(ctx, account)
 	if err != nil {
 		return nil, err
 	}
-	source, err := imp.store.GetOrCreateSourceContext(ctx, kind, SourceIdentifier(app, account))
+	source, err := st.GetOrCreateSourceContext(ctx, kind, SourceIdentifier(app, account))
 	if err != nil {
 		return nil, err
 	}
-	execution, err := imp.store.AcquireSyncExecutionContext(ctx, source.ID)
+	execution, err := st.AcquireSyncExecutionContext(ctx, source.ID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = execution.Release() }()
-	source, err = imp.store.GetSourceByIDContext(ctx, source.ID)
+	source, err = st.GetSourceByIDContext(ctx, source.ID)
 	if err != nil {
 		return nil, err
 	}
 	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
 		return nil, store.ErrSourceRetired
 	}
-	if err := imp.store.AddAccountIdentityContext(ctx, source.ID, ActorIdentifier(app, account, account), "tiktok_account_token"); err != nil {
+	if err := st.AddAccountIdentityContext(ctx, source.ID, ActorIdentifier(app, account, account), "tiktok_account_token"); err != nil {
 		return nil, err
 	}
 	name := profile.DisplayName
 	if name == "" {
 		name = profile.Username
 	}
-	if err := imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, name); err != nil {
+	if err := st.UpdateSourceDisplayNameContext(ctx, source.ID, name); err != nil {
 		return nil, err
 	}
-	return imp.store.GetSourceByIDContext(ctx, source.ID)
+	return st.GetSourceByIDContext(ctx, source.ID)
 }
 
 type ImportOptions struct {

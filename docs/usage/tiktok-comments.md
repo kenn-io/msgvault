@@ -121,6 +121,10 @@ Commenter identities use the app, account, and `unique_identifier`. Use the
 [people tools](people.md) to link those observations to your maintained people.
 Matching usernames do not merge people.
 
+Use [Business Messaging capture](tiktok-messages.md) for supported direct
+messages. It shares commenter identity anchors within the same app/account,
+but requires separate app access and explicit `messages_enabled = true`.
+
 Pull sync cannot infer deletions from absent comments, and never deletes prior
 history. It does not subscribe to optional `comment.update` webhooks or promise
 complete provider coverage. App approval, granted scopes, privacy filtering,

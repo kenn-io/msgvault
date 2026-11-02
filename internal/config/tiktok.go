@@ -12,13 +12,16 @@ import (
 // TikTokSource selects one authorized account. Secrets are read only by the
 // daemon from the named environment variables, never from this profile.
 type TikTokSource struct {
-	Identifier   string `toml:"identifier"`
-	AppID        string `toml:"app_id"`
-	AccountID    string `toml:"account_id"`
-	TokenEnv     string `toml:"token_env"`
-	AppSecretEnv string `toml:"app_secret_env"`
-	Enabled      bool   `toml:"enabled"`
-	Schedule     string `toml:"schedule"`
+	Identifier      string `toml:"identifier"`
+	AppID           string `toml:"app_id"`
+	AccountID       string `toml:"account_id"`
+	TokenEnv        string `toml:"token_env"`
+	AppSecretEnv    string `toml:"app_secret_env"`
+	Enabled         bool   `toml:"enabled"`
+	Schedule        string `toml:"schedule"`
+	CommentsEnabled *bool  `toml:"comments_enabled"`
+	MessagesEnabled bool   `toml:"messages_enabled"`
+	MaxMediaMB      int    `toml:"max_media_mb"`
 }
 
 func (c *Config) GetTikTokSource(identifier string) *TikTokSource {
@@ -32,7 +35,19 @@ func (c *Config) GetTikTokSource(identifier string) *TikTokSource {
 func (c *Config) ScheduledTikTokSources() []TikTokSource {
 	var sources []TikTokSource
 	for _, source := range c.TikTok {
-		if source.Enabled && source.Schedule != "" {
+		if source.Enabled && source.CommentsAllowed() && source.Schedule != "" {
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
+
+func (s TikTokSource) CommentsAllowed() bool { return s.CommentsEnabled == nil || *s.CommentsEnabled }
+
+func (c *Config) ScheduledTikTokMessageSources() []TikTokSource {
+	var sources []TikTokSource
+	for _, source := range c.TikTok {
+		if source.Enabled && source.MessagesEnabled && source.Schedule != "" {
 			sources = append(sources, source)
 		}
 	}
@@ -56,6 +71,9 @@ func (c *Config) validateTikTokSources() error {
 			return fmt.Errorf("tiktok[%d] duplicates an app/account pair", i)
 		}
 		accounts[key] = true
+		if s.MaxMediaMB < 0 || s.MaxMediaMB > 1024 {
+			return fmt.Errorf("tiktok[%d].max_media_mb must be between 0 and 1024", i)
+		}
 		if !envutil.ValidName(s.TokenEnv) {
 			return fmt.Errorf("tiktok[%d].token_env must name an explicit environment variable", i)
 		}

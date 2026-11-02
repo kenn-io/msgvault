@@ -34,6 +34,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Your source | Start here | Scope |
 |---|---|---|
 | TikTok video comments | [TikTok comments](../usage/tiktok-comments.md) | Captions, comments, and replies on owned videos; approved company app required; unreleased |
+| TikTok business messages | [Business Messaging capture](../usage/tiktok-messages.md) | Signed incoming/outgoing events, immediate media capture, and limited recent backfill; eligible Business account and approved app required; unreleased |
 | Slack | [Slack sync](../usage/slack.md) | Channels you have joined, group DMs, DMs, threads, and available files |
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |

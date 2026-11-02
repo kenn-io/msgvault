@@ -618,6 +618,7 @@ type Config struct {
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	TikTok             []TikTokSource                  `toml:"tiktok"`
+	TikTokWebhooks     TikTokWebhooksConfig            `toml:"tiktok_webhooks"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1333,6 +1334,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.validateTikTokSources(); err != nil {
 		return nil, err
 	}
+	cfg.deferDaemonError(cfg.TikTokWebhooks.Validate())
 	cfg.applyMeetingSourceDefaults()
 	if err := cfg.validateMeetingSources(); err != nil {
 		return nil, err

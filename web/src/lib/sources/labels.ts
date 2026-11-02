@@ -6,6 +6,7 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   tiktok_comments: 'TikTok comments',
+  tiktok_messages: 'TikTok messages',
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
   discord: 'Discord', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',

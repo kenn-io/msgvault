@@ -35,6 +35,9 @@ type Client struct {
 	wait    func(context.Context, time.Duration) error
 }
 
+// Close releases idle API and media connections after a bounded sync or delivery.
+func (c *Client) Close() { c.http.CloseIdleConnections() }
+
 func NewClient(token string) (*Client, error) {
 	if token == "" || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("TikTok access token is empty or invalid")

@@ -138,6 +138,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return "omi:" + identifier, true
 	case "tiktok_comments":
 		return "tiktok-comments:" + identifier, true
+	case "tiktok_messages":
+		return "tiktok-messages:" + identifier, true
 	case granola.SourceType:
 		// Store identifier == config Identifier (see
 		// internal/granola/importer.go GetOrCreateSource call).

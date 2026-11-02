@@ -48,6 +48,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Remote Email Images](https://msgvault.io/docs/usage/remote-images.md): opt-in downloads and offline display
 - [Text Messages](https://msgvault.io/docs/usage/text-messages.md)
 - [TikTok Comments](https://msgvault.io/docs/usage/tiktok-comments.md)
+- [TikTok Business Messages](https://msgvault.io/docs/usage/tiktok-messages.md)
 - [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
