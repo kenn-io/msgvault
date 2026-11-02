@@ -15,6 +15,11 @@
   function closeEditor(): void {
     editing = undefined;
   }
+
+  function finishEditor(): void {
+    closeEditor();
+    void controller.refreshOrganizations(query);
+  }
 </script>
 
 <section class="block" aria-label="Organizations">
@@ -43,7 +48,7 @@
 </section>
 
 {#if editing !== undefined}
-  <OrganizationEditor {controller} organization={editing ?? undefined} onDone={closeEditor} onClose={closeEditor} />
+  <OrganizationEditor {controller} organization={editing ?? undefined} onDone={finishEditor} onClose={closeEditor} />
 {/if}
 
 <style>

@@ -692,14 +692,16 @@ it('leaving People aborts its pending Save', async () => {
 it.each(['settled', 'pending', 'all pairs link'] as const)('preserves bulk-link work with stale-cache outcome: %s', async phase => {
   const pairs: Array<{ participant_a: number; participant_b: number }> = [];
   const names = phase !== 'pending' ? ['Alice Example', 'Bob Example', 'Cara Example'] : ['Alice Example', 'Bob Example'];
+  let cacheReady = false;
   let resolveRetry: ((response: Response) => void) | undefined;
   const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: names.map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
+    '/api/v1/relationships': () => Response.json({ rows: names.map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: cacheReady && index === 0 ? [1, 2] : [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })).filter(row => !cacheReady || row.canonical_id !== 2) }),
     '/api/v1/identity/links': async request => {
       pairs.push(await request.json());
       if (phase === 'pending' && pairs.length === 2) return new Promise<Response>(resolve => { resolveRetry = resolve; });
       if (phase === 'settled' && pairs.length === 2) return Response.json({ error: 'internal_error', message: 'Cara link failed' }, { status: 500 });
-      return Response.json({ identity_revision: 2, cache_state: pairs.length === 1 ? 'stale' : 'ready' });
+      cacheReady = pairs.length > 1;
+      return Response.json({ identity_revision: 2, cache_state: cacheReady ? 'ready' : 'stale' });
     },
   });
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
@@ -727,7 +729,8 @@ it.each(['settled', 'pending', 'all pairs link'] as const)('preserves bulk-link 
     } else {
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull());
       expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }, { participant_a: 1, participant_b: 2 }]);
-      for (const name of names) expect.soft(screen.queryByRole('checkbox', { name: `Unselect ${name}` })).not.toBeNull();
+      expect.soft(screen.queryByRole('checkbox', { name: /select Bob Example/i })).toBeNull();
+      for (const name of ['Alice Example', 'Cara Example']) expect.soft(screen.queryByRole('checkbox', { name: `Unselect ${name}` })).not.toBeNull();
       expect.soft(screen.queryByRole('button', { name: 'Clear selection' })).not.toBeNull();
       expect.soft(screen.getByRole('status').textContent).toContain('1 of 2 linked.');
       expect.soft(screen.getByRole('status').textContent).not.toContain('People are now treated as the same person.');
