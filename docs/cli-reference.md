@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-02"
+last_edited: "2026-11-01"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -3900,8 +3900,6 @@ SQLite database directly. The delete cannot be undone with `deduplicate --undo`;
 when backups are enabled, the daemon writes the backup next to the database it
 owns before deleting. Repeated `--batch` selections commit as one transaction;
 if the request is canceled, none of the selected batches are left half-deleted.
-While any account with rows to delete is syncing, the command fails with
-`sync_already_active` and deletes nothing; rerun it after the sync finishes.
 
 | Flag | Description |
 |---|---|

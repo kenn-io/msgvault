@@ -2251,7 +2251,7 @@ func (s *Server) executeCLIDeleteDeduped(
 	if req.AllHidden {
 		deleted, distinct, err := dedupStore.DeleteAllDeduped()
 		if err != nil {
-			return cliDeleteDedupedExecuteResponse{}, s.cliDedupDeleteError(fmt.Errorf("delete all dedup-hidden: %w", err))
+			return cliDeleteDedupedExecuteResponse{}, fmt.Errorf("delete all dedup-hidden: %w", err)
 		}
 		deletedTotal = deleted
 		batchCount = distinct
@@ -2259,7 +2259,7 @@ func (s *Server) executeCLIDeleteDeduped(
 		batchCount = int64(len(req.BatchIDs))
 		deletedTotal, err = dedupStore.DeleteDedupedBatches(req.BatchIDs)
 		if err != nil {
-			return cliDeleteDedupedExecuteResponse{}, s.cliDedupDeleteError(fmt.Errorf("delete selected dedup batches: %w", err))
+			return cliDeleteDedupedExecuteResponse{}, fmt.Errorf("delete selected dedup batches: %w", err)
 		}
 	}
 
@@ -2385,10 +2385,6 @@ func (s *Server) cliDedupDeleteError(err error) *apiHTTPError {
 	}
 	if requestErr, ok := errors.AsType[*cliRequestError](err); ok {
 		return newAPIHTTPError(http.StatusBadRequest, requestErr.code, requestErr.message)
-	}
-	if errors.Is(err, store.ErrSyncAlreadyActive) {
-		return newAPIHTTPError(http.StatusConflict, "sync_already_active",
-			"An account with dedup-hidden messages is syncing; rerun delete-deduped after the sync finishes")
 	}
 	s.logger.Error("failed CLI dedup delete operation", "error", err)
 	return newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Dedup delete operation failed")
