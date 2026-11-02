@@ -652,6 +652,56 @@ func TestPersonSweepTwoPhaseApplyFailureAfterStatusCommitRetries(t *testing.T) {
 	assert.Equal(through, freshnessCursorSequence(t, f, catalog))
 }
 
+func TestPersonSweepNarrowedRetryReusesCommittedRetraction(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, worker, _ := newProjectionFreshnessSweep(t)
+	providerConfig := worker.Config.Providers["default"]
+	providerConfig.AllowedSources = []peoplesweep.SourceClass{
+		peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText,
+	}
+	worker.Config.Providers["default"] = providerConfig
+	worker.Config.EvidenceMaxItems = 1
+	worker.Config.Budgets.MaxRequestsPerPerson = 1
+	worker.Context = emptyFreshnessContext{}
+	profile, err := worker.Config.Profile()
+	require.NoError(err)
+	_, err = f.store.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(err)
+	_, _, err = f.store.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test-owner")
+	require.NoError(err)
+	addFreshnessRetractionAndMessage(t, f, worker.Clock())
+	meetingID := f.insertMessage(t, "M3", "meeting_transcript", f.aliceID, worker.Clock().Add(-30*time.Second))
+	addSweepBody(t, f, meetingID, "I will review the new proposal")
+
+	failed := emptyFreshnessRunner()
+	worker.Runner = failingFreshnessRunner{capturingSweepRunner: failed}
+	_, err = worker.Run(t.Context(), peoplesweep.RunRequest{
+		Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: f.alicePersonID, Limit: 1,
+	})
+	require.ErrorIs(err, errFreshnessProvider)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+		UPDATE person_sweep_work SET available_at = ? WHERE person_id = ?`),
+		time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), f.alicePersonID)
+	require.NoError(err)
+	previousClock := worker.Clock()
+	worker.Clock = func() time.Time { return previousClock.Add(time.Minute) }
+
+	// The retry finds the retraction committed and narrows to one lane again.
+	runner := emptyFreshnessRunner()
+	worker.Runner = runner
+	runFreshnessSweep(t, worker, f.alicePersonID)
+	require.Len(runner.requests, 1)
+	assert.NotContains(projectedValues(t, packetFromRequest(t, runner.requests[0]).CurrentProjection), "Lisbon")
+	_, statuses, _ := freshnessGenerationCounts(t, f)
+	assert.Equal(1, statuses, "the retry must reuse the committed status generation")
+	var events int
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
+		SELECT COUNT(*) FROM person_fact_evidence_status_events WHERE person_id = ?`),
+		f.alicePersonID).Scan(&events))
+	assert.Equal(1, events, "no generation may record the committed retraction again")
+}
+
 func TestPersonSweepRetractionWithProviderCallCommitsTwoGenerations(t *testing.T) {
 	for _, hasCurrent := range []bool{true, false} {
 		t.Run(fmt.Sprintf("current_projection_%t", hasCurrent), func(t *testing.T) {
