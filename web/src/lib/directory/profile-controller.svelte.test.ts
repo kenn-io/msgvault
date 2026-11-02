@@ -358,7 +358,7 @@ describe('DirectoryProfileController', () => {
   it.each([
     ['single', 'single'],
     ['multi', 'multi']
-  ] as const)('synthesizes the first %s attribute group from the refreshed definition', async (_name, cardinality) => {
+  ] as const)('synthesizes the first %s attribute group from the refreshed definition even if the follow-up read fails', async (_name, cardinality) => {
     const createdDefinition = {
       id: 71, universal_id: `created-${cardinality}`, object_type: 'person' as const, slug: `created_${cardinality}`,
       label: `Created ${cardinality}`, value_type: 'text' as const, field_type: 'text', cardinality,
@@ -374,29 +374,17 @@ describe('DirectoryProfileController', () => {
     const seeded = bundle();
     seeded.attributes = { person_id: 7, attributes: [] };
     seeded.definitions = { definitions: [createdDefinition] };
-    const group = { definition: createdDefinition, current: [value], history: [] };
-    let finishAttributes!: (response: Response) => void;
-    const refreshedAttributes = new Promise<Response>(resolve => { finishAttributes = resolve; });
-    const controller = new DirectoryProfileController(createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (request.method === 'PUT') return Response.json({ dry_run: false, value });
-      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
-      if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r3"' } });
-      if (path.endsWith('/attributes')) return refreshedAttributes;
-      if (path.endsWith('/attribute-definitions')) return Response.json(seeded.definitions);
-      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: value.created_at, stale: false });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }), 7, seeded);
+    const controller = new DirectoryProfileController(createAPIClient(vi.fn<typeof fetch>(async input =>
+      (input instanceof Request ? input : new Request(input)).method === 'PUT' ? Response.json({ dry_run: false, value }) : Response.json({ error: 'unavailable', message: 'Refresh unavailable' }, { status: 503 })
+    )), 7, seeded);
 
-    const saving = controller.setAttribute(createdDefinition.slug, { value: { type: 'text', text: 'First value' } });
-    try {
-      await vi.waitFor(() => expect(controller.attributes?.attributes).toEqual([group]));
-    } finally {
-      finishAttributes(Response.json({ person_id: 7, attributes: [group] }));
-      await saving;
-      controller.destroy();
-    }
+    await controller.setAttribute(createdDefinition.slug, { value: { type: 'text', text: 'First value' } });
+
+    expect(controller.attributes?.attributes).toEqual([{
+      definition: createdDefinition,
+      current: [value],
+      history: []
+    }]);
   });
 
   it('rejects a rapid second rename without letting the first response erase its draft', async () => {
