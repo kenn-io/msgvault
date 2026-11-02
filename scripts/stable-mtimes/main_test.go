@@ -39,11 +39,11 @@ import (
 )
 
 func TestInputs(t *testing.T) {
-	_, _ = os.ReadFile("testdata/with space.txt")
+	_, _ = os.ReadFile("testdata/café.txt")
 	_, _ = filepath.Glob("testdata/*.txt")
 }
 `,
-		"testdata/with space.txt": "abc",
+		"testdata/café.txt": "abc",
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(content), 0o644))
 	}
@@ -75,10 +75,10 @@ func TestInputs(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, os.RemoveAll(checkout)) })
 			t.Chdir(checkout)
 			if tc.edit {
-				require.NoError(t, os.WriteFile("testdata/with space.txt", []byte("abd"), 0o644))
+				require.NoError(t, os.WriteFile("testdata/café.txt", []byte("abd"), 0o644))
 			}
 			require.NoError(t, run())
-			cmd = exec.Command("go", "test", "-tags", "fts5 sqlite_vec", "./...")
+			cmd = exec.Command("go", "test", "./...")
 			output, err = cmd.CombinedOutput()
 			require.NoError(t, err, "%s", output)
 			assert.Equal(t, tc.cached, strings.Contains(string(output), "(cached)"), "%s", output)
