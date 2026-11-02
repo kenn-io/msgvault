@@ -63,9 +63,9 @@ func TestThreadsExactSourceAndCredentialAdmission(t *testing.T) {
 	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, threads.ScheduledRequestLimit)
 	require.ErrorIs(err, threads.ErrReauthorizationRequired)
 	assert.Zero(calls)
-	// Invalid mode combinations are rejected before provider/token work.
+	// Invalid modes must report validation even when the credential requires reauthorization.
 	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{Full: true, PostID: "100"}, 200)
-	require.Error(err)
+	require.EqualError(err, "threads full and targeted sync are mutually exclusive")
 	assert.Zero(calls)
 	command := newSyncThreadsLocalCmd(deps)
 	command.SetOut(io.Discard)

@@ -450,6 +450,7 @@ func TestThreadsPollingProviderCooldownSurvivesResume(t *testing.T) {
 // This wrapper delegates real HTTP and cancels at the received-response boundary.
 type cancelAfterStatusAPI struct {
 	PublishAPI
+
 	cancel context.CancelFunc
 }
 

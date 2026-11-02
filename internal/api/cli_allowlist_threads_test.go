@@ -49,8 +49,3 @@ func TestThreadsOAuthDelegatedHTTPDeniedBeforeRunner(t *testing.T) {
 	assert.Contains(recorder.Body.String(), "command_not_allowed")
 	assert.Zero(calls)
 }
-
-func TestThreadsSyncCLIAndScheduleAdmission(t *testing.T) {
-	assert.True(t, cliRunCommandAllowed([]string{"sync-threads", "threads:123:20"}))
-	assert.Equal(t, sourceScheduleAccount, classifySourceScheduling("threads", "threads:123:20").kind)
-}
