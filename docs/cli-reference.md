@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-02"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Moderate and triage Facebook comments | [comment-moderate](#comment-moderate), [comment-triage](#comment-triage), [comment-queue](#comment-queue), [comment-actions](#comment-actions) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -278,6 +279,68 @@ Credentials are stored in `tokens/imap_<hash>.json` with restricted file permiss
 After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
 
 ---
+
+## comment-moderate
+
+Hide, unhide, or delete an archived Facebook comment (unreleased). Requires
+owner authorization and daemon API schema 3.30.0 or newer, an enabled profile,
+and explicit [action opt-ins](configuration.md#facebook-comments). A dry run
+works without write opt-ins or a token and makes no provider request.
+
+```bash
+msgvault comment-moderate <message-id> --hide|--unhide|--delete [--dry-run] [--confirm TOKEN] [--resolve-unknown sent|not-sent] [--json]
+```
+
+Choose exactly one action. Delete requires the `confirm` token from a dry run
+and preserves archived history. The token binds the exact archived target and
+action. `--resolve-unknown` cannot be combined with `--dry-run`: inspect the
+provider and receipts before recording `sent` or `not-sent`. Resolution makes
+no provider call; `not-sent` allows a later explicit attempt. Unknown outcomes
+are never retried automatically. `--json` prints coded errors with any partial
+receipt and the command still exits nonzero.
+
+See [comment actions](usage/facebook-comments.md#comment-actions) for permissions,
+recovery, and MCP confirmation.
+
+## comment-triage
+
+Set a comment's local `open`, `handled`, or `skipped` label without changing
+Facebook. Requires owner authorization and daemon API schema 3.30.0 or newer.
+
+```bash
+msgvault comment-triage <message-id> --state open|handled|skipped [--expect STATE] [--json]
+```
+
+`--expect` requires the current state to match before the update. Later imports
+preserve triage labels. No provider-write opt-in or token is needed.
+
+## comment-queue
+
+List archived Facebook comments by local triage state. Requires owner
+authorization and daemon API schema 3.30.0 or newer.
+
+```bash
+msgvault comment-queue [--source IDENTIFIER] [--state open|handled|skipped|all] [--limit N] [--before-id ID] [--json]
+```
+
+`--source` matches the exact archive identifier, such as `app:9:page:100`.
+State defaults to `open`; limit defaults to 50 and must be 1–200. Results sort
+by sent time and then ID, ascending. Continue with `--before-id` set to the
+last-seen message ID (`next_before_id` in JSON). The Page's own comments are
+excluded. Deleted comments appear only with `--state all`.
+
+## comment-actions
+
+Read receipts for an archived Facebook comment. Requires owner authorization
+and daemon API schema 3.30.0 or newer. Reading receipts never retries an action.
+
+```bash
+msgvault comment-actions <message-id> [--json]
+```
+
+Receipts include their state and any remote IDs or archive evidence.
+See [comment actions](usage/facebook-comments.md#comment-actions) before
+resolving an unknown outcome.
 
 ## message-tags
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-02"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,12 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- [Facebook comment actions](usage/facebook-comments.md#comment-actions) hide,
+  unhide, or delete archived comments through owner-only CLI, HTTP API, and MCP
+  tools after explicit profile opt-in. Delete keeps archive history; receipts
+  preserve uncertain outcomes. Local triage labels and a comment queue help
+  track work without changing Facebook. Requires daemon API schema 3.30.0.
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed comments, with owner subscription, status, and replay commands. Other fields are held for a future release.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional

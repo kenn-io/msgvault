@@ -78,3 +78,38 @@ func TestFacebookCommentsRejectsInvalidProfiles(t *testing.T) {
 		})
 	}
 }
+
+func TestFacebookCommentsActionsValidate(t *testing.T) {
+	for _, tc := range []struct {
+		actions string
+		bad     bool
+	}{
+		{`[]`, false}, {`["hide","delete","public_reply","private_reply","block"]`, false},
+		{`["hide","hide"]`, true}, {`["send"]`, true}, {`["Hide"]`, true},
+	} {
+		t.Run(tc.actions, func(t *testing.T) {
+			err := loadConfigTextError(t, facebookProfile+"actions="+tc.actions+"\n")
+			if tc.bad {
+				require.ErrorContains(t, err, "facebook_comments[0].actions has unknown or duplicate action")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+	cfg := loadConfigText(t, facebookProfile+"actions=[\"hide\"]\n")
+	assert.Equal(t, []string{"hide"}, cfg.FacebookComments[0].Actions)
+}
+func TestFacebookCommentsActionAllowedUnhideMapsToHide(t *testing.T) {
+	p := FacebookCommentsSource{Enabled: true, Actions: []string{"hide", "block"}}
+	assert.True(t, p.ActionAllowed("unhide"))
+	assert.True(t, p.ActionAllowed("unblock"))
+	assert.False(t, p.ActionAllowed("delete"))
+	p.Enabled = false
+	assert.False(t, p.ActionAllowed("hide"))
+}
+func TestFacebookCommentsSourceForPair(t *testing.T) {
+	cfg := loadConfigText(t, facebookProfile)
+	require.NotNil(t, cfg.FacebookCommentsSourceFor("9", "100"))
+	assert.Nil(t, cfg.FacebookCommentsSourceFor("99", "100"))
+	assert.Nil(t, cfg.FacebookCommentsSourceFor("9", "101"))
+}

@@ -128,17 +128,21 @@ Import local exports:
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
 
 Drafts, calendar, and Kata (write to providers):
-  calendar      Control live calendar events and query availability
-  draft-compose Create an email, native Beeper, or local chat draft
-  draft-delete  Delete a managed draft
-  draft-edit    Replace the body of a managed draft
-  draft-forward Create an IMAP draft forwarding an archived message
-  draft-get     Read a managed draft or list a chat's local drafts
-  draft-recover Recover an interrupted managed IMAP draft edit or delete
-  draft-reply   Create an IMAP or Gmail reply draft from an archived message
-  draft-send-as List Gmail send-as identities
-  kata          Create Kata issues that quote archived evidence
-  message-tags  Read or update native email tags
+  calendar         Control live calendar events and query availability
+  comment-actions  Read action receipts for an archived comment
+  comment-moderate Hide, unhide or delete an archived Facebook comment
+  comment-queue    List archived comments by triage state
+  comment-triage   Set a comment's local triage state
+  draft-compose    Create an email, native Beeper, or local chat draft
+  draft-delete     Delete a managed draft
+  draft-edit       Replace the body of a managed draft
+  draft-forward    Create an IMAP draft forwarding an archived message
+  draft-get        Read a managed draft or list a chat's local drafts
+  draft-recover    Recover an interrupted managed IMAP draft edit or delete
+  draft-reply      Create an IMAP or Gmail reply draft from an archived message
+  draft-send-as    List Gmail send-as identities
+  kata             Create Kata issues that quote archived evidence
+  message-tags     Read or update native email tags
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

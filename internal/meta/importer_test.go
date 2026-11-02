@@ -923,3 +923,18 @@ func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 		})
 	}
 }
+
+func TestTriageSurvivesImportReplay(t *testing.T) {
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_200_300", "100_200", "Example comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(t, err)
+	id := message(t, st, src.ID, "100_200_300").ID
+	_, err = st.SetCommentTriageContext(t.Context(), id, store.CommentTriageHandled, nil)
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
+	require.NoError(t, err)
+	got, err := st.CommentTriageContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, store.CommentTriageHandled, got)
+}

@@ -46,7 +46,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
 - [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
-- [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): selected Page comment ingestion, coverage, and cursor recovery (unreleased)
+- [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): selected Page ingestion, opt-in moderation, triage, and cursor recovery (unreleased)
 - [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): signed Page feed receiver, delivery backlog, and replay (unreleased)
 - [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): linked professional account comments, scoped identity, and bounded resuming (unreleased)
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
