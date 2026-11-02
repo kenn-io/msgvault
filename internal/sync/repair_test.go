@@ -523,7 +523,7 @@ func seedRepairRow(t *testing.T, st *store.Store, sourceID int64, sourceMessageI
 			MessageType: store.MessageTypeEmail, RFC822MessageID: sql.NullString{String: "<" + sourceMessageID + "@example.com>", Valid: true},
 			Subject: sql.NullString{String: subject, Valid: true}, SenderID: sql.NullInt64{Int64: participants["sender@example.com"], Valid: true},
 		},
-		BodyText: sql.NullString{String: parsed.GetBodyText(), Valid: parsed.GetBodyText() != ""},
+		BodyText: sql.NullString{String: parsed.BodyText, Valid: parsed.BodyText != ""},
 		RawMIME:  raw,
 		Recipients: []store.RecipientSet{
 			{Type: "from", ParticipantIDs: []int64{participants["sender@example.com"]}, EmailAddresses: []string{"sender@example.com"}},

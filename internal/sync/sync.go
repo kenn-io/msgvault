@@ -1745,7 +1745,7 @@ func (s *Syncer) prepareMessage(
 
 	// Ensure all text fields are valid UTF-8
 	subject := textutil.EnsureUTF8(parsed.Subject)
-	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
+	bodyText := textutil.EnsureUTF8(parsed.BodyText)
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
 	snippet := textutil.EnsureUTF8(raw.Snippet)
 

@@ -47,6 +47,7 @@ func TestDetectCorpus(t *testing.T) {
 		{"cue adjacent link", "Log in: https://example.com/login?id=abc", "magic_link", "https://example.com/login?id=abc", 0},
 		{"long DM", strings.Repeat("ordinary text ", 100) + "Verification code: 482913", "otp_code", "482913", 0},
 		{"cue only", "Your verification code will arrive separately", "otp_code", "", 0},
+		{"generic sign-in navigation", "Your order is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders", "", "", 0},
 		{"invoice", "Invoice 482913 total $154.00", "", "", 0},
 		{"order", "Your order number is 482913", "", "", 0},
 		{"tracking", "Tracking 1234567890123456", "", "", 0},
@@ -464,16 +465,12 @@ func TestCredentialLinkRequiresPayload(t *testing.T) {
 	} {
 		t.Run(value, func(t *testing.T) {
 			assert := assert.New(t)
-			require := require.New(t)
 			for _, in := range []Input{
 				{BodyText: "Sign in: " + value},
 				{BodyHTML: `<a href="` + value + `">Sign in</a>`},
 			} {
 				f := Detect(in)
-				require.NotNil(f)
-				assert.Equal("magic_link", f.Kind)
-				assert.Equal("medium", f.Confidence)
-				assert.Empty(f.Values)
+				assert.Nil(f)
 			}
 		})
 	}

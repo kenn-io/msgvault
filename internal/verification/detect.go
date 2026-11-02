@@ -103,6 +103,7 @@ type cueMatch struct {
 	start, end int
 	maxEnd     int // latest end among this match and all preceding matches
 	kind       string
+	text       string
 }
 
 func cueMatches(text string) []cueMatch {
@@ -124,7 +125,7 @@ func cueMatches(text string) []cueMatch {
 			if wordBoundary(text, i, end) {
 				// "is your" alone is ordinary prose, not a credential cue.
 				if c.text != "is your" || hasCodeAfter(text, end, urls) {
-					found = append(found, cueMatch{start: i, end: end, kind: c.kind})
+					found = append(found, cueMatch{start: i, end: end, kind: c.kind, text: c.text})
 				}
 			}
 		}
@@ -137,6 +138,15 @@ func cueMatches(text string) []cueMatch {
 		}
 	}
 	return found
+}
+
+func genericSignInCue(text string) bool {
+	switch text {
+	case "sign in", "sign-in", "log in", "login link":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasCodeAfter(text string, start int, urls [][]int) bool {
@@ -389,15 +399,18 @@ func Detect(in Input) *Finding {
 		text := strings.ToLower(original)
 		matches := cueMatches(text)
 		var linkMatches []cueMatch
+		var codeMatches []cueMatch
 		for _, c := range matches {
-			if c.kind != kindOTPCode {
+			if c.kind == kindOTPCode {
+				codeMatches = append(codeMatches, c)
+			} else {
 				c.maxEnd = c.end
 				if len(linkMatches) > 0 {
 					c.maxEnd = max(c.maxEnd, linkMatches[len(linkMatches)-1].maxEnd)
 				}
 				linkMatches = append(linkMatches, c)
 			}
-			if f.Kind == "" || kindRank(c.kind) > kindRank(f.Kind) {
+			if !genericSignInCue(c.text) && (f.Kind == "" || kindRank(c.kind) > kindRank(f.Kind)) {
 				f.Kind = c.kind
 			}
 		}
@@ -428,7 +441,7 @@ func Detect(in Input) *Finding {
 			}
 			start := codeOffset(loc[0])
 			end := start + len(strings.ToLower(value))
-			if nearCue(text, start, end, matches) {
+			if nearCue(text, start, end, codeMatches) {
 				add(Secret{Kind: "code", Value: value})
 			}
 		}

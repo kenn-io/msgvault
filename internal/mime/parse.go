@@ -120,7 +120,7 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 		MessageID:       env.GetHeader("Message-ID"),
 		InReplyTo:       env.GetHeader("In-Reply-To"),
 		ListID:          NormalizeListID(env.GetHeader("List-Id")),
-		BodyText:        env.Text,
+		BodyText:        plainTextBody(root, env.Text),
 		BodyHTML:        env.HTML,
 		AutoSubmitted:   env.GetHeader("Auto-Submitted"),
 		Precedence:      env.GetHeader("Precedence"),
@@ -169,6 +169,20 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 		inspect(root)
 	}
 	return msg, nil
+}
+
+func plainTextBody(root *enmime.Part, parsedText string) string {
+	if root == nil {
+		return ""
+	}
+	part := root.DepthMatchFirst(func(part *enmime.Part) bool {
+		return strings.EqualFold(part.ContentType, "text/plain") &&
+			!strings.EqualFold(part.Disposition, "attachment") && part.FileName == ""
+	})
+	if part == nil {
+		return ""
+	}
+	return parsedText
 }
 
 // ParseWithRecovery parses a message and salvages its top-level headers when
