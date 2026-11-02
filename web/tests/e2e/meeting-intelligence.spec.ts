@@ -274,16 +274,21 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
   ];
   for (const scope of scopes) {
     await page.goto(meetingURL(daemon, scope.state));
-    const panel = page
+    let panel = page
       .getByRole("region", { name: "Meeting activity", exact: true })
       .last();
+    if (scope.name === "relationships") {
+      await page.getByRole("region", { name: "Meeting summary", exact: true }).getByRole("button", { name: /Action items/ }).click();
+      panel = page.getByRole("dialog", { name: "Action items", exact: true });
+      await panel.getByText("Meeting metrics", { exact: true }).click();
+    }
     if (scope.name === "domain") {
       await assertMetrics(panel, 4, 4, 0, "1h 40m 45s", "25m 11s");
     } else {
       await assertMetrics(panel, 3, 3, 0, "1h 40m", "33m 20s");
     }
-    const source = panel
-      .getByRole("link", { name: "Open archived meeting", exact: true })
+    const source = (scope.name === "relationships" ? panel.locator('a[href^="/messages/"]') : panel
+      .getByRole("link", { name: "Open archived meeting", exact: true }))
       .filter({ visible: true })
       .first();
     await source.click();
