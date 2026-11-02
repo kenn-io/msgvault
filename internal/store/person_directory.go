@@ -54,6 +54,7 @@ type DirectoryPeopleQuery struct {
 // a durable person root. ContactState is "active" when a contact projection
 // has a last-contact timestamp and "inactive" otherwise.
 type DirectoryPersonSummary struct {
+	SenderCeilingReadout
 	ID              int64            `json:"id"`
 	VCardUID        string           `json:"vcard_uid"`
 	CardDAVBindings []CardDAVBinding `json:"carddav_bindings"`

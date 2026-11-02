@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
@@ -98,6 +99,7 @@ type PersonSearchRequest struct {
 }
 
 type PersonSummary struct {
+	store.SenderCeilingReadout
 	ID                             int64              `json:"id"`
 	DisplayLabel                   string             `json:"display_label"`
 	DisplayName                    string             `json:"display_name,omitempty"`

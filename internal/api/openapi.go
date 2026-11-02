@@ -388,7 +388,8 @@ import (
 // 3.34.0 adds answered-call counts to person tier signals.
 // 3.35.0 adds archived calendar occurrence listing and sender_auth metadata to message reads.
 // 3.36.0 adds derived sender class, basis, and exact-address relationship on message reads.
-const APISchemaVersion = "3.36.0"
+// 3.37.0 adds relationship ceilings on people reads.
+const APISchemaVersion = "3.37.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1313,6 +1314,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				}
 				setEnumNames(field, qualifiedEnumNames(name+suffix, values))
 			}
+		}
+	}
+	for name, schema := range schemas {
+		if schema == nil {
+			continue
+		}
+		if field := schema.Properties["sender_class_ceiling"]; field != nil {
+			setEnumNames(field, qualifiedEnumNames(name+"SenderClassCeiling", []string{"contact", "known", "none"}))
+		}
+		if field := schema.Properties["sender_class_ceiling_basis"]; field != nil {
+			setEnumNames(field, qualifiedEnumNames(name+"SenderClassCeilingBasis", []string{"curated_person", "owner_sent_to", "no_relationship"}))
 		}
 	}
 	if recording := schemas["MessageRecording"]; recording != nil {

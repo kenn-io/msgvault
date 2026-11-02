@@ -480,6 +480,8 @@ func outputSchemaFor[T any]() *jsonschema.Schema {
 		reflect.TypeFor[senderclass.Class]():        {Type: "string", Enum: []any{"unverified", "verified", "known", "contact", "self"}},
 		reflect.TypeFor[senderclass.Basis]():        {Type: "string", Enum: []any{"source_owned", "auth_failed", "no_auth_evidence", "curated_person", "owner_sent_to", "dmarc_pass", "platform", "invalid_relationship", "evidence_unavailable"}},
 		reflect.TypeFor[senderclass.Relationship](): {Type: "string", Enum: []any{"contact", "known", "none"}},
+		reflect.TypeFor[store.SenderClassCeiling](): {Type: "string", Enum: []any{"contact", "known", "none"}},
+		reflect.TypeFor[store.SenderCeilingBasis](): {Type: "string", Enum: []any{"curated_person", "owner_sent_to", "no_relationship"}},
 	}})
 	if err != nil {
 		panic(err)

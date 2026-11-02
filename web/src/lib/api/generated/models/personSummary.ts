@@ -4,6 +4,8 @@
 import type { PersonCluster } from "./personCluster";
 import type { PersonIdentifier } from "./personIdentifier";
 import type { PersonProfile } from "./personProfile";
+import type { PersonSummarySenderClassCeiling } from "./personSummarySenderClassCeiling";
+import type { PersonSummarySenderClassCeilingBasis } from "./personSummarySenderClassCeilingBasis";
 import type { SourceCount } from "./sourceCount";
 
 export interface PersonSummary {
@@ -23,6 +25,8 @@ export interface PersonSummary {
   peak_relationship_temperature: number;
   peak_relationship_year: number;
   profile?: PersonProfile;
+  sender_class_ceiling?: PersonSummarySenderClassCeiling;
+  sender_class_ceiling_basis?: PersonSummarySenderClassCeilingBasis;
   source_counts: SourceCount[];
   [key: string]: unknown;
 }

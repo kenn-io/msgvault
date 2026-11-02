@@ -286,6 +286,7 @@ func (h *handlers) prepareCuratedPeopleSearch(
 			summary.ID = slices.Min(profile.ParticipantIDs)
 		}
 		applyProfileToPeopleSummary(&summary, profile)
+		summary.SenderCeilingReadout = profile.SenderCeilingReadout
 		prepared.rows = append(prepared.rows, searchPeopleRow{
 			PersonSummary: summary, PersonID: profile.ID,
 			VCardUID:        profile.VCardUID,

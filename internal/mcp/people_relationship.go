@@ -10,9 +10,11 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 type getPersonRelationshipResponse struct {
+	store.SenderCeilingReadout
 	ParticipantID    int64                                    `json:"participant_id"`
 	CanonicalID      int64                                    `json:"canonical_id"`
 	DisplayLabel     string                                   `json:"display_label"`
@@ -103,7 +105,8 @@ func (h *handlers) getPersonRelationship(
 		annual = []identityindex.AnnualTemperatureSummary{}
 	}
 	response := getPersonRelationshipResponse{
-		ParticipantID: participantID, CanonicalID: calendar.CanonicalID,
+		SenderCeilingReadout: contact.SenderCeilingReadout,
+		ParticipantID:        participantID, CanonicalID: calendar.CanonicalID,
 		DisplayLabel: contact.DisplayLabel, Current: calendar.Current, Annual: annual,
 		PeakTemperature: calendar.PeakTemperature, PeakYear: calendar.PeakYear,
 		ScoringTimezone: calendar.ScoringTimezone, ScoreVersion: calendar.ScoreVersion,

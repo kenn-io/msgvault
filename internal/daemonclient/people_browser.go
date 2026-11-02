@@ -572,7 +572,8 @@ func personSummaryFromGenerated(person generated.PersonSummary) query.PersonSumm
 		counts[i] = query.SourceCount{SourceType: count.SourceType, Count: count.Count}
 	}
 	out := query.PersonSummary{
-		ID: person.ID, DisplayLabel: person.DisplayLabel,
+		SenderCeilingReadout: senderCeilingFromGenerated(person.SenderClassCeiling, person.SenderClassCeilingBasis),
+		ID:                   person.ID, DisplayLabel: person.DisplayLabel,
 		DisplayName: stringValue(person.DisplayName), PartialLabel: person.PartialLabel,
 		Identifiers: identifiers, ActivityCount: person.ActivityCount,
 		MeetingCount: person.MeetingCount, FileCount: person.FileCount,
@@ -685,7 +686,8 @@ func personFromGenerated(person *generated.Person) *store.Person {
 		cardDAVBindings = bindings
 	}
 	return &store.Person{
-		ID: person.ID, VCardUID: person.VcardUID,
+		SenderCeilingReadout: senderCeilingFromGenerated(person.SenderClassCeiling, person.SenderClassCeilingBasis),
+		ID:                   person.ID, VCardUID: person.VcardUID,
 		DisplayName: copyString(person.DisplayName), Revision: person.Revision,
 		ParticipantIDs: append([]int64(nil), person.ParticipantIds...),
 		CreatedAt:      person.CreatedAt, UpdatedAt: person.UpdatedAt,

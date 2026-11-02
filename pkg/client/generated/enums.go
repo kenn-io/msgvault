@@ -754,6 +754,42 @@ func (d DecidePersonMergeCandidateRequestDecision) Validate() error {
 	}
 }
 
+type DirectoryPersonSummarySenderClassCeiling string
+
+const (
+	DirectoryPersonSummarySenderClassCeilingContact DirectoryPersonSummarySenderClassCeiling = "contact"
+	DirectoryPersonSummarySenderClassCeilingKnown   DirectoryPersonSummarySenderClassCeiling = "known"
+	DirectoryPersonSummarySenderClassCeilingNone    DirectoryPersonSummarySenderClassCeiling = "none"
+)
+
+// Validate checks if the DirectoryPersonSummarySenderClassCeiling value is valid
+func (d DirectoryPersonSummarySenderClassCeiling) Validate() error {
+	switch d {
+	case DirectoryPersonSummarySenderClassCeilingContact, DirectoryPersonSummarySenderClassCeilingKnown, DirectoryPersonSummarySenderClassCeilingNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DirectoryPersonSummarySenderClassCeiling value, got: %v", d))
+	}
+}
+
+type DirectoryPersonSummarySenderClassCeilingBasis string
+
+const (
+	DirectoryPersonSummarySenderClassCeilingBasisCuratedPerson  DirectoryPersonSummarySenderClassCeilingBasis = "curated_person"
+	DirectoryPersonSummarySenderClassCeilingBasisNoRelationship DirectoryPersonSummarySenderClassCeilingBasis = "no_relationship"
+	DirectoryPersonSummarySenderClassCeilingBasisOwnerSentTo    DirectoryPersonSummarySenderClassCeilingBasis = "owner_sent_to"
+)
+
+// Validate checks if the DirectoryPersonSummarySenderClassCeilingBasis value is valid
+func (d DirectoryPersonSummarySenderClassCeilingBasis) Validate() error {
+	switch d {
+	case DirectoryPersonSummarySenderClassCeilingBasisCuratedPerson, DirectoryPersonSummarySenderClassCeilingBasisNoRelationship, DirectoryPersonSummarySenderClassCeilingBasisOwnerSentTo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DirectoryPersonSummarySenderClassCeilingBasis value, got: %v", d))
+	}
+}
+
 type DiscoverEventType string
 
 const (
@@ -2456,6 +2492,42 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+type PersonSenderClassCeiling string
+
+const (
+	PersonSenderClassCeilingContact PersonSenderClassCeiling = "contact"
+	PersonSenderClassCeilingKnown   PersonSenderClassCeiling = "known"
+	PersonSenderClassCeilingNone    PersonSenderClassCeiling = "none"
+)
+
+// Validate checks if the PersonSenderClassCeiling value is valid
+func (p PersonSenderClassCeiling) Validate() error {
+	switch p {
+	case PersonSenderClassCeilingContact, PersonSenderClassCeilingKnown, PersonSenderClassCeilingNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSenderClassCeiling value, got: %v", p))
+	}
+}
+
+type PersonSenderClassCeilingBasis string
+
+const (
+	PersonSenderClassCeilingBasisCuratedPerson  PersonSenderClassCeilingBasis = "curated_person"
+	PersonSenderClassCeilingBasisNoRelationship PersonSenderClassCeilingBasis = "no_relationship"
+	PersonSenderClassCeilingBasisOwnerSentTo    PersonSenderClassCeilingBasis = "owner_sent_to"
+)
+
+// Validate checks if the PersonSenderClassCeilingBasis value is valid
+func (p PersonSenderClassCeilingBasis) Validate() error {
+	switch p {
+	case PersonSenderClassCeilingBasisCuratedPerson, PersonSenderClassCeilingBasisNoRelationship, PersonSenderClassCeilingBasisOwnerSentTo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSenderClassCeilingBasis value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (
@@ -2697,6 +2769,42 @@ func (p PersonSplitResultCacheState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSplitResultCacheState value, got: %v", p))
+	}
+}
+
+type PersonSummarySenderClassCeiling string
+
+const (
+	PersonSummarySenderClassCeilingContact PersonSummarySenderClassCeiling = "contact"
+	PersonSummarySenderClassCeilingKnown   PersonSummarySenderClassCeiling = "known"
+	PersonSummarySenderClassCeilingNone    PersonSummarySenderClassCeiling = "none"
+)
+
+// Validate checks if the PersonSummarySenderClassCeiling value is valid
+func (p PersonSummarySenderClassCeiling) Validate() error {
+	switch p {
+	case PersonSummarySenderClassCeilingContact, PersonSummarySenderClassCeilingKnown, PersonSummarySenderClassCeilingNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSummarySenderClassCeiling value, got: %v", p))
+	}
+}
+
+type PersonSummarySenderClassCeilingBasis string
+
+const (
+	PersonSummarySenderClassCeilingBasisCuratedPerson  PersonSummarySenderClassCeilingBasis = "curated_person"
+	PersonSummarySenderClassCeilingBasisNoRelationship PersonSummarySenderClassCeilingBasis = "no_relationship"
+	PersonSummarySenderClassCeilingBasisOwnerSentTo    PersonSummarySenderClassCeilingBasis = "owner_sent_to"
+)
+
+// Validate checks if the PersonSummarySenderClassCeilingBasis value is valid
+func (p PersonSummarySenderClassCeilingBasis) Validate() error {
+	switch p {
+	case PersonSummarySenderClassCeilingBasisCuratedPerson, PersonSummarySenderClassCeilingBasisNoRelationship, PersonSummarySenderClassCeilingBasisOwnerSentTo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSummarySenderClassCeilingBasis value, got: %v", p))
 	}
 }
 

@@ -3845,6 +3845,18 @@ components:
         revision:
           format: int64
           type: integer
+        sender_class_ceiling:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
+        sender_class_ceiling_basis:
+          enum:
+            - curated_person
+            - owner_sent_to
+            - no_relationship
+          type: string
         vcard_uid:
           type: string
       required:
@@ -10989,6 +11001,18 @@ components:
         revision:
           format: int64
           type: integer
+        sender_class_ceiling:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
+        sender_class_ceiling_basis:
+          enum:
+            - curated_person
+            - owner_sent_to
+            - no_relationship
+          type: string
         updated_at:
           format: date-time
           type: string
@@ -13748,6 +13772,18 @@ components:
           type: integer
         profile:
           $ref: "#/components/schemas/PersonProfile"
+        sender_class_ceiling:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
+        sender_class_ceiling_basis:
+          enum:
+            - curated_person
+            - owner_sent_to
+            - no_relationship
+          type: string
         source_counts:
           items:
             $ref: "#/components/schemas/SourceCount"
@@ -17222,7 +17258,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.36.0
+  version: 3.37.0
 openapi: 3.1.0
 paths:
   /api/ping:

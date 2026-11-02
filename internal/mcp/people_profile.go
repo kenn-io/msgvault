@@ -16,6 +16,7 @@ import (
 // and "which network do I reach them on" for one durable person from local
 // derived state. Sensitive attributes and private Notes are never included.
 type getPersonProfileResponse struct {
+	store.SenderCeilingReadout
 	PersonID        int64                  `json:"person_id"`
 	DisplayName     string                 `json:"display_name"`
 	VCardUID        string                 `json:"vcard_uid"`
@@ -295,22 +296,23 @@ func (h *handlers) getPersonProfile(ctx context.Context, req toolRequest) (*tool
 
 func personProfileResponse(profile peoplebrowser.PersonProfile) getPersonProfileResponse {
 	response := getPersonProfileResponse{
-		PersonID:        profile.Person.ID,
-		DisplayName:     profileDisplayLabel(profile.Person),
-		VCardUID:        profile.Person.VCardUID,
-		CardDAVBindings: append([]store.CardDAVBinding{}, profile.Person.CardDAVBindings...),
-		Tracked:         profile.Tracked,
-		ContactState:    profile.ContactState,
-		Emails:          profileContactValues(profile.ContactPoints, store.ContactAddressEmail, skipServiceHandles),
-		Phones:          profileContactValues(profile.ContactPoints, store.ContactAddressPhone, keepServiceHandles),
-		Address:         personProfileAddressResponse(profile.Addresses),
-		Attributes:      []personProfileAttribute{},
-		Employments:     []personProfileEmployment{},
-		Relationships:   []personProfileRelationship{},
-		ContactPoints:   []personProfileContactPoint{},
-		Dates:           []personProfileDate{},
-		Categories:      []string{},
-		Excluded:        append([]string(nil), personProfileExcluded...),
+		SenderCeilingReadout: profile.Person.SenderCeilingReadout,
+		PersonID:             profile.Person.ID,
+		DisplayName:          profileDisplayLabel(profile.Person),
+		VCardUID:             profile.Person.VCardUID,
+		CardDAVBindings:      append([]store.CardDAVBinding{}, profile.Person.CardDAVBindings...),
+		Tracked:              profile.Tracked,
+		ContactState:         profile.ContactState,
+		Emails:               profileContactValues(profile.ContactPoints, store.ContactAddressEmail, skipServiceHandles),
+		Phones:               profileContactValues(profile.ContactPoints, store.ContactAddressPhone, keepServiceHandles),
+		Address:              personProfileAddressResponse(profile.Addresses),
+		Attributes:           []personProfileAttribute{},
+		Employments:          []personProfileEmployment{},
+		Relationships:        []personProfileRelationship{},
+		ContactPoints:        []personProfileContactPoint{},
+		Dates:                []personProfileDate{},
+		Categories:           []string{},
+		Excluded:             append([]string(nil), personProfileExcluded...),
 	}
 	if profile.ContactState != nil {
 		response.InferredChannel = string(profile.ContactState.InferredChannel)

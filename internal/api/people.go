@@ -136,6 +136,7 @@ func (s *Server) handleSearchParticipants(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; restart pagination")
 		return
 	}
+	s.fillParticipantSenderCeilings(r.Context(), result.Rows)
 	response := ParticipantSearchHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: prepared.snapshotID}
 	if next := prepared.offset + len(result.Rows); next < int(result.TotalCount) {
@@ -260,6 +261,7 @@ func (s *Server) handleGetParticipant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.attachPersonProfile(r.Context(), person, id, members)
+	s.fillParticipantSenderCeiling(r.Context(), person, id)
 	writeJSON(w, http.StatusOK, person)
 }
 
@@ -361,6 +363,7 @@ func (s *Server) handleParticipantContextSummary(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "participant_not_found", "Participant cluster not found in the active analytical context")
 		return
 	}
+	s.fillParticipantSenderCeiling(r.Context(), &result.Rows[0], id)
 	writeJSON(w, http.StatusOK, ParticipantContextSummaryHTTPResponse{Summary: result.Rows[0], CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID})
 }

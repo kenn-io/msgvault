@@ -320,6 +320,7 @@ func (s *Server) handleGetPersonProfile(w http.ResponseWriter, r *http.Request) 
 		s.writePersonError(w, err)
 		return
 	}
+	s.fillPersonSenderCeiling(r.Context(), person)
 	writePerson(w, http.StatusOK, person)
 }
 
@@ -338,6 +339,7 @@ func (s *Server) handleGetPersonByUID(w http.ResponseWriter, r *http.Request) {
 		s.writePersonError(w, err)
 		return
 	}
+	s.fillPersonSenderCeiling(r.Context(), person)
 	writePerson(w, http.StatusOK, person)
 }
 
@@ -352,6 +354,7 @@ func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	s.fillPersonSenderCeilings(r.Context(), persons)
 	writeJSON(w, http.StatusOK, PeopleResponse{People: persons})
 }
 
@@ -371,6 +374,7 @@ func (s *Server) handleDirectoryPeople(w http.ResponseWriter, r *http.Request) {
 		s.writeDirectoryPeopleError(w, err)
 		return
 	}
+	s.fillDirectorySenderCeilings(r.Context(), page.People)
 	writeJSON(w, http.StatusOK, DirectoryPeopleResponse{People: page.People, NextCursor: page.NextCursor})
 }
 

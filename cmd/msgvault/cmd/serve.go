@@ -2214,6 +2214,12 @@ func (a *storeAPIAdapter) SenderRelationships(
 	return a.store.SenderRelationships(ctx, addresses, allowedSourceIDs)
 }
 
+func (a *storeAPIAdapter) SenderClassCeilings(
+	ctx context.Context, participantIDs, personIDs, allowedSourceIDs []int64,
+) (store.SenderClassCeilings, error) {
+	return a.store.SenderClassCeilings(ctx, participantIDs, personIDs, allowedSourceIDs)
+}
+
 func (a *storeAPIAdapter) GetMessagesSummariesByIDsContext(
 	ctx context.Context, ids []int64,
 ) ([]api.APIMessage, error) {

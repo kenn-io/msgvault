@@ -47,6 +47,7 @@ func (e *PersonBindingConflictError) Unwrap() error {
 // edge never deletes or moves them, so one person may intentionally span
 // multiple clusters until the user re-links or unbinds those participants.
 type Person struct {
+	SenderCeilingReadout
 	ID              int64            `json:"id"`
 	VCardUID        string           `json:"vcard_uid"`
 	CardDAVBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`

@@ -3690,16 +3690,18 @@ func (d DirectoryPeopleResponse) Validate() error {
 }
 
 type DirectoryPersonSummary struct {
-	CarddavBindings []CardDAVBinding `json:"carddav_bindings" validate:"required"`
-	Categories      []string         `json:"categories" validate:"required"`
-	ContactState    string           `json:"contact_state" validate:"required"`
-	DisplayName     *string          `json:"display_name,omitzero"`
-	ID              int64            `json:"id"`
-	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
-	Organizations   []string         `json:"organizations" validate:"required"`
-	PrimaryChannel  *string          `json:"primary_channel,omitzero"`
-	Revision        int64            `json:"revision"`
-	VcardUID        string           `json:"vcard_uid" validate:"required"`
+	CarddavBindings         []CardDAVBinding                               `json:"carddav_bindings" validate:"required"`
+	Categories              []string                                       `json:"categories" validate:"required"`
+	ContactState            string                                         `json:"contact_state" validate:"required"`
+	DisplayName             *string                                        `json:"display_name,omitzero"`
+	ID                      int64                                          `json:"id"`
+	LastContactAt           *time.Time                                     `json:"last_contact_at,omitempty"`
+	Organizations           []string                                       `json:"organizations" validate:"required"`
+	PrimaryChannel          *string                                        `json:"primary_channel,omitzero"`
+	Revision                int64                                          `json:"revision"`
+	SenderClassCeiling      *DirectoryPersonSummarySenderClassCeiling      `json:"sender_class_ceiling,omitempty"`
+	SenderClassCeilingBasis *DirectoryPersonSummarySenderClassCeilingBasis `json:"sender_class_ceiling_basis,omitempty"`
+	VcardUID                string                                         `json:"vcard_uid" validate:"required"`
 }
 
 func (d DirectoryPersonSummary) Validate() error {
@@ -3722,6 +3724,20 @@ func (d DirectoryPersonSummary) Validate() error {
 	}
 	if err := typesValidator.Var(d.Organizations, "required"); err != nil {
 		errors = errors.Append("Organizations", err)
+	}
+	if d.SenderClassCeiling != nil {
+		if v, ok := any(d.SenderClassCeiling).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderClassCeiling", err)
+			}
+		}
+	}
+	if d.SenderClassCeilingBasis != nil {
+		if v, ok := any(d.SenderClassCeilingBasis).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderClassCeilingBasis", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(d.VcardUID, "required"); err != nil {
 		errors = errors.Append("VcardUID", err)
@@ -10591,14 +10607,16 @@ func (p PeopleResponse) Validate() error {
 }
 
 type Person struct {
-	CarddavBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`
-	CreatedAt       time.Time        `json:"created_at" validate:"required"`
-	DisplayName     *string          `json:"display_name,omitzero"`
-	ID              int64            `json:"id"`
-	ParticipantIds  []int64          `json:"participant_ids" validate:"required"`
-	Revision        int64            `json:"revision"`
-	UpdatedAt       time.Time        `json:"updated_at" validate:"required"`
-	VcardUID        string           `json:"vcard_uid" validate:"required"`
+	CarddavBindings         []CardDAVBinding               `json:"carddav_bindings,omitempty"`
+	CreatedAt               time.Time                      `json:"created_at" validate:"required"`
+	DisplayName             *string                        `json:"display_name,omitzero"`
+	ID                      int64                          `json:"id"`
+	ParticipantIds          []int64                        `json:"participant_ids" validate:"required"`
+	Revision                int64                          `json:"revision"`
+	SenderClassCeiling      *PersonSenderClassCeiling      `json:"sender_class_ceiling,omitempty"`
+	SenderClassCeilingBasis *PersonSenderClassCeilingBasis `json:"sender_class_ceiling_basis,omitempty"`
+	UpdatedAt               time.Time                      `json:"updated_at" validate:"required"`
+	VcardUID                string                         `json:"vcard_uid" validate:"required"`
 }
 
 func (p Person) Validate() error {
@@ -10615,6 +10633,20 @@ func (p Person) Validate() error {
 	}
 	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
 		errors = errors.Append("ParticipantIds", err)
+	}
+	if p.SenderClassCeiling != nil {
+		if v, ok := any(p.SenderClassCeiling).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderClassCeiling", err)
+			}
+		}
+	}
+	if p.SenderClassCeilingBasis != nil {
+		if v, ok := any(p.SenderClassCeilingBasis).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderClassCeilingBasis", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
 		errors = errors.Append("UpdatedAt", err)
@@ -13629,23 +13661,25 @@ func (p PersonSplitResult) Validate() error {
 }
 
 type PersonSummary struct {
-	ActivityCount                  int64              `json:"activity_count"`
-	CacheRevision                  string             `json:"cache_revision" validate:"required"`
-	Cluster                        *PersonCluster     `json:"cluster,omitempty"`
-	CurrentRelationshipTemperature int64              `json:"current_relationship_temperature"`
-	DisplayLabel                   string             `json:"display_label" validate:"required"`
-	DisplayName                    *string            `json:"display_name,omitzero"`
-	FileCount                      int64              `json:"file_count"`
-	FirstAt                        time.Time          `json:"first_at" validate:"required"`
-	ID                             int64              `json:"id"`
-	Identifiers                    []PersonIdentifier `json:"identifiers" validate:"required"`
-	LastAt                         time.Time          `json:"last_at" validate:"required"`
-	MeetingCount                   int64              `json:"meeting_count"`
-	PartialLabel                   bool               `json:"partial_label"`
-	PeakRelationshipTemperature    int64              `json:"peak_relationship_temperature"`
-	PeakRelationshipYear           int64              `json:"peak_relationship_year"`
-	Profile                        *PersonProfile     `json:"profile,omitempty"`
-	SourceCounts                   []SourceCount      `json:"source_counts" validate:"required"`
+	ActivityCount                  int64                                 `json:"activity_count"`
+	CacheRevision                  string                                `json:"cache_revision" validate:"required"`
+	Cluster                        *PersonCluster                        `json:"cluster,omitempty"`
+	CurrentRelationshipTemperature int64                                 `json:"current_relationship_temperature"`
+	DisplayLabel                   string                                `json:"display_label" validate:"required"`
+	DisplayName                    *string                               `json:"display_name,omitzero"`
+	FileCount                      int64                                 `json:"file_count"`
+	FirstAt                        time.Time                             `json:"first_at" validate:"required"`
+	ID                             int64                                 `json:"id"`
+	Identifiers                    []PersonIdentifier                    `json:"identifiers" validate:"required"`
+	LastAt                         time.Time                             `json:"last_at" validate:"required"`
+	MeetingCount                   int64                                 `json:"meeting_count"`
+	PartialLabel                   bool                                  `json:"partial_label"`
+	PeakRelationshipTemperature    int64                                 `json:"peak_relationship_temperature"`
+	PeakRelationshipYear           int64                                 `json:"peak_relationship_year"`
+	Profile                        *PersonProfile                        `json:"profile,omitempty"`
+	SenderClassCeiling             *PersonSummarySenderClassCeiling      `json:"sender_class_ceiling,omitempty"`
+	SenderClassCeilingBasis        *PersonSummarySenderClassCeilingBasis `json:"sender_class_ceiling_basis,omitempty"`
+	SourceCounts                   []SourceCount                         `json:"source_counts" validate:"required"`
 }
 
 func (p PersonSummary) Validate() error {
@@ -13683,6 +13717,20 @@ func (p PersonSummary) Validate() error {
 		if v, ok := any(p.Profile).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Profile", err)
+			}
+		}
+	}
+	if p.SenderClassCeiling != nil {
+		if v, ok := any(p.SenderClassCeiling).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderClassCeiling", err)
+			}
+		}
+	}
+	if p.SenderClassCeilingBasis != nil {
+		if v, ok := any(p.SenderClassCeilingBasis).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderClassCeilingBasis", err)
 			}
 		}
 	}

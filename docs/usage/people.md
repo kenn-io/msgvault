@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-02
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -49,6 +49,28 @@ or a UID from one of its bound CardDAV cards. JSON profile reads include
 `vcard_uid` and `carddav_bindings`, which show the connection, book, resource
 href, remote UID, and mapping status. UID lookup needs daemon API schema 3.10.0
 or newer.
+
+## Read sender relationship ceilings
+
+`get_person_profile`, `get_person_relationship`, `search_people`, and directory
+rows expose `sender_class_ceiling` and `sender_class_ceiling_basis`:
+
+| Ceiling | Basis | Evidence |
+|---|---|---|
+| `contact` | `curated_person` | An exact mailbox bound to a saved person |
+| `known` | `owner_sent_to` | A qualifying real owner send to that mailbox |
+| `none` | `no_relationship` | The lookup completed without either relationship |
+
+This is the best relationship class an authenticated message could earn. It
+does not authenticate a person or a message, establish consent, or authorize
+an action. Display names, profile text, activity tiers, and unbound aliases
+cannot raise it. Draft-only contacts do not count.
+
+A participant read uses the exact requested identity, even when its presentation
+includes a linked cluster or profile. A curated profile uses its explicitly
+bound mailbox members. Values are derived when read, so promotion changes them
+without a cache rebuild. Missing fields mean the evidence lookup is unavailable,
+including older daemons; they do not mean `none`.
 
 ## Review identity matches
 
