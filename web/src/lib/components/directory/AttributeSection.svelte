@@ -15,7 +15,7 @@
     owner = controller;
     revealed = {};
   });
-  const visibleFields = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).filter(field => field.history.length > 0));
+  const visibleFields = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).filter(field => field.current.length > 0 || field.history.length > 0));
   function isRevealed(definition: AttributeDefinition): boolean { return isAttributeRevealed(definition, revealed); }
   function toggleReveal(definition: AttributeDefinition): void {
     revealed = { ...revealed, [definition.universal_id]: !revealed[definition.universal_id] };
@@ -31,6 +31,14 @@
           <Button size="sm" label={shown ? 'Hide' : 'Show'} ariaLabel={`${shown ? 'Hide' : 'Reveal'} ${field.definition.label} values`} onclick={() => toggleReveal(field.definition)} />
         {/if}
       </header>
+      {#if field.current.length > 0}
+        <ul class="history-rows">
+          {#each field.current as value (value.id)}
+            <li><span class={shown ? '' : 'concealed'}>{shown ? displayAttributeValue(field.definition, value.value) : 'Hidden'}</span><span class="meta">{historyProvenance(value)}</span></li>
+          {/each}
+        </ul>
+      {/if}
+      {#if field.history.length > 0}
       <details>
       <summary>{field.history.length} earlier {field.history.length === 1 ? 'value' : 'values'}</summary>
       <ul class="history-rows">
@@ -42,6 +50,7 @@
         {/each}
       </ul>
       </details>
+      {/if}
     </section>
   {/each}
 <style>

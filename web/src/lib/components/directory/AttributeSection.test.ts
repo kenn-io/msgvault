@@ -89,18 +89,23 @@ function renderSection(
 }
 
 describe('AttributeSection', () => {
-  it('keeps sensitive history out of display and DOM until reveal', async () => {
+  it.each([false, true])('keeps current imported provenance reachable while concealing sensitive values until reveal (earlier values=%s)', async earlier => {
     const sensitive = definition();
-    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' });
+    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' }, 0, { source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8, active_until: '2099-01-01T00:00:00Z' });
     const historical = personValue(sensitive, 17, { type: 'text', text: 'synthetic historical secret' }, 0, {
       active_until: '2026-07-01T00:00:00Z',
       superseded_at: '2026-07-01T00:00:00Z',
     });
-    renderSection(vi.fn(), [{ definition: sensitive, current: [current], history: [current, historical] }]);
+    renderSection(vi.fn(), [{ definition: sensitive, current: [current], history: earlier ? [historical] : [] }]);
 
     expect(screen.getByRole('heading', { name: 'Private note' })).toBeDefined();
-    expect(screen.getByText('1 earlier value')).toBeDefined();
-    expect(screen.getByText('Hidden')).toBeDefined();
+    if (earlier) expect(screen.getByText('1 earlier value')).toBeDefined();
+    expect(screen.getAllByText('Hidden')).toHaveLength(earlier ? 2 : 1);
+    const currentRow = screen.getByText(/Reference: source-card-7/).closest('li')!;
+    expect(currentRow.textContent).toContain('Actor: synthetic-importer');
+    expect(currentRow.textContent).toContain('Confidence: 0.8');
+    expect(currentRow.textContent).toMatch(/Valid from:.*Valid until:/);
+    expect(document.body.innerHTML).not.toContain('synthetic current secret');
     expect(screen.queryByText('synthetic historical secret')).toBeNull();
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
 
@@ -108,11 +113,13 @@ describe('AttributeSection', () => {
     reveal.focus();
     await fireEvent.click(reveal);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Hide Private note values' }));
-    expect(screen.getByText('synthetic historical secret')).toBeDefined();
+    if (earlier) expect(screen.getByText('synthetic historical secret')).toBeDefined();
+    expect(screen.getByText('synthetic current secret')).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Hide Private note values' }));
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
-    expect(screen.getByText('Hidden')).toBeDefined();
+    expect(screen.getAllByText('Hidden')).toHaveLength(earlier ? 2 : 1);
+    expect(document.body.innerHTML).not.toContain('synthetic current secret');
   });
 
   it('renders collapsed attribute history with value labels and provenance', () => {
