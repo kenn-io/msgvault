@@ -31,6 +31,7 @@ var task5StableToolNames = []string{
 	ToolFindSimilarMessages,
 	ToolGetAttachment,
 	ToolGetMessage,
+	ToolGetMessageRecords,
 	ToolGetSavedView,
 	ToolGetStats,
 	ToolListMessages,
@@ -367,6 +368,8 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 			return map[string]any{"query": "needle"}, true
 		}
 		return map[string]any{"query": "needle", "mode": "vector", "limit": 1, "explain": true}, true
+	case ToolGetMessageRecords:
+		return map[string]any{"message_id": 42}, true
 	case ToolGetMessage:
 		return map[string]any{"id": 42, "max_chars": 80, "body_format": "text"}, true
 	case ToolGetSavedView:
@@ -546,6 +549,12 @@ func task5AssertRepresentativeResult(
 		checks.NotEmpty(value.Data[0].Matches[0].Snippet)
 		must.NotNil(value.Data[0].Matches[0].Score)
 		checks.InDelta(0.92, *value.Data[0].Matches[0].Score, 0.0001)
+	case ToolGetMessageRecords:
+		value := task5StructuredAs[messageRecordsResponse](t, result)
+		checks.Equal(int64(42), value.MessageID)
+		checks.Equal("none", value.Kind)
+		checks.Empty(value.Records)
+		checks.Nil(value.SenderAuth)
 	case ToolGetMessage:
 		value := task5StructuredAs[struct {
 			ID              int64  `json:"id"`

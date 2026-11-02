@@ -157,6 +157,65 @@ func TestSQLiteFTSProbeQueryPlan(t *testing.T) {
 	}
 }
 
+func TestSQLiteFTSBackfillHTMLOnlyCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		columnsizeZero bool
+	}{
+		{name: "docsize"},
+		{name: "columnsize_zero", columnsizeZero: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			req := require.New(t)
+			db := newFTSProbeDB(t, tc.columnsizeZero)
+			_, err := db.Exec(`
+				ALTER TABLE messages ADD COLUMN message_type TEXT;
+				CREATE TABLE message_bodies (
+					message_id INTEGER PRIMARY KEY,
+					body_text TEXT,
+					body_html TEXT
+				);
+				INSERT INTO messages(id, message_type) VALUES
+					(1, 'email'), (2, 'email'), (3, 'email'), (4, 'google_chat');
+				INSERT INTO message_bodies VALUES
+					(1, '', '<p>missing HTML-only email</p>'),
+					(2, 'plain text', '<p>plain email</p>'),
+					(3, '', '<p>indexed HTML-only email</p>'),
+					(4, '', '<p>HTML-only chat</p>');
+				INSERT INTO messages_fts(rowid, text) VALUES (3, 'already indexed');
+			`)
+			req.NoError(err)
+
+			dialect := &SQLiteDialect{}
+			collectIDs := func(query string) []int64 {
+				t.Helper()
+				rows, err := db.QueryContext(t.Context(), query, int64(1), int64(5))
+				req.NoError(err)
+				defer func() { req.NoError(rows.Close()) }()
+				var ids []int64
+				for rows.Next() {
+					var id int64
+					req.NoError(rows.Scan(&id))
+					ids = append(ids, id)
+				}
+				req.NoError(rows.Err())
+				return ids
+			}
+
+			missingOnlySQL, err := dialect.FTSBackfillHTMLOnlyCandidateSQL(t.Context(), db, true)
+			req.NoError(err)
+			assert.Equal([]int64{1, 4}, collectIDs(missingOnlySQL),
+				"missing-only backfill selects unindexed HTML-only email and Google Chat messages")
+
+			rebuildSQL, err := dialect.FTSBackfillHTMLOnlyCandidateSQL(t.Context(), db, false)
+			req.NoError(err)
+			assert.Equal([]int64{1, 3, 4}, collectIDs(rebuildSQL),
+				"full rebuild selects every HTML-only email and Google Chat message")
+		})
+	}
+}
+
 func FuzzSQLiteFTSProbePresence(f *testing.F) {
 	f.Add([]byte{}, false)
 	f.Add([]byte{1, 1, 1}, false)

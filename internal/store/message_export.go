@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
@@ -388,13 +389,16 @@ func (s *Store) exportMessageRows(
 			return nil
 		}
 		for _, row := range page {
-			var text sql.NullString
+			var text, html sql.NullString
 			if err := s.db.QueryRowContext(
 				ctx,
-				s.dialect.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`),
+				s.dialect.Rebind(`SELECT body_text, body_html FROM message_bodies WHERE message_id = ?`),
 				row.id,
-			).Scan(&text); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			).Scan(&text, &html); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("load message export body: %w", err)
+			}
+			if row.messageType == MessageTypeEmail || row.messageType == MessageTypeGoogleChat {
+				text.String = mime.SearchableBodyText(text.String, html.String)
 			}
 			author, err := normalizeMessageExportAuthor(row)
 			if err != nil {

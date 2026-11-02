@@ -5,16 +5,20 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"html"
+	"io"
 	stdmime "mime"
 	"net/mail"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jhillyerd/enmime/v2"
 	"github.com/jhillyerd/enmime/v2/mediatype"
+	"golang.org/x/net/html"
 )
 
 const (
@@ -120,7 +124,7 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 		MessageID:       env.GetHeader("Message-ID"),
 		InReplyTo:       env.GetHeader("In-Reply-To"),
 		ListID:          NormalizeListID(env.GetHeader("List-Id")),
-		BodyText:        env.Text,
+		BodyText:        plainTextBody(root, env.Text),
 		BodyHTML:        env.HTML,
 		AutoSubmitted:   env.GetHeader("Auto-Submitted"),
 		Precedence:      env.GetHeader("Precedence"),
@@ -169,6 +173,20 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 		inspect(root)
 	}
 	return msg, nil
+}
+
+func plainTextBody(root *enmime.Part, parsedText string) string {
+	if root == nil {
+		return ""
+	}
+	part := root.DepthMatchFirst(func(part *enmime.Part) bool {
+		return strings.EqualFold(part.ContentType, "text/plain") &&
+			!strings.EqualFold(part.Disposition, "attachment") && part.FileName == ""
+	})
+	if part == nil {
+		return ""
+	}
+	return parsedText
 }
 
 // ParseWithRecovery parses a message and salvages its top-level headers when
@@ -772,15 +790,6 @@ func parseDate(s string) time.Time {
 	return time.Time{}
 }
 
-// Block tags that should create line breaks when stripped.
-var blockTagRe = regexp.MustCompile(`(?i)<(/?)(p|div|br|hr|h[1-6]|li|tr|td|th|blockquote|pre|table|ul|ol|dl|dt|dd)[^>]*>`)
-
-// Patterns for content-stripping tags (each needs separate pattern due to Go regex limitations).
-var scriptTagRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-var styleTagRe = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-var headTagRe = regexp.MustCompile(`(?is)<head[^>]*>.*?</head>`)
-var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
-
 // StripHTML removes HTML tags, decodes entities, and normalizes whitespace.
 // Block elements are converted to line breaks for readable plain text output.
 //
@@ -788,57 +797,182 @@ var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 // as all runs of spaces are collapsed. This is acceptable for email preview
 // where preserving exact code formatting is less important than readability.
 func StripHTML(rawHTML string) string {
-	// Remove script, style, and head tags entirely (including their content)
-	text := scriptTagRe.ReplaceAllString(rawHTML, "")
-	text = styleTagRe.ReplaceAllString(text, "")
-	text = headTagRe.ReplaceAllString(text, "")
+	return StripHTMLPrefix(rawHTML)
+}
 
-	// Add newlines for block tags to create paragraph separation.
-	// Both opening and closing block tags emit newlines so consecutive
-	// blocks (like </p><p>) get proper spacing. Leading/trailing blank
-	// lines are removed by the final TrimSpace.
-	text = blockTagRe.ReplaceAllStringFunc(text, func(match string) string {
-		return "\n"
-	})
+// StripHTMLPrefix removes markup and non-visible head, script, and style
+// content from an HTML body or a bounded prefix of one. If the prefix ends
+// inside one of those elements, its remaining content stays suppressed.
+func StripHTMLPrefix(rawHTML string) string {
+	stripped, _ := StripHTMLPrefixWithState(rawHTML)
+	return stripped
+}
 
-	// Strip remaining HTML tags
-	text = htmlTagRe.ReplaceAllString(text, "")
+// StripHTMLPrefixWithState also reports whether the supplied prefix ends
+// inside hidden markup. Callers can distinguish a visible-text boundary from
+// a source truncation inside an unterminated head, script, or style element.
+func StripHTMLPrefixWithState(rawHTML string) (string, bool) {
+	stripped, hiddenAtEnd, _ := StripHTMLPrefixWithBoundaryState(rawHTML)
+	return stripped, hiddenAtEnd
+}
 
-	// Decode HTML entities (&nbsp;, &amp;, &#160;, etc.)
-	text = html.UnescapeString(text)
+// StripHTMLPrefixWithBoundaryState also reports whether the visible text ends
+// at a separator before an unterminated hidden element. The normalized output
+// trims trailing whitespace, so callers that reason about a truncated token
+// boundary need this state separately.
+func StripHTMLPrefixWithBoundaryState(rawHTML string) (string, bool, bool) {
+	tokenizer := html.NewTokenizer(strings.NewReader(rawHTML))
+	var text strings.Builder
+	suppressed := ""
+	headTextElement := ""
+	visibleSeparatorAtEnd := false
+	writeVisible := func(content []byte) {
+		text.Write(content)
+		for len(content) > 0 {
+			r, size := utf8.DecodeRune(content)
+			if !unicode.IsMark(r) {
+				visibleSeparatorAtEnd = unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r)
+			}
+			content = content[size:]
+		}
+	}
+	for {
+		tokenType := tokenizer.Next()
+		switch tokenType {
+		case html.ErrorToken:
+			hiddenAtEnd := suppressed != "" && errors.Is(tokenizer.Err(), io.EOF)
+			return normalizeStrippedHTML(text.String()), hiddenAtEnd, hiddenAtEnd && visibleSeparatorAtEnd
+		case html.CommentToken, html.DoctypeToken:
+			// Comments and document declarations have no visible text.
+		case html.TextToken:
+			content := tokenizer.Text()
+			if suppressed == "head" {
+				if headTextElement != "" {
+					continue
+				}
+				if len(bytes.TrimSpace(content)) > 0 {
+					suppressed = ""
+					text.WriteByte('\n')
+					visibleSeparatorAtEnd = true
+				} else {
+					continue
+				}
+			}
+			if suppressed == "" {
+				writeVisible(content)
+			}
+		case html.StartTagToken, html.EndTagToken, html.SelfClosingTagToken:
+			token := tokenizer.Token()
+			name := strings.ToLower(token.Data)
+			if suppressed == "head" {
+				if headTextElement != "" {
+					if tokenType == html.EndTagToken && name == headTextElement {
+						headTextElement = ""
+					}
+					continue
+				}
+				if tokenType == html.EndTagToken && name == "head" {
+					suppressed = ""
+					continue
+				}
+				if tokenType != html.EndTagToken && name == "body" {
+					suppressed = ""
+					text.WriteByte('\n')
+					visibleSeparatorAtEnd = true
+					continue
+				}
+				if tokenType != html.EndTagToken && isHTMLHeadChild(name) {
+					if isHTMLHeadTextElement(name) {
+						headTextElement = name
+					}
+					continue
+				}
+				if tokenType == html.EndTagToken {
+					continue
+				}
+				// A body element implicitly closes an omitted </head> tag.
+				suppressed = ""
+				text.WriteByte('\n')
+				visibleSeparatorAtEnd = true
+			}
+			if suppressed != "" {
+				if tokenType == html.EndTagToken && name == suppressed {
+					suppressed = ""
+				}
+				continue
+			}
+			if tokenType == html.StartTagToken {
+				switch name {
+				case "head", "script", "style":
+					suppressed = name
+					continue
+				}
+			}
+			if isHTMLBlockTag(name) {
+				text.WriteByte('\n')
+				visibleSeparatorAtEnd = true
+			}
+		}
+	}
+}
 
-	// Normalize whitespace
+func isHTMLHeadChild(name string) bool {
+	if isHTMLHeadTextElement(name) {
+		return true
+	}
+	switch name {
+	case "base", "basefont", "bgsound", "link", "meta":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHTMLHeadTextElement(name string) bool {
+	switch name {
+	case "title", "noscript", "noframes", "script", "style", "template":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHTMLBlockTag(name string) bool {
+	switch name {
+	case "p", "div", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
+		"li", "tr", "td", "th", "blockquote", "pre", "table", "ul", "ol", "dl", "dt", "dd":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeStrippedHTML(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
-
-	// Replace non-breaking spaces with regular spaces
 	text = strings.ReplaceAll(text, "\u00A0", " ")
-
-	// Collapse multiple spaces on the same line (but preserve newlines)
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		lines[i] = strings.Join(strings.Fields(line), " ")
 	}
 	text = strings.Join(lines, "\n")
-
-	// Collapse multiple newlines (max 2)
 	for strings.Contains(text, "\n\n\n") {
 		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
 	}
-
 	return strings.TrimSpace(text)
 }
 
-// GetBodyText returns the best available body text.
-// Prefers plain text, falls back to stripped HTML.
+// SearchableBodyText returns plain text when available and stripped HTML otherwise.
+func SearchableBodyText(bodyText, bodyHTML string) string {
+	if bodyText != "" {
+		return bodyText
+	}
+	return StripHTML(bodyHTML)
+}
+
+// GetBodyText returns the best available body text for display or search.
 func (m *Message) GetBodyText() string {
-	if m.BodyText != "" {
-		return m.BodyText
-	}
-	if m.BodyHTML != "" {
-		return StripHTML(m.BodyHTML)
-	}
-	return ""
+	return SearchableBodyText(m.BodyText, m.BodyHTML)
 }
 
 // GetFirstFrom returns the first From address, or empty if none.

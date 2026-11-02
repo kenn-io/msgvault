@@ -1749,21 +1749,19 @@ func messageBodyChanges(
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
 	if errors.Is(err, sql.ErrNoRows) {
-		return embeddingBodyValue(bodyText, bodyHTML) != "",
-			nullStringValue(bodyText) != "", nil
+		searchableChanged := embeddingBodyValue(bodyText, bodyHTML) != ""
+		return searchableChanged, searchableChanged, nil
 	}
 	if err != nil {
 		return false, false, err
 	}
-	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML),
-		nullStringValue(oldText) != nullStringValue(bodyText), nil
+	oldSearchable := embeddingBodyValue(oldText, oldHTML)
+	newSearchable := embeddingBodyValue(bodyText, bodyHTML)
+	return oldSearchable != newSearchable, oldSearchable != newSearchable, nil
 }
 
 func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {
-	if v := nullStringValue(bodyText); v != "" {
-		return v
-	}
-	return mime.StripHTML(nullStringValue(bodyHTML))
+	return mime.SearchableBodyText(nullStringValue(bodyText), nullStringValue(bodyHTML))
 }
 
 func nullStringValue(ns sql.NullString) string {
@@ -1875,6 +1873,22 @@ func (s *Store) GetMessageBodyTextContext(ctx context.Context, messageID int64) 
 		return "", err
 	}
 	return nullStringValue(body), nil
+}
+
+// GetMessageBodyTextAndHTMLContext returns the stored body alternatives for
+// one message. A message without a body returns two empty strings.
+func (s *Store) GetMessageBodyTextAndHTMLContext(ctx context.Context, messageID int64) (string, string, error) {
+	var bodyText, bodyHTML sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
+	`, messageID).Scan(&bodyText, &bodyHTML)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return nullStringValue(bodyText), nullStringValue(bodyHTML), nil
 }
 
 func decodeMessageRaw(compressed []byte, compression sql.NullString) ([]byte, error) {
@@ -3978,7 +3992,11 @@ func (s *Store) BackfillFTSContext(
 	if err != nil {
 		return 0, err
 	}
-	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, progress)
+	candidateSQL, err := s.dialect.FTSBackfillHTMLOnlyCandidateSQL(ctx, s.db.DB, true)
+	if err != nil {
+		return 0, err
+	}
+	return s.backfillFTSRangeContext(ctx, batchSQL, candidateSQL, minID, maxID, progress)
 }
 
 // RebuildFTS fully recreates the FTS index from the underlying message
@@ -4020,7 +4038,13 @@ func (s *Store) RebuildFTSContext(
 		return 0, nil
 	}
 
-	indexed, err := s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillBatchSQL(), minID, maxID, progress)
+	candidateSQL, err := s.dialect.FTSBackfillHTMLOnlyCandidateSQL(ctx, s.db.DB, false)
+	if err != nil {
+		return 0, err
+	}
+	indexed, err := s.backfillFTSRangeContext(
+		ctx, s.dialect.FTSBackfillBatchSQL(), candidateSQL, minID, maxID, progress,
+	)
 	if err != nil {
 		return indexed, err
 	}
@@ -4047,6 +4071,7 @@ func (s *Store) messageIDRangeContext(ctx context.Context) (int64, int64, error)
 func (s *Store) backfillFTSRangeContext(
 	ctx context.Context,
 	batchSQL string,
+	candidateSQL string,
 	minID, maxID int64,
 	progress func(done, total int64),
 ) (int64, error) {
@@ -4057,7 +4082,7 @@ func (s *Store) backfillFTSRangeContext(
 
 	for cursor <= maxID {
 		batchEnd := cursor + batchSize
-		n, err := s.backfillFTSBatchContext(ctx, batchSQL, cursor, batchEnd)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, candidateSQL, cursor, batchEnd)
 		if err != nil {
 			// Only the specific PG tsvector-overflow error (a single
 			// pathological row whose body exceeds PostgreSQL's tsvector
@@ -4069,7 +4094,7 @@ func (s *Store) backfillFTSRangeContext(
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
 			}
-			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, cursor, batchEnd)
+			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, candidateSQL, cursor, batchEnd)
 			if err != nil {
 				return indexed, err
 			}
@@ -4083,6 +4108,84 @@ func (s *Store) backfillFTSRangeContext(
 		}
 	}
 	return indexed, nil
+}
+
+func (s *Store) htmlOnlyFTSCandidateIDsContext(
+	ctx context.Context,
+	tx *loggedTx,
+	candidateSQL string,
+	fromID, toID int64,
+) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, s.Rebind(candidateSQL), fromID, toID)
+	if err != nil {
+		return nil, fmt.Errorf("list HTML-only FTS candidates in [%d,%d): %w", fromID, toID, err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan HTML-only FTS candidate: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate HTML-only FTS candidates: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close HTML-only FTS candidates: %w", err)
+	}
+	return ids, nil
+}
+
+// indexHTMLOnlyFTSCandidatesWithTxContext fills body terms that the set-based
+// backfill cannot derive from body_text. Candidate IDs are captured before the
+// update and limited to missing HTML-only email entries, so this pass loads
+// message details only for rows requiring the HTML fallback. It shares the
+// batch transaction so an interruption cannot commit an incomplete document.
+func (s *Store) indexHTMLOnlyFTSCandidatesWithTxContext(
+	ctx context.Context,
+	tx *loggedTx,
+	ids []int64,
+) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		row, err := s.loadDerivedEmailText(q, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read message %d for FTS body update: %w", id, err)
+		}
+		if row.body != "" || row.html == "" {
+			continue
+		}
+		if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+			return fmt.Errorf("lock message %d for FTS body update: %w", id, err)
+		}
+		row, err = s.loadDerivedEmailText(q, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("reload message %d for FTS body update: %w", id, err)
+		}
+		if row.body != "" || row.html == "" {
+			continue
+		}
+		row.fts.Body = mime.SearchableBodyText(row.body, row.html)
+		if row.fts.Body == "" {
+			continue
+		}
+		if _, err := s.upsertFTSOrUnsearchable(q, row.fts); err != nil {
+			return fmt.Errorf("update FTS body for message %d: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // backfillFTSRowByRow re-runs the batch backfill one message id at a time over
@@ -4103,11 +4206,12 @@ func (s *Store) backfillFTSRangeContext(
 func (s *Store) backfillFTSRowByRowContext(
 	ctx context.Context,
 	batchSQL string,
+	candidateSQL string,
 	fromID, toID int64,
 ) (int64, error) {
 	var indexed int64
 	for id := fromID; id < toID; id++ {
-		n, err := s.backfillFTSBatchContext(ctx, batchSQL, id, id+1)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, candidateSQL, id, id+1)
 		if err != nil {
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
@@ -4129,11 +4233,10 @@ func (s *Store) backfillFTSRowByRowContext(
 }
 
 // backfillFTSBatchErrHook is a test-only seam: when non-nil it is consulted
-// before each batch's UPDATE, and a non-nil return forces backfillFTSBatch to
-// fail for the given id range. It lets tests exercise backfillFTSRowByRow's
-// skip-and-continue fallback deterministically without depending on a body that
-// happens to overflow PostgreSQL's tsvector limit after the LEFT cap. Nil (and
-// thus a no-op) in production; only export_test.go ever sets it, and it is
+// after the set-based update but before the HTML-only body pass. A non-nil
+// return aborts the transaction, allowing tests to verify that interrupted
+// batches cannot commit an incomplete HTML-only search document. Nil (and thus
+// a no-op) in production; only export_test.go ever sets it, and it is
 // per-Store: see the field's declaration on Store.
 
 // backfillFTSBatch inserts FTS rows for messages with id in [fromID, toID).
@@ -4146,21 +4249,34 @@ func (s *Store) backfillFTSRowByRowContext(
 func (s *Store) backfillFTSBatchContext(
 	ctx context.Context,
 	batchSQL string,
+	candidateSQL string,
 	fromID, toID int64,
 ) (int64, error) {
-	if s.backfillFTSBatchErrHook != nil {
-		if err := s.backfillFTSBatchErrHook(fromID, toID); err != nil {
-			return 0, err
-		}
-	}
 	var affected int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		candidateIDs, err := s.htmlOnlyFTSCandidateIDsContext(ctx, tx, candidateSQL, fromID, toID)
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
 		if err != nil {
 			return err
 		}
 		affected, err = result.RowsAffected()
-		return err
+		if err != nil {
+			return err
+		}
+		if s.backfillFTSBatchErrHook != nil {
+			if err := s.backfillFTSBatchErrHook(fromID, toID); err != nil {
+				return err
+			}
+		}
+		if affected > 0 && len(candidateIDs) > 0 {
+			if err := s.indexHTMLOnlyFTSCandidatesWithTxContext(ctx, tx, candidateIDs); err != nil {
+				return fmt.Errorf("index HTML-only message bodies in [%d,%d): %w", fromID, toID, err)
+			}
+		}
+		return nil
 	})
 	return affected, err
 }
@@ -6697,6 +6813,7 @@ type ArchivedRawMessage struct {
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
+	BodyHTML string
 	Snippet  string
 	// stored is the stored text and search envelope read with the payload.
 	stored derivedEmailText
@@ -6744,7 +6861,7 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 		return nil, fmt.Errorf("scan archived email: %w", err)
 	}
 	item.stored.fts.MessageID = item.MessageID
-	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
+	item.BodyText, item.BodyHTML, item.Snippet = item.stored.body, item.stored.html, item.stored.snippet
 	item.decodeArchivedEmail(raw, compression)
 	return item, nil
 }
@@ -6916,7 +7033,7 @@ func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, row derivedE
 		return true, nil
 	}
 	q := boundQuerier{ctx: ctx, q: s.db}
-	row.fts.Body = bodyText.String
+	row.fts.Body = embeddingBodyValue(bodyText, bodyHTML)
 	matches, err := s.dialect.FTSMatches(q, row.fts)
 	if s.dialect.IsFTSValueTooLargeError(err) {
 		return ftsMessageUnsearchable(q, row.fts.MessageID)
@@ -6936,7 +7053,7 @@ func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, item *A
 	if err != nil {
 		return false, fmt.Errorf("load derived email envelope: %w", err)
 	}
-	row.fts.Body = bodyText.String
+	row.fts.Body = embeddingBodyValue(bodyText, bodyHTML)
 	if row.matches(bodyText, bodyHTML, snippet) {
 		return s.upsertFTSOrUnsearchable(q, row.fts)
 	}
@@ -6980,6 +7097,7 @@ func (s *Store) lockArchivedEmailTextContext(ctx context.Context, tx *loggedTx, 
 }
 
 func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc, upsertFTS func(querier, FTSDoc) error) error {
+	fts.Body = embeddingBodyValue(bodyText, bodyHTML)
 	if err := upsertMessageBody(q, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
 		return fmt.Errorf("update derived message body: %w", err)
 	}

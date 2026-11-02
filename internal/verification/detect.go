@@ -75,11 +75,12 @@ var cues = []cue{
 }
 
 var (
-	codePattern     = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
-	urlPattern      = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
-	tokenPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
-	codeWordPattern = regexp.MustCompile(`\bcode\b`)
-	expiryPattern   = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
+	codePattern           = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
+	urlPattern            = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
+	tokenPattern          = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
+	codeWordPattern       = regexp.MustCompile(`\bcode\b`)
+	credentialWordPattern = regexp.MustCompile(`\b(?:code|password|passcode|otp|pin)\b`)
+	expiryPattern         = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
 )
 
 var knownDomains = []string{
@@ -103,6 +104,7 @@ type cueMatch struct {
 	start, end int
 	maxEnd     int // latest end among this match and all preceding matches
 	kind       string
+	text       string
 }
 
 func cueMatches(text string) []cueMatch {
@@ -122,9 +124,12 @@ func cueMatches(text string) []cueMatch {
 				continue
 			}
 			if wordBoundary(text, i, end) {
+				if (c.text == "one-time" || c.text == "one time") && !hasCredentialAfter(text, end, urls) {
+					continue
+				}
 				// "is your" alone is ordinary prose, not a credential cue.
 				if c.text != "is your" || hasCodeAfter(text, end, urls) {
-					found = append(found, cueMatch{start: i, end: end, kind: c.kind})
+					found = append(found, cueMatch{start: i, end: end, kind: c.kind, text: c.text})
 				}
 			}
 		}
@@ -139,10 +144,94 @@ func cueMatches(text string) []cueMatch {
 	return found
 }
 
+func genericSignInCue(text string) bool {
+	switch text {
+	case "sign in", "sign-in", "log in", "login link":
+		return true
+	default:
+		return false
+	}
+}
+
+const (
+	genericSignInProximityRunes = 12
+	genericSignInMaxCueBytes    = len("login link")
+)
+
+// genericSignInPrecedesCode treats a bare sign-in cue as evidence only when a
+// candidate code follows it directly. Navigation text such as "Sign in to
+// view order 482913" must not turn an order number into a credential.
+func genericSignInPrecedesCode(text string, codeStart int, matches []cueMatch) bool {
+	if codeStart < 0 || codeStart > len(text) || len(matches) == 0 {
+		return false
+	}
+	maxGapBytes := genericSignInProximityRunes * utf8.UTFMax
+	minimumStart := max(0, codeStart-maxGapBytes-genericSignInMaxCueBytes)
+	first := sort.Search(len(matches), func(i int) bool { return matches[i].start >= minimumStart })
+	last := sort.Search(len(matches), func(i int) bool { return matches[i].start >= codeStart })
+	for i := last - 1; i >= first; i-- {
+		cue := matches[i]
+		if cue.end > codeStart {
+			continue
+		}
+		if codeStart-cue.end > maxGapBytes {
+			continue
+		}
+		if separatorsOnlyBetween(text, cue.end, codeStart, genericSignInProximityRunes) {
+			return true
+		}
+	}
+	return false
+}
+
+func genericSignInDescribesLink(text string, start, end int, matches []cueMatch) bool {
+	for _, cue := range matches {
+		if cue.start >= start && cue.end <= end {
+			return true
+		}
+		if cue.end <= start && separatorsOnlyBetween(text, cue.end, start, genericSignInProximityRunes) {
+			return true
+		}
+	}
+	return false
+}
+
+func separatorsOnlyBetween(text string, start, end, maxRunes int) bool {
+	if start < 0 || end < start || end > len(text) {
+		return false
+	}
+	gap := text[start:end]
+	if utf8.RuneCountInString(gap) > maxRunes {
+		return false
+	}
+	for _, r := range gap {
+		if !unicode.IsSpace(r) && !unicode.IsPunct(r) && !unicode.IsSymbol(r) {
+			return false
+		}
+	}
+	return true
+}
+
 func hasCodeAfter(text string, start int, urls [][]int) bool {
 	for _, loc := range codeWordPattern.FindAllStringIndex(text[start:min(len(text), start+60)], -1) {
 		begin, end := start+loc[0], start+loc[1]
 		if !wordBoundary(text, begin, end) {
+			continue
+		}
+		index := sort.Search(len(urls), func(i int) bool { return urls[i][1] > begin })
+		if index < len(urls) && end > urls[index][0] {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func hasCredentialAfter(text string, start int, urls [][]int) bool {
+	limit := min(len(text), start+80)
+	for _, loc := range credentialWordPattern.FindAllStringIndex(text[start:limit], -1) {
+		begin, end := start+loc[0], start+loc[1]
+		if !wordBoundary(text, begin, end) || strings.ContainsAny(text[start:begin], ".!?") {
 			continue
 		}
 		index := sort.Search(len(urls), func(i int) bool { return urls[i][1] > begin })
@@ -194,15 +283,19 @@ func nearCue(text string, start, end int, matches []cueMatch) bool {
 	return false
 }
 
-// normalizedOffsets maps increasing original offsets into their lowercased
-// positions without repeatedly normalizing the entire preceding body.
-func normalizedOffsets(original string) func(int) int {
+// normalizedOffsets maps requested original offsets into their lowercased
+// positions in one pass. Sorting the offsets also handles overlapping anchor
+// spans without re-normalizing their shared text.
+func normalizedOffsets(original string, offsets []int) map[int]int {
+	sort.Ints(offsets)
+	positions := make(map[int]int, len(offsets))
 	previous, normalized := 0, 0
-	return func(offset int) int {
+	for _, offset := range offsets {
 		normalized += len(strings.ToLower(original[previous:offset]))
+		positions[offset] = normalized
 		previous = offset
-		return normalized
 	}
+	return positions
 }
 
 // Credential words must describe a complete endpoint component or query key,
@@ -389,15 +482,21 @@ func Detect(in Input) *Finding {
 		text := strings.ToLower(original)
 		matches := cueMatches(text)
 		var linkMatches []cueMatch
+		var codeMatches []cueMatch
+		var genericSignInMatches []cueMatch
 		for _, c := range matches {
-			if c.kind != kindOTPCode {
+			if c.kind == kindOTPCode {
+				codeMatches = append(codeMatches, c)
+			} else if genericSignInCue(c.text) {
+				genericSignInMatches = append(genericSignInMatches, c)
+			} else {
 				c.maxEnd = c.end
 				if len(linkMatches) > 0 {
 					c.maxEnd = max(c.maxEnd, linkMatches[len(linkMatches)-1].maxEnd)
 				}
 				linkMatches = append(linkMatches, c)
 			}
-			if f.Kind == "" || kindRank(c.kind) > kindRank(f.Kind) {
+			if !genericSignInCue(c.text) && (f.Kind == "" || kindRank(c.kind) > kindRank(f.Kind)) {
 				f.Kind = c.kind
 			}
 		}
@@ -410,28 +509,10 @@ func Detect(in Input) *Finding {
 				f.Signals = append(f.Signals, signal)
 			}
 		}
-		// Scan original casing for code shape, and normalize each prefix for
-		// cue offsets rather than assuming Unicode lowercasing preserves bytes.
+		// Scan original casing for code shape, and normalize only match endpoints
+		// because Unicode lowercasing can change byte lengths.
 		urls := urlPattern.FindAllStringIndex(original, -1)
-		urlIndex := 0
-		codeOffset := normalizedOffsets(original)
-		for _, loc := range codePattern.FindAllStringIndex(original, -1) {
-			for urlIndex < len(urls) && urls[urlIndex][1] <= loc[0] {
-				urlIndex++
-			}
-			if urlIndex < len(urls) && loc[1] > urls[urlIndex][0] {
-				continue
-			}
-			value := original[loc[0]:loc[1]]
-			if !wordBoundary(original, loc[0], loc[1]) || !codeShape(value) {
-				continue
-			}
-			start := codeOffset(loc[0])
-			end := start + len(strings.ToLower(value))
-			if nearCue(text, start, end, matches) {
-				add(Secret{Kind: "code", Value: value})
-			}
-		}
+		codes := codePattern.FindAllStringIndex(original, -1)
 		candidates := make([]htmlLink, 0, len(urls)+len(hrefs))
 		for _, loc := range urls {
 			candidates = append(candidates, htmlLink{strings.TrimRight(original[loc[0]:loc[1]], ".,;!)]}"), loc[0], loc[1]})
@@ -442,7 +523,37 @@ func Detect(in Input) *Finding {
 			}
 		}
 		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].start < candidates[j].start })
-		urlOffset := normalizedOffsets(original)
+		normalizationPoints := make([]int, 0, 2*(len(codes)+len(candidates)))
+		for _, loc := range codes {
+			normalizationPoints = append(normalizationPoints, loc[0], loc[1])
+		}
+		for _, link := range candidates {
+			normalizationPoints = append(normalizationPoints, link.start, link.end)
+		}
+		normalizedAt := normalizedOffsets(original, normalizationPoints)
+		urlIndex := 0
+		for _, loc := range codes {
+			for urlIndex < len(urls) && urls[urlIndex][1] <= loc[0] {
+				urlIndex++
+			}
+			if urlIndex < len(urls) && loc[1] > urls[urlIndex][0] {
+				continue
+			}
+			value := original[loc[0]:loc[1]]
+			if !wordBoundary(original, loc[0], loc[1]) || !codeShape(value) {
+				continue
+			}
+			start := normalizedAt[loc[0]]
+			end := normalizedAt[loc[1]]
+			if nearCue(text, start, end, codeMatches) {
+				add(Secret{Kind: "code", Value: value})
+			} else if genericSignInPrecedesCode(text, start, genericSignInMatches) {
+				add(Secret{Kind: "code", Value: value})
+				if f.Kind == "" {
+					f.Kind = kindOTPCode
+				}
+			}
+		}
 		for _, link := range candidates {
 			value := link.value
 			u, err := url.Parse(value)
@@ -453,14 +564,17 @@ func Detect(in Input) *Finding {
 			if !payload {
 				continue
 			}
-			start := urlOffset(link.start)
-			end := start + len(strings.ToLower(original[link.start:link.end]))
+			start := normalizedAt[link.start]
+			end := normalizedAt[link.end]
+			linkContext := nearCue(text, start, end, linkMatches) ||
+				genericSignInDescribesLink(text, start, end, genericSignInMatches)
 			// Explicit link context can identify an opaque credential URL even
-			// when its endpoint is generic. An OTP cue alone is not link context.
-			if !endpoint && (!opaque || !nearCue(text, start, end, linkMatches)) {
+			// when its endpoint is generic. Generic sign-in cues must directly
+			// introduce a URL or be its anchor text; nearby navigation is not link context.
+			if !endpoint && (!opaque || !linkContext) {
 				continue
 			}
-			if !opaque && !nearCue(text, start, end, matches) {
+			if !opaque && !linkContext {
 				continue
 			}
 			add(Secret{Kind: "link", Value: value, Host: strings.ToLower(u.Hostname())})

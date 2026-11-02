@@ -65,6 +65,34 @@ func TestLoadPersonSweepWindowUsesExactDurableScope(t *testing.T) {
 	checks.Contains(sweepMessageIDs(window.Seeds), aliceMessage)
 }
 
+func TestHydratePersonSweepHTMLOnlyMessagesIncludeBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, sourceType, messageType string
+	}{
+		{"email", "gmail", store.MessageTypeEmail},
+		{"google chat", "google_chat", store.MessageTypeGoogleChat},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			f := newPersonSweepJournalFixture(t, true, false)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+				`UPDATE sources SET source_type = ? WHERE id = ?`), tc.sourceType, f.sourceID)
+			requirements.NoError(err)
+			messageID := f.insertMessage(t, "html-only-message", tc.messageType, f.aliceID, time.Now().UTC())
+			requirements.NoError(f.store.UpsertMessageBody(messageID,
+				sql.NullString{String: "", Valid: true},
+				sql.NullString{String: `<p>HTML-only transactional confirmation.</p>`, Valid: true},
+			))
+
+			items, err := f.store.HydratePersonSweepMessages(t.Context(), f.alicePersonID, []int64{messageID}, 0)
+			requirements.NoError(err)
+			requirements.Len(items, 1)
+			checks.Contains(items[0].Excerpt, "HTML-only transactional confirmation.")
+		})
+	}
+}
+
 func TestPersonSweepDurableScopeMatchesResolver(t *testing.T) {
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)

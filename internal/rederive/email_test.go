@@ -60,6 +60,29 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	}
 }
 
+func TestEmailRebuildsHTMLOnlySearchWithoutSynthesizingBodyText(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "HeizkÃ¶rper")
+
+	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.BodiesRewritten)
+
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Empty(body, "HTML-only mail must keep canonical body_text empty")
+	var snippet string
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT snippet FROM messages WHERE id = ?"), id).Scan(&snippet))
+	assert.Equal("Heizkörper", snippet)
+
+	matches, total, err := st.SearchMessages("Heizkörper", 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	require.Len(matches, 1)
+	assert.Equal(id, matches[0].ID)
+}
+
 func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

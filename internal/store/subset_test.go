@@ -5584,6 +5584,44 @@ func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
 	assert.False(t, found, "markers for sources outside the subset stay behind")
 }
 
+func TestCopySubsetIndexesHTMLOnlyBodies(t *testing.T) {
+	for _, messageType := range []string{"email", MessageTypeGoogleChat} {
+		t.Run(messageType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+			source, err := Open(sourcePath)
+			require.NoError(err)
+			_, err = source.DB().Exec(`UPDATE message_bodies
+				SET body_text = '', body_html = ? WHERE message_id = 1`,
+				`<p>subsethtmlfallbackneedle</p>`)
+			require.NoError(err)
+			_, err = source.DB().Exec(`UPDATE messages
+				SET size_estimate = 0, message_type = ? WHERE id = 1`, messageType)
+			require.NoError(err)
+			require.NoError(source.Close())
+
+			destinationDir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(sourcePath, destinationDir, 1, false)
+			require.NoError(err)
+			destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(destination.Close()) })
+
+			matches, count, err := destination.SearchMessages("subsethtmlfallbackneedle", 0, 10)
+			require.NoError(err)
+			assert.Equal(int64(1), count)
+			require.Len(matches, 1)
+			var bodyText, bodyHTML string
+			require.NoError(destination.DB().QueryRow(`
+				SELECT body_text, body_html FROM message_bodies WHERE message_id = 1
+			`).Scan(&bodyText, &bodyHTML))
+			assert.Empty(bodyText, "FTS fallback must not rewrite canonical body_text")
+			assert.Equal(`<p>subsethtmlfallbackneedle</p>`, bodyHTML)
+		})
+	}
+}
+
 func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
 	for _, tc := range []struct {
 		name, provider, evidence string

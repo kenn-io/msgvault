@@ -112,6 +112,50 @@ func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 	assertions.Equal("Mail subject", sink.messages[1].Subject)
 }
 
+func TestExportMessagesUsesHTMLFallbackForEmailAndGoogleChatBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, sourceType, sourceIdentifier, conversationType, messageType string
+	}{
+		{"email", "gmail", "person@example.test", "email_thread", store.MessageTypeEmail},
+		{"google chat", "google_chat", "space-1", "group", store.MessageTypeGoogleChat},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource(tc.sourceType, tc.sourceIdentifier)
+			requirements.NoError(err)
+			conversationID := insertMessageExportConversation(
+				t, st, source.ID, "html-only-thread", "HTML only", tc.conversationType, `{}`,
+			)
+			start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+			messageID := insertMessageExportMessage(
+				t, st, source.ID, conversationID, "html-only", tc.messageType,
+				start, "", "HTML only", 0, false, false,
+			)
+			_, err = st.DB().Exec(st.Rebind(
+				`UPDATE message_bodies SET body_html = ? WHERE message_id = ?`,
+			), `<p>HTML-only export content.</p>`, messageID)
+			requirements.NoError(err)
+
+			sink := &collectingMessageExportSink{}
+			_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+				Start: start, End: start.Add(time.Hour),
+			}, sink)
+			requirements.NoError(err)
+			requirements.Len(sink.messages, 1)
+			assertions.Equal("HTML-only export content.", sink.messages[0].Text)
+
+			var bodyText sql.NullString
+			requirements.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT body_text FROM message_bodies WHERE message_id = ?`,
+			), messageID).Scan(&bodyText))
+			assertions.True(bodyText.Valid)
+			assertions.Empty(bodyText.String, "export fallback must not rewrite canonical body_text")
+		})
+	}
+}
+
 func TestExportMessagesUsesHalfOpenEffectiveTimestampWindow(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

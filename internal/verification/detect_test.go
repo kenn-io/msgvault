@@ -17,7 +17,9 @@ func TestDetectCorpus(t *testing.T) {
 		{"verification", "Your verification code is 482913", "otp_code", "482913", 0},
 		{"security", "Security code: 482913. Expires in 10 minutes.", "otp_code", "482913", 10 * time.Minute},
 		{"one-time", "One-time code 482913", "otp_code", "482913", 0},
+		{"one-time cue wraps before code", "One-time\ncode: 482913", "otp_code", "482913", 0},
 		{"one time", "One time password 482913", "otp_code", "482913", 0},
+		{"generic sign-in code", "Sign in: 482913", "otp_code", "482913", 0},
 		{"otp", "OTP: 482913", "otp_code", "482913", 0},
 		{"passcode", "Passcode: 4829", "otp_code", "4829", 0},
 		{"your code", "Your code is 482913", "otp_code", "482913", 0},
@@ -47,6 +49,11 @@ func TestDetectCorpus(t *testing.T) {
 		{"cue adjacent link", "Log in: https://example.com/login?id=abc", "magic_link", "https://example.com/login?id=abc", 0},
 		{"long DM", strings.Repeat("ordinary text ", 100) + "Verification code: 482913", "otp_code", "482913", 0},
 		{"cue only", "Your verification code will arrive separately", "otp_code", "", 0},
+		{"generic sign-in navigation", "Your order is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders", "", "", 0},
+		{"generic sign-in footer near order UUID", "Your order is confirmed: https://shop.example.test/orders/550e8400-e29b-41d4-a716-446655440000. Sign in to view your account.", "", "", 0},
+		{"generic sign-in date", "Order date: 2026-11-03. Sign in to view your order.", "", "", 0},
+		{"one-time payment", "This is a one-time payment for your order.", "", "", 0},
+		{"one time purchase", "Your one time purchase is confirmed.", "", "", 0},
 		{"invoice", "Invoice 482913 total $154.00", "", "", 0},
 		{"order", "Your order number is 482913", "", "", 0},
 		{"tracking", "Tracking 1234567890123456", "", "", 0},
@@ -261,6 +268,15 @@ func TestDeepHTMLRetainsCodesAndLinks(t *testing.T) {
 	}, f.Values)
 }
 
+func TestDetectUnclosedCredentialAnchorsWithLongBody(t *testing.T) {
+	const anchorCount = 2048
+	link := "https://example.test/login?token=abcdefghijklmnop"
+	body := strings.Repeat(`<a href="`+link+`">`, anchorCount) + strings.Repeat("A", 32*1024) + " Sign in"
+	f := Detect(Input{BodyHTML: body})
+	require.NotNil(t, f)
+	assert.Equal(t, []Secret{{Kind: "link", Value: link, Host: "example.test"}}, f.Values)
+}
+
 func TestCuesAllowWrappedWhitespace(t *testing.T) {
 	for _, body := range []string{
 		"Your verification\ncode is 482913",
@@ -375,6 +391,28 @@ func TestAnyCodePromotesGenericSignIn(t *testing.T) {
 	}
 }
 
+func TestGenericSignInDoesNotPromoteOrderOrTrackingNumbers(t *testing.T) {
+	for _, body := range []string{
+		"Order number 482913. Sign in to view your order.",
+		"Tracking number: 482913. Sign in to view delivery details.",
+		"482913 is your order number. Sign in to view your order.",
+		"482913 is your tracking number. Sign in to view delivery details.",
+		"Sign in to view order number 482913.",
+	} {
+		t.Run(body, func(t *testing.T) {
+			assert.Nil(t, Detect(Input{BodyText: body}))
+		})
+	}
+}
+
+func TestGenericSignInRepeatedNavigationKeepsOnlyNearbyCode(t *testing.T) {
+	body := strings.Repeat("Sign in to view order 482913. ", 512) + "Sign in: 928374"
+	finding := Detect(Input{BodyText: body})
+	require.NotNil(t, finding)
+	assert.Equal(t, "otp_code", finding.Kind)
+	assert.Equal(t, []Secret{{Kind: "code", Value: "928374"}}, finding.Values)
+}
+
 func TestExplicitCredentialCuesExtractOpaqueLinks(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, value string
@@ -383,6 +421,7 @@ func TestExplicitCredentialCuesExtractOpaqueLinks(t *testing.T) {
 		{"reset path", "password_reset", "https://example.com/r/abcdefghijklmnop", Input{BodyText: "Reset your password: https://example.com/r/abcdefghijklmnop"}},
 		{"magic query", "magic_link", "https://example.com/go?ticket=abcdefghijklmnop", Input{BodyText: "Your magic link: https://example.com/go?ticket=abcdefghijklmnop"}},
 		{"sign in snippet", "magic_link", "https://example.com/r/abcdefghijklmnop", Input{Snippet: "Sign in: https://example.com/r/abcdefghijklmnop"}},
+		{"sign in anchor", "magic_link", "https://example.com/r/abcdefghijklmnop", Input{BodyHTML: `<a href="https://example.com/r/abcdefghijklmnop">Sign in</a>`}},
 		{"HTML confirmation", "account_confirmation", "https://example.com/r/abcdefghijklmnop", Input{BodyHTML: `<a href="https://example.com/r/abcdefghijklmnop">Confirm <b>your email</b></a>`}},
 		{"subscription subject", "double_opt_in", "https://example.com/r/abcdefghijklmnop", Input{Subject: "Confirm your subscription", BodyText: "https://example.com/r/abcdefghijklmnop"}},
 	} {
@@ -464,16 +503,12 @@ func TestCredentialLinkRequiresPayload(t *testing.T) {
 	} {
 		t.Run(value, func(t *testing.T) {
 			assert := assert.New(t)
-			require := require.New(t)
 			for _, in := range []Input{
 				{BodyText: "Sign in: " + value},
 				{BodyHTML: `<a href="` + value + `">Sign in</a>`},
 			} {
 				f := Detect(in)
-				require.NotNil(f)
-				assert.Equal("magic_link", f.Kind)
-				assert.Equal("medium", f.Confidence)
-				assert.Empty(f.Values)
+				assert.Nil(f)
 			}
 		})
 	}

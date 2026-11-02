@@ -25,7 +25,7 @@ func NewEmbeddedReader(st *store.Store, attachmentsDir string) *EmbeddedReader {
 	r := &EmbeddedReader{store: st, downloads: downloads, handlers: make(map[string]sdkmcp.ToolHandlerFor[map[string]any, any])}
 	for _, d := range stableOperationCatalogs.get(catalogCapabilities{}) {
 		switch d.name {
-		case ToolGetMessage, ToolListMessages, ToolListThread, ToolSearchMetadata, ToolSearchMessageBodies, ToolGetStats, ToolGetAttachment:
+		case ToolGetMessage, ToolGetMessageRecords, ToolListMessages, ToolListThread, ToolSearchMetadata, ToolSearchMessageBodies, ToolGetStats, ToolGetAttachment:
 			r.handlers[d.name] = officialToolHandler(d.bind(h))
 		}
 	}

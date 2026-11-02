@@ -41,6 +41,36 @@ func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
 	assertFTSContains(t, f.Store, "orchard", 2)
 }
 
+func TestStore_BackfillFTSHTMLOnlyBodyRollsBackTogether(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+
+	messageID := f.CreateMessage("backfill-html-only-interrupted")
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: "<p>htmlatomicbackfilltoken</p>", Valid: true}),
+		"store HTML-only body")
+
+	interrupted := errors.New("interrupt HTML-only FTS pass")
+	restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(int64, int64) error {
+		return interrupted
+	})
+	t.Cleanup(restore)
+	_, err := f.Store.BackfillFTS(nil)
+	require.ErrorIs(err, interrupted)
+	assert.True(f.Store.NeedsFTSBackfill(), "the rolled-back batch remains eligible for retry")
+	assertFTSContains(t, f.Store, "htmlatomicbackfilltoken", 0)
+
+	restore()
+	indexed, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "retry the interrupted batch")
+	assert.Equal(int64(1), indexed)
+	assertFTSContains(t, f.Store, "htmlatomicbackfilltoken", 1)
+}
+
 func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

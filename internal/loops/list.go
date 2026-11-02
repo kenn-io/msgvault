@@ -60,7 +60,7 @@ var ErrEvidenceIncomplete = &EvidenceIncompleteError{}
 type Store interface {
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
-	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
+	GetMessageBodyTextAndHTMLContext(ctx context.Context, messageID int64) (string, string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
 	LoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, string, bool, error)
 	SaveLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int, token string, evidence store.LoopMessageEvidence) error
@@ -101,10 +101,11 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 		return e, ErrEvidenceIncomplete
 	}
 	r.left--
-	body, err := r.st.GetMessageBodyTextContext(r.ctx, id)
+	bodyText, bodyHTML, err := r.st.GetMessageBodyTextAndHTMLContext(r.ctx, id)
 	if err != nil {
 		return e, err
 	}
+	body := mime.SearchableBodyText(bodyText, bodyHTML)
 	signals, attachment, unreadable, err := r.original(id)
 	if err != nil {
 		return e, err

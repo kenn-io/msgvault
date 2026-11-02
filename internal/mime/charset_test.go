@@ -58,7 +58,12 @@ func TestParse_DeclaredUTF8Bodies(t *testing.T) {
 			}
 			msg := mustParse(t, []byte(part))
 			assert.Equal(wantHTML, msg.BodyHTML)
-			assert.Equal(charsetText, msg.BodyText)
+			if tc.kind == "plain" {
+				assert.Equal(charsetText, msg.BodyText)
+			} else {
+				assert.Empty(msg.BodyText, "HTML-only mail keeps canonical body text empty")
+			}
+			assert.Equal(charsetText, msg.GetBodyText())
 		})
 	}
 }
@@ -92,7 +97,8 @@ func TestParse_DeclaredUTF8WithMalformedAttachment(t *testing.T) {
 	assert := assert.New(t)
 	msg := mustParse(t, raw)
 	assert.Equal(charsetHTML, msg.BodyHTML)
-	assert.Equal(charsetText, msg.BodyText)
+	assert.Empty(msg.BodyText, "HTML-only mail keeps canonical body text empty")
+	assert.Equal(charsetText, msg.GetBodyText())
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal("broken.txt", msg.Attachments[0].Filename)
 }
@@ -101,5 +107,6 @@ func TestParse_InvalidDeclaredUTF8StillRecovered(t *testing.T) {
 	body := strings.ReplaceAll(strings.ReplaceAll(charsetHTML, "ö", "\xf6"), "Grüßen", "Gr\xfc\xdfen")
 	msg := mustParse(t, []byte(charsetPart(t, "utf-8", "quoted-printable", body)))
 	assert.Equal(t, charsetHTML, msg.BodyHTML)
-	assert.Equal(t, charsetText, msg.BodyText)
+	assert.Empty(t, msg.BodyText, "HTML-only mail keeps canonical body text empty")
+	assert.Equal(t, charsetText, msg.GetBodyText())
 }

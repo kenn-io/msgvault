@@ -43,6 +43,7 @@ const (
 	ToolSearchMessageBodies       = "search_message_bodies"
 	ToolSemanticSearchMessages    = "semantic_search_messages"
 	ToolGetMessage                = "get_message"
+	ToolGetMessageRecords         = "get_message_records"
 	ToolGetAttachment             = "get_attachment"
 	ToolExportAttachment          = "export_attachment"
 	ToolExportEML                 = "export_eml"
@@ -645,7 +646,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
+	case ToolGetMessage, ToolGetMessageRecords, ToolListThread, ToolSearchInMessage:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

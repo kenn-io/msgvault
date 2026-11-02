@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -70,6 +71,47 @@ func TestRepairMessageLeavesSentAttributionToIdentityDiscovery(t *testing.T) {
 		"Gmail ingest never writes source-native attribution; repair must match sync")
 	assert.False(t, identityIsFromMe,
 		"identity attribution comes from confirmed identities, not the SENT label")
+}
+
+func TestRepairMessageIndexesHTMLOnlyBody(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+	if !env.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+	source := env.CreateSource(t)
+	const id = "gmail-html-only"
+	const htmlBody = `<html><body><p>repairhtmlsearchtoken</p></body></html>`
+	internalID := seedRepairRow(t, env.Store, source.ID, id, "thread-html-only", "old")
+	env.Mock.Messages[id] = &gmail.RawMessage{
+		ID: id, ThreadID: "thread-html-only", LabelIDs: []string{"INBOX"},
+		Raw: testemail.MakeRaw(testemail.Options{
+			From:        "sender@example.com",
+			To:          "recipient@example.com",
+			Subject:     "HTML-only repair",
+			ContentType: "text/html; charset=utf-8",
+			Headers:     map[string]string{"Message-ID": "<gmail-html-only@example.com>"},
+			Body:        htmlBody,
+		}),
+	}
+
+	_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: id, SourceID: source.ID})
+	require.NoError(err)
+	message, err := env.Store.GetMessage(internalID)
+	require.NoError(err)
+	storedBodyText, err := env.Store.GetMessageBodyTextContext(t.Context(), internalID)
+	require.NoError(err)
+	assert.Empty(storedBodyText, "HTML-only repair should keep canonical plain text empty")
+	assert.Contains(message.BodyHTML, "repairhtmlsearchtoken")
+
+	results, total, err := env.Store.SearchMessagesQuery(
+		&search.Query{TextTerms: []string{"repairhtmlsearchtoken"}}, 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	require.Len(results, 1)
+	assert.Equal(internalID, results[0].ID)
 }
 
 func TestRepairMessagePreservesMetadata(t *testing.T) {
@@ -523,7 +565,7 @@ func seedRepairRow(t *testing.T, st *store.Store, sourceID int64, sourceMessageI
 			MessageType: store.MessageTypeEmail, RFC822MessageID: sql.NullString{String: "<" + sourceMessageID + "@example.com>", Valid: true},
 			Subject: sql.NullString{String: subject, Valid: true}, SenderID: sql.NullInt64{Int64: participants["sender@example.com"], Valid: true},
 		},
-		BodyText: sql.NullString{String: parsed.GetBodyText(), Valid: parsed.GetBodyText() != ""},
+		BodyText: sql.NullString{String: parsed.BodyText, Valid: parsed.BodyText != ""},
 		RawMIME:  raw,
 		Recipients: []store.RecipientSet{
 			{Type: "from", ParticipantIDs: []int64{participants["sender@example.com"]}, EmailAddresses: []string{"sender@example.com"}},

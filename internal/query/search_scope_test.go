@@ -413,6 +413,59 @@ func TestSearchMessageBodies_SQLiteOversizedBodyDoesNotPoisonFollowingHit(t *tes
 	assert.Contains(small.BodyContextSnippets[0], "needle")
 }
 
+func TestSearchMessageBodies_HTMLOnlyUsesStrippedHTML(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	messageID := createSearchScopeMessage(t, f, "html-only-context",
+		"ordinary subject", "ordinary preview", "", 0, 0)
+	htmlBody := `<html><head><title>hiddenhtmlterm</title></head><body><p>htmlonlyneedle appears in an email.</p></body></html>`
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: htmlBody, Valid: true}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"htmlonlyneedle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages.Messages, 1)
+	assert.Equal(messageID, messages.Messages[0].ID)
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "htmlonlyneedle")
+	assert.NotContains(messages.Messages[0].BodyContextSnippets[0], "hiddenhtmlterm")
+	assert.NotContains(messages.Messages[0].BodyContextSnippets[0], "<p>")
+}
+
+func TestSearchMessageBodies_TruncatedHTMLHidesOpenStyleContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	messageID := createSearchScopeMessage(t, f, "html-truncated-style-context",
+		"ordinary subject", "ordinary preview", "", 0, 0)
+	htmlBody := `<html><body><p>prefixneedle</p><style>hiddenstylesentinel` +
+		strings.Repeat("x", 1_500_000) + `</style></body></html>`
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: htmlBody, Valid: true}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"prefixneedle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages.Messages, 1)
+	assert.Equal(messageID, messages.Messages[0].ID)
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "prefixneedle")
+	assert.NotContains(messages.Messages[0].BodyContextSnippets[0], "hiddenstylesentinel")
+	assert.True(messages.Messages[0].BodyContextSnippetsTruncated)
+}
+
 func TestSearchMessageBodies_LimitedHitDoesNotMaskAnotherStaleHit(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

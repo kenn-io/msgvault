@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personscope"
@@ -447,8 +448,8 @@ func (s *Store) hydratePersonSweepMessageSet(
 	args = append(args, scopeArgs...)
 	args = append(args, boundArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
-		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''),
-		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(m.snippet, ''),
+		SELECT m.id, m.source_id, m.message_type, s.source_type, COALESCE(m.source_message_id, ''),
+		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(mb.body_html, ''), COALESCE(m.snippet, ''),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at), m.archived_at
 		FROM messages m JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources s ON s.id = m.source_id
@@ -461,16 +462,19 @@ func (s *Store) hydratePersonSweepMessageSet(
 	}
 	defer func() { _ = rows.Close() }()
 	type messageRow struct {
-		id, sourceID                                        int64
-		sourceType, sourceMessageID, subject, body, snippet string
-		event, recorded                                     time.Time
+		id, sourceID                                                               int64
+		messageType, sourceType, sourceMessageID, subject, body, bodyHTML, snippet string
+		event, recorded                                                            time.Time
 	}
 	messageRowsByID := make(map[int64]messageRow, len(queryIDs))
 	messageIDs := make([]int64, 0, len(queryIDs))
 	for rows.Next() {
 		var row messageRow
 		var event, recorded requiredTimestamp
-		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceType, &row.sourceMessageID, &row.subject, &row.body, &row.snippet, &event, &recorded); err != nil {
+		if err := rows.Scan(
+			&row.id, &row.sourceID, &row.messageType, &row.sourceType, &row.sourceMessageID,
+			&row.subject, &row.body, &row.bodyHTML, &row.snippet, &event, &recorded,
+		); err != nil {
 			return nil, nil, fmt.Errorf("scan person sweep message: %w", err)
 		}
 		row.event, row.recorded = event.Time.UTC(), recorded.Time.UTC()
@@ -497,9 +501,13 @@ func (s *Store) hydratePersonSweepMessageSet(
 		subjectPersonID, directness := personSweepAuthorship(
 			personID, prov, lane == peoplesweep.SourceConversationText,
 			personSweepSourceAuthenticatesSender(row.sourceType))
-		text := canonicalSweepMessageText(row.subject, row.body, row.snippet)
+		body := row.body
+		if row.messageType == MessageTypeEmail || row.messageType == MessageTypeGoogleChat {
+			body = msgmime.SearchableBodyText(body, row.bodyHTML)
+		}
+		text := canonicalSweepMessageText(row.subject, body, row.snippet)
 		if slices.Contains(prov.Roles, personscope.RoleFrom) {
-			body, _ := preprocess.Preprocess("", row.body, 0, preprocess.Config{
+			body, _ = preprocess.Preprocess("", body, 0, preprocess.Config{
 				StripQuotes: true, StripSignatures: true, StripHTML: true,
 				StripBase64: true, CollapseWhitespace: true,
 			})

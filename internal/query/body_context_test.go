@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestMarkedFragmentContext(t *testing.T) {
@@ -64,6 +65,68 @@ func TestValidBodyContextPrefixIsRuneSafe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "abc", prefix)
 	assert.True(t, truncated)
+}
+
+func TestBodyContextHiddenHTMLPrefixBoundaryNeedsVisibleSeparator(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                 string
+		html                 string
+		wantVisibleSeparator bool
+		wantSpanAtEndIsSafe  bool
+	}{
+		{
+			name:                 "hidden content can join the preceding token",
+			html:                 "needle<script>truncated hidden content",
+			wantVisibleSeparator: false,
+			wantSpanAtEndIsSafe:  false,
+		},
+		{
+			name:                 "visible space completes the preceding token",
+			html:                 "needle <script>truncated hidden content",
+			wantVisibleSeparator: true,
+			wantSpanAtEndIsSafe:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plain, hiddenAtEnd, visibleSeparatorAtEnd := mime.StripHTMLPrefixWithBoundaryState(tc.html)
+			require.True(t, hiddenAtEnd)
+			assert.Equal(t, "needle", plain)
+			assert.Equal(t, tc.wantVisibleSeparator, visibleSeparatorAtEnd)
+
+			state := bodyContextSourceState{spanBoundaryTruncated: hiddenAtEnd && !visibleSeparatorAtEnd}
+			chunk := bodyContextChunk{
+				body: plain, end: len(plain), coreEnd: len(plain),
+			}
+			assert.Equal(t, tc.wantSpanAtEndIsSafe, bodyContextSpanIsSafe(
+				chunk, bodyContextSpan{start: 0, end: len(plain)}, state,
+			))
+		})
+	}
+}
+
+func TestLoadBodyContextChunksSkipsOversizedBodies(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, bodyText, bodyHTML string
+	}{
+		{name: "plain text", bodyText: strings.Repeat("large body ", 32)},
+		{name: "html", bodyHTML: strings.Repeat("<p>large body</p>", 32)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := metadataSearchDB(t)
+			_, err := db.Exec(`INSERT INTO message_bodies(message_id, body_text, body_html) VALUES (1, ?, ?)`,
+				tc.bodyText, tc.bodyHTML)
+			require.NoError(t, err)
+
+			states, _, bodies, err := NewSQLiteEngine(db).loadBodyContextChunks(
+				t.Context(), []int64{1}, 32,
+			)
+			require.NoError(t, err)
+			assert.Empty(t, bodies[1])
+			assert.True(t, states[1].scanTruncated)
+		})
+	}
 }
 
 func TestBodyContextSnippetsCapsDistantMatches(t *testing.T) {

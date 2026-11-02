@@ -110,6 +110,48 @@ func TestListSignatureOnlyReplyKeepsQuestionOpen(t *testing.T) {
 	}
 }
 
+func TestListUsesHTMLOnlyBodiesForQuestionsAndAnswers(t *testing.T) {
+	t.Run("HTML-only question opens a loop", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := storetest.New(t)
+		question := f.PersistEmail(storetest.EmailSpec{
+			Thread: "html-only-question", From: alex, To: []string{me},
+			Subject: "Contract", SentAt: ago(5 * day),
+		})
+		require.NoError(f.Store.UpsertMessageBody(question,
+			sql.NullString{String: "", Valid: true},
+			sql.NullString{String: `<p>Can you send the contract?</p>`, Valid: true}),
+			"store HTML-only question")
+
+		result := list(t, f, loops.Options{})
+		require.Len(result.Loops, 1)
+		assert.Equal(question, result.Loops[0].Anchor.ID)
+		assert.Equal(loops.ReplyOwed, result.Loops[0].Kind)
+	})
+
+	t.Run("HTML-only answer settles a question", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := storetest.New(t)
+		f.PersistEmail(storetest.EmailSpec{
+			Thread: "html-only-answer", From: alex, To: []string{me},
+			Subject: "Contract", Body: "Can you send the contract?", SentAt: ago(5 * day),
+		})
+		answer := f.PersistEmail(storetest.EmailSpec{
+			Thread: "html-only-answer", From: me, To: []string{alex},
+			Subject: "Re: Contract", SentAt: ago(4 * day),
+		})
+		require.NoError(f.Store.UpsertMessageBody(answer,
+			sql.NullString{String: "", Valid: true},
+			sql.NullString{String: `<p>I sent the contract.</p>`, Valid: true}),
+			"store HTML-only answer")
+
+		result := list(t, f, loops.Options{})
+		assert.Empty(result.Loops)
+	})
+}
+
 func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *testing.T) {
 	const pdfOriginal = "MIME-Version: 1.0\r\n" +
 		"Content-Type: multipart/mixed; boundary=proof\r\n\r\n" +
@@ -495,9 +537,9 @@ type countingStore struct {
 	bodies    int
 }
 
-func (c *countingStore) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
+func (c *countingStore) GetMessageBodyTextAndHTMLContext(ctx context.Context, messageID int64) (string, string, error) {
 	c.bodies++
-	return c.Store.GetMessageBodyTextContext(ctx, messageID)
+	return c.Store.GetMessageBodyTextAndHTMLContext(ctx, messageID)
 }
 
 func (c *countingStore) LoopOriginalEvidenceContext(
