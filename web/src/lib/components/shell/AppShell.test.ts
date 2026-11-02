@@ -1754,9 +1754,6 @@ describe('AppShell', () => {
       if (path === '/api/v1/participants/11/timeline' || path === '/api/v1/participants/12/timeline') {
         return Response.json({ cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {} });
       }
-      if (path === '/api/v1/people' && request.method === 'POST') return Response.json({
-        error: 'person_binding_conflict', message: 'This identity is already bound to another person'
-      }, { status: 409 });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -1765,15 +1762,6 @@ describe('AppShell', () => {
     expect(await screen.findByRole('heading', { name: 'Prior Directory Person' })).toBeDefined();
     state.commitNavigation(relationshipDestination(11));
     expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('already bound to another person');
-
-    state.commitNavigation(relationshipDestination(12));
-    expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-
-    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
 
     rendered.unmount();

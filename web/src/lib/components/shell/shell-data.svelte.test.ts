@@ -9,6 +9,7 @@ interface Answers {
   views?: SavedView[];
   failing?: string[];
   deletions?: Promise<Response>;
+  waiting?: boolean;
 }
 
 function setup(answers: Answers = {}) {
@@ -18,6 +19,7 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: answers.waiting ? [pair] : [] });
     if (path === '/api/v1/deletions') return answers.deletions ?? Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
@@ -223,11 +225,15 @@ it('restores the visible view and reports a failed delete', async () => {
 
 it('refreshes jobs on the timer and deletions on explicit refresh', async () => {
   vi.useFakeTimers();
-  const { data, requests } = setup();
+  const answers = { waiting: false };
+  const { data, requests } = setup(answers);
   try {
     await data.refresh();
+    expect(data.duplicateCount).toBe(0);
     data.start();
+    answers.waiting = true;
     await vi.advanceTimersByTimeAsync(30_000);
+    expect(data.duplicateCount).toBe(1);
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
     await data.refresh();
@@ -265,28 +271,4 @@ it('keeps the post-decision badge when an earlier read completes late', async ()
     await initial;
     expect(data.duplicateCount).toBe(0);
   } finally { data.stop(); }
-});
-
-it('refreshes the waiting duplicate count while the app remains visible', async () => {
-  vi.useFakeTimers();
-  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  let waiting = false;
-  const data = new ShellData(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: waiting ? [pair] : [], offset: 0, limit: 500 });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
-    if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
-    if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
-    throw new Error(`Unexpected ${path}`);
-  }));
-  try {
-    await data.refresh();
-    expect(data.duplicateCount).toBe(0);
-    data.start();
-    waiting = true;
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(data.duplicateCount).toBe(1);
-  } finally { data.stop(); visibility.mockRestore(); vi.useRealTimers(); }
 });

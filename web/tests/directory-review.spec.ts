@@ -103,8 +103,8 @@ for (const bulk of [false, true]) {
   });
 }
 
-test('merge handoff inspects both profiles separately without mutating', async ({ page }) => {
-  for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthetic Two' }]) {
+for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthetic Two' }]) {
+  test(`merge handoff inspects ${profile.name} separately without mutating`, async ({ page }) => {
     const fixture = await installDirectoryReviewArchive(page);
     await page.goto(duplicatesURL);
     await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
@@ -123,8 +123,8 @@ test('merge handoff inspects both profiles separately without mutating', async (
     await expect(page.getByRole('list', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
-  }
-});
+  });
+}
 
 test('History wraps long provenance at phone width', async ({ page }) => {
   await installDirectoryReviewArchive(page);

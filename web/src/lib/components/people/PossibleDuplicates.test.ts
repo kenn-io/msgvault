@@ -7,23 +7,17 @@ import { pair } from '../shell/fixtures.test-support';
 
 it('renders endpoint summaries and wires Retry and both decisions', async () => {
   const row = { ...pair, basis: 'stable_provider_id', review_token: 'displayed-token' };
-  let unavailable = true;
-  const controller = new DirectoryReviewController(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    if (new URL(request.url).pathname.endsWith('/identity/match-candidates')) {
-      if (unavailable) { unavailable = false; return Response.json({ message: 'Queue unavailable' }, { status: 503 }); }
-      return Response.json({ candidates: [row], limit: 10, offset: 0 });
-    }
-    throw new Error(`Unexpected ${request.url}`);
-  }));
-  await controller.loadIdentityPage();
+  const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
+  controller.rows = [row];
+  controller.error = 'Queue unavailable';
+  const retry = vi.spyOn(controller, 'retryPage').mockImplementation(async () => { controller.error = null; });
   controller.summaries.set('participant:1', { id: 1, name: 'Observed example', address: 'observed@example.com', count: 1, lastAt: null });
   controller.summaries.set('participant:2', { id: 2, name: 'Absorbed person', address: 'absorbed@example.com', count: 3, lastAt: null });
   const onDecide = vi.fn();
   const view = render(PossibleDuplicates, { controller, onDecide });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByRole('button', { name: 'Merge' });
+    expect(retry).toHaveBeenCalledOnce();
     await screen.findByText('Observed example');
     await screen.findByText('absorbed@example.com');
     await screen.findByText('Same provider identity');

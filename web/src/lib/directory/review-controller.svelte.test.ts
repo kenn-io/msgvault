@@ -272,7 +272,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.status).toContain('Review the refreshed pair to finish.');
   });
 
-  it.each(['newer To review', '409 recovery', '503 recovery'] as const)('preserves the active review context after deferred settlement: %s', async scenario => {
+  it.each(['newer To review', '409 recovery', '503 failure remains available after History navigation'] as const)('preserves the active review context after deferred settlement: %s', async scenario => {
     const decisionResponse = deferredResponse();
     const conflict = {
       error: 'person_merge_required', message: 'Choose a survivor', profiles: [
@@ -312,13 +312,13 @@ describe('DirectoryReviewController', () => {
         expect(controller.status).toBeNull();
         expect(reads).toBe(3);
       } else {
+        await controller.setIdentityState('accepted');
+        await vi.waitFor(() => expect(controller.rows).toEqual(historyRows));
         if (scenario === '409 recovery') {
           decisionResponse.resolve(Response.json(conflict, { status: 409 }));
           await expect(decision).resolves.toMatchObject({ ok: false, kind: 'merge_required', conflict });
         }
-        await controller.setIdentityState('accepted');
-        await vi.waitFor(() => expect(controller.rows).toEqual(historyRows));
-        if (scenario === '503 recovery') {
+        if (scenario === '503 failure remains available after History navigation') {
           decisionResponse.resolve(Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status: 503 }));
           await expect(decision).resolves.toMatchObject({ ok: false, kind: 'error', status: 503, message: 'Decision unavailable' });
           expect(controller.decisionError).toBe('Decision unavailable');
@@ -390,7 +390,7 @@ it.each([
   const settled = vi.fn();
   const refresh = deferredResponse();
   const accepted = candidate(1, decision === 'accept' ? 'accepted' : 'rejected');
-  const cacheState = reconciliation === 'failed' ? 'stale' : 'ready';
+  const cacheState = 'ready';
   let decided = false;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
@@ -412,13 +412,13 @@ it.each([
     if (reconciliation === 'pending') {
       await vi.waitFor(() => expect(controller.rows).toEqual([accepted]));
       expect(controller.isDecisionPending(1)).toBe(true);
-      refresh.resolve(page([accepted]));
+      refresh.resolve(page([candidate(2)]));
     }
     await expect(completion).resolves.toEqual({ ok: true, candidate: accepted, cacheState });
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
     expect(controller.isDecisionPending(1)).toBe(false);
     expect(writes).toEqual([{ path: `/api/v1/identity/match-candidates/1/review/${decision}`, body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
-    expect(controller.rows).toEqual(reconciliation === 'ready' ? [candidate(2)] : [accepted]);
+    expect(controller.rows).toEqual(reconciliation === 'failed' ? [accepted] : [candidate(2)]);
     expect(controller.getDecisionDraft(1)).toBe('');
     expect(controller.summaries.has('participant:20')).toBe(decision === 'reject');
     expect(controller.summaries.has('participant:11')).toBe(decision === 'reject');

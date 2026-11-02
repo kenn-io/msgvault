@@ -69,11 +69,6 @@ export type CapturedTrackingRequest = {
   tracked?: boolean;
 };
 
-export type CapturedRelationshipReviewRequest = {
-  method: string;
-  path: string;
-  status: string | null;
-};
 
 type InstalledMixedArchive = MixedArchiveFixture & {
   trackingRequests: CapturedTrackingRequest[];
@@ -706,10 +701,6 @@ export async function installDirectoryReviewArchive(page: Page) {
   ]);
   let phase: 'premerge' | 'postmerge' | 'postsplit' = 'premerge';
   const requests: CapturedReviewRequest[] = [];
-  const decisionGates = new Map<number, { promise: Promise<void>; release: () => void }>();
-  const decisionFailures = new Map<number, string>();
-  const relationshipRequests: CapturedRelationshipReviewRequest[] = [];
-  let failNextRelationshipRead = false;
   let factCatalogMode: 'ready' | 'deferred' | 'failed' | 'malformed' = 'ready';
   let factCatalogGate: Promise<void> | null = null;
 
@@ -723,11 +714,6 @@ export async function installDirectoryReviewArchive(page: Page) {
     const request = route.request();
     const url = new URL(request.url());
     const status = url.searchParams.get('status');
-    relationshipRequests.push({ method: request.method(), path: url.pathname, status });
-    if (failNextRelationshipRead) {
-      failNextRelationshipRead = false;
-      return route.fulfill({ status: 503, json: { error: 'unavailable', message: 'forbidden-remote-error-marker' } });
-    }
     const reviews =
       status === 'pending' || status === null && url.searchParams.get('person_id') === '7'
         ? [
@@ -993,16 +979,6 @@ export async function installDirectoryReviewArchive(page: Page) {
       });
     }
 
-    const gate = decisionGates.get(candidateID);
-    if (gate) {
-      decisionGates.delete(candidateID);
-      await gate.promise;
-    }
-    const failure = decisionFailures.get(candidateID);
-    if (failure) {
-      decisionFailures.delete(candidateID);
-      return route.fulfill({ status: 503, json: { error: 'unavailable', message: failure } });
-    }
     if (candidateID === 19 && decision === 'accept') {
       return route.fulfill({
         status: 409,
@@ -1214,10 +1190,6 @@ export async function installDirectoryReviewArchive(page: Page) {
     archive,
     candidates,
     requests,
-    relationshipRequests,
-    failNextRelationshipRead(): void {
-      failNextRelationshipRead = true;
-    },
     deferFactCatalog(): () => void {
       let release = () => undefined;
       factCatalogMode = 'deferred';
@@ -1231,17 +1203,6 @@ export async function installDirectoryReviewArchive(page: Page) {
     },
     malformFactCatalog(): void {
       factCatalogMode = 'malformed';
-    },
-    holdNextDecision(candidateID: number): () => void {
-      let release = () => undefined;
-      const promise = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      decisionGates.set(candidateID, { promise, release });
-      return release;
-    },
-    failNextDecision(candidateID: number, message: string): void {
-      decisionFailures.set(candidateID, message);
     },
   };
 }
