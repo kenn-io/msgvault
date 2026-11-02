@@ -453,9 +453,10 @@ func (s *Syncer) replayAcquisitionFailures(
 			}
 			s.logger.Warn("failed to batch fetch replay messages", "error", fetchErr)
 			for _, messageID := range batchIDs {
-				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
+				if s.recordReplayError(ctx, syncID, messageID, syncItemPhaseFetch, syncItemKindBatchFetchError, fetchErr) {
+					checkpoint.ErrorsCount++
+				}
 			}
-			checkpoint.ErrorsCount += int64(len(batchIDs))
 			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
 				return nil, fmt.Errorf("checkpoint replay batch: %w", err)
 			}
@@ -474,8 +475,9 @@ func (s *Syncer) replayAcquisitionFailures(
 				}
 				errMsg := syncItemErrorMessage(result.Err, errRawBatchMissing.Error())
 				err := errors.New(errMsg)
-				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
-				checkpoint.ErrorsCount++
+				if s.recordReplayError(ctx, syncID, messageID, syncItemPhaseFetch, syncItemKindFetchError, err) {
+					checkpoint.ErrorsCount++
+				}
 				continue
 			}
 
@@ -487,8 +489,9 @@ func (s *Syncer) replayAcquisitionFailures(
 					// A purge settled this retry after the run read it.
 					continue
 				}
-				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
-				checkpoint.ErrorsCount++
+				if s.recordReplayError(ctx, syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err) {
+					checkpoint.ErrorsCount++
+				}
 				continue
 			}
 			checkpoint.MessagesAdded++

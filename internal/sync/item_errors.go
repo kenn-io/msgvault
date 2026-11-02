@@ -205,6 +205,32 @@ func syncItemErrorMessage(err error, fallback string) string {
 	return fallback
 }
 
+// recordReplayError records a failed retry of an earlier acquisition failure
+// and reports whether it counts as an error. A dedup purge may have settled the
+// message after this run read its pending retries; that purge stands, so the
+// failure is not recorded and does not count.
+func (s *Syncer) recordReplayError(ctx context.Context, syncID int64, messageID, phase, kind string, err error) bool {
+	recorded, recErr := s.store.RecordAcquisitionRetryError(ctx, store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: messageID,
+		Phase:           phase,
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       kind,
+		ErrorMessage:    syncItemErrorMessage(err, kind),
+	})
+	if recErr != nil {
+		s.logger.Warn("failed to record sync item",
+			"sync_id", syncID,
+			"source_message_id", messageID,
+			"phase", phase,
+			"error_kind", kind,
+			"error", recErr,
+		)
+		return true
+	}
+	return recorded
+}
+
 func (s *Syncer) recordSyncItem(syncID int64, sourceMessageID, phase, status, kind string, err error) {
 	if s.pendingAcquisitions != nil && syncID == s.acquisitionSyncID && status == store.SyncRunItemStatusError &&
 		isAcquisitionReplayCandidate(store.SyncRunItem{SourceMessageID: sourceMessageID, Phase: phase, ErrorKind: kind}) {

@@ -983,6 +983,33 @@ func (s *Store) recordSyncRunItemWith(ctx context.Context, q contextQuerier, ite
 // resolveAcquisitionWith records item unless the message's latest acquisition
 // outcome is already resolved, and returns ErrAcquisitionSettled if it is.
 func (s *Store) resolveAcquisitionWith(ctx context.Context, q contextQuerier, item SyncRunItem) error {
+	recorded, err := s.recordUnlessAcquisitionSettled(ctx, q, item)
+	if err != nil {
+		return fmt.Errorf("resolve acquisition: %w", err)
+	}
+	if !recorded {
+		return fmt.Errorf("message %q: %w", item.SourceMessageID, ErrAcquisitionSettled)
+	}
+	return nil
+}
+
+// RecordAcquisitionRetryError records a failed retry of an earlier acquisition
+// failure. It reports false and records nothing if the message's latest
+// outcome is already resolved: a dedup purge settled it after the sync read its
+// pending retries, and a newer error would let a later sync restore the purged
+// message.
+func (s *Store) RecordAcquisitionRetryError(ctx context.Context, item SyncRunItem) (bool, error) {
+	recorded, err := s.recordUnlessAcquisitionSettled(ctx, s.db, item)
+	if err != nil {
+		return false, fmt.Errorf("record acquisition retry error: %w", err)
+	}
+	return recorded, nil
+}
+
+// recordUnlessAcquisitionSettled inserts item in one statement unless the
+// message's latest fetch or ingest outcome is resolved, and reports whether it
+// inserted.
+func (s *Store) recordUnlessAcquisitionSettled(ctx context.Context, q contextQuerier, item SyncRunItem) (bool, error) {
 	result, err := q.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO sync_run_items (
 			sync_run_id, source_message_id, phase, status,
@@ -1004,16 +1031,13 @@ func (s *Store) resolveAcquisitionWith(ctx context.Context, q contextQuerier, it
 		item.SyncRunID, item.SourceMessageID, SyncRunItemStatusResolved,
 	)
 	if err != nil {
-		return fmt.Errorf("resolve acquisition: %w", err)
+		return false, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("resolve acquisition: %w", err)
+		return false, err
 	}
-	if affected == 0 {
-		return fmt.Errorf("message %q: %w", item.SourceMessageID, ErrAcquisitionSettled)
-	}
-	return nil
+	return affected > 0, nil
 }
 
 // CountSyncRunItems returns the number of recorded per-item sync outcomes for
