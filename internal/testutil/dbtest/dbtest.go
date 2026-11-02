@@ -29,6 +29,8 @@ type TestDB struct {
 
 // Templates live for the test binary's lifetime. Their single connection also
 // serializes backups, while every test gets a private, growable copy.
+// testutil's sqliteTemplateBytes in internal/testutil/sqlite_template.go snapshots a file built by store.InitSchema with FTS and archive metadata.
+// dbtest needs a separate template for raw schema.sql with messages_fts dropped, copied into memory.
 var schemaTemplates sync.Map
 
 type schemaTemplate struct {
