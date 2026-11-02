@@ -2641,11 +2641,6 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
-	var active []line.ActiveChannel
-	if a.lineWebhook != nil {
-		active = a.lineWebhook.ActiveChannels()
-	}
-	ctx = withLineActiveChannels(ctx, active)
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}

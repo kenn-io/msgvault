@@ -39,22 +39,13 @@ currently sends no LINE messages.
     ```
 
     The command checks the credentials and bot identity, registers the archive
-    source, and saves configuration. This first invocation leaves LINE's remote
-    webhook settings alone.
+    source, and saves configuration.
 4. Restart the daemon or service with the secret variable present. This loads
-   the saved channel and mounts its receiver. The saved file alone does not
-   prove that the running daemon can receive events.
-5. Make the [public webhook route](#expose-only-the-webhook-route) reachable,
-   then run the command again with your public HTTPS base URL:
-
-    ```bash
-    msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAMPLE \
-      --webhook-base-url https://archive.example.com
-    ```
-
-    This invocation can set and test the webhook after the active receiver
-    matches the registered channel. Without `--webhook-base-url`, use the
-    printed route and Console instructions to configure it yourself.
+   the saved channel and mounts its receiver.
+5. Make the [public webhook route](#expose-only-the-webhook-route) reachable.
+   Set `https://archive.example.com/webhooks/line/2000000001` as the webhook URL
+   in LINE Developers Console, using your public hostname and channel ID.
+   The optional `--webhook-base-url` flag prints this URL during registration.
 6. In the channel's Messaging API settings, enable **Use webhook** and enable
    **Webhook redelivery**. Use **Verify**, then send a test message and check
    your archive. LINE's [redelivery guide](https://developers.line.biz/en/docs/messaging-api/receiving-messages/#enable-webhook-redelivery)
@@ -130,7 +121,7 @@ ranges; the [signature authenticates delivery](https://developers.line.biz/en/do
 | Incoming content | Archive behavior |
 |---|---|
 | Text and locations | Searchable text with native metadata |
-| Images, video, audio, and files | LINE-provided bytes streamed into the archive, up to a fixed 250 MiB per attachment |
+| Images, video, audio, and files | LINE-provided bytes streamed into the archive, up to the configured cap (250 MiB by default) |
 | External-provider media | URLs retained as metadata; msgvault never fetches those URLs |
 | Stickers | Native sticker metadata and available text or keywords; no scraped sticker art |
 | Quotes | Linked when the quoted message is archived in the same chat; missing targets can resolve later |
@@ -161,6 +152,9 @@ If the receiver is inactive, check the channel configuration and secret
 environment variable, then restart the daemon.
 
 ## Delivery and retries
+
+Each channel can disable downloads with `media = false` or set a per-file
+cap with `max_media_mb`. The default cap is 250 MiB.
 
 LINE may deliver duplicates or events out of order, and redelivery cannot
 guarantee completeness. msgvault acknowledges a batch only after committing
@@ -198,8 +192,9 @@ This integration has no option to purge content automatically on unsend.
 
 Reply and mark-as-read capability tokens are removed recursively before events
 are persisted. Native metadata, including `quoteToken`, may remain in the
-archive. Completed and ignored inbox payloads older than 30 days are cleared,
-while compact event IDs stay for duplicate detection. This cleanup does not
+archive. Completed, ignored, and failed inbox events older than 30 days are deleted,
+except for failed edits and unsends. Duplicate detection covers this 30-day
+window; a redelivery after retention can be admitted again. This cleanup does not
 remove archived message bodies or their raw evidence. Failed lifecycle evidence
 is retained for later reconciliation.
 

@@ -69,7 +69,7 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 			runtime.logger.Warn("LINE receiver skipped; run add-line to register bot identity", "channel", profile.ChannelID)
 			continue
 		}
-		processor := line.NewProcessor(st, client, source.ID, profile.ChannelID, cfg.AttachmentsDir())
+		processor := line.NewProcessor(st, client, source.ID, profile.ChannelID, cfg.AttachmentsDir(), line.WithProcessorMediaPolicy(profile.MediaPolicy()))
 		channelID := profile.ChannelID
 		name, _ := api.SchedulerJobNameForSource(line.SourceType, channelID)
 		run := invocationBoundJobRun(state, func(ctx context.Context) error {

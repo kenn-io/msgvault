@@ -35,7 +35,7 @@ func TestSanitizeEventRemovesCapabilities(t *testing.T) {
 	checks.Contains(string(clean), `9007199254740993`)
 	checks.Contains(string(clean), `"quoteToken":"keep"`)
 	var event line.Event
-	must.NoError(json.Unmarshal(raw, &event))
+	must.NoError(json.Unmarshal(clean, &event))
 	checks.JSONEq(string(clean), string(event.Raw))
 	checks.Contains(string(event.Message.Raw), `"native":{"quoteToken":"keep"}`)
 	for _, invalid := range []string{`null`, `[]`, `{`, `{} {}`, `{"replyToken":}`} {

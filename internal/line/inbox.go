@@ -76,6 +76,15 @@ func WithProcessorMediaLimit(maxBytes int64) ProcessorOption {
 	}
 }
 
+func WithProcessorMediaPolicy(policy attachmentpolicy.Policy) ProcessorOption {
+	return func(p *Processor) {
+		p.mediaPolicy = policy
+		if policy.MaxBytes > 0 {
+			p.maxBytes = policy.MaxBytes
+		}
+	}
+}
+
 // Processor applies one bounded pass. Text commits before any provider lookup;
 // each event remains durable until all its enrichment has finished or expired.
 type Processor struct {
@@ -85,6 +94,7 @@ type Processor struct {
 	channelID, attachmentsDir string
 	now                       func() time.Time
 	maxBytes                  int64
+	mediaPolicy               attachmentpolicy.Policy
 	groupNames                map[string]string
 	botID                     string
 	messagesAdded             int64
@@ -99,7 +109,36 @@ func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, at
 	return p
 }
 
-func (p *Processor) Process(ctx context.Context) (resultErr error) {
+// Drain processes all work due at entry, across bounded passes. Later receipts
+// and newly scheduled retries belong to a later drain.
+func (p *Processor) Drain(ctx context.Context) error {
+	cutoff := p.now()
+	throughID, err := p.store.LineInboxHighWaterContext(ctx, p.sourceID)
+	if err != nil {
+		return err
+	}
+	if throughID == 0 {
+		return ctx.Err()
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		due, err := p.store.DueLineEventsThroughContext(ctx, p.sourceID, cutoff, throughID, 1)
+		if err != nil || len(due) == 0 {
+			return err
+		}
+		if err := p.process(ctx, cutoff, throughID); err != nil {
+			return err
+		}
+	}
+}
+
+func (p *Processor) Process(ctx context.Context) error {
+	return p.process(ctx, p.now(), 0)
+}
+
+func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int64) (resultErr error) {
 	if p == nil || p.store == nil || p.client == nil {
 		return errors.New("LINE processor unavailable")
 	}
@@ -110,7 +149,7 @@ func (p *Processor) Process(ctx context.Context) (resultErr error) {
 	if err := p.store.PruneLineEventsContext(ctx, p.sourceID, p.now().Add(-30*24*time.Hour)); err != nil {
 		return err
 	}
-	due, err := p.store.DueLineEventsContext(ctx, p.sourceID, p.now(), 1)
+	due, err := p.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 1)
 	if err != nil {
 		return err
 	}
@@ -122,7 +161,7 @@ func (p *Processor) Process(ctx context.Context) (resultErr error) {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, execution.Release()) }()
-	due, err = p.store.DueLineEventsContext(ctx, p.sourceID, p.now(), 1)
+	due, err = p.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 1)
 	if err != nil {
 		return err
 	}
@@ -185,7 +224,7 @@ func (p *Processor) Process(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	rows, err := pass.store.DueLineEventsContext(ctx, p.sourceID, p.now(), 500)
+	rows, err := pass.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 500)
 	if err != nil {
 		return err
 	}

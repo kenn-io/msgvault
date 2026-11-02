@@ -70,9 +70,10 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	if m.Type != "file" && m.ContentProvider != nil && m.ContentProvider.Type != "" && m.ContentProvider.Type != "line" {
 		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
-	policy := attachmentpolicy.Policy{MaxBytes: p.maxBytes}
-	if policy.Evaluate(attachmentpolicy.Conversation{}, m.FileSize) == attachmentpolicy.SkipSizeCap {
-		return save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
+	policy := p.mediaPolicy
+	policy.MaxBytes = p.maxBytes
+	if reason := policy.Evaluate(attachmentpolicy.Conversation{}, m.FileSize); reason != "" {
+		return save(attachmentpolicy.StateSkipped, reason)
 	}
 	if _, found := refs[key]; !found {
 		if err = save(attachmentpolicy.StatePending, ""); err != nil {

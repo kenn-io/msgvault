@@ -2,7 +2,6 @@ package line_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,19 +56,6 @@ func TestReceiverConfigurationAndHandles(t *testing.T) {
 	}
 	_, err = line.NewReceiver(st, []line.ReceiverChannel{channel, channel}, nil)
 	must.Error(err)
-	channels := []line.ReceiverChannel{channel, receiverChannel(2)}
-	channels[1].ChannelID = "2000000001"
-	receiver, err = line.NewReceiver(st, channels, nil)
-	must.NoError(err)
-	snapshot := receiver.ActiveChannels()
-	must.Len(snapshot, 2)
-	checks.Equal("2000000000", snapshot[0].ChannelID)
-	snapshot[0].ChannelID = "mutated"
-	checks.Equal("2000000000", receiver.ActiveChannels()[0].ChannelID)
-	encoded, err := json.Marshal(receiver.ActiveChannels())
-	must.NoError(err)
-	checks.NotContains(string(encoded), "synthetic-secret")
-	checks.Contains(string(encoded), "EXAMPLE_LINE_SECRET")
 }
 
 func TestReceiverWakeAfterCommit(t *testing.T) {
@@ -89,9 +75,12 @@ func TestReceiverWakeAfterCommit(t *testing.T) {
 		must.NoError(err)
 		must.Len(rows, 1)
 		checks.Equal("event-1", rows[0].WebhookEventID)
+		checks.NotContains(rows[0].RawJSON, "replyToken")
+		checks.NotContains(rows[0].RawJSON, "markAsReadToken")
+		checks.Contains(rows[0].RawJSON, "quoteToken")
 	})
 	must.NoError(err)
-	body := `{"destination":"` + receiverBot + `","events":[{"type":"message","webhookEventId":"event-1","timestamp":123,"source":{"type":"user"},"message":{"id":"123","type":"text","text":"synthetic"}}]}`
+	body := `{"destination":"` + receiverBot + `","events":[{"type":"message","replyToken":"ephemeral","webhookEventId":"event-1","timestamp":123,"source":{"type":"user"},"message":{"id":"123","type":"text","text":"synthetic","quoteToken":"retained","nested":[{"markAsReadToken":"ephemeral"}]}}]}`
 	request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", strings.NewReader(body))
 	request.Header.Set("X-Line-Signature", lineapi.Sign("synthetic-secret", []byte(body)))
 	receiver.ServeHTTP(response, request)

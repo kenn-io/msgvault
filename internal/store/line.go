@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -38,7 +37,7 @@ type LineInboxStatus struct {
 // EnqueueLineEventsContext acknowledges a batch only after all its events commit.
 // The mounted receiver's channel and bot identities are checked under the same
 // source lock as receipt so a stale receiver cannot target a reused source ID.
-// Compact event IDs remain after payload retention so old delivery cannot replay.
+// Event IDs deduplicate deliveries within the retained inbox window.
 func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, channelID, botUserID string, events []LineWebhookEvent) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
@@ -72,9 +71,6 @@ func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, ch
 			return errors.New("LINE inbox bot binding changed")
 		}
 		for _, e := range events {
-			if e.WebhookEventID == "" || len(e.WebhookEventID) > 200 || strings.HasPrefix(e.WebhookEventID, "_") || e.EventType == "" || e.EventTimestamp <= 0 || !jsontext.Value(e.RawJSON).IsValid() {
-				return errors.New("invalid LINE inbox event")
-			}
 			received := e.ReceivedAt
 			if received.IsZero() {
 				received = time.Now().UTC()
@@ -110,12 +106,25 @@ func scanLineEvents(rows *loggedRows) ([]LineWebhookEvent, error) {
 }
 
 func (s *Store) DueLineEventsContext(ctx context.Context, sourceID int64, now time.Time, limit int) ([]LineWebhookEvent, error) {
+	return s.DueLineEventsThroughContext(ctx, sourceID, now, 0, limit)
+}
+
+// LineInboxHighWaterContext bounds a manual drain to receipts present at entry.
+func (s *Store) LineInboxHighWaterContext(ctx context.Context, sourceID int64) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(MAX(id),0) FROM line_webhook_events WHERE source_id=?`), sourceID).Scan(&id)
+	return id, err
+}
+
+// DueLineEventsThroughContext optionally bounds receipt IDs as well as retry time.
+// A zero ceiling selects all receipts.
+func (s *Store) DueLineEventsThroughContext(ctx context.Context, sourceID int64, now time.Time, throughID int64, limit int) ([]LineWebhookEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+lineEventColumns+` FROM line_webhook_events
-  WHERE source_id=? AND (state='pending' OR (state='retry' AND next_attempt_at<=?))
-  ORDER BY event_timestamp,webhook_event_id LIMIT ?`), sourceID, now.UTC(), limit)
+  WHERE source_id=? AND (?=0 OR id<=?) AND (state='pending' OR (state='retry' AND next_attempt_at<=?))
+  ORDER BY event_timestamp,webhook_event_id LIMIT ?`), sourceID, throughID, throughID, now.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("load due LINE events: %w", err)
 	}
@@ -172,9 +181,11 @@ func (s *Store) PruneLineEventsContext(ctx context.Context, sourceID int64, befo
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE line_webhook_events SET raw_json='{}',last_error=''
-   WHERE source_id=? AND state IN ('processed','ignored') AND event_type NOT IN ('_profile','_membership')
-   AND received_at<? AND raw_json<>'{}'`, sourceID, before)
+		_, err := tx.ExecContext(ctx, `DELETE FROM line_webhook_events
+   WHERE source_id=? AND state IN ('processed','ignored','failed')
+   AND event_type NOT IN ('_profile','_membership')
+   AND NOT (state='failed' AND event_type IN ('messageEdited','unsend'))
+   AND received_at<?`, sourceID, before)
 		return err
 	})
 }
@@ -182,7 +193,7 @@ func (s *Store) PruneLineEventsContext(ctx context.Context, sourceID int64, befo
 func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (LineInboxStatus, error) {
 	var out LineInboxStatus
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(SUM(CASE WHEN state IN ('pending','retry') THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END),0) FROM line_webhook_events WHERE source_id=? AND event_type NOT IN ('_profile','_membership')`), sourceID).Scan(&out.Pending, &out.Failed)
+ COALESCE(SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END),0) FROM line_webhook_events WHERE source_id=? AND state IN ('pending','retry','failed') AND event_type NOT IN ('_profile','_membership')`), sourceID).Scan(&out.Pending, &out.Failed)
 	if err != nil {
 		return out, fmt.Errorf("count LINE inbox: %w", err)
 	}

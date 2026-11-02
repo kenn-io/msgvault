@@ -3,7 +3,6 @@ package line
 import (
 	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -51,14 +50,6 @@ type GroupSummary struct {
 	GroupName  string `json:"groupName"`
 	PictureURL string `json:"pictureUrl"`
 }
-type WebhookTestResult struct {
-	Success    bool   `json:"success"`
-	Timestamp  string `json:"timestamp"`
-	StatusCode int    `json:"statusCode"`
-	Reason     string `json:"reason"`
-	Detail     string `json:"detail"`
-}
-
 type ClientOption func(*Client)
 
 // WithBaseURLs overrides the fixed LINE hosts for a local fake API.
@@ -338,28 +329,4 @@ func (c *Client) content(ctx context.Context, messageID string, maxBytes int64) 
 		defer func() { _ = response.Body.Close() }()
 		return nil, c.statusError(response)
 	}
-}
-
-func webhookBody(endpoint string) ([]byte, error) {
-	return json.Marshal(struct {
-		Endpoint string `json:"endpoint"`
-	}{endpoint})
-}
-
-func (c *Client) SetWebhook(ctx context.Context, endpoint string) error {
-	body, err := webhookBody(endpoint)
-	if err != nil {
-		return fmt.Errorf("encode LINE webhook endpoint: %w", err)
-	}
-	var result jsontext.Value
-	return c.jsonRequest(ctx, http.MethodPut, "/v2/bot/channel/webhook/endpoint", body, &result)
-}
-func (c *Client) TestWebhook(ctx context.Context, endpoint string) (WebhookTestResult, error) {
-	var result WebhookTestResult
-	body, err := webhookBody(endpoint)
-	if err != nil {
-		return result, fmt.Errorf("encode LINE webhook endpoint: %w", err)
-	}
-	err = c.jsonRequest(ctx, http.MethodPost, "/v2/bot/channel/webhook/test", body, &result)
-	return result, err
 }

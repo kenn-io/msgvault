@@ -36,14 +36,6 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	checks.Equal("event-1", rows[0].WebhookEventID)
 	checks.Equal("1", rows[0].TargetMessageID)
 	checks.Equal(src.ID, rows[0].SourceID)
-	invalid := event
-	invalid.WebhookEventID = ""
-	valid := event
-	valid.WebhookEventID = "event-2"
-	must.Error(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, []store.LineWebhookEvent{valid, invalid}))
-	rows, err = st.DueLineEventsContext(ctx, src.ID, at.Add(time.Second), 100)
-	must.NoError(err)
-	checks.Len(rows, 1, "invalid batch rolls back every insert")
 }
 
 func TestLineInboxRetryDeadlineIgnoresCallerZone(t *testing.T) {
@@ -105,13 +97,9 @@ func TestLineInboxDueAndRetention(t *testing.T) {
 	checks.Equal(1, due[0].Attempts)
 	must.NoError(st.FinishLineEventContext(ctx, rows[1].ID, "processed", "", time.Time{}))
 	must.NoError(st.PruneLineEventsContext(ctx, src.ID, now.Add(-30*24*time.Hour)))
-	var raw string
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), src.ID, "original").Scan(&raw))
-	checks.Equal("{}", raw)
-	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, events[:1]))
-	due, err = st.DueLineEventsContext(ctx, src.ID, now, 10)
-	must.NoError(err)
-	checks.Empty(due, "retained event id rejects replay after payload cleanup")
+	var retained int
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), src.ID, "original").Scan(&retained))
+	checks.Zero(retained)
 	mutations, err := st.LineMutationsContext(ctx, src.ID, "late")
 	must.NoError(err)
 	must.Len(mutations, 1)

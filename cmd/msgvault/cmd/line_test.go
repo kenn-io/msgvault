@@ -3,17 +3,16 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/line"
@@ -29,7 +28,6 @@ func lineWiringFixture(t *testing.T) (*config.Config, *store.Store, *lineapi.Ser
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	t.Setenv("EXAMPLE_LINE_SECRET", "synthetic-secret")
 	t.Setenv("OTHER_LINE_SECRET", "other-synthetic-secret")
-	t.Setenv(lineActiveChannelsEnv, "")
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = t.TempDir()
@@ -58,15 +56,15 @@ func executeLineCommand(t *testing.T, cfg *config.Config, command *cobra.Command
 	return out.String(), err
 }
 
-func TestLineRegistrationTwoChannelsAndActiveRestart(t *testing.T) {
+func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	cfg, st, fake := lineWiringFixture(t)
+	cfg, _, fake := lineWiringFixture(t)
 	args := []string{"--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com"}
 	output, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "restart")
+	checks.Contains(output, "Restart")
 	checks.Contains(output, "Use webhook")
 	checks.Contains(output, "Webhook redelivery")
 	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
@@ -82,28 +80,23 @@ func TestLineRegistrationTwoChannelsAndActiveRestart(t *testing.T) {
 	// The original cfg remains stale; a repeated add must load the current file.
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "restart")
+	checks.Contains(output, "Restart")
 	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
-	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
-	must.NoError(err)
-	snapshot, err := json.Marshal([]line.ActiveChannel{{ChannelID: "2000000001", SourceID: source.ID, BotUserID: wiringBot, SecretEnv: "EXAMPLE_LINE_SECRET"}})
-	must.NoError(err)
-	t.Setenv(lineActiveChannelsEnv, string(snapshot))
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "verified")
-	checks.Equal(1, fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
-	checks.Equal(1, fake.Count("POST", "/v2/bot/channel/webhook/test"))
+	checks.Contains(output, "https://archive.example.com/webhooks/line/2000000001")
+	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
+	checks.Zero(fake.Count("POST", "/v2/bot/channel/webhook/test"))
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.Len(loaded.Line, 2)
 	checks.Equal(17, loaded.Sync.RateLimitQPS)
-	// A changed secret variable requires a new mounted receiver snapshot.
+	// A changed secret variable takes effect when the daemon restarts.
 	args[3] = "OTHER_LINE_SECRET"
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "restart")
-	checks.Equal(1, fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
+	checks.Contains(output, "Restart")
+	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
 	checks.NotContains(output, "synthetic-secret")
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
@@ -113,41 +106,12 @@ func TestLineRegistrationTwoChannelsAndActiveRestart(t *testing.T) {
 		}
 	}
 	must.NoError(loaded.Save())
-	t.Setenv(lineActiveChannelsEnv, "")
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "restart")
+	checks.Contains(output, "Restart")
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.False(loaded.GetLineSource("2000000001").Enabled)
-}
-
-func TestLineWebhookFailurePreservesRegistration(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-
-	cfg, st, fake := lineWiringFixture(t)
-	args := []string{"--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com"}
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
-	must.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
-	must.NoError(err)
-	snapshot, err := json.Marshal([]line.ActiveChannel{{ChannelID: "2000000001", SourceID: source.ID, BotUserID: wiringBot, SecretEnv: "EXAMPLE_LINE_SECRET"}})
-	must.NoError(err)
-	t.Setenv(lineActiveChannelsEnv, string(snapshot))
-	for _, response := range []lineapi.Response{
-		{Status: 200, Body: `{"success":false,"reason":"synthetic-secret"}`},
-		{Status: 500, Body: `synthetic-secret`},
-	} {
-		fake.Enqueue("POST", "/v2/bot/channel/webhook/test", response)
-		output, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
-		must.Error(err)
-		checks.NotContains(err.Error(), "synthetic-secret")
-		checks.NotContains(output, "synthetic-secret")
-		loaded, err := config.Load(cfg.ConfigFilePath(), "")
-		must.NoError(err)
-		checks.NotNil(loaded.GetLineSource("2000000001"))
-	}
 }
 
 func TestLineCommandValidation(t *testing.T) {
@@ -169,45 +133,6 @@ func TestLineCommandValidation(t *testing.T) {
 	t.Setenv("EXAMPLE_LINE_SECRET", "")
 	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
 	require.ErrorContains(t, err, "EXAMPLE_LINE_SECRET")
-}
-
-func TestLineRuntimeChildEnvAuthoritativeSnapshot(t *testing.T) {
-	cfg, st, _ := lineWiringFixture(t)
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: "2000000001", SourceID: 1, BotUserID: wiringBot, SecretEnv: "EXAMPLE_LINE_SECRET", Secret: "synthetic-secret"}}, nil)
-	require.NoError(t, err)
-	t.Setenv(lineActiveChannelsEnv, `[{"channel_id":"forged-inherited"}]`)
-	for _, active := range []*line.Receiver{receiver, nil} {
-		adapter := &storeAPIAdapter{config: cfg, lineWebhook: active}
-		err := adapter.runCLICommandWithRunner(testInvocationContext(t.Context(), cfg, invocationOptions{}), api.CLIRunRequest{Args: []string{"add-line"}, Env: map[string]string{lineActiveChannelsEnv: `[{"channel_id":"forged-request"}]`, strings.ToLower(lineActiveChannelsEnv): "forged-case"}}, nil,
-			func(ctx context.Context, args []string, env map[string]string, cwd string, emit func(string, string) error) error {
-				command, err := newDaemonCLISubprocessCommand(ctx, args, env, cwd)
-				require.NoError(t, err)
-				var snapshot string
-				count := 0
-				for _, entry := range command.Env {
-					name, value, ok := strings.Cut(entry, "=")
-					if ok && strings.EqualFold(name, lineActiveChannelsEnv) {
-						count++
-						snapshot = value
-					}
-				}
-				assert.Equal(t, 1, count)
-				assert.NotContains(t, snapshot, "forged")
-				assert.NotContains(t, snapshot, "synthetic-secret")
-				var records []line.ActiveChannel
-				require.NoError(t, json.Unmarshal([]byte(snapshot), &records))
-				if active == nil {
-					assert.Empty(t, records)
-				} else {
-					assert.Equal(t, active.ActiveChannels(), records)
-				}
-				return nil
-			})
-		require.NoError(t, err)
-	}
-	// Even a call without invocation state clears inherited and request claims.
-	env := daemonRuntimeChildEnv(context.Background(), []string{lineActiveChannelsEnv + "=forged"})
-	assert.Contains(t, env, lineActiveChannelsEnv+"=[]")
 }
 
 func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
@@ -258,27 +183,6 @@ func TestLineScheduledCacheProgress(t *testing.T) {
 	checks.Equal(1, calls)
 }
 
-func TestLineReadinessRequiresExactParentIdentity(t *testing.T) {
-	must := require.New(t)
-	lineWiringFixture(t)
-	record := line.ActiveChannel{ChannelID: "2000000001", SourceID: 1, BotUserID: wiringBot, SecretEnv: "EXAMPLE_LINE_SECRET"}
-	for _, mutate := range []func(*line.ActiveChannel){
-		func(r *line.ActiveChannel) { r.ChannelID = "2000000002" }, func(r *line.ActiveChannel) { r.SourceID = 2 }, func(r *line.ActiveChannel) { r.BotUserID = "U00000000000000000000000000000003" }, func(r *line.ActiveChannel) { r.SecretEnv = "OTHER_LINE_SECRET" },
-	} {
-		changed := record
-		mutate(&changed)
-		raw, err := json.Marshal([]line.ActiveChannel{changed})
-		must.NoError(err)
-		t.Setenv(lineActiveChannelsEnv, string(raw))
-		assert.False(t, lineReceiverReady(1, record.ChannelID, record.BotUserID, record.SecretEnv))
-	}
-	raw, err := json.Marshal([]line.ActiveChannel{record})
-	must.NoError(err)
-	t.Setenv(lineActiveChannelsEnv, string(raw))
-	t.Setenv(daemonCLISubprocessEnv, "")
-	assert.False(t, lineReceiverReady(1, record.ChannelID, record.BotUserID, record.SecretEnv), "ordinary CLI cannot trust a supplied snapshot")
-}
-
 func TestLineNormalCLIUsesDaemonTransport(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
@@ -306,4 +210,64 @@ func TestLineNormalCLIUsesDaemonTransport(t *testing.T) {
 		must.NoError(err)
 		checks.Equal(name, leaf.Name())
 	}
+}
+
+func TestAddLinePreservesConcurrentConfigEdit(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	cfg, _, fake := lineWiringFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/bot/info" {
+			snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
+			if !checks.NoError(err) {
+				http.Error(w, "config edit failed", http.StatusInternalServerError)
+				return
+			}
+			_, err = config.EditConfigFile(cfg.ConfigFilePath(), snapshot.ETag, []config.Edit{{Key: "sync.rate_limit_qps", Value: 17}})
+			if !checks.NoError(err) {
+				http.Error(w, "config edit failed", http.StatusInternalServerError)
+				return
+			}
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	lineClientFactory = func(id, secret string) *line.Client {
+		return line.NewClient(id, secret, line.WithBaseURLs(server.URL, server.URL))
+	}
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+	// A conditional edit may report a conflict; it must preserve the newer file.
+	if err != nil {
+		must.ErrorIs(err, config.ErrConfigConflict)
+	}
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	checks.Equal(17, loaded.Sync.RateLimitQPS)
+}
+
+func TestSyncLineDrainsAllDueWork(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	cfg, st, _ := lineWiringFixture(t)
+	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
+	must.NoError(err)
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	loaded.Line[0].Enabled = false
+	must.NoError(loaded.Save())
+	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	must.NoError(err)
+	events := make([]store.LineWebhookEvent, 501)
+	for i := range events {
+		id := fmt.Sprintf("message-%03d", i)
+		raw := fmt.Sprintf(`{"type":"message","webhookEventId":%q,"timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":%q,"type":"text","text":"synthetic"}}`, id, id)
+		events[i] = store.LineWebhookEvent{WebhookEventID: id, EventType: "message", TargetMessageID: id, EventTimestamp: 123, RawJSON: raw}
+	}
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, wiringBot, events))
+	output, err := executeLineCommand(t, loaded, addManualSyncCacheFlags(newSyncLineCmd()), "--channel-id", source.Identifier, "--no-build-cache")
+	must.NoError(err)
+	checks.Contains(output, "pending: 0")
+	var archived int
+	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_id=?", source.ID).Scan(&archived))
+	checks.Equal(501, archived)
 }

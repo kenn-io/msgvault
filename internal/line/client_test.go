@@ -131,23 +131,6 @@ func TestClientCancellationAndRateLimit(t *testing.T) {
 	must.ErrorIs(err, context.Canceled)
 }
 
-func TestClientWebhookSetup(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-
-	client, api := newClient(t)
-	endpoint := "https://archive.example.com/webhooks/line/2000000000"
-	must.NoError(client.SetWebhook(context.Background(), endpoint))
-	result, err := client.TestWebhook(context.Background(), endpoint)
-	must.NoError(err)
-	checks.True(result.Success)
-	for _, request := range api.Requests() {
-		if strings.Contains(request.Path, "/webhook/") {
-			checks.JSONEq(`{"endpoint":"`+endpoint+`"}`, string(request.Body))
-		}
-	}
-}
-
 func TestClientRefusesRedirects(t *testing.T) {
 	var calls int
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))

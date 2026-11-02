@@ -96,69 +96,63 @@ type Event struct {
 
 func (e *Event) UnmarshalJSON(raw []byte) error {
 	type plain Event
-	clean, err := SanitizeEvent(raw)
-	if err != nil {
-		return err
-	}
+	snapshot := jsontext.Value(raw).Clone()
 	var common struct {
 		Type           string `json:"type"`
 		Timestamp      int64  `json:"timestamp"`
 		WebhookEventID string `json:"webhookEventId"`
 	}
-	if err := json.Unmarshal(clean, &common); err != nil {
+	if err := json.Unmarshal(snapshot, &common); err != nil {
 		return errors.New("line: invalid event fields")
 	}
 	switch common.Type {
 	case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave", "follow", "unfollow":
 	default:
 		var compatible plain
-		if json.Unmarshal(clean, &compatible) == nil {
-			compatible.Raw = clean
+		if json.Unmarshal(snapshot, &compatible) == nil {
+			compatible.Raw = snapshot
 			*e = Event(compatible)
 			return nil
 		}
-		*e = Event{Type: common.Type, Timestamp: common.Timestamp, WebhookEventID: common.WebhookEventID, Raw: clean}
+		*e = Event{Type: common.Type, Timestamp: common.Timestamp, WebhookEventID: common.WebhookEventID, Raw: snapshot}
 		return nil
 	}
 	var decoded plain
-	if err := json.Unmarshal(clean, &decoded); err != nil {
+	if err := json.Unmarshal(snapshot, &decoded); err != nil {
 		return errors.New("line: invalid event fields")
 	}
-	decoded.Raw = clean
+	decoded.Raw = snapshot
 	*e = Event(decoded)
 	return nil
 }
 
 func (m *Message) UnmarshalJSON(raw []byte) error {
 	type plain Message
-	clean, err := SanitizeEvent(raw)
-	if err != nil {
-		return err
-	}
+	snapshot := jsontext.Value(raw).Clone()
 	var common struct {
 		ID   string `json:"id"`
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal(clean, &common); err != nil {
+	if err := json.Unmarshal(snapshot, &common); err != nil {
 		return errors.New("line: invalid message fields")
 	}
 	switch common.Type {
 	case "text", "image", "video", "audio", "file", "location", "sticker":
 	default:
 		var compatible plain
-		if json.Unmarshal(clean, &compatible) == nil {
-			compatible.Raw = clean
+		if json.Unmarshal(snapshot, &compatible) == nil {
+			compatible.Raw = snapshot
 			*m = Message(compatible)
 			return nil
 		}
-		*m = Message{ID: common.ID, Type: common.Type, Raw: clean}
+		*m = Message{ID: common.ID, Type: common.Type, Raw: snapshot}
 		return nil
 	}
 	var decoded plain
-	if err := json.Unmarshal(clean, &decoded); err != nil {
+	if err := json.Unmarshal(snapshot, &decoded); err != nil {
 		return errors.New("line: invalid message fields")
 	}
-	decoded.Raw = clean
+	decoded.Raw = snapshot
 	*m = Message(decoded)
 	return nil
 }

@@ -38,8 +38,8 @@ The envelope's `destination` must match the registered bot user ID. It does not
 require an API key, session cookie, or CSRF token. Other paths and methods,
 including suffixes and encoded-path variations, retain ordinary Host,
 authentication, same-origin, CSRF, and operation-gate protections. Server
-timeouts still apply. Requests through the documented keyless loopback proxy
-bypass the API IP rate limiter; the receiver applies its own concurrency bounds.
+timeouts still apply. Signed webhook routes bypass the API IP rate limiter;
+the receiver applies its own signature checks and concurrency bounds.
 
 The body limit is 1 MiB. Across configured channels, at most 16 requests can
 read or retain bodies at once. Excess requests receive `503` before their body

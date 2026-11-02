@@ -2,17 +2,25 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/envutil"
 )
 
 // LineSource configures a push source. The secret itself remains in the environment.
 type LineSource struct {
-	ChannelID string `toml:"channel_id"`
-	SecretEnv string `toml:"secret_env"`
-	Enabled   bool   `toml:"enabled"`
+	ChannelID  string `toml:"channel_id"`
+	SecretEnv  string `toml:"secret_env"`
+	Enabled    bool   `toml:"enabled"`
+	Media      *bool  `toml:"media"`
+	MaxMediaMB int64  `toml:"max_media_mb"`
+}
+
+func (s LineSource) MediaPolicy() attachmentpolicy.Policy {
+	return resolveMediaPolicy(nil, "", 0, int(s.MaxMediaMB), attachmentpolicy.DefaultChatMaxBytes, MediaAccountConfig{Media: s.Media}, true)
 }
 
 func (c *Config) GetLineSource(channelID string) *LineSource {
@@ -34,6 +42,9 @@ func (c *Config) validateLineSources() error {
 		}
 		if seen[source.ChannelID] {
 			return fmt.Errorf("line[%d].channel_id is duplicate", index)
+		}
+		if source.MaxMediaMB < 0 || source.MaxMediaMB > math.MaxInt64/(1<<20) {
+			return fmt.Errorf("line[%d].max_media_mb must fit a nonnegative byte limit", index)
 		}
 		seen[source.ChannelID] = true
 		source.SecretEnv = strings.TrimSpace(source.SecretEnv)

@@ -1594,22 +1594,12 @@ msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAM
 | `--secret-env` | required | Environment-variable name holding the channel secret |
 | `--webhook-base-url` | omitted | Public HTTPS base URL; userinfo, query, and fragment are rejected; the webhook path is `/webhooks/line/<channel_id>` |
 
-The first invocation checks token credentials and bot identity, registers the
-archive source, and saves configuration. It requests a daemon restart and does
-not change LINE's webhook, even when a base URL is supplied. Restart the daemon
-or service with the secret variable in its environment, then repeat the command:
-
-```bash
-msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAMPLE \
-  --webhook-base-url https://archive.example.com
-```
-
-Remote webhook setup requires the running daemon's receiver to match the
-channel, archive source, bot identity, and secret-variable name. Disk
-configuration alone is insufficient. After activation, the idempotent command
-can set and test the URL. Without a base URL it prints the route and Console
-setup instructions. Enable **Use webhook** in LINE Developers Console and
-consider **Webhook redelivery**. See [LINE setup](usage/line.md).
+The command checks credentials and bot identity, registers the archive source,
+and saves configuration. Restart the daemon or service with the secret variable
+in its environment. Set the printed webhook URL in LINE Developers Console,
+enable **Use webhook**, and use **Verify**. The optional base URL prints the
+complete webhook URL; remote webhook settings are managed in the Console.
+Consider **Webhook redelivery**. See [LINE setup](usage/line.md).
 
 ---
 
@@ -3134,6 +3124,10 @@ in the stored headers of mail not yet attributed, so each message keeps its
 account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
 warning before sharing its output.
+
+A subset containing a LINE source also includes that channel's retained inbox,
+cached sender profiles, and membership clocks, including pending deliveries
+beyond the selected messages.
 
 ---
 

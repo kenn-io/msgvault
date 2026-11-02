@@ -62,7 +62,7 @@
   const initialLoading = $derived((loading || contactsLoading) && !sources.length && !contacts.length);
   const STALE_STATUS_MESSAGE = 'Automatic refresh paused. Source status may be stale.';
   let lockStatusStale = $state(false);
-  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed' | 'line_noop'>('idle');
+  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed' | 'line_requested'>('idle');
   let statusError = $state('');
   let contactsError = $state('');
   let triggerError = $state('');
@@ -241,6 +241,7 @@
         awaitingAttempts += 1;
         if (awaitingAttempts >= maxAwaitingPolls) {
           awaitingSourceID = undefined;
+          awaitingBaselineRunID = undefined;
           awaitingState = 'not_observed';
         } else {
           awaitingState = 'awaiting';
@@ -333,7 +334,7 @@
       awaitingSourceID = source.source_type === 'line' ? undefined : source.id;
       awaitingBaselineRunID = source.latest_sync?.id;
       awaitingAttempts = 0;
-      awaitingState = source.source_type === 'line' ? 'line_noop' : 'awaiting';
+      awaitingState = source.source_type === 'line' ? 'line_requested' : 'awaiting';
       await load();
     } catch (cause) {
       if (disposed) return;
@@ -407,7 +408,7 @@
     </div>{/if}
   {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
-  {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'line_noop'}<div class="notice" role="status"><span>No inbox work was due. Any retries will run automatically at their scheduled time.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
+  {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'line_requested'}<div class="notice" role="status"><span>Inbox processing requested. Retries keep their scheduled times.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if triggerError}<div class="notice notice--error" role="alert">
       <span>{triggerError}</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />

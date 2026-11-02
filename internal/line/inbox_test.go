@@ -537,7 +537,7 @@ func TestProcessorIdlePassSkipsSyncRunAndScopesTouchedStats(t *testing.T) {
 	checks.Equal(99, otherCount)
 }
 
-func TestProcessorIdlePassPrunesExpiredPayloads(t *testing.T) {
+func TestProcessorIdlePassPrunesExpiredEvents(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)
@@ -548,9 +548,9 @@ func TestProcessorIdlePassPrunesExpiredPayloads(t *testing.T) {
 
 	f.now = f.now.Add(31 * 24 * time.Hour)
 	f.run(t)
-	var raw string
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, "event-1").Scan(&raw))
-	checks.Equal("{}", raw)
+	var retained int
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, "event-1").Scan(&retained))
+	checks.Zero(retained)
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsAfter))
 	checks.Equal(runsBefore, runsAfter)
 }
@@ -1036,4 +1036,36 @@ func TestProcessorPersistenceFailureKeepsPending(t *testing.T) {
 	f.run(t)
 	body := f.archived(t, "1").body
 	checks.Equal("text must survive a storage failure", body)
+}
+
+func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/bot/message/1/content" {
+			f.enqueue(t, f.message("later", "next drain", f.now.UnixMilli()), time.Time{})
+		}
+		f.api.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
+	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	must.NoError(processor.Drain(t.Context()))
+	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	var laterMessages int
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='later'"), f.source.ID).Scan(&laterMessages))
+	checks.Zero(laterMessages)
+	due, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+	must.NoError(err)
+	must.Len(due, 1)
+	checks.Equal("event-later", due[0].WebhookEventID)
+	must.NoError(processor.Drain(t.Context()))
+	checks.Equal("next drain", f.archived(t, "later").body)
+	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	must.ErrorIs(processor.Drain(ctx), context.Canceled)
 }

@@ -57,7 +57,10 @@ secret_env="EXAMPLE_LINE_SECRET"
 channel_id=" 2000000000 "
 secret_env="EXAMPLE_LINE_SECRET_B"
 `), "duplicate")
-	for _, extra := range []string{`secret="never-store"`, `schedule="* * * * *"`, `media=true`, `secret_en="EXAMPLE_LINE_SECRET"`} {
+	for _, limit := range []string{"-1", "8796093022208"} {
+		require.ErrorContains(t, loadConfigTextError(t, "[[line]]\nchannel_id=\"2000000000\"\nsecret_env=\"EXAMPLE_LINE_SECRET\"\nmax_media_mb="+limit), "max_media_mb")
+	}
+	for _, extra := range []string{`secret="never-store"`, `schedule="* * * * *"`, `secret_en="EXAMPLE_LINE_SECRET"`} {
 		must.ErrorContains(loadConfigTextError(t, "[[line]]\nchannel_id=\"2000000000\"\nsecret_env=\"EXAMPLE_LINE_SECRET\"\n"+extra), "unknown LINE config key")
 	}
 }

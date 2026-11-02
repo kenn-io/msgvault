@@ -21,7 +21,6 @@ export interface SourceStatus {
   schedule?: string;
   scheduled: boolean;
   scheduler_last_error?: string;
-  scheduler_last_run_at?: string;
   scheduler_pending?: boolean;
   scheduler_queued?: boolean;
   scheduler_queued_at?: string;

@@ -4779,8 +4779,8 @@ AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
 
--- LINE's signed webhook inbox. Completed payloads expire; compact event IDs
--- remain to reject redelivery. Expired orphan mutations retain their evidence.
+-- LINE's signed webhook inbox. Terminal events expire after retention.
+-- Expired orphan mutations retain their evidence.
 CREATE TABLE IF NOT EXISTS line_webhook_events (
     id INTEGER PRIMARY KEY,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -4798,3 +4798,9 @@ CREATE TABLE IF NOT EXISTS line_webhook_events (
 );
 CREATE INDEX IF NOT EXISTS idx_line_webhook_due ON line_webhook_events(source_id,state,next_attempt_at,event_timestamp);
 CREATE INDEX IF NOT EXISTS idx_line_webhook_target ON line_webhook_events(source_id,target_message_id,state);
+
+CREATE INDEX IF NOT EXISTS idx_line_webhook_received ON line_webhook_events(source_id,received_at DESC)
+    WHERE event_type NOT IN ('_profile','_membership');
+CREATE INDEX IF NOT EXISTS idx_line_webhook_retention ON line_webhook_events(source_id,received_at)
+    WHERE state IN ('processed','ignored','failed') AND event_type NOT IN ('_profile','_membership')
+    AND NOT (state='failed' AND event_type IN ('messageEdited','unsend'));

@@ -7551,6 +7551,28 @@ components:
         - issue
         - replayed
       type: object
+    LineWebhookStatus:
+      properties:
+        active:
+          type: boolean
+        failed:
+          format: int64
+          type: integer
+        invalid_signatures:
+          format: int64
+          minimum: 0
+          type: integer
+        last_received_at:
+          type: string
+        pending:
+          format: int64
+          type: integer
+      required:
+        - active
+        - pending
+        - failed
+        - invalid_signatures
+      type: object
     ListDeletionsResponse:
       properties:
         manifests:
@@ -15601,6 +15623,8 @@ components:
           $ref: "#/components/schemas/SyncRunStatus"
           nullable: true
           type: ""
+        line_webhook:
+          $ref: "#/components/schemas/LineWebhookStatus"
         next_sync_at:
           nullable: true
           type: string

@@ -51,6 +51,8 @@ function api(sources: unknown[], handler: Handler = () => undefined, contacts: A
   });
 }
 
+const LINE_NO_WORK = 'Inbox processing requested. Retries keep their scheduled times.';
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -672,6 +674,27 @@ describe('SourcesWorkspace', () => {
     expect(reads).toBe(4);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(4);
+    rendered.unmount();
+  });
+
+  it('acknowledges a LINE inbox request without waiting for a new sync run', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'POST') {
+        return Response.json({ status: 'accepted', message: 'started' }, { status: 202 });
+      }
+      return Response.json({ sources: [source({
+        source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
+        scheduled: true, can_sync: true,
+        line_webhook: { active: true, pending: 1, failed: 0, invalid_signatures: 0 }
+      })] });
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Process inbox Example OA' }));
+
+    expect(await screen.findByText(LINE_NO_WORK)).toBeDefined();
+    expect(screen.queryByText(NOT_OBSERVED)).toBeNull();
     rendered.unmount();
   });
 

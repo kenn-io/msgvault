@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -45,22 +44,6 @@ func loadLineConfig(state *invocation) (*config.Config, error) {
 	return fresh, nil
 }
 
-func lineReceiverReady(sourceID int64, channelID, botID, secretEnv string) bool {
-	if !isDaemonCLISubprocess() {
-		return false
-	}
-	var active []line.ActiveChannel
-	if err := json.Unmarshal([]byte(os.Getenv(lineActiveChannelsEnv)), &active); err != nil {
-		return false
-	}
-	for _, record := range active {
-		if record.ChannelID == channelID && record.SourceID == sourceID && record.BotUserID == botID && record.SecretEnv == secretEnv {
-			return true
-		}
-	}
-	return false
-}
-
 func newAddLineCmd() *cobra.Command {
 	var channelID, secretEnv, baseURL string
 	command := &cobra.Command{Use: "add-line", Short: "Add a LINE Official Account", Args: cobra.NoArgs,
@@ -83,7 +66,7 @@ func newAddLineCmd() *cobra.Command {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 			state := invocationFromCommand(cmd)
-			fresh, err := loadLineConfig(state)
+			snapshot, err := config.ReadConfigFile(state.cfg.ConfigFilePath())
 			if err != nil {
 				return err
 			}
@@ -100,22 +83,18 @@ func newAddLineCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("register LINE channel: %w", err)
 			}
-			botID, err := st.LineBotUserIDContext(cmd.Context(), source.ID)
+			fresh, err := config.LoadConfigFile(snapshot, state.cfg.HomeDir)
 			if err != nil {
 				return err
 			}
-			updated := false
-			for index := range fresh.Line {
-				if fresh.Line[index].ChannelID == channelID {
-					fresh.Line[index].SecretEnv = secretEnv
-					updated = true
-					break
-				}
+			values := map[string]any{"secret_env": secretEnv}
+			if fresh.GetLineSource(channelID) == nil {
+				values["enabled"] = true
 			}
-			if !updated {
-				fresh.Line = append(fresh.Line, config.LineSource{ChannelID: channelID, SecretEnv: secretEnv, Enabled: true})
-			}
-			if err := fresh.Save(); err != nil {
+			_, err = config.EditConfigTables(state.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{
+				Path: []string{"line"}, Match: map[string]string{"channel_id": channelID}, Values: values,
+			}})
+			if err != nil {
 				return fmt.Errorf("save LINE configuration: %w", err)
 			}
 			if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
@@ -124,31 +103,17 @@ func newAddLineCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "Registered LINE channel %s (source %d).\nWebhook route: /webhooks/line/%s\n", channelID, source.ID, channelID)
 			_, _ = fmt.Fprintln(out, "Enable Use webhook in LINE Developers Console; Webhook redelivery is recommended.")
-			if !lineReceiverReady(source.ID, channelID, botID, secretEnv) {
-				_, _ = fmt.Fprintf(out, "Receiver is not active for this registration; restart the daemon/service with %s in its environment. Then repeat add-line to set and test the webhook.\n", secretEnv)
-				return nil
+			_, _ = fmt.Fprintf(out, "Restart the daemon/service with %s in its environment.\n", secretEnv)
+			if base != "" {
+				_, _ = fmt.Fprintf(out, "Set the webhook URL in LINE Developers Console: %s/webhooks/line/%s\n", base, channelID)
+			} else {
+				_, _ = fmt.Fprintln(out, "Set the public HTTPS webhook URL in LINE Developers Console, then use Verify.")
 			}
-			if base == "" {
-				_, _ = fmt.Fprintln(out, "Configure the public HTTPS webhook URL in LINE Developers Console and use Verify.")
-				return nil
-			}
-			endpoint := base + "/webhooks/line/" + channelID
-			if err := client.SetWebhook(cmd.Context(), endpoint); err != nil {
-				return fmt.Errorf("set LINE webhook (registration saved): %w", err)
-			}
-			result, err := client.TestWebhook(cmd.Context(), endpoint)
-			if err != nil {
-				return fmt.Errorf("test LINE webhook (registration saved): %w", err)
-			}
-			if !result.Success {
-				return errors.New("LINE webhook verification failed; registration saved; check receiver reachability and credentials")
-			}
-			_, _ = fmt.Fprintf(out, "LINE webhook verified: %s\n", endpoint)
 			return nil
 		}}
 	command.Flags().StringVar(&channelID, "channel-id", "", "LINE Messaging API channel ID")
 	command.Flags().StringVar(&secretEnv, "secret-env", "", "daemon environment variable holding the channel secret")
-	command.Flags().StringVar(&baseURL, "webhook-base-url", "", "public HTTPS origin used to set and test the active receiver")
+	command.Flags().StringVar(&baseURL, "webhook-base-url", "", "public HTTPS origin for the webhook URL")
 	_ = command.MarkFlagRequired("channel-id")
 	_ = command.MarkFlagRequired("secret-env")
 	return command
@@ -213,7 +178,7 @@ func newSyncLineCmd() *cobra.Command {
 				}
 				client, err := configuredLineClient(profile)
 				if err == nil {
-					err = line.NewProcessor(st, client, source.ID, profile.ChannelID, cfg.AttachmentsDir()).Process(ctx)
+					err = line.NewProcessor(st, client, source.ID, profile.ChannelID, cfg.AttachmentsDir(), line.WithProcessorMediaPolicy(profile.MediaPolicy())).Drain(ctx)
 				}
 				_ = recordSyncAttempt(ctx, line.SourceType, profile.ChannelID, err)
 				if err != nil {

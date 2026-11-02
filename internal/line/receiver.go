@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -28,15 +27,6 @@ type ReceiverChannel struct {
 	BotUserID string
 	SecretEnv string
 	Secret    string `json:"-"`
-}
-
-// ActiveChannel proves which configuration the running receiver actually mounted.
-// It intentionally excludes credentials.
-type ActiveChannel struct {
-	ChannelID string `json:"channel_id"`
-	SourceID  int64  `json:"source_id"`
-	BotUserID string `json:"bot_user_id"`
-	SecretEnv string `json:"secret_env"`
 }
 
 type receiverChannel struct {
@@ -95,14 +85,10 @@ func (r *Receiver) Handles(request *http.Request) bool {
 	return channelID != "" && !strings.Contains(channelID, "/")
 }
 
-func (r *Receiver) ActiveChannels() []ActiveChannel {
-	active := make([]ActiveChannel, 0, len(r.channels))
-	for _, channel := range r.channels {
-		cfg := channel.config
-		active = append(active, ActiveChannel{ChannelID: cfg.ChannelID, SourceID: cfg.SourceID, BotUserID: cfg.BotUserID, SecretEnv: cfg.SecretEnv})
-	}
-	slices.SortFunc(active, func(a, b ActiveChannel) int { return strings.Compare(a.ChannelID, b.ChannelID) })
-	return active
+// Active reports whether this source has a mounted receiver.
+func (r *Receiver) Active(sourceID int64, channelID string) bool {
+	channel := r.channels[channelID]
+	return channel != nil && channel.config.SourceID == sourceID
 }
 
 func (r *Receiver) InvalidSignatures(channelID string) uint64 {

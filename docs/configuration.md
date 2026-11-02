@@ -1727,15 +1727,17 @@ enabled = true
 | `channel_id` | required | Unique positive decimal channel ID, stored as a string; after trimming whitespace it must be canonical, without a sign or leading zeros, and fit uint64 |
 | `secret_env` | required | Explicit environment-variable name containing the channel secret on the daemon host; surrounding whitespace is trimmed; the name must match `[A-Za-z_][A-Za-z0-9_]*` |
 | `enabled` | `false` | Mount this channel's receiver when the daemon starts |
+| `media` | `true` | Download incoming media; `false` keeps message metadata only |
+| `max_media_mb` | `250` | Per-file download cap in MiB; `0` uses the default |
 
 Disabled blocks are still validated. Duplicate channel IDs and unknown keys in
 `[[line]]` are rejected. The secret value is never stored in this file. Restart
 the daemon or service after changing its channel configuration or secret
 environment; an already running process does not inherit later terminal exports.
 
-The integration has no `schedule`, `media`, or size-cap setting. It receives
-webhooks while the daemon runs and retries due work internally. Attachments
-have a fixed 250 MiB per-file cap; see
+The integration receives webhooks while the daemon runs and retries due work
+internally. After changing media settings, restart the daemon. Use
+`purge-excluded-media` to apply the new policy to stored attachments. See
 [media and delivery limits](usage/line.md#delivery-and-retries).
 
 ### `[[chatwoot]]` {#chatwoot}

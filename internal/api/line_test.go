@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -154,4 +155,23 @@ func TestLineReceiverRetainsAPIKeyAndCSRFProtections(t *testing.T) {
 	status, response = lineAPIRequest(t, base, "GET", "/api/v1/stats", "", http.Header{"Cookie": {sessionCookieName + "=" + sessionID}, "Origin": {"https://hostile.example.com"}})
 	checks.Equal(403, status, response)
 	checks.Contains(response, "cross_origin_session")
+}
+
+func TestLineWebhookBurstWithAPIKey(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	fixture := newLineAPIServer(t, "synthetic-api-key", true)
+	for i := range 40 {
+		body := lineEnvelope("[" + lineEvent(fmt.Sprintf("burst-%d", i)) + "]")
+		status, response := lineAPIRequest(t, fixture.base, "POST", lineTestPath, body, lineSignedHeaders(body))
+		checks.Equal(http.StatusOK, status, response)
+	}
+	rows, err := fixture.st.DueLineEventsContext(t.Context(), fixture.sourceID, time.Now(), 100)
+	must.NoError(err)
+	checks.Len(rows, 40)
+	body := lineEnvelope("[" + lineEvent("bad-signature") + "]")
+	headers := lineSignedHeaders(body)
+	headers.Set("X-Line-Signature", "invalid")
+	status, _ := lineAPIRequest(t, fixture.base, "POST", lineTestPath, body, headers)
+	checks.Equal(http.StatusUnauthorized, status)
 }

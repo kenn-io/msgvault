@@ -154,7 +154,6 @@ type SourceStatus struct {
 	SchedulerQueued    bool    `json:"scheduler_queued,omitempty"`
 	SchedulerPending   bool    `json:"scheduler_pending,omitempty"`
 	SchedulerStartedAt *string `json:"scheduler_started_at,omitempty"`
-	SchedulerLastRunAt *string `json:"scheduler_last_run_at,omitempty"`
 }
 
 // SyncRunStatus represents the API-visible details for a sync run.
@@ -1672,12 +1671,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 			}
 		}
 		if s.lineWebhook != nil {
-			for _, active := range s.lineWebhook.ActiveChannels() {
-				if active.SourceID == source.ID && active.ChannelID == source.Identifier {
-					webhook.Active = true
-					break
-				}
-			}
+			webhook.Active = s.lineWebhook.Active(source.ID, source.Identifier)
 			webhook.InvalidSignatures = s.lineWebhook.InvalidSignatures(source.Identifier)
 		}
 		status.LineWebhook = webhook
@@ -1768,10 +1762,6 @@ func (s *Server) applyGenericJobStatus(status *SourceStatus, jobName string) boo
 		status.Scheduled = true
 		status.Schedule = job.Schedule
 		status.SchedulerLastError = job.LastError
-		if !job.LastRun.IsZero() {
-			lastRun := job.LastRun.UTC().Format(time.RFC3339Nano)
-			status.SchedulerLastRunAt = &lastRun
-		}
 		if !job.NextRun.IsZero() {
 			status.NextSyncAt = nullableTimePtr(job.NextRun)
 		}

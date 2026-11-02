@@ -804,8 +804,8 @@ func (s *Server) setupRouter() http.Handler {
 	h = operationGateMiddleware(s.operationGate, s.requestGateEligible)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
-	h = s.lineWebhookMiddleware(h)
 	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)
+	h = s.lineWebhookMiddleware(h)
 	h = CORSMiddleware(corsConfig)(h)
 	h = s.timeoutMiddleware(h)
 	if s.idleTracker != nil {

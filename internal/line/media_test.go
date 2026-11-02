@@ -339,3 +339,30 @@ func TestMediaStreamingCapRejectsChunkedContent(t *testing.T) {
 	assert.Equal(t, attachmentpolicy.SkipSizeCap, ref.SkipReason)
 	assert.Empty(t, ref.StoragePath)
 }
+
+func TestMediaChannelPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy attachmentpolicy.Policy
+		size   int64
+		reason attachmentpolicy.SkipReason
+	}{
+		{"disabled", attachmentpolicy.Policy{DisabledReason: attachmentpolicy.SkipAccountPolicy}, 0, attachmentpolicy.SkipAccountPolicy},
+		{"size cap", attachmentpolicy.Policy{MaxBytes: 2}, 3, attachmentpolicy.SkipSizeCap},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorMediaPolicy(tc.policy))
+			event := f.fileEvent()
+			event.Message.FileSize = tc.size
+			f.enqueue(t, event, time.Time{})
+			f.run(t)
+			media := f.media(t)
+			checks.Equal(attachmentpolicy.StateSkipped, media.State)
+			checks.Equal(tc.reason, media.SkipReason)
+			checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+			checks.NotZero(f.archived(t, "1").id)
+		})
+	}
+}
