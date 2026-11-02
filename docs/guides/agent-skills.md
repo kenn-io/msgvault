@@ -16,10 +16,17 @@ session.
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
+| `msgvault-beeper-triage` (unreleased) | Owner-authorized GTD, native draft reuse and the opt-in executable morning workflow |
 
-All three cover read-only workflows only. They explicitly tell agents
+The search, attachments and analytics skills cover read-only workflows only. They explicitly tell agents
 not to run archive-mutating commands (sync, import, dedup, deletion)
 without your direction.
+
+The Beeper triage skill requires explicit owner direction or a standing policy.
+Installing it grants no mutation authority and activates no schedule. Its
+[morning workflow](../usage/beeper.md#gtd-and-morning-triage-unreleased) uses
+fixed classifier controls and typed decisions before existing CLI primitives;
+it never sends messages or replaces an occupied draft.
 
 ## Install
 

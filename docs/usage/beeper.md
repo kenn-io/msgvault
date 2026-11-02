@@ -133,6 +133,135 @@ Beeper has no conditional archive operation. A message can arrive after the
 final check and before the write. The local source lock does not prevent this
 race or guarantee a transactional provider snapshot.
 
+### Run before morning
+
+An enabled preview invokes the pinned classifier with the selected live text,
+so it uses model quota and sends that text to the chosen model provider.
+It does not save classifications or prepare or archive chats.
+
+The executable `scripts/beeper-morning.py` uses Python 3's standard library,
+the built msgvault CLI and a pinned Pi 1.4.0 classifier. The shipped
+[`examples/beeper-morning`](https://github.com/kenn-io/msgvault/tree/main/examples/beeper-morning)
+configuration and systemd user service/timer are disabled examples. They are
+not installed or enabled by msgvault. The timer provides repeated bounded
+passes between 04:00 and 06:45; one page per day would not cover a larger archive.
+
+1. Copy the example configuration to your chosen private location. Set exact
+   source IDs, absolute binary/home/state paths and your supported model ID.
+   Check the declared context and run bounds. The example service allows the
+   supported maximum run budget of 3,600 seconds plus one minute for shutdown;
+   the default run budget remains 600 seconds.
+2. Keep `enabled=false` and `apply=false` while inspecting configuration.
+   Set `enabled=true` to run previews. `apply=true` is separate standing
+   authorization for classification and the selected archive policy.
+3. If new chats need importing, opt into `sync_sources=true`. The runner invokes
+   only `sync-beeper --account <exact account ID> --no-media --limit 1`,
+   separately from JSON reads. Otherwise use the existing Beeper sync schedule
+   beforehand. The per-chat limit is checked after whole message pages, so `1`
+   can import a full provider page, typically about 20 events. Additional
+   read-only importer probes can make further requests. The importer continues
+   to later chats and saves unfinished backfill cursors for subsequent passes.
+   History can remain incomplete even when this sync exits successfully;
+   `sync_returned` does not certify complete history. Ordinary `sync-beeper`
+   defaults are unchanged. Classification and archive use independently
+   captured live text and its postmodel recapture, never imported bodies or
+   sync success as proof of reviewed context.
+   This explicit import prerequisite runs before classification. A classifier
+   failure does not roll back messages already imported by that sync.
+4. Set `prepare_drafts=true` only to authorize response preparation. Nonempty
+   classifier `draft_text` can create a native draft through existing
+   `draft-compose`; the source still needs its existing draft configuration.
+   Existing managed drafts are read/reused unchanged. Requested preparation
+   that fails or finds an occupied/pending composer holds archive. With
+   preparation disabled or empty text, unrelated composer state does not
+   block archive. Nothing is sent, edited or deleted automatically; native
+   compose does not attach threaded reply metadata.
+5. Provide only the selected model key (`ZAI_API_KEY` for the supported zai
+   adapter) through the private environment file used by the example service.
+   The runner gives the classifier fresh empty HOME/config/CWD, fixed no-tool,
+   no-MCP/resource flags and no msgvault/Beeper credentials. Arbitrary agent
+   arguments are refused. The trusted Pi/Node executable still has its OS
+   permissions and inference network access; this is not an OS sandbox.
+6. Run `python3 /absolute/path/scripts/beeper-morning.py --config /private/config.json`.
+   Inspect its content-free results, held chats and persistent answer-needed
+   IDs/draft handles. Its private state keeps a frozen traversal ceiling,
+   source rotation and cursor so held early rows do not starve later work.
+   Unchanged reviewed chats do not repeat classification/draft/archive actions.
+7. To activate scheduling, edit the example service's absolute script/config
+   paths, copy both units into your systemd user-unit directory, verify them
+   with `systemd-analyze verify` and verify `OnCalendar` with
+   `systemd-analyze calendar`. Only then explicitly enable/start your timer
+   using your normal service management procedure.
+
+Reports distinguish local scan backlog from bounded native catalog coverage,
+unknown local chat identities and failed/incomplete discovery. A completed
+local page is not a claim that every unknown native chat was processed. The
+answer-needed groups include current revisions and archive holds. The
+runner locks one instance, bounds subprocess input/output/time and validates
+all typed decisions before applying any classification/draft/archive action.
+Message content cannot change standing policy or supply executable arguments.
+
+The per-decision `max_context_requests` cap counts every physical HTTP attempt:
+initial capture, postmodel verification, optional draft GET/PATCH, archive
+preflight/recapture/final observation, the one POST and readback. Archive reserves
+its final observation/write/readback before recapturing. These calls share
+private HTTP/1 transports with no redirects or replay. Discovery sync/catalog
+are separate bounded stages; the runner does not add per-row refresh reads.
+`context_timeout` is cumulative active-provider command time, including local
+IPC overhead. Classifier inference is excluded, while the unchanged process and
+whole-run deadlines still apply. No phase renews the decision's allowance.
+
+The runner allocates time inside those limits. Once it admits the first changed
+packet, collection can use half of the remaining whole-run time. The version
+check and classifier then share three quarters of the time left after
+collection, reserving the last quarter for actions and reporting. The configured
+process and provider limits still apply. Unavailable components leave incomplete
+work. Unprocessed admissions keep a conservative cursor before the earliest
+pending conversation and retain the frozen ceiling. Reports mark them
+`classification_deferred`; later runs capture fresh context before trying a new
+classification. Capturing a packet alone never advances its reviewed head.
+
+Optional sync failure, timeout or output overflow is reported as `sync_failed`;
+whole-run exhaustion is `run_deadline`. Local review and later sources continue
+within the remaining whole-run deadline.
+With sync configured in preview, `sync_skipped_preview` records the intentional
+skip. `scanned` counts attempted rows, including a deferred candidate; it is a
+work bound, not a count of completed classifications. Catalog omissions remain
+visible through `omitted_count` and `coverage_incomplete`, even at listing end.
+
+A reviewed decision can remain unresolved if classification loses its response,
+requested draft preparation fails, archive becomes unavailable, or the provider
+rejects archiving. The runner does not replay it automatically. A
+`classification_changed_or_unavailable` diagnostic records the possible next
+revision, since the guarded local write may have committed before its response
+was lost. It is an uncertainty warning, not proof of completion. An unchanged
+chat at that revision retains the warning; another actual revision supersedes
+it. A no-commit result can receive a new decision after a fresh context/model
+pass.
+Its existing private `report.json` retains one content-free unresolved status
+per conversation/revision and exposes it alongside answer-needed groups on
+unchanged runs. Inspect the current draft/native state and act explicitly;
+the runner's review stamp alone does not mean response preparation or archive
+completed. A newer classification supersedes the old report status; a confirmed
+native `already_archived` reconciliation resolves only a matching source,
+conversation and revision's archive-unavailable or provider-rejected status.
+A local `hold_resolved` acknowledgment, native false/unavailable result or
+unrelated draft-held status cannot settle that diagnostic. Categories and the
+independent answer-needed flag stay unchanged. The report is checkpointed
+before optional answer-group reads; failed enrichment leaves `status=incomplete`
+and `answer_needed_status=unavailable` with the current unresolved projection.
+Loaded diagnostics retain only conversation ID, source ID, revision and status.
+Each answer-needed group includes `has_more` and `next_after` for continuing
+the local view with `beeper triage --needs-answer --after <next_after>`.
+A successful bounded visit can report `status=applied` and `incomplete=true`
+when another cohort or configured source remains. Unrecognized progress-file
+layouts stop before CLI work; diagnostic projection remains content-free.
+This report is not an operation history or retry queue. Unknown archive writes still use the
+durable archive hold in msgvault, independent of the runner report.
+
+On non-systemd hosts, schedule the same executable with cron or launchd after
+the same explicit opt-in. The checked-in scheduling examples remain disabled.
+
 ## Prerequisites
 
 - Beeper Desktop installed and running on the same machine as the msgvault

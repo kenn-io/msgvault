@@ -209,10 +209,15 @@ test:
 	fi
 
 # Use an existing built binary when supplied, otherwise build the worktree CLI.
+# Each independent fixture gets the same finite test/cleanup deadline; an earlier
+# fixture must not consume a later fixture's process cleanup reserve.
 .PHONY: test-cli-e2e
 test-cli-e2e:
 	@if [ -z "$(MSGVAULT_E2E_BINARY)" ]; then $(MAKE) build; fi
-	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./cmd/msgvault/cmd -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1
+	python3 scripts/test_beeper_morning.py
+	@set -e; for test in TestSearchDiscoverabilityBuiltCLI TestBeeperMorningBuiltCLI TestBeeperMorningReviewBuiltCLI TestBeeperMorningNativePaginationBuiltCLI TestBeeperMorningClassificationCompletionBuiltCLI; do \
+		MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./cmd/msgvault/cmd -run "^$$test$$" -count=1; \
+	done
 
 .PHONY: test-standard $(SQLITE_SHARD_TARGETS)
 test-standard:

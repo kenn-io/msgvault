@@ -238,6 +238,60 @@ func TestBeeperContextBoundsProviderResponses(t *testing.T) {
 	})
 }
 
+func TestBeeperContextDuplicateTailTermination(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		messageCount int
+		changeTail   bool
+		wantComplete bool
+		wantReason   string
+	}{
+		{name: "short history", messageCount: 2, wantComplete: true},
+		{name: "exact window", messageCount: 3, wantComplete: true},
+		{name: "changed duplicate content", messageCount: 2, changeTail: true, wantReason: "context_identity_or_limit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeBeeper(t)
+			base := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+			chat := &fakeChat{
+				ID:                   "!tail:example.test",
+				AccountID:            "signal",
+				Network:              "Signal",
+				Title:                "Tail",
+				Type:                 "single",
+				LastActivity:         base.Add(time.Duration(tc.messageCount+1) * time.Minute),
+				TailCountdown:        true,
+				TailCountdownChanged: tc.changeTail,
+			}
+			for i := 1; i <= tc.messageCount; i++ {
+				chat.Msgs = append(chat.Msgs, fakeMsg{
+					ID:        fmt.Sprintf("message-%d", i),
+					SortKey:   i,
+					Timestamp: base.Add(time.Duration(i) * time.Minute),
+					Text:      fmt.Sprintf("Synthetic message %d", i),
+					SenderID:  "@sender:example.test",
+				})
+			}
+			f.addChat(chat)
+			server := f.server()
+			defer server.Close()
+			bounds := DefaultContextBounds()
+			bounds.InitialMessages = 3
+			packet, err := NewClient(server.URL, testToken, 1000).CaptureContext(t.Context(), "signal", chat.ID, nil, bounds)
+			require.NoError(t, err)
+			if tc.wantComplete {
+				require.True(t, packet.Complete, packet.Reason)
+				require.Len(t, packet.Messages, tc.messageCount)
+				Assert.False(t, packet.OlderHistoryOmitted)
+				Assert.Equal(t, fmt.Sprintf("message-%d", tc.messageCount), packet.Head.MessageID)
+				return
+			}
+			Assert.False(t, packet.Complete)
+			Assert.Equal(t, tc.wantReason, packet.Reason)
+		})
+	}
+}
+
 func TestBeeperContextReplyClosure(t *testing.T) {
 	for _, mode := range []string{"complete", "overflow", "missing", "cycle"} {
 		t.Run(mode, func(t *testing.T) {

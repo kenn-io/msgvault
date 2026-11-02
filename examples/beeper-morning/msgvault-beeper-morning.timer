@@ -1,0 +1,10 @@
+[Unit]
+Description=Bounded morning review passes (requires explicit activation)
+
+[Timer]
+OnCalendar=*-*-* 04,05,06:00,15,30,45:00
+Persistent=false
+Unit=msgvault-beeper-morning.service
+
+[Install]
+WantedBy=timers.target

@@ -66,7 +66,10 @@ type fakeChat struct {
 	// the oldest messages under a synthetic decrementing cursor instead of
 	// coming back empty.
 	TailCountdown bool
-	Msgs          []fakeMsg // oldest → newest
+	// TailCountdownChanged alters a repeated tail item so tests can verify that
+	// same-ID content changes do not masquerade as termination.
+	TailCountdownChanged bool
+	Msgs                 []fakeMsg // oldest → newest
 }
 
 // fakeBeeper simulates the Beeper Desktop API surface the importer uses,
@@ -561,6 +564,10 @@ func (f *fakeBeeper) writeMessages(w http.ResponseWriter, r *http.Request, chatI
 	// the oldest few under a synthetic decrementing cursor (live API quirk).
 	if ch.TailCountdown && direction == "before" && len(window) == 0 && len(msgs) > 0 {
 		window = msgs[:min(3, len(msgs))]
+		if ch.TailCountdownChanged {
+			window = append([]fakeMsg(nil), window...)
+			window[0].Text += " changed"
+		}
 		cur, _ := strconv.Atoi(cursor)
 		oldestCursor = strconv.Itoa(cur - 1)
 	}

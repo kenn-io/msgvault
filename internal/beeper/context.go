@@ -169,6 +169,7 @@ func (c *Client) CaptureContext(ctx context.Context, accountID, chatID string, l
 	snapshot.Title = before.Title
 	snapshot.Activity = before.LastActivity.UTC().Format(time.RFC3339Nano)
 	seen := map[string]bool{}
+	seenContent := map[string]string{}
 	projectedBytes := len(before.Title) + len(accountID) + len(chatID)
 	add := func(m Message) error {
 		if !validMessage(m) || seen[m.ID] {
@@ -182,11 +183,16 @@ func (c *Client) CaptureContext(ctx context.Context, accountID, chatID string, l
 		if e != nil {
 			return e
 		}
+		contentDigest, e := contextDigest(projected)
+		if e != nil {
+			return e
+		}
 		projectedBytes += len(encoded) + 1
 		if projectedBytes > b.MaxBytes {
 			return errors.New("context byte limit")
 		}
 		seen[m.ID] = true
+		seenContent[m.ID] = contentDigest
 		snapshot.Messages = append(snapshot.Messages, projected)
 		return nil
 	}
@@ -200,6 +206,27 @@ func (c *Client) CaptureContext(ctx context.Context, accountID, chatID string, l
 	}
 	empty := func(p *ListMessagesOutput) bool {
 		return p != nil && p.Items != nil && len(p.Items) == 0 && p.OldestCursor == "" && p.NewestCursor == ""
+	}
+	duplicateTail := func(p *ListMessagesOutput, cursor string, seenCursors map[string]bool) bool {
+		if p == nil || len(p.Items) == 0 || p.OldestCursor == "" || p.NewestCursor == "" || p.OldestCursor == cursor || seenCursors[p.OldestCursor] {
+			return false
+		}
+		pageIDs := make(map[string]bool, len(p.Items))
+		for _, m := range p.Items {
+			if !validMessage(m) || pageIDs[m.ID] {
+				return false
+			}
+			pageIDs[m.ID] = true
+			priorDigest, ok := seenContent[m.ID]
+			if !ok {
+				return false
+			}
+			digest, e := contextDigest(contextProjection(m))
+			if e != nil || digest != priorDigest {
+				return false
+			}
+		}
+		return true
 	}
 	if lower != nil {
 		snapshot.Scope = "since_reviewed_head"
@@ -260,6 +287,9 @@ func (c *Client) CaptureContext(ctx context.Context, accountID, chatID string, l
 			if len(p.Items) == 0 {
 				return failed("context_incomplete")
 			}
+			if direction == "before" && duplicateTail(p, cursor, seenCursors) {
+				break
+			}
 			if snapshot.Head.Cursor == "" {
 				if p.NewestCursor == "" {
 					return failed("context_missing_head")
@@ -293,6 +323,9 @@ func (c *Client) CaptureContext(ctx context.Context, accountID, chatID string, l
 				}
 				if len(probe.Items) == 0 {
 					return failed("context_incomplete")
+				}
+				if duplicateTail(probe, cursor, seenCursors) {
+					break
 				}
 				for _, m := range probe.Items {
 					if !validMessage(m) || seen[m.ID] {

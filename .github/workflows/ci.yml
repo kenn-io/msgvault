@@ -71,7 +71,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           kit-retry 3 5 apt-get -o APT::Update::Error-Mode=any update
-          kit-retry 3 5 apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
+          kit-retry 3 5 apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev python3
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -131,6 +131,14 @@ jobs:
     timeout-minutes: 37
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate disabled morning scheduling examples
+        run: |
+          systemd-analyze --version
+          sha256sum examples/beeper-morning/msgvault-beeper-morning.service examples/beeper-morning/msgvault-beeper-morning.timer
+          systemd-analyze verify --man=no examples/beeper-morning/msgvault-beeper-morning.service examples/beeper-morning/msgvault-beeper-morning.timer
+          calendar=$(sed -n 's/^OnCalendar=//p' examples/beeper-morning/msgvault-beeper-morning.timer)
+          systemd-analyze calendar "$calendar"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

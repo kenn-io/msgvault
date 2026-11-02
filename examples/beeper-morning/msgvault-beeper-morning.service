@@ -1,0 +1,11 @@
+[Unit]
+Description=Explicitly configured msgvault morning triage
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=%h/.config/msgvault-morning/model.env
+ExecStart=/usr/bin/python3 /opt/msgvault/scripts/beeper-morning.py --config %h/.config/msgvault-morning/config.json
+TimeoutStartSec=61min
+KillMode=control-group
+NoNewPrivileges=true
