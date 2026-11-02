@@ -80,6 +80,9 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		return &APIError{Status: resp.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil || len(data) > maxResponseBytes {
 		return errors.New("graph response unreadable or too large")
 	}

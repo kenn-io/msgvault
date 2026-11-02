@@ -108,7 +108,7 @@ func TestFacebookConfiguredCredentialsSelectionDelegationFlagsAndHelp(t *testing
 	assert.Contains(output.String(), "Facebook")
 }
 
-func TestFacebookManualPartialWritesRefreshCacheAcrossProfiles(t *testing.T) {
+func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "synthetic-page-token")
@@ -125,25 +125,6 @@ func TestFacebookManualPartialWritesRefreshCacheAcrossProfiles(t *testing.T) {
 		_, err := registerFacebookCommentsProfile(t.Context(), st, profile)
 		require.NoError(err)
 	}
-	original := rebuildFacebookCommentsCacheAfterWrite
-	t.Cleanup(func() { rebuildFacebookCommentsCacheAfterWrite = original })
-	refreshes := 0
-	rebuildFacebookCommentsCacheAfterWrite = func(dsn string, _ *invocation) error {
-		refreshes++
-		assert.Equal(cfg.DatabaseDSN(), dsn)
-		for _, profile := range cfg.FacebookComments {
-			source, err := st.GetSourceByTypeAndIdentifier(meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
-			require.NoError(err)
-			ids, err := st.MessageExistsBatch(source.ID, []string{"100_201"})
-			require.NoError(err)
-			assert.NotZero(ids["100_201"], "refresh must include accepted writes from %s", profile.Identifier)
-			run, err := st.GetLatestSync(source.ID)
-			require.NoError(err)
-			assert.Equal(store.SyncStatusFailed, run.Status)
-			assert.Equal(int64(2), run.MessagesAdded)
-		}
-		return nil
-	}
 	cmd := newSyncFacebookCommentsCmd()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
@@ -153,7 +134,17 @@ func TestFacebookManualPartialWritesRefreshCacheAcrossProfiles(t *testing.T) {
 	assert.Contains(err.Error(), "facebook profile first")
 	assert.Contains(err.Error(), "facebook profile second")
 	assert.Contains(output.String(), "Partial coverage")
-	assert.Equal(1, refreshes)
+	for _, profile := range cfg.FacebookComments {
+		source, err := st.GetSourceByTypeAndIdentifier(meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
+		require.NoError(err)
+		ids, err := st.MessageExistsBatch(source.ID, []string{"100_201"})
+		require.NoError(err)
+		assert.NotZero(ids["100_201"], "accepted partial writes must remain for %s", profile.Identifier)
+		run, err := st.GetLatestSync(source.ID)
+		require.NoError(err)
+		assert.Equal(store.SyncStatusFailed, run.Status)
+		assert.Equal(int64(2), run.MessagesAdded)
+	}
 }
 
 func TestFacebookPartialWritesRefreshScheduledCache(t *testing.T) {

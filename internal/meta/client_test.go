@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 )
 
 func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
@@ -122,8 +125,12 @@ func TestGraphRejectsMalformedPagingAndPaths(t *testing.T) {
 	})
 	_, err := c.Posts(context.Background(), "100", Posts, "")
 	require.Error(t, err)
+	invalid := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Fail(t, "invalid Graph ID made an HTTP request")
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
+	})
 	for _, id := range []string{"../me", "100/comments?access_token=x", "100/200", ""} {
-		_, err = c.Comments(context.Background(), id, "")
+		_, err = invalid.Comments(context.Background(), id, "")
 		require.Error(t, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -146,4 +153,38 @@ func TestGraphTransportErrorDoesNotReflectToken(t *testing.T) {
 	require.Error(err)
 	assert.NotContains(err.Error(), "synthetic-page-secret")
 	assert.NotContains(err.Error(), "access_token")
+}
+
+// Keep the real HTTP body/error: only observe the first bytes before yielding.
+type streamedGraphBody struct {
+	io.ReadCloser
+
+	cancel context.CancelCauseFunc
+	reads  *atomic.Int32
+}
+
+func (b streamedGraphBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.reads.Add(1)
+		if b.cancel != nil {
+			b.cancel(jobctx.ErrYieldedToWaiter)
+		}
+	}
+	return n, err
+}
+
+type streamedGraphTransport struct {
+	http.RoundTripper
+
+	cancel context.CancelCauseFunc
+	reads  *atomic.Int32
+}
+
+func (tr streamedGraphTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := tr.RoundTripper.RoundTrip(r)
+	if err == nil && r.URL.Path == "/v26.0/100_301/comments" {
+		response.Body = streamedGraphBody{ReadCloser: response.Body, cancel: tr.cancel, reads: tr.reads}
+	}
+	return response, err
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -458,6 +459,118 @@ func TestImportSchedulerYieldHandoff(t *testing.T) {
 			assert.False(sum.Partial)
 			assert.Equal(reads, f.freshCommentReads, "handoff must resume without rescanning completed organic history")
 			assert.Equal(archived.ID, message(t, st, src.ID, "100_201").ID)
+		})
+	}
+}
+
+func TestImportStreamedBodyYieldKeepsProgress(t *testing.T) {
+	for _, yielding := range []bool{true, false} {
+		name := "truncated body without cancellation"
+		if yielding {
+			name = "scheduler yield during body read"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			var streaming atomic.Bool
+			streaming.Store(true)
+			var organicReads, bodyReads atomic.Int32
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v26.0/me":
+					_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+				case "/v26.0/100/posts":
+					organicReads.Add(1)
+					_, _ = fmt.Fprint(w, `{"data":[{"id":"100_200"}]}`)
+				case "/v26.0/100_200/comments":
+					_, _ = fmt.Fprint(w, `{"data":[{"id":"100_201","parent":{"id":"100_200"}}]}`)
+				case "/v26.0/100/visitor_posts":
+					_, _ = fmt.Fprint(w, `{"data":[{"id":"100_300"}]}`)
+				case "/v26.0/100_300/comments":
+					if r.URL.Query().Get("after") == "after-two" {
+						_, _ = fmt.Fprint(w, `{"data":[{"id":"100_303","parent":{"id":"100_300"}}]}`)
+					} else {
+						_, _ = fmt.Fprint(w, `{"data":[{"id":"100_301","parent":{"id":"100_300"}},{"id":"100_302","parent":{"id":"100_300"}}],"paging":{"cursors":{"after":"after-two"},"next":"https://example.test/unused"}}`)
+					}
+				case "/v26.0/100_301/comments":
+					if streaming.Load() {
+						w.Header().Set("Content-Length", "1024")
+						_, _ = fmt.Fprint(w, `{"data":[{"message":"synthetic-page-secret private-provider-body`)
+						if !assert.NoError(http.NewResponseController(w).Flush()) {
+							return
+						}
+						if yielding {
+							<-r.Context().Done()
+						}
+						return
+					}
+					_, _ = fmt.Fprint(w, `{"data":[]}`)
+				case "/v26.0/100_201/comments", "/v26.0/100_302/comments", "/v26.0/100_303/comments", "/v26.0/100/ads_posts":
+					_, _ = fmt.Fprint(w, `{"data":[]}`)
+				default:
+					assert.Fail("unexpected Graph request", r.URL.Path)
+					http.Error(w, "unexpected fixture route", http.StatusNotFound)
+				}
+			})
+			base := c.http.Transport
+			transport := streamedGraphTransport{RoundTripper: base, reads: &bodyReads}
+			if yielding {
+				transport.cancel = cancel
+			}
+			c.http.Transport = transport
+			imp := NewImporter(st, c)
+			src, err := imp.Register(t.Context(), "9", "100")
+			require.NoError(err)
+			sum, err := imp.Import(ctx, "9", "100", ImportOptions{})
+			require.Error(err)
+			assert.Positive(bodyReads.Load(), "cancellation must happen after Do returns and actual body bytes are read")
+			assert.True(sum.Partial)
+			assert.NotContains(err.Error(), "synthetic-page-secret")
+			assert.NotContains(err.Error(), "private-provider-body")
+			run, readErr := st.GetLatestCheckpointedSync(src.ID)
+			require.NoError(readErr)
+			assert.NotContains(run.ErrorMessage.String, "synthetic-page-secret")
+			assert.NotContains(run.ErrorMessage.String, "private-provider-body")
+			var state syncState
+			require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &state))
+			assert.True(state.Phases[Posts].Done)
+			frames := state.Phases[VisitorPosts].Stack
+			require.Len(frames, 2)
+			require.Len(frames[0].Pending, 1)
+			assert.Equal("100_302", frames[0].Pending[0].ID)
+			assert.Equal("after-two", frames[0].Next)
+			assert.Equal("100_301", frames[1].Parent)
+			assert.False(frames[1].Loaded)
+			if !yielding {
+				require.NoError(ctx.Err())
+				require.NotErrorIs(err, context.Canceled)
+				require.ErrorContains(jobctx.ErrorAfterYield(ctx, err), "graph response unreadable or too large")
+				assert.Equal(store.SyncStatusFailed, run.Status)
+				assert.Positive(run.ErrorsCount)
+				assert.True(state.Phases[Posts].Rescan)
+				return
+			}
+			require.ErrorIs(context.Cause(ctx), jobctx.ErrYieldedToWaiter)
+			require.ErrorIs(err, context.Canceled)
+			require.NoError(jobctx.ErrorAfterYield(ctx, err))
+			assert.Equal(store.SyncStatusCancelled, run.Status)
+			assert.Zero(run.ErrorsCount)
+			assert.Empty(run.ErrorMessage.String)
+			assert.False(state.Phases[Posts].Rescan)
+			archived := message(t, st, src.ID, "100_201")
+			reads := organicReads.Load()
+			streaming.Store(false)
+			c.http.Transport = base
+			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			assert.Equal(reads, organicReads.Load(), "resume must not rescan completed organic history")
+			assert.Equal(archived.ID, message(t, st, src.ID, "100_201").ID)
+			for _, id := range []string{"100_302", "100_303"} {
+				assert.Equal(message(t, st, src.ID, "100_300").ID, message(t, st, src.ID, id).ReplyToMessageID.Int64)
+			}
 		})
 	}
 }
