@@ -76,7 +76,7 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 	require.NoError(
 		b.ActivateGeneration(ctx, gen, true), "activate (force)")
 
-	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL, embedding_revision = 1`)
 	require.NoError(
 		err, "reset embed_gen to NULL (simulate upgrade)")
 
@@ -95,9 +95,17 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 		v, isNull := embedGenOf(t, db, id)
 		assert.Falsef(isNull, "msg %d should be stamped", id)
 		assert.Equalf(int64(gen), v, "msg %d embed_gen", id)
+		var revision int64
+		require.NoError(db.QueryRowContext(ctx,
+			`SELECT embedding_revision FROM messages WHERE id = $1`, id).Scan(&revision))
+		assert.Zero(revision, "msg %d restores the artificial baseline for its current legacy vector", id)
 	}
 	_, isNull3 := embedGenOf(t, db, 3)
 	assert.True(isNull3, "msg 3 (un-embedded) stays NULL")
+	var revision3 int64
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT embedding_revision FROM messages WHERE id = 3`).Scan(&revision3))
+	assert.Equal(int64(1), revision3, "an unembedded legacy message keeps its baseline to reject copied stale vectors")
 
 	// Coverage is honest: only message 3 missing.
 	s, err := b.Stats(ctx, gen)
@@ -111,6 +119,52 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 
 	_, isNull3Again := embedGenOf(t, db, 3)
 	assert.True(isNull3Again, "msg 3 still NULL after second backfill (ledger no-op)")
+}
+
+func TestBackfillEmbedGen_DoesNotCoverMismatchedLegacyVectorRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	_, err := db.Exec(`CREATE TABLE applied_migrations (
+		name TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(err)
+	for _, id := range []int64{1, 2} {
+		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		require.NoError(err)
+	}
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embedding_revision=2 WHERE id=1`)
+	require.NoError(err)
+
+	b, err := Open(ctx, Options{DB: db, Dimension: 4})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+	gen, err := b.CreateGeneration(ctx, "legacy-revision", 4, "")
+	require.NoError(err)
+	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0}, EmbeddingRevision: 0},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0}, EmbeddingRevision: 0},
+	}))
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen=$1`, int64(gen))
+	require.NoError(err)
+	require.NoError(b.ActivateGeneration(ctx, gen, true))
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL`)
+	require.NoError(err)
+	_, err = db.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name=$1`, embedGenBackfillMigration)
+	require.NoError(err)
+
+	require.NoError(b.BackfillEmbedGenForUpgrade(ctx))
+	_, mismatchedIsNull := embedGenOf(t, db, 1)
+	assert.True(mismatchedIsNull, "a vector older than a real input revision cannot cover the message")
+	matched, matchedIsNull := embedGenOf(t, db, 2)
+	assert.False(matchedIsNull, "a vector at the current message revision covers the message")
+	assert.Equal(int64(gen), matched)
+	stats, err := b.Stats(ctx, gen)
+	require.NoError(err)
+	assert.Equal(int64(1), stats.PendingCount, "the mismatched message remains eligible for the backstop scan")
 }
 
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the PG
@@ -180,7 +234,7 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 
 	// Simulate the upgrade: embed_gen NULL everywhere, ledger cleared so the
 	// next backfill runs (Open marked it at open time when no gen existed).
-	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL, embedding_revision = 1`)
 	require.NoError(
 		err, "reset embed_gen")
 
@@ -200,6 +254,13 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	v2, isNull2 := embedGenOf(t, db, 2)
 	assert.False(isNull2, "msg 2 (no pending row) must be stamped")
 	assert.Equal(int64(gen), v2, "msg 2 embed_gen = active")
+	var revision1, revision2 int64
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&revision1))
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT embedding_revision FROM messages WHERE id = 2`).Scan(&revision2))
+	assert.Equal(int64(1), revision1, "a pending re-embed retains the baseline revision to hide its stale vector")
+	assert.Zero(revision2, "a current legacy vector restores the artificial baseline revision")
 }
 
 // TestOpen_DropsDeadPendingEmbeddings pins that a normal writable Open drops
@@ -289,6 +350,8 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
 	require.NoError(
 		err, "reset embed_gen")
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embedding_revision = 1 WHERE id = 1`)
+	require.NoError(err, "simulate the pre-backfill revision baseline")
 
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
@@ -323,6 +386,11 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	_, isNull := embedGenOf(t, db, 1)
 	assert.True(isNull,
 		"embed_gen must be rolled back to NULL when the ledger mark fails (atomic)")
+	var revision int64
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&revision))
+	assert.Equal(int64(1), revision,
+		"revision baseline restoration must roll back with the failed backfill")
 	var marked int
 	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
@@ -341,6 +409,9 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	v, isNull := embedGenOf(t, db, 1)
 	assert.False(isNull, "embed_gen stamped after clean re-run")
 	assert.Equal(int64(gen), v, "embed_gen references the active generation")
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT embedding_revision FROM messages WHERE id = 1`).Scan(&revision))
+	assert.Zero(revision, "revision baseline restored when the clean backfill commits")
 	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))

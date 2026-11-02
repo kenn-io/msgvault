@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -44,6 +45,59 @@ func TestUpsertMessageBodyRollsBackWhenEmbeddingResetFails(t *testing.T) {
 		JOIN messages m ON m.id = b.message_id WHERE b.message_id = ?`, id).Scan(&body, &embedGen))
 	assert.Equal(t, "original text", body)
 	assert.Equal(t, sql.NullInt64{Int64: 42, Valid: true}, embedGen)
+}
+
+func TestUpsertMessageBodyInvalidatesChatHTMLFallbackRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "html-fallback-revision")
+	require.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "chat", "group_chat", "Chat")
+	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "chat", conversationpolicy.Full))
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "html-fallback",
+		MessageType: "beeper",
+	})
+	require.NoError(err)
+	blank := sql.NullString{String: " \t\n", Valid: true}
+	html := sql.NullString{
+		String: "<p>First fallback body</p>", Valid: true,
+	}
+	require.NoError(st.UpsertMessageBody(id, sql.NullString{}, html))
+	require.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 42))
+	var beforeGeneration sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&beforeGeneration))
+	assert.Equal(sql.NullInt64{Int64: 42, Valid: true}, beforeGeneration)
+	var beforeRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&beforeRevision))
+
+	require.NoError(st.UpsertMessageBodyContext(t.Context(), id, blank, html))
+	var afterPlainRevision int64
+	var embedGen sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision, embed_gen FROM messages WHERE id = ?`), id).Scan(&afterPlainRevision, &embedGen))
+	assert.Greater(afterPlainRevision, beforeRevision,
+		"changing blank body_text to whitespace can change ordinary embedding input")
+	assert.False(embedGen.Valid)
+
+	require.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 42))
+	var beforeHTMLGeneration sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&beforeHTMLGeneration))
+	assert.Equal(sql.NullInt64{Int64: 42, Valid: true}, beforeHTMLGeneration)
+	require.NoError(st.UpsertMessageBodyContext(t.Context(), id, blank, sql.NullString{
+		String: "<p>Updated fallback body</p>", Valid: true,
+	}))
+	var afterRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision, embed_gen FROM messages WHERE id = ?`), id).Scan(&afterRevision, &embedGen))
+	assert.Greater(afterRevision, afterPlainRevision,
+		"chat HTML fallback changes must invalidate vectors even when body_text is whitespace")
+	assert.False(embedGen.Valid)
 }
 
 // A body write that waits behind a concurrent message write must compare

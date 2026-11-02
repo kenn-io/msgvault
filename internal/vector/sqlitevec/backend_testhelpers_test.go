@@ -28,7 +28,8 @@ func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME,
-		embed_gen INTEGER
+		embed_gen INTEGER,
+		embedding_revision INTEGER NOT NULL DEFAULT 0
 	)`)
 	require.NoError(t, err, "create messages")
 	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)

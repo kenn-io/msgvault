@@ -39,6 +39,30 @@ func pgDocumentPublication(key, revision string, sequence int64, members ...int6
 	}
 }
 
+func TestDocumentPublicationPersistsEmbeddingRevisionPostgreSQL(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "model", 768, "model:768:context")
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE messages SET embedding_revision = 17 WHERE id = 1`)
+	require.NoError(t, err)
+
+	chunk := pgDocumentChunk(1, 0.7)
+	chunk.EmbeddingRevision = 17
+	require.NoError(t, b.PublishScope(ctx, gen, "chat:revision", 1,
+		[]vector.DocumentPublication{pgDocumentPublication("chat:revision:window", "revision-1", 1, 1)},
+		[]vector.Chunk{chunk}))
+
+	var got int64
+	require.NoError(t, b.DB().QueryRow(`SELECT embedding_revision FROM embeddings
+		WHERE generation_id = $1 AND message_id = $2 AND chunk_index = $3`,
+		int64(gen), chunk.MessageID, chunk.ChunkIndex).Scan(&got))
+	assert.Equal(t, int64(17), got)
+	hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(1), hits[0].MessageID)
+}
+
 func TestDocumentPublicationIgnoresStaleScopeSequencePostgreSQL(t *testing.T) {
 	b, ctx, _ := newBackendForTest(t)
 	gen, err := b.CreateGeneration(ctx, "model", 768, "model:768:context")

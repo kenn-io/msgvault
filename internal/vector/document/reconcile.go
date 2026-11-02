@@ -80,6 +80,15 @@ func (r *Reconciler) Run(ctx context.Context, generationID GenerationID, limit i
 	if err := r.validate(generationID, limit); err != nil {
 		return result, err
 	}
+	if policy, ok := r.deps.Ledger.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 	generation, err := r.deps.Ledger.GetDocumentVectorGeneration(ctx, int64(generationID))
 	if err != nil {
 		return result, fmt.Errorf("read document vector generation for reconciliation: %w", err)

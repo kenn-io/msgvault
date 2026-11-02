@@ -8,30 +8,36 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/document"
 )
 
 // DocumentBackend is the independent attachment-document vector store. It
 // borrows its parent's pool and does not own or close it.
 type DocumentBackend struct {
-	db *sql.DB
+	db          *sql.DB
+	policyStore *store.Store
 }
 
 var _ document.Backend = (*DocumentBackend)(nil)
 
 // DocumentBackend returns a non-owning document-vector view of this backend.
 func (b *Backend) DocumentBackend() *DocumentBackend {
-	return &DocumentBackend{db: b.db}
+	return &DocumentBackend{db: b.db, policyStore: b.policyStore}
 }
 
 // DocumentBackendForDB returns a non-owning document-vector backend for an
 // already initialized PostgreSQL database. It is used by cleanup operations
 // that must not initialize an embedding provider or rerun backend migrations.
-func DocumentBackendForDB(db *sql.DB) (*DocumentBackend, error) {
+func DocumentBackendForDB(db *sql.DB, policyStores ...*store.Store) (*DocumentBackend, error) {
 	if db == nil {
 		return nil, errors.New("pgvector document backend database is required")
 	}
-	return &DocumentBackend{db: db}, nil
+	var policyStore *store.Store
+	if len(policyStores) > 0 {
+		policyStore = policyStores[0]
+	}
+	return &DocumentBackend{db: db, policyStore: policyStore}, nil
 }
 
 func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID document.GenerationID, dimension int, embeddings []document.Embedding) error {
@@ -44,11 +50,23 @@ func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID docum
 	if err := EnsureDocumentVectorIndex(ctx, b.db, dimension); err != nil {
 		return err
 	}
+	tokens := make([]string, len(embeddings))
+	for i, embedding := range embeddings {
+		tokens[i] = embedding.Token
+	}
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin document vector put: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if b.policyStore != nil {
+		if err := b.policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyShared); err != nil {
+			return err
+		}
+		if err := b.policyStore.CheckConversationPolicyDocumentTokensTx(ctx, tx, int64(generationID), tokens); err != nil {
+			return err
+		}
+	}
 
 	// Establish a lockable generation row before inspecting its dimension.
 	// For the first concurrent writers, PostgreSQL's unique-index conflict
@@ -107,6 +125,18 @@ func (b *DocumentBackend) DeleteTokens(ctx context.Context, generationID documen
 	if err := document.ValidateTokens(generationID, tokens); err != nil {
 		return err
 	}
+	for start := 0; start < len(tokens); start += 500 {
+		if err := b.deleteDocumentTokenBatch(ctx, generationID, tokens[start:min(start+500, len(tokens))]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *DocumentBackend) deleteDocumentTokenBatch(ctx context.Context, generationID document.GenerationID, tokens []string) error {
+	if err := document.ValidateTokens(generationID, tokens); err != nil {
+		return err
+	}
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -124,6 +154,23 @@ func (b *DocumentBackend) DeleteTokens(ctx context.Context, generationID documen
 		return fmt.Errorf("begin document vector delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if b.policyStore != nil {
+		if err := b.policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyExclusive); err != nil {
+			return err
+		}
+		deletable := make([]string, 0, len(unique))
+		for _, token := range unique {
+			published, err := b.policyStore.DocumentPolicyTokenPublished(ctx, tx, int64(generationID), token)
+			if err != nil {
+				return err
+			}
+			if !published {
+				deletable = append(deletable, token)
+			}
+		}
+		unique = deletable
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM document_vector_embeddings
 		WHERE generation_id = $1 AND token = ANY($2::text[])`, int64(generationID), textArray(unique)); err != nil {

@@ -228,7 +228,7 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 }
 
 func personGeneration(
-	ctx context.Context, q rowQueryer, gen vector.GenerationID, lock bool,
+	ctx context.Context, q queryRower, gen vector.GenerationID, lock bool,
 ) (int, error) {
 	query := `SELECT dimension, state FROM index_generations WHERE id = $1`
 	if lock {

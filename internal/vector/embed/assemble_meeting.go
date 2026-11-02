@@ -73,8 +73,10 @@ func AssembleMeetingDocument(row AssemblyMessage, policy AssemblyPolicy) (Docume
 		Key: key, Kind: "meeting-transcript", ScopeKey: key,
 		Revision:       documentRevision("meeting", row, policy, chunks),
 		SourceSequence: row.SourceSequence,
-		Versions:       []SourceVersion{{MessageID: row.ID, LastModified: row.LastModified}},
-		Chunks:         chunks,
+		Versions: []SourceVersion{{
+			MessageID: row.ID, LastModified: row.LastModified, EmbeddingRevision: row.EmbeddingRevision,
+		}},
+		Chunks: chunks,
 	}, nil
 }
 

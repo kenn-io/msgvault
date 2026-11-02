@@ -26,3 +26,7 @@ func (b *DocumentBackend) DeleteTokens(context.Context, document.GenerationID, [
 func (b *DocumentBackend) Search(context.Context, document.GenerationID, int, []float32, int) ([]document.Hit, error) {
 	return nil, ErrNotBuilt
 }
+
+func (b *DocumentBackend) PruneIneligibleDocuments(context.Context) (int64, error) {
+	return 0, ErrNotBuilt
+}

@@ -90,6 +90,12 @@ func (w *Worker) Run(ctx context.Context, work []WorkItem) (result WorkerResult,
 	for start := 0; start < len(work); start += w.config.MaxBatchItems {
 		end := min(start+w.config.MaxBatchItems, len(work))
 		if err := w.runBatch(ctx, work[start:end], &result); err != nil {
+			if errors.Is(err, store.ErrConversationPolicyStale) {
+				releaseCtx := context.WithoutCancel(ctx)
+				for _, item := range work[end:] {
+					err = errors.Join(err, w.archive.ReleaseVisualWork(releaseCtx, item.Claim))
+				}
+			}
 			return result, err
 		}
 	}
@@ -110,9 +116,37 @@ func (w *Worker) runBatch(
 	ctx context.Context,
 	work []WorkItem,
 	result *WorkerResult,
-) error {
+) (runErr error) {
 	if len(work) == 0 {
 		return nil
+	}
+	claimed := append([]WorkItem(nil), work...)
+	releaseClaims := func(releaseCtx context.Context) error {
+		var releaseErr error
+		for _, item := range claimed {
+			releaseErr = errors.Join(releaseErr, w.archive.ReleaseVisualWork(releaseCtx, item.Claim))
+		}
+		return releaseErr
+	}
+	// Cancellation must release even claims rejected by pre-request admission.
+	defer func(releaseCtx context.Context) {
+		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, store.ErrConversationPolicyStale) {
+			runErr = errors.Join(runErr, releaseClaims(releaseCtx))
+		}
+	}(context.WithoutCancel(ctx))
+	// Every item retains the authority captured before its context/media reads.
+	for _, item := range work {
+		if item.policyContext != nil {
+			if err := store.CheckConversationPolicyAdmission(store.WithConversationPolicyWorkFrom(ctx, item.policyContext)); err != nil {
+				return err
+			}
+		}
+	}
+	ctx = store.WithConversationPolicyWorkFrom(ctx, work[0].policyContext)
+	var captureErr error
+	ctx, captureErr = w.archive.CaptureConversationPolicyWork(ctx)
+	if captureErr != nil {
+		return captureErr
 	}
 	// Reserve every publication before the provider request so source
 	// changes during the request deterministically invalidate the pending
@@ -126,12 +160,10 @@ func (w *Worker) runBatch(
 			// A hard failure here (including caller cancellation) must not
 			// strand the batch's claims until lease expiry: nothing was sent
 			// to the provider yet, so releasing is always safe.
-			releaseCtx := context.WithoutCancel(ctx)
-			var releaseErr error
-			for _, item := range work {
-				releaseErr = errors.Join(releaseErr, w.archive.ReleaseVisualWork(releaseCtx, item.Claim))
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, store.ErrConversationPolicyStale) {
+				err = errors.Join(err, releaseClaims(context.WithoutCancel(ctx)))
 			}
-			return errors.Join(err, releaseErr)
+			return err
 		}
 		if !ok {
 			continue
@@ -151,6 +183,11 @@ func (w *Worker) runBatch(
 		claims[index] = work[index].Claim
 	}
 
+	policyCtx := ctx
+	ctx = store.WithConversationPolicyVisualTokens(ctx, tokens)
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return err
+	}
 	result.ProviderRequests++
 	providerCtx, cancel := context.WithTimeout(ctx, w.config.ProviderTimeout)
 	renewErr := make(chan error, 1)
@@ -163,6 +200,9 @@ func (w *Worker) runBatch(
 	if renewalErr != nil {
 		return fmt.Errorf("renew visual work claims: %w", renewalErr)
 	}
+	if admissionErr := store.CheckConversationPolicyAdmission(policyCtx); admissionErr != nil {
+		return admissionErr
+	}
 	if err != nil {
 		// Rejections bisect like oversized batches: a multi-item rejection
 		// does not identify the offending document, and recording terminal
@@ -170,10 +210,10 @@ func (w *Worker) runBatch(
 		// neighbors. Only a rejected SINGLETON is a durable decision.
 		if (errors.Is(err, ErrProviderBatchTooLarge) || errors.Is(err, ErrProviderRejected)) && len(work) > 1 {
 			middle := len(work) / 2
-			if err := w.runBatch(ctx, work[:middle], result); err != nil {
+			if err := w.runBatch(policyCtx, work[:middle], result); err != nil {
 				return err
 			}
-			return w.runBatch(ctx, work[middle:], result)
+			return w.runBatch(policyCtx, work[middle:], result)
 		}
 		return w.recordProviderFailure(ctx, work, err, result)
 	}

@@ -258,7 +258,9 @@ func clearInvocationFlags(root *cobra.Command) {
 }
 
 // activateConversationPolicyWriter is only for authorized mutations. Read-only
-// and preview callers use openInitializedStoreForInvocation instead.
+// and preview callers use openInitializedStoreForInvocation instead. The final
+// pass runs before closing the Store so standalone imports also attempt durable
+// cleanup without depending on a running daemon.
 func activateConversationPolicyWriter(ctx context.Context, state *invocation, st *store.Store, closeStore func()) (*store.Store, func(), error) {
 	ctx = withInvocation(ctx, state)
 	if state == nil || state.cfg == nil {
@@ -269,7 +271,14 @@ func activateConversationPolicyWriter(ctx context.Context, state *invocation, st
 		closeStore()
 		return nil, nil, err
 	}
-	return st, closeStore, nil
+	return st, func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		if err := cleanupConversationPolicyRuntime(cleanupCtx, st); err != nil {
+			loggerFromContext(ctx).Warn("conversation policy derived cleanup pending", "error", err)
+		}
+		closeStore()
+	}, nil
 }
 
 func openConversationPolicyWriterForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {

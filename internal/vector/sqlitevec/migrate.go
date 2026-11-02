@@ -56,6 +56,7 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 		desc string
 	}{
 		{`ALTER TABLE index_generations ADD COLUMN seeded_at INTEGER`, "seeded_at"},
+		{`ALTER TABLE embeddings ADD COLUMN embedding_revision INTEGER NOT NULL DEFAULT 0`, "embedding input revision"},
 		{`ALTER TABLE embedding_document_progress ADD COLUMN journal_cursor TEXT NOT NULL DEFAULT ''`, "document journal cursor"},
 	} {
 		if _, err := db.ExecContext(ctx, m.sql); err != nil &&

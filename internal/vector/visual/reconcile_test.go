@@ -703,3 +703,100 @@ func TestPersistentProviderRetryableDoesNotLoopTheBaseline(t *testing.T) {
 	require.Len(result.Work, 1)
 	assert.Equal(first, result.Work[0].Candidate.Owner.MessageID)
 }
+
+// Completion can commit while the fence advance after it fails. An empty
+// journal then offers no page to retry the advance, so replay repairs it.
+func TestEmptyReplayRepairsSourceFenceAfterCompletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	generation := testVisualGeneration(t, f)
+	messageID := testVisualCandidate(t, f, "reconcile-fence", strings.Repeat("c3", 32))
+	consumerKey := "visual-test/fence"
+	reconciler := testReconciler(t, f, generation.ID, memoryOpener{data: encodedPNG(t, 2, 2)}, consumerKey)
+	initial, err := reconciler.FullReconcile(t.Context())
+	require.NoError(err)
+	require.Len(initial.Work, 1)
+	publishReconciledWork(t, f, initial.Work[0])
+	completed, err := reconciler.FullReconcile(t.Context())
+	require.NoError(err)
+	require.Empty(completed.Work)
+	// Consume one journal entry so the acknowledged cursor is past zero.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET attachment_role = 'inline' WHERE message_id = ?`), messageID)
+	require.NoError(err)
+	_, err = reconciler.Replay(t.Context())
+	require.NoError(err)
+	consumer, err := f.Store.GetAttachmentChangeConsumer(t.Context(), consumerKey)
+	require.NoError(err)
+	require.True(consumer.ReconciliationComplete)
+	require.Positive(consumer.LastSequence)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE visual_generations SET source_fence = 0 WHERE id = ?`), generation.ID)
+	require.NoError(err)
+
+	_, err = reconciler.Replay(t.Context())
+	require.NoError(err)
+	current, err := f.Store.GetVisualGeneration(t.Context(), generation.ID)
+	require.NoError(err)
+	assert.Equal(consumer.LastSequence, current.SourceFence)
+}
+
+// Reopening reconciliation moves the consumer baseline past journal entries
+// for messages the bounded scan already passed. The scan must restart, or an
+// image added to such a message escapes both the scan and journal replay.
+func TestFullReconcileRestartsScanWhenBaselineMoves(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	generation := testVisualGeneration(t, f)
+	early := testVisualCandidate(t, f, "rebaseline-early", strings.Repeat("a7", 32))
+	testVisualCandidate(t, f, "rebaseline-middle", strings.Repeat("b8", 32))
+	testVisualCandidate(t, f, "rebaseline-late", strings.Repeat("c9", 32))
+	consumerKey := "visual-test/rebaseline"
+	reconciler := testReconciler(t, f, generation.ID, memoryOpener{data: encodedPNG(t, 2, 2)}, consumerKey)
+	reconciler.config.PageSize = 1
+	reconciler.config.MaxScanPagesPerPass = 1
+	_, err := f.Store.SyncVisualGenerationCapabilityFingerprint(t.Context(), generation.ID, consumerKey, "capability-one")
+	require.NoError(err)
+
+	first, err := reconciler.FullReconcile(t.Context())
+	require.NoError(err)
+	require.Len(first.Work, 1)
+	require.Equal(early, first.Work[0].Claim.Owner.MessageID)
+	publishReconciledWork(t, f, first.Work[0])
+	// The bounded scan moves past a page only once it yields no new work.
+	passed, err := reconciler.FullReconcile(t.Context())
+	require.NoError(err)
+	require.Empty(passed.Work)
+	require.Equal(early, reconciler.scanCursor, "the scan has passed the early message")
+
+	// A new image lands on the already-scanned message, then reconciliation
+	// reopens at a baseline past that journal entry.
+	added := strings.Repeat("d0", 32)
+	require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), early, store.AttachmentWrite{
+		Filename: "added.png", MIMEType: "image/png", StoragePath: added[:2] + "/" + added,
+		ContentHash: added, Size: 10, Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:2",
+	}))
+	reopened, err := f.Store.SyncVisualGenerationCapabilityFingerprint(t.Context(), generation.ID, consumerKey, "capability-two")
+	require.NoError(err)
+	require.True(reopened)
+
+	claimedAdded := false
+	for range 20 {
+		result, err := reconciler.FullReconcile(t.Context())
+		require.NoError(err)
+		for _, work := range result.Work {
+			if work.Claim.Owner.BlobHash == added {
+				claimedAdded = true
+			}
+			publishReconciledWork(t, f, work)
+		}
+		consumer, err := f.Store.GetAttachmentChangeConsumer(t.Context(), consumerKey)
+		require.NoError(err)
+		if consumer.ReconciliationComplete {
+			break
+		}
+	}
+	assert.True(claimedAdded, "the reopened scan must revisit messages before the old cursor")
+}

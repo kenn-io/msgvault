@@ -27,6 +27,7 @@ var _ vector.MetadataSearchingBackend = (*Backend)(nil)
 type acceleratedCandidate struct {
 	embeddingID int64
 	messageID   int64
+	revision    int64
 }
 
 type acceleratedQueryer interface {
@@ -45,6 +46,11 @@ func (b *Backend) SearchWithMetadata(
 	k int,
 	filter vector.Filter,
 ) ([]vector.Hit, vector.SearchMetadata, error) {
+	release, err := b.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return nil, vector.SearchMetadata{}, err
+	}
+	defer release()
 	hits, metadata, err := b.searchAccelerator(ctx, gen, queryVec, k, filter)
 	if err != nil || (metadata.Accelerator != "" && metadata.Accelerator != "exact-fallback") {
 		return hits, metadata, err
@@ -107,7 +113,7 @@ func (b *Backend) searchAccelerator(
 		_ = tx.Rollback()
 		return nil, vector.SearchMetadata{}, nil
 	}
-	if !filter.IsEmpty() {
+	if !filter.IsEmpty() || b.policyStore != nil {
 		threshold := b.exactFilterVectorThreshold
 		messageIDs, probeErr := b.filteredMessageIDsLimit(ctx, filter, threshold+1)
 		if probeErr != nil {
@@ -301,15 +307,49 @@ func (b *Backend) searchExactFilteredPopulation(
 	if err != nil {
 		return nil, fmt.Errorf("encode exact-filter message IDs: %w", err)
 	}
-	rows, err := queryer.QueryContext(ctx, `SELECT e.message_id,
+	from := `FROM embeddings e
+		JOIN ` + accelerator.TableName + ` a ON a.rowid = e.embedding_id`
+	where := `WHERE e.generation_id = ?
+		  AND e.message_id IN (SELECT value FROM json_each(?))`
+	queryPrefix := ""
+	args := []any{float32SliceBlob(queryVec), int64(accelerator.GenerationID), string(blob)}
+	if b.policyStore != nil {
+		revisions, err := b.currentEmbeddingRevisions(ctx, messageIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(revisions) == 0 {
+			return []vector.Hit{}, nil
+		}
+		revisionPairs, err := encodeEmbeddingRevisionPairs(revisions)
+		if err != nil {
+			return nil, err
+		}
+		// Materialize the bounded revision set once, then join current vectors by
+		// generation and message through their index.
+		queryPrefix = `WITH current_revisions(message_id, embedding_revision) AS MATERIALIZED (
+			SELECT CAST(json_extract(pair.value, '$[0]') AS INTEGER),
+			       CAST(json_extract(pair.value, '$[1]') AS INTEGER)
+			FROM json_each(?) pair
+		)
+		`
+		from = `FROM current_revisions current_revision
+		JOIN embeddings e ON e.generation_id = ?
+			AND e.message_id = current_revision.message_id
+			AND e.embedding_revision = current_revision.embedding_revision
+		JOIN ` + accelerator.TableName + ` a ON a.rowid = e.embedding_id`
+		where = ""
+		args = []any{revisionPairs, float32SliceBlob(queryVec), int64(accelerator.GenerationID)}
+	}
+	query := queryPrefix + `SELECT e.message_id,
 		MIN(vec1_l2_distance(?, a.embedding)) AS distance
-		FROM embeddings e
-		JOIN `+accelerator.TableName+` a ON a.rowid = e.embedding_id
-		WHERE e.generation_id = ?
-		  AND e.message_id IN (SELECT value FROM json_each(?))
+		` + from + `
+		` + where + `
 		GROUP BY e.message_id
 		ORDER BY distance ASC, e.message_id ASC
-		LIMIT ?`, float32SliceBlob(queryVec), int64(accelerator.GenerationID), string(blob), k)
+		LIMIT ?`
+	args = append(args, k)
+	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query exact-filter population: %w", err)
 	}
@@ -347,7 +387,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	if err != nil {
 		return nil, fmt.Errorf("encode accelerator candidate IDs: %w", err)
 	}
-	rows, err := queryer.QueryContext(ctx, `SELECT embedding_id, message_id FROM embeddings
+	rows, err := queryer.QueryContext(ctx, `SELECT embedding_id, message_id, embedding_revision FROM embeddings
 		WHERE generation_id = ? AND embedding_id IN (SELECT value FROM json_each(?))`,
 		int64(accelerator.GenerationID), string(encoded))
 	if err != nil {
@@ -359,7 +399,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	seenMessages := make(map[int64]struct{}, len(rowIDs))
 	for rows.Next() {
 		var candidate acceleratedCandidate
-		if err := rows.Scan(&candidate.embeddingID, &candidate.messageID); err != nil {
+		if err := rows.Scan(&candidate.embeddingID, &candidate.messageID, &candidate.revision); err != nil {
 			return nil, fmt.Errorf("scan accelerator candidate mapping: %w", err)
 		}
 		candidates = append(candidates, candidate)
@@ -387,6 +427,13 @@ func (b *Backend) rerankAcceleratedCandidates(
 	for _, messageID := range liveIDs {
 		live[messageID] = struct{}{}
 	}
+	currentRevisions := map[int64]int64(nil)
+	if b.policyStore != nil {
+		currentRevisions, err = b.currentEmbeddingRevisions(ctx, liveIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	queryBlob := float32SliceBlob(queryVec)
 	stmt, err := queryer.PrepareContext(ctx, `SELECT vec1_l2_distance(?, embedding)
 		FROM `+accelerator.TableName+` WHERE rowid = ?`)
@@ -398,6 +445,12 @@ func (b *Backend) rerankAcceleratedCandidates(
 	for _, candidate := range candidates {
 		if _, ok := live[candidate.messageID]; !ok {
 			continue
+		}
+		if b.policyStore != nil {
+			currentRevision, ok := currentRevisions[candidate.messageID]
+			if !ok || currentRevision != candidate.revision {
+				continue
+			}
 		}
 		var distance float64
 		if err := stmt.QueryRowContext(ctx, queryBlob, candidate.embeddingID).Scan(&distance); err != nil {

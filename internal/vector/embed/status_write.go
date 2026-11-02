@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -13,6 +14,9 @@ func (w *Worker) upsertMeasured(ctx context.Context, gen vector.GenerationID, ch
 }
 
 func (w *ContextWorker) embedDocumentsMeasured(ctx context.Context, inputs []DocumentInput) ([][][]float32, error) {
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return nil, err
+	}
 	var chunks []string
 	for _, input := range inputs {
 		chunks = append(chunks, input.Chunks...)
