@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -187,4 +188,131 @@ func (tr streamedGraphTransport) RoundTrip(r *http.Request) (*http.Response, err
 		response.Body = streamedGraphBody{ReadCloser: response.Body, cancel: tr.cancel, reads: tr.reads}
 	}
 	return response, err
+}
+
+func TestGraphPostSendsFormBodyOnly(t *testing.T) {
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/v26.0/100/subscribed_apps", r.URL.Path)
+		assert.Empty(t, r.URL.RawQuery)
+		assert.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
+		assert.Equal(t, "Bearer synthetic-page-secret", r.Header.Get("Authorization"))
+		require.NoError(t, r.ParseForm())
+		assert.Equal(t, "feed,messages", r.PostForm.Get("subscribed_fields"))
+		_, _ = fmt.Fprint(w, `{"success":true}`)
+	})
+	var out struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, c.post(t.Context(), "100/subscribed_apps", url.Values{"subscribed_fields": {"feed,messages"}}, &out))
+	assert.True(t, out.Success)
+}
+
+func TestGraphPostJSON(t *testing.T) {
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Empty(t, r.URL.RawQuery)
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		assert.Equal(t, "Bearer synthetic-page-secret", r.Header.Get("Authorization"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"recipient":{"comment_id":"100_200_300"},"message":{"text":"Synthetic reply"}}`, string(body))
+		_, _ = fmt.Fprint(w, `{"message_id":"400"}`)
+	})
+	var out struct {
+		ID string `json:"message_id"`
+	}
+	require.NoError(t, c.postJSON(t.Context(), "100/messages", map[string]any{"recipient": map[string]string{"comment_id": "100_200_300"}, "message": map[string]string{"text": "Synthetic reply"}}, &out))
+	assert.Equal(t, "400", out.ID)
+	require.Error(t, c.postJSON(t.Context(), "100/messages", make(chan int), &out))
+}
+
+func TestGraphDeleteDecodesSuccess(t *testing.T) {
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/v26.0/100_200_300", r.URL.Path)
+		assert.Empty(t, r.URL.RawQuery)
+		assert.Equal(t, "Bearer synthetic-page-secret", r.Header.Get("Authorization"))
+		_, _ = fmt.Fprint(w, `{"success":true}`)
+	})
+	var out struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, c.delete(t.Context(), "100_200_300", &out))
+	assert.True(t, out.Success)
+}
+
+func TestGraphPostRefusesRedirect(t *testing.T) {
+	for _, status := range []int{302, 307, 308, 500} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			var calls atomic.Int32
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Location", "/redirected")
+				w.WriteHeader(status)
+			})
+			var out map[string]any
+			require.Error(t, c.post(t.Context(), "100/subscribed_apps", url.Values{"subscribed_fields": {"feed"}}, &out))
+			assert.Equal(t, int32(1), calls.Load())
+		})
+	}
+}
+
+func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
+	for _, method := range []string{"GET", "POST", "JSON", "DELETE"} {
+		t.Run(method, func(t *testing.T) {
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = fmt.Fprint(w, `{"error":{"message":"secret-bearing synthetic-page-secret","code":10,"error_subcode":2018300}}`)
+			})
+			var out map[string]any
+			var err error
+			switch method {
+			case "GET":
+				err = c.get(t.Context(), "100", nil, &out)
+			case "POST":
+				err = c.post(t.Context(), "100", nil, &out)
+			case "JSON":
+				err = c.postJSON(t.Context(), "100", map[string]string{}, &out)
+			case "DELETE":
+				err = c.delete(t.Context(), "100", &out)
+			}
+			var api *APIError
+			require.ErrorAs(t, err, &api)
+			assert.Equal(t, 400, api.Status)
+			assert.Equal(t, 10, api.Code)
+			assert.Equal(t, 2018300, api.Subcode)
+			assert.True(t, api.Permission())
+			assert.Equal(t, "graph request failed (HTTP 400, code 10, subcode 2018300)", err.Error())
+			assert.NotContains(t, err.Error(), "secret")
+		})
+	}
+}
+
+func TestGraphErrorBodyCapped(t *testing.T) {
+	for _, body := range []string{"invalid", `{"error":{"message":"` + strings.Repeat("x", 1<<20) + `","code":200}}`, `{"error":{"code":200}}` + strings.Repeat(" ", 9<<20)} {
+		c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, body)
+		})
+		var out map[string]any
+		err := c.get(t.Context(), "100", nil, &out)
+		var api *APIError
+		require.ErrorAs(t, err, &api)
+		assert.Equal(t, 403, api.Status)
+		assert.Zero(t, api.Code)
+		assert.Zero(t, api.Subcode)
+		assert.Equal(t, "graph request failed (HTTP 403)", err.Error())
+	}
+}
+
+func TestGraphThrottleAndNotFoundCodes(t *testing.T) {
+	for _, code := range []int{4, 17, 32, 613, 80000, 80001, 80014, 80015, 100, 190, 10, 200, 299, 300} {
+		e := &APIError{Status: 400, Code: code}
+		assert.Equal(t, code == 4 || code == 17 || code == 32 || code == 613 || (code >= 80000 && code <= 80014), e.Throttled(), "code %d", code)
+		assert.Equal(t, code == 100, e.NotFound())
+		assert.Equal(t, code == 190, e.TokenExpired())
+		assert.Equal(t, code == 10 || (code >= 200 && code <= 299), e.Permission())
+	}
+	assert.Equal(t, "graph request failed (HTTP 400, code 100)", (&APIError{Status: 400, Code: 100}).Error())
 }
