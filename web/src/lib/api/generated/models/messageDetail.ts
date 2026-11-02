@@ -22,6 +22,7 @@ export interface MessageDetail {
   from_name?: string;
   from_phone?: string;
   has_attachments: boolean;
+  hidden_text_present: boolean;
   id: number;
   is_from_me?: boolean;
   labels: string[];

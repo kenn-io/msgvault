@@ -100,6 +100,14 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		decoder.UseNumber()
 		require.NoError(decoder.Decode(value))
 	}
+	command := exec.CommandContext(t.Context(), binary, "--home", home, "search", "from:@a.example OR from:@b.example", "--json") //nolint:gosec // The binary path is supplied by the test operator.
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
+	var jsonOut, warningOut bytes.Buffer
+	command.Stdout, command.Stderr = &jsonOut, &warningOut
+	require.NoError(command.Run())
+	var warningResults []map[string]any
+	decode(jsonOut.String(), &warningResults)
+	assert.Contains(warningOut.String(), `OR was matched as a literal word`)
 	// The stored preview lacks this term, so this proves --snippet reaches the daemon's include_snippet path.
 	out := run("search", "contextneedle", "--snippet")
 	assert.Contains(out, "contextneedle")
