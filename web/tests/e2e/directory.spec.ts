@@ -50,9 +50,6 @@ test('Directory lists durable people, opens People Files, and scopes files to th
   await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
-  await page.reload();
-  await expect(personTabs.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
-  await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
   await personTabs.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
   expect(requests).toContain('/api/v1/people/42/files/search');

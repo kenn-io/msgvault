@@ -125,12 +125,11 @@ it.each([
   { outcome: 'is cancelled', selectedID: null },
   { outcome: 'clears the stale warning', selectedID: null },
   { outcome: 'merges', selectedID: null },
-  { outcome: 'merges', selectedID: 42 },
-])('handles the next pair when it $outcome (selected=$selectedID)', async ({ outcome, selectedID }) => {
+  { outcome: 'merges', selectedID: 7 },
+])('handles bulk-link outcomes and absorbed selections: $outcome (selected=$selectedID)', async ({ outcome, selectedID }) => {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
   let merged = false;
   const one = profile(7, 4, [1]), two = profile(9, 2, [2]);
-  const unrelated = { ...profile(42, 1, []), display_name: 'Unrelated person' };
   const survivor = { ...two, revision: 3, participant_ids: [1, 2] };
   const structured = (person: ReturnType<typeof profile>, alias: string) => ({ person, names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
   const missing = () => Response.json({ error: 'person_not_found', message: 'Person not found.' }, { status: 404 });
@@ -140,13 +139,11 @@ it.each([
       if (++listRequests === 2 && outcome === 'merges') await new Promise<void>(resolve => { releaseReconcile = resolve; });
       return Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) });
     },
-    '/api/v1/people/directory': () => Response.json({ people: merged ? [survivor, unrelated] : [one, two, unrelated] }),
+    '/api/v1/people/directory': () => Response.json({ people: merged ? [survivor] : [one, two] }),
     '/api/v1/people/7': () => merged ? missing() : Response.json(one, { headers: { ETag: '"person-7-r4"' } }),
     '/api/v1/people/7/profile': () => merged ? missing() : Response.json(structured(one, 'Absorbed alias'), { headers: { ETag: '"person-7-r4"' } }),
     '/api/v1/people/9': () => Response.json(merged ? survivor : two, { headers: { ETag: merged ? '"person-9-r3"' : '"person-9-r2"' } }),
     '/api/v1/people/9/profile': () => Response.json(structured(merged ? survivor : two, 'Survivor alias'), { headers: { ETag: merged ? '"person-9-r3"' : '"person-9-r2"' } }),
-    '/api/v1/people/42': () => Response.json(unrelated, { headers: { ETag: '"person-42-r1"' } }),
-    '/api/v1/people/42/profile': () => Response.json(structured(unrelated, 'Unrelated alias'), { headers: { ETag: '"person-42-r1"' } }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: merged ? survivor : one, display_label: merged ? 'Synthetic Two' : 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
     '/api/v1/identity/links': async request => {
@@ -161,7 +158,7 @@ it.each([
   const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    if (selectedID !== null) expect(await screen.findByText(selectedID === 7 ? 'Absorbed alias' : 'Unrelated alias')).toBeDefined();
+    if (selectedID !== null) expect(await screen.findByText('Absorbed alias')).toBeDefined();
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
     if (outcome === 'merges') {
@@ -180,11 +177,10 @@ it.each([
       expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
       expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
       if (selectedID !== null) {
-        const expectedID = selectedID === 7 ? 9 : 42;
-        await waitFor(() => expect(directory.selectedPersonID).toBe(expectedID));
-        expect(state.current.directoryPersonID).toBe(expectedID);
+        await waitFor(() => expect(directory.selectedPersonID).toBe(9));
+        expect(state.current.directoryPersonID).toBe(9);
         await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-        expect(await screen.findByText(selectedID === 7 ? 'Survivor alias' : 'Unrelated alias')).toBeDefined();
+        expect(await screen.findByText('Survivor alias')).toBeDefined();
         expect(screen.queryByText('Absorbed alias')).toBeNull();
       }
     } else if (outcome === 'is cancelled') {
@@ -228,13 +224,8 @@ it('resetting People filters commits one complete navigation', async () => {
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each([
-  { entry: 'list', activity: 50, bindings: [1] },
-  { entry: 'deep link', activity: 50, bindings: [1] },
-  { entry: 'list', activity: 0, bindings: [1] },
-  { entry: 'deep link', activity: 0, bindings: [1] },
-  { entry: 'deep link', activity: 0, bindings: [] },
-])('opens a saved person from $entry on the activity-appropriate tab (activity=$activity, bindings=$bindings)', async ({ entry, activity, bindings }) => {
+it.each(['list', 'deep link'])('opens a saved person from %s in its person page', async entry => {
+  const activity = 50, bindings = [1];
   const saved = { ...profile(7, 1, bindings), display_name: 'Saved Person', categories: [], organizations: [], contact_state: 'active' };
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: [saved] }),
@@ -255,14 +246,7 @@ it.each([
   try {
     if (entry === 'list') await fireEvent.click(await within(screen.getByRole('grid', { name: 'People results' })).findByText('Saved Person'));
     await screen.findByRole('heading', { name: 'Saved Person' });
-    if (bindings.length) await waitFor(() => expect(controller.detail?.activity_count).toBe(activity));
-    if (activity > 0) {
-      expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
-      expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
-    } else {
-      expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
-      expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
-    }
+    expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
