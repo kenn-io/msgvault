@@ -80,9 +80,11 @@ func NewManagedClient(root, app, account, bootstrap, secret string) (*Client, er
 				if err := writeState(path, state); err != nil {
 					return err
 				}
-				rotated, err := c.Refresh(ctx, app, secret, bundle.RefreshToken)
+				dispatched := false
+				refreshCtx := withDispatchHook(ctx, func() error { dispatched = true; return nil })
+				rotated, err := c.Refresh(refreshCtx, app, secret, bundle.RefreshToken)
 				if err != nil {
-					if errors.Is(err, ErrRateLimited) {
+					if !dispatched || errors.Is(err, ErrRateLimited) {
 						state.RefreshPending = false
 						return errors.Join(err, writeState(path, state))
 					}

@@ -1,9 +1,11 @@
 package tiktok
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,4 +90,37 @@ func TestCommentSyncRejectsLoopingCursor(t *testing.T) {
 	sum, err := imp.Import(t.Context(), "app-example", "account-example", ImportOptions{})
 	requirements.ErrorContains(err, "cursor")
 	assert.True(t, sum.Partial)
+}
+
+func TestCommentRequestBudgetCountsRetriedHTTPAttempts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	videoCalls := 0
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/business/get/" {
+			_, _ = fmt.Fprint(w, `{"code":0,"data":{"username":"example"}}`)
+			return
+		}
+		videoCalls++
+		if videoCalls == 1 {
+			http.Error(w, "synthetic transient error", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"code":0,"data":{"videos":[],"has_more":false}}`)
+	})
+	c.wait = func(context.Context, time.Duration) error { return nil }
+	imp := NewImporter(st, c)
+	_, err := imp.Register(t.Context(), "app-example", "account-example")
+	requirements.NoError(err)
+	sum, err := imp.Import(t.Context(), "app-example", "account-example", ImportOptions{MaxRequests: 2})
+	requirements.NoError(err)
+	assertions.True(sum.Partial)
+	assertions.Equal(2, sum.Requests)
+	assertions.Equal(1, videoCalls, "retry must pause before dispatch exceeds the budget")
+	sum, err = imp.Import(t.Context(), "app-example", "account-example", ImportOptions{MaxRequests: 2})
+	requirements.NoError(err)
+	assertions.False(sum.Partial)
+	assertions.Equal(2, sum.Requests)
+	assertions.Equal(2, videoCalls)
 }

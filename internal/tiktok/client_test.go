@@ -53,7 +53,7 @@ func TestClientFailuresAreBoundedAndSanitized(t *testing.T) {
 		status, calls int
 	}{
 		{"denied", `{"code":40105,"message":"fixture-access-token personal content"}`, 200, 1},
-		{"missing code", `{"data":{}}`, 200, 1},
+		{"missing code", `{"data":{"username":"example"}}`, 200, 1},
 		{"transient", `{"code":50000,"message":"private"}`, 503, 3},
 		{"invalid", `private response`, 200, 1},
 	} {

@@ -66,6 +66,22 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
+// Dispatch hooks are scoped to an operation, including nested token refreshes.
+// They run only after preflight succeeds and immediately before HTTP dispatch.
+type dispatchHookKey struct{}
+
+func withDispatchHook(ctx context.Context, hook func() error) context.Context {
+	prior, _ := ctx.Value(dispatchHookKey{}).(func() error)
+	return context.WithValue(ctx, dispatchHookKey{}, func() error {
+		if prior != nil {
+			if err := prior(); err != nil {
+				return err
+			}
+		}
+		return hook()
+	})
+}
+
 func (c *Client) request(ctx context.Context, path string, query url.Values, payload, result any, auth, retry bool) error {
 	var body []byte
 	var err error
@@ -110,6 +126,14 @@ func (c *Client) request(ctx context.Context, path string, query url.Values, pay
 		}
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if hook, ok := ctx.Value(dispatchHookKey{}).(func() error); ok {
+			if err := hook(); err != nil {
+				return err
+			}
 		}
 		resp, err := c.http.Do(req)
 		if err != nil {

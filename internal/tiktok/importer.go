@@ -211,6 +211,7 @@ func (imp *Importer) Import(ctx context.Context, app, account string, opts Impor
 	}
 	sum = &ImportSummary{}
 	r := &commentRun{imp: &scoped, source: source, app: app, account: account, state: state, sum: sum, maximum: maximum, syncID: syncID}
+	ctx = withDispatchHook(ctx, r.consumeRequest)
 	defer func() {
 		sum.Partial = retErr != nil || !state.complete()
 		cp, err := r.checkpoint()
@@ -229,7 +230,10 @@ func (imp *Importer) Import(ctx context.Context, app, account string, opts Impor
 	if err := r.save(ctx); err != nil {
 		return sum, err
 	}
-	if err := r.request(ctx, func() error { _, err := imp.api.Account(ctx, account); return err }); err != nil {
+	if _, err := imp.api.Account(ctx, account); err != nil {
+		if errors.Is(err, errBudget) {
+			return sum, nil
+		}
 		return sum, err
 	}
 	for !state.complete() {
@@ -256,16 +260,14 @@ func (r *commentRun) save(ctx context.Context) error {
 	}
 	return r.imp.store.UpdateSyncCheckpointContext(ctx, r.syncID, cp)
 }
-func (r *commentRun) request(ctx context.Context, fn func() error) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+func (r *commentRun) consumeRequest() error {
 	if r.sum.Requests >= r.maximum {
 		return errBudget
 	}
 	r.sum.Requests++
-	return fn()
+	return nil
 }
+
 func nextCursor(current string, next ID, more bool) (string, error) {
 	if !more {
 		return "", nil
@@ -286,8 +288,7 @@ func (r *commentRun) step(ctx context.Context) error {
 			s.Videos = s.Videos[1:]
 			return nil
 		}
-		var page VideoPage
-		err := r.request(ctx, func() error { var err error; page, err = r.imp.api.Videos(ctx, r.account, s.Cursor); return err })
+		page, err := r.imp.api.Videos(ctx, r.account, s.Cursor)
 		if err != nil {
 			return err
 		}
@@ -343,12 +344,7 @@ func (r *commentRun) step(ctx context.Context) error {
 	return r.fetchComments(ctx, string(a.Video.ID), "", &a.Cursor, &a.Exhausted, &a.Comments)
 }
 func (r *commentRun) fetchComments(ctx context.Context, video, parent string, cursor *string, exhausted *bool, pending *[]Comment) error {
-	var page CommentPage
-	err := r.request(ctx, func() error {
-		var err error
-		page, err = r.imp.api.Comments(ctx, r.account, video, parent, *cursor)
-		return err
-	})
+	page, err := r.imp.api.Comments(ctx, r.account, video, parent, *cursor)
 	if err != nil {
 		return err
 	}

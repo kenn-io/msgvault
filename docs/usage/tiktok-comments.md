@@ -57,11 +57,12 @@ are skipped, and selecting one explicitly fails. Registration calls
 `/business/get/` for the configured account. It checks the returned profile;
 it does not attest to all scopes or discover other authorized accounts.
 
-`sync` requires registration. The default budget is 1,000 API reads per account,
-including the profile check. `--max-requests` must be positive. Budget pauses
-save pending pages and resume on the next run. Provider errors also preserve
-accepted rows and checkpoints, but return failure. Completed scans start again
-at the newest video page, so new comments on older videos can be discovered.
+`sync` requires registration. The default budget is 1,000 API requests per
+account, including retries, profile checks, and token refreshes.
+`--max-requests` must be positive. Budget pauses save pending pages and resume
+on the next run. Provider errors also preserve accepted rows and checkpoints,
+but return failure. Completed scans start again at the newest video page, so
+new comments on older videos can be discovered.
 
 Use `--json` for JSON results on stdout and JSON command errors on stderr.
 The daemon owns archive access and credentials even when a remote CLI requests
