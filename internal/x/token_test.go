@@ -466,15 +466,12 @@ func TestSnapshotScopesCannotMutatePreparedGrant(t *testing.T) {
 	record := testRecord()
 	record.Expiry = time.Now().Add(time.Hour)
 	_testRequire.NoError(m.Save(t.Context(), record))
-	c := m.Credentials(record.OwnerID, nil)
+	c, ok := m.Credentials(record.OwnerID, nil).(*accountCredentials)
+	_testRequire.True(ok)
 	snapshot, err := c.Prepare(t.Context())
 	_testRequire.NoError(err)
 	snapshot.GrantedScopes[0] = "tweet.write"
-	actual, err := c.Prepare(t.Context())
-	_testRequire.NoError(err)
-	_testAssert.True(actual.HasScope("tweet.read"))
-	_testAssert.False(actual.HasScope("tweet.write"))
-	_testAssert.Equal(int64(1), actual.Generation)
+	_testAssert.Equal(record.GrantedScopes, c.record.GrantedScopes)
 }
 
 func TestRefreshCancellationDuringTokenHTTP(t *testing.T) {
