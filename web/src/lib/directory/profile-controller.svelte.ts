@@ -94,7 +94,7 @@ export class DirectoryProfileController {
     this.options = options;
     this.person = bundle.person;
     this.structuredProfile = bundle.structuredProfile;
-    this.attributes = bundle.attributes;
+    this.attributes = bundle.attributes; this.attributesError = bundle.errors.attributes ?? null;
     this.definitions = bundle.definitions?.definitions ?? [];
     this.personETag = bundle.etags.person ?? null;
     this.structuredProfileETag = bundle.etags.structuredProfile ?? null;

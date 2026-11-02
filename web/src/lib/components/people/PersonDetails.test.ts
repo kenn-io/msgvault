@@ -33,12 +33,17 @@ it('routes section Retry through the same profile controller and forwards the re
   const owner = directory.profile;
   const view = render(PersonDetails, { client, directory, personID: 7 });
   try {
-    const alert = screen.getAllByRole('alert').find(element => element.textContent?.startsWith('attributes:'))!;
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    const alert = alerts[0]!;
+    expect(alert.textContent).toContain('Attributes unavailable');
+    expect(alert.textContent).not.toContain('attributes:');
+    expect(screen.getAllByRole('button', { name: /Retry/ })).toHaveLength(1);
     expect(vi.mocked(MeetingPanel).mock.calls.at(-1)?.[1].refreshKey).toBe('1');
     const reload = vi.spyOn(owner!, 'reload');
     person.revision = 2;
     await act(async () => {
-      await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+      await fireEvent.click(within(alert).getByRole('button', { name: 'Retry attributes' }));
       expect(reload).toHaveBeenCalledOnce();
       await reload.mock.results[0]!.value;
     });
