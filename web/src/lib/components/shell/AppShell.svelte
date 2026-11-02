@@ -1347,6 +1347,7 @@
           onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}
           onOpenDirectoryPerson={openDirectoryPerson}
+          onReviewFacts={(personID) => commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
           onAnnounce={announceOperation}
           onOpenFileItem={openFileItem}
           onOpenFileConversation={openFileConversation}

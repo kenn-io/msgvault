@@ -19,7 +19,7 @@
   import DomainCalendar from './DomainCalendar.svelte';
 
   let { client, directory, onRecordDeleted, onSplitCommitted, onOpenCardDAVConflict, onOpenCardDAVSettings, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
-    onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings, sweepConfigured,
+    onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings, sweepConfigured, onReviewFacts,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, onIdentityChange, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange, onMessagesTableChange,
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
@@ -28,7 +28,7 @@
       onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>; onIdentityChange?: () => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
-      sweepConfigured?: boolean; onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: (category?: string) => void; onOpenFileItem?: (key: string) => void;
+      onReviewFacts?: (personID: number) => void; sweepConfigured?: boolean; onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: (category?: string) => void; onOpenFileItem?: (key: string) => void;
       onOpenFileConversation?: (key: string, messageID: number, conversationID: number) => void;
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
       details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
@@ -150,7 +150,7 @@
   {/if}
   <div class="details" hidden={!details}>
     {#if profileID !== null && details}
-      {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
+      {#key profileID}<PersonDetails {onReviewFacts} {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
       <RelationshipHeader {onOpenDirectoryPerson} showIdentity={false} showTabs={false} title={person ? 'Identities' : undefined} {detail} loading={false} missing={false} {filesOpen} {onFilesToggle} {client} {onAnnounce}

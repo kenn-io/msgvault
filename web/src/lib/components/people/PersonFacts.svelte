@@ -11,9 +11,10 @@
     personID: number;
     /** Opens the setting that turns fact review on, while it is off. Stored facts stay readable. */
     onSetUp?: () => void;
+    onReviewFacts?: (personID: number) => void;
   }
 
-  let { client, personID, onSetUp = undefined }: Props = $props();
+  let { client, personID, onSetUp = undefined, onReviewFacts }: Props = $props();
 
   const controller = new FactLedgerController(untrack(() => client));
   let open = $state(false);
@@ -32,6 +33,7 @@
   <header>
     <h3 id={`facts-${personID}`}>Facts</h3>
     <span class="spacer"></span>
+    {#if onReviewFacts}<Button size="sm" label="Review facts" onclick={() => onReviewFacts?.(personID)} />{/if}
     {#if onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Facts" onclick={onSetUp} />{/if}
     <Button size="sm" label={open ? 'Hide' : 'Show'} ariaExpanded={open} onclick={() => (open = !open)} />
   </header>
