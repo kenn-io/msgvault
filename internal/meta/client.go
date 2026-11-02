@@ -123,6 +123,9 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		apiErr := &APIError{Status: resp.StatusCode}
 		const errorLimit = 64 << 10
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, errorLimit+1))
+		if readErr != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		var wire struct {
 			Error struct {
 				Code    int `json:"code"`

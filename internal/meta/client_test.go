@@ -316,3 +316,48 @@ func TestGraphThrottleAndNotFoundCodes(t *testing.T) {
 	}
 	assert.Equal(t, "graph request failed (HTTP 400, code 100)", (&APIError{Status: 400, Code: 100}).Error())
 }
+
+func TestGraphErrorBodyCancellation(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"error":{"code":200,"message":"`)
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			})
+			c.http.Transport = cancelErrorBodyTransport{base: c.http.Transport, cancel: cancel}
+			var out map[string]any
+			err := c.post(ctx, "100/subscribed_apps", url.Values{"subscribed_fields": {"feed"}}, &out)
+			assert.ErrorIs(t, err, context.Canceled)
+		})
+	}
+}
+
+type cancelErrorBodyTransport struct {
+	base   http.RoundTripper
+	cancel context.CancelFunc
+}
+
+func (tr cancelErrorBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := tr.base.RoundTrip(r)
+	if err == nil {
+		response.Body = &cancelErrorBody{ReadCloser: response.Body, cancel: tr.cancel}
+	}
+	return response, err
+}
+
+type cancelErrorBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelErrorBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.cancel()
+	}
+	return n, err
+}
