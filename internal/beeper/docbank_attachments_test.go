@@ -1119,19 +1119,34 @@ func TestAttachmentMirrorBackfillBeforeProcessingFailureSave(t *testing.T) {
 }
 
 func TestAttachmentMirrorBackfillBeforeFirstProcessingResultSave(t *testing.T) {
-	for _, state := range []string{"refused", "accepted"} {
-		t.Run(state, func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		missingJob bool
+		refused    bool
+		jobs       []string
+	}{
+		{name: "refused", refused: true, jobs: []string{"a", "a"}},
+		{name: "accepted", jobs: []string{"a", "a"}},
+		{name: "missing job", missingJob: true, refused: true, jobs: []string{"a", "a", "a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
 			r.delivered("a")
-			if state == "refused" {
+			if tc.missingJob {
+				require.NoError(r.runBatch(t.Context()))
+				delete(r.processing.States, docbanktest.ProcessingJobID("a", r.processing.Fingerprint))
+				r.processingDue()
+			}
+			if tc.refused {
 				r.processing.JobFaults["a"] = http.StatusConflict
 				r.processing.Reasons["a"] = "rendition_operator_required"
 			}
+			initialAttempts := len(r.processing.Jobs)
 			backfilled := false
 			r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-				if !backfilled && len(r.processing.Jobs) == 1 {
+				if !backfilled && len(r.processing.Jobs) > initialAttempts {
 					backfilled = true
 					delete(r.processing.JobFaults, "a")
 					delete(r.processing.Reasons, "a")
@@ -1141,14 +1156,14 @@ func TestAttachmentMirrorBackfillBeforeFirstProcessingResultSave(t *testing.T) {
 			})
 			require.NoError(r.runBatch(t.Context()))
 			require.True(backfilled)
-			if state == "accepted" {
+			if !tc.refused {
 				assert.Equal([]string{"a"}, r.processing.Jobs, "backfill preserves the newly accepted job")
 				id := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
 				r.processing.States[id] = [3]string{"failed", "rendition", "consent"}
 				r.processingDue()
 				require.NoError(r.runBatch(t.Context()))
 			}
-			assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+			assert.Equal(tc.jobs, r.processing.Jobs)
 			counts := r.processingCounts()
 			assert.Equal(int64(1), counts.Requested)
 			assert.Empty(counts.Outcomes)
