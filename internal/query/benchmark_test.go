@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -34,7 +34,12 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 
 	tmpDir := tb.TempDir()
 
-	db, err := sql.Open("duckdb", "")
+	// Derive the fixture under the cache builder policy with a fixed 1GB limit.
+	// Uncapped, DuckDB grows toward 80% of host RAM (8GB on a 16GB Windows CI
+	// runner), and Windows commits all of it, which starves the runner when other
+	// test binaries run at the same time.
+	db, err := duckdbutil.Open(tb.Context(), duckdbutil.BuilderPolicyWithOverrides(
+		tb.TempDir(), duckdbutil.BuilderOverrides{MemoryLimit: "1GB"}))
 	requirements.NoError(err, "open duckdb")
 	defer func() { _ = db.Close() }()
 
