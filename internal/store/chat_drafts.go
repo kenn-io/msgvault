@@ -124,7 +124,7 @@ func (s *Store) createChatDraftContext(
 		}
 		var reply sql.NullString
 		if dest.sourceType == "threads" && replyToMessageID == 0 {
-			return fmt.Errorf("Threads requires an archived reply target: %w", ErrChatDraftInvalidDestination)
+			return fmt.Errorf("threads requires an archived reply target: %w", ErrChatDraftInvalidDestination)
 		}
 		if replyToMessageID != 0 {
 			query := `SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?`

@@ -65,13 +65,17 @@ func TestThreadsOnePublishConcurrentCalls(t *testing.T) {
 		}()
 	}
 	close(start)
+	// Observe both workers before fatal assertions can end the test.
+	var completed [2]outcome
+	for n := range completed {
+		completed[n] = <-results
+	}
 	successes := 0
-	for range 2 {
-		out := <-results
+	for _, out := range completed {
 		if out.err == nil && out.result.MediaID != "" {
 			successes++
 		} else if out.err != nil {
-			assert.ErrorIs(out.err, store.ErrThreadsReplyConflict)
+			require.ErrorIs(out.err, store.ErrThreadsReplyConflict)
 		}
 	}
 	assert.GreaterOrEqual(successes, 1)

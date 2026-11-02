@@ -220,7 +220,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 				return lookupErr
 			}
 			if current.Identifier != source.Identifier || current.SourceType != sourceTypeThreads {
-				return errors.New("Threads source changed while waiting for removal")
+				return errors.New("threads source changed while waiting for removal")
 			}
 			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
 		})

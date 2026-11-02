@@ -67,7 +67,7 @@ func NewClient(o ClientOptions) (*Client, error) {
 		return nil, errors.New("invalid Threads API base URL")
 	}
 	if base.Scheme != "https" && (base.Scheme != "http" || !netguard.IsLoopbackHost(base.Hostname())) {
-		return nil, errors.New("Threads API base URL must use HTTPS")
+		return nil, errors.New("threads API base URL must use HTTPS")
 	}
 	if o.AccessToken == "" || strings.ContainsAny(o.AccessToken, "\r\n") {
 		return nil, errors.New("invalid Threads access token")
@@ -286,8 +286,17 @@ func (c *Client) getJSONWithAttempts(ctx context.Context, path string, params ur
 		if api.CredentialInvalid() {
 			return api
 		}
+		var cooldown time.Duration
+		if attempts == 1 && retryable(api) {
+			// Single-attempt polling skips Do's retry callback. Preserve the
+			// provider's uncapped deadline for the durable scheduler instead.
+			cooldown, _ = httpretry.ParseRetryAfter(res.Header.Get("Retry-After"), 0, c.budget.now())
+		}
 		if highUsage(res.Header) {
-			return &PauseError{Reason: "high_usage"}
+			return &PauseError{Reason: "high_usage", RetryAfter: cooldown}
+		}
+		if cooldown > 0 {
+			return errors.Join(api, &PauseError{Reason: "retry_after", RetryAfter: cooldown})
 		}
 		return api
 	}
@@ -323,7 +332,7 @@ func readBody(res *http.Response) ([]byte, error) {
 		return nil, errors.New("could not read Threads API response")
 	}
 	if len(body) > maxResponseBytes {
-		return nil, errors.New("Threads API response exceeds size limit")
+		return nil, errors.New("threads API response exceeds size limit")
 	}
 	return body, nil
 }

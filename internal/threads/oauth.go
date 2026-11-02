@@ -104,11 +104,11 @@ func ParseOAuthCallback(registeredURI, returnedURL, expectedState string) (strin
 func oauthCallbackURI(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.Fragment != "" || strings.Contains(raw, "#") {
-		return nil, errors.New("Threads requires a registered HTTPS callback")
+		return nil, errors.New("threads requires a registered HTTPS callback")
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || net.ParseIP(host) != nil {
-		return nil, errors.New("Threads callback requires a controlled domain")
+		return nil, errors.New("threads callback requires a controlled domain")
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
@@ -217,7 +217,7 @@ func newOAuthHTTP(opts OAuthClientOptions) (*oauthHTTP, error) {
 	}
 	// Preserve the injected transport (and its budget) but deny every redirect,
 	// including same-origin 307/308 replays of authorization material.
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("Threads OAuth redirect refused") }
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("threads OAuth redirect refused") }
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -273,7 +273,7 @@ func (c *oauthHTTP) request(ctx context.Context, method, path string, values url
 		if errors.Is(err, context.DeadlineExceeded) {
 			return context.DeadlineExceeded
 		}
-		return errors.New("Threads OAuth request failed")
+		return errors.New("threads OAuth request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	const maxBody = 1 << 20

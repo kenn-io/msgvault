@@ -71,7 +71,7 @@ func (e snapshotEvidence) mergeMedia(m Media) {
 
 func mediaRoot(m Media, origin ItemOrigin) (string, error) {
 	if !validID(m.ID) || m.Timestamp.IsZero() {
-		return "", errors.New("Threads item requires a media ID and timestamp")
+		return "", errors.New("threads item requires a media ID and timestamp")
 	}
 	for _, ref := range []*MediaReference{m.RootPost, m.RepliedTo, m.Owner, m.QuotedPost, m.RepostedPost} {
 		if ref != nil && !validID(ref.ID) {
@@ -96,22 +96,22 @@ func mediaRoot(m Media, origin ItemOrigin) (string, error) {
 	case "conversation", "sent_provisional":
 		root = origin.RootID
 		if !validID(root) {
-			return "", errors.New("Threads conversation requires a root ID")
+			return "", errors.New("threads conversation requires a root ID")
 		}
 	default:
 		return "", errors.New("unknown Threads item origin")
 	}
 	if origin.RootID != "" && origin.RootID != root {
-		return "", errors.New("Threads origin root mismatch")
+		return "", errors.New("threads origin root mismatch")
 	}
 	if m.RootPost != nil && m.RootPost.ID != root {
-		return "", errors.New("Threads item root mismatch")
+		return "", errors.New("threads item root mismatch")
 	}
 	if m.RepliedTo != nil && (m.RepliedTo.ID == m.ID || m.ID == root) {
 		return "", errors.New("invalid Threads parent edge")
 	}
 	if m.ID == root && m.IsReply != nil && *m.IsReply {
-		return "", errors.New("Threads root is a reply")
+		return "", errors.New("threads root is a reply")
 	}
 	return root, nil
 }

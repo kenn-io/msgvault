@@ -64,7 +64,7 @@ func newAddThreadsCmd(deps threadsCommandDeps) *cobra.Command {
 			secret = strings.TrimSpace(secret)
 		}
 		if secret == "" {
-			return errors.New("Threads app secret is required")
+			return errors.New("threads app secret is required")
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Open this authorization URL in your browser:\n%s\n", authorization)
 		_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Paste the full returned callback URL: ")
@@ -167,11 +167,11 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 				}
 			}
 			if oldID, existed := initial[identifier]; existed && (current == nil || current.ID != oldID) {
-				return errors.New("Threads source changed during authorization; reconnect explicitly")
+				return errors.New("threads source changed during authorization; reconnect explicitly")
 			}
 			if current != nil {
 				if current.HistoryOnly || current.MergedIntoSourceID != 0 {
-					return errors.New("Threads source is no longer writable")
+					return errors.New("threads source is no longer writable")
 				}
 				execution, err = st.AcquireSyncExecutionContext(ctx, current.ID)
 				if err != nil {
@@ -198,7 +198,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			source, err := deps.registerSource(ctx, st, saved, now())
 			if err != nil {
-				return fmt.Errorf("Threads credential was saved, but account registration failed: %w", err)
+				return fmt.Errorf("threads credential was saved, but account registration failed: %w", err)
 			}
 			if execution == nil {
 				execution, err = st.AcquireSyncExecutionContext(ctx, source.ID)
@@ -208,7 +208,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			if deps.postSourceMigrations != nil {
 				if err := deps.postSourceMigrations(st); err != nil {
-					return fmt.Errorf("Threads credential was saved, but registration migrations failed: %w", err)
+					return fmt.Errorf("threads credential was saved, but registration migrations failed: %w", err)
 				}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connected Threads account: %s\nUse this exact identifier in [[accounts]] to enable scheduled reads.\n", identifier)

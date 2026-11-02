@@ -38,10 +38,10 @@ func (w *Writer) checkSource(ctx context.Context) error {
 	}
 	source, err := w.store.GetSourceByIDContext(ctx, w.sourceID)
 	if err != nil {
-		return fmt.Errorf("Threads writer source: %w", err)
+		return fmt.Errorf("threads writer source: %w", err)
 	}
 	if source.SourceType != "threads" || source.Identifier != w.sourceIdentifier {
-		return errors.New("Threads writer source binding mismatch")
+		return errors.New("threads writer source binding mismatch")
 	}
 	return nil
 }
@@ -62,10 +62,10 @@ func (w *Writer) Apply(ctx context.Context, m Media, origin ItemOrigin) (int64, 
 	}
 	previous, exists, err := w.store.ThreadsArchiveMessageMetadataContext(ctx, w.sourceID, m.ID)
 	if err != nil {
-		return 0, fmt.Errorf("Threads archive metadata: %w", err)
+		return 0, fmt.Errorf("threads archive metadata: %w", err)
 	}
 	if exists && previous.SourceConversationID.String != root {
-		return 0, errors.New("Threads snapshot cannot change conversation")
+		return 0, errors.New("threads snapshot cannot change conversation")
 	}
 	e, err := decodeEvidence(previous.Metadata.String)
 	if err != nil {
@@ -115,7 +115,7 @@ func (w *Writer) Apply(ctx context.Context, m Media, origin ItemOrigin) (int64, 
 	if exists && m.Text == nil && !m.Present["text"] {
 		body, _, err = w.store.GetMessageBodyAndRawContext(ctx, previous.ID)
 		if err != nil {
-			return 0, fmt.Errorf("Threads sparse body: %w", err)
+			return 0, fmt.Errorf("threads sparse body: %w", err)
 		}
 	} else if m.Text != nil {
 		body = *m.Text
@@ -124,7 +124,7 @@ func (w *Writer) Apply(ctx context.Context, m Media, origin ItemOrigin) (int64, 
 	if exists && body == "" && strings.EqualFold(e.text("hide_status"), "hidden") {
 		body, _, err = w.store.GetMessageBodyAndRawContext(ctx, previous.ID)
 		if err != nil {
-			return 0, fmt.Errorf("Threads hidden body: %w", err)
+			return 0, fmt.Errorf("threads hidden body: %w", err)
 		}
 	}
 	hash := bodyHash(body)
@@ -149,7 +149,7 @@ func (w *Writer) Apply(ctx context.Context, m Media, origin ItemOrigin) (int64, 
 	}
 	metadata, err := json.Marshal(e)
 	if err != nil {
-		return 0, fmt.Errorf("Threads snapshot metadata: %w", err)
+		return 0, fmt.Errorf("threads snapshot metadata: %w", err)
 	}
 	raw := m.Raw
 	if len(raw) == 0 {

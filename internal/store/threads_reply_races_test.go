@@ -191,7 +191,7 @@ func TestThreadsReceiptPGClaimVersusMutation(t *testing.T) {
 			_, err = barrier.ExecContext(t.Context(), `SELECT pg_advisory_unlock(912230)`)
 			requirements.NoError(err)
 			requirements.NoError(<-claimed)
-			assertions.ErrorIs(<-mutated, store.ErrChatDraftClaimed)
+			requirements.ErrorIs(<-mutated, store.ErrChatDraftClaimed)
 			got, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
 			requirements.NoError(err)
 			assertions.Equal("immutable", got.Body)
@@ -314,6 +314,6 @@ func TestThreadsReceiptDispatchCommitResponseLostPG(t *testing.T) {
 	assertions.Equal("publish_dispatched", saved.State)
 	assertions.NotNil(saved.PublishDispatchedAt)
 	won, err = st.TryDispatchThreadsReplyContext(t.Context(), r.DraftID, saved.RowRevision)
-	assertions.ErrorIs(err, store.ErrThreadsReplyConflict)
+	requirements.ErrorIs(err, store.ErrThreadsReplyConflict)
 	assertions.False(won)
 }

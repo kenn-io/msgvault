@@ -157,7 +157,7 @@ func TestThreadsWriterSnapshotsAndParents(t *testing.T) {
 		assert := assert.New(t)
 		w, _ := writerFixture(t)
 		_, err := w.Apply(context.Background(), writerMedia("400", "no root"), ItemOrigin{Kind: "own_replies"})
-		assert.Error(err)
+		require.Error(t, err)
 		cases := []struct {
 			m Media
 			o ItemOrigin
@@ -169,11 +169,11 @@ func TestThreadsWriterSnapshotsAndParents(t *testing.T) {
 		}
 		for _, tc := range cases {
 			_, err = w.Apply(context.Background(), tc.m, tc.o)
-			assert.Error(err)
+			require.Error(t, err)
 		}
 		applyWriter(t, w, writerReply("410", "400", "411"), ItemOrigin{Kind: "conversation", RootID: "400"})
 		_, err = w.Apply(context.Background(), writerReply("411", "400", "410"), ItemOrigin{Kind: "conversation", RootID: "400"})
-		assert.Error(err)
+		require.Error(t, err)
 		applyWriter(t, w, writerMedia("420", "other root"), ItemOrigin{Kind: "own_posts"})
 		_, err = w.Apply(context.Background(), writerReply("421", "400", "420"), ItemOrigin{Kind: "conversation", RootID: "400"})
 		assert.Error(err)

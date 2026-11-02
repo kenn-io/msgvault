@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	ErrReplyNotPermitted       = errors.New("Threads reply is not permitted")
-	ErrReplyQuotaExhausted     = errors.New("Threads reply quota is exhausted")
+	ErrReplyNotPermitted       = errors.New("threads reply is not permitted")
+	ErrReplyQuotaExhausted     = errors.New("threads reply quota is exhausted")
 	ErrReplyReceiptPersistence = errors.New("published Threads media ID could not be saved")
 )
 
@@ -352,6 +352,19 @@ func (s *Sender) waitForContainer(ctx context.Context, r store.ThreadsReplySend,
 		r = reserved
 		status, err := api.ContainerStatus(ctx, r.ContainerID)
 		if err != nil {
+			if pause, ok := errors.AsType[*PauseError](err); ok && pause.RetryAfter > 0 {
+				cooldown := ceilReplyClock(s.options.Now().Add(pause.RetryAfter))
+				if r.NextPollAt == nil || cooldown.After(*r.NextPollAt) {
+					// Preserve a received cooldown even if the caller disconnected.
+					checkpoint, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+					saved, saveErr := s.store.AdvanceThreadsReplySendContext(checkpoint, r.DraftID, r.RowRevision, store.ThreadsReplyTransition{NextPollAt: &cooldown})
+					cancel()
+					if saveErr != nil {
+						return r, errors.Join(err, saveErr)
+					}
+					r = saved
+				}
+			}
 			return r, err
 		}
 		switch status {
@@ -362,7 +375,7 @@ func (s *Sender) waitForContainer(ctx context.Context, r store.ThreadsReplySend,
 			if err != nil {
 				return r, err
 			}
-			return terminal, errors.New("Threads container ended without publication")
+			return terminal, errors.New("threads container ended without publication")
 		case "FINISHED", "PUBLISHED":
 			ready, err := s.store.AdvanceThreadsReplySendContext(ctx, r.DraftID, r.RowRevision, store.ThreadsReplyTransition{State: "ready"})
 			if err != nil {
@@ -378,7 +391,7 @@ func (s *Sender) waitForContainer(ctx context.Context, r store.ThreadsReplySend,
 				return locked, err
 			}
 			unknown, saveErr := s.markUnknown(ctx, locked)
-			return unknown, errors.Join(errors.New("Threads container is published without a media ID"), saveErr)
+			return unknown, errors.Join(errors.New("threads container is published without a media ID"), saveErr)
 		default:
 			return r, ErrDecodeResponse
 		}

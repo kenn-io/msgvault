@@ -125,7 +125,9 @@ func TestThreadsWholeRunCapsIncludeCredentialRefresh(t *testing.T) {
 				}
 				serial++
 				until, err := strconv.ParseInt(r.URL.Query().Get("until"), 10, 64)
-				require.NoError(err)
+				if !assert.NoError(err) {
+					return true
+				}
 				// Repost facades exercise actual page requests and cursor progress without
 				// creating thousands of irrelevant archive fixtures merely to reach a cap.
 				_, _ = fmt.Fprintf(w, `{"data":[{"id":"%d","timestamp":%q,"reposted_post":{"id":"99999"}}],"paging":{"cursors":{"after":"page%d"}}}`, 100000+serial, time.Unix(until-1, 0).UTC().Format(time.RFC3339), serial)

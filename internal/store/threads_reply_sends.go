@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	ErrThreadsReplyNotFound = errors.New("Threads reply receipt not found")
-	ErrThreadsReplyConflict = errors.New("Threads reply receipt conflict")
+	ErrThreadsReplyNotFound = errors.New("threads reply receipt not found")
+	ErrThreadsReplyConflict = errors.New("threads reply receipt conflict")
 	ErrChatDraftClaimed     = errors.New("chat draft is claimed by a reply attempt")
 )
 
@@ -134,7 +134,7 @@ func threadsReplyDecimalID(id string) bool {
 func validateThreadsReplySourceTx(ctx context.Context, tx *loggedTx, r ThreadsReplySend) error {
 	source, err := scanSource(tx.QueryRowContext(ctx, `SELECT `+sourceCatalogColumns+` FROM sources WHERE id=?`, r.SourceID))
 	if err != nil {
-		return fmt.Errorf("Threads receipt source unavailable: %w", err)
+		return fmt.Errorf("threads receipt source unavailable: %w", err)
 	}
 	if source.SourceType != "threads" || source.Identifier != r.SourceIdentifier || source.HistoryOnly || source.MergedIntoSourceID != 0 {
 		return ErrSourceRetired

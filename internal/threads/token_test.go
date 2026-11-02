@@ -52,18 +52,18 @@ func TestThreadsTokenLifecycleStorage(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(uint64(2), next.Generation)
 	assert.Equal("new-secret", next.AccessToken())
-	assert.Error(m.Save(r), "stale generation cannot overwrite a newer record")
+	require.Error(m.Save(r), "stale generation cannot overwrite a newer record")
 	for _, id := range []string{"", "0", "../123", "1/2", "1e3", "-1", "01"} {
 		_, err = m.Load(id, oauthTestOwner)
 		require.Error(err)
 		bad := testTokenRecord()
 		bad.AppID = id
-		assert.Error(m.Save(bad))
-		assert.Error(m.Delete(id, oauthTestOwner))
+		require.Error(m.Save(bad))
+		require.Error(m.Delete(id, oauthTestOwner))
 	}
 	require.NoError(m.Delete("123", oauthTestOwner))
 	_, err = m.Load("123", oauthTestOwner)
-	assert.ErrorIs(err, ErrTokenNotFound)
+	require.ErrorIs(err, ErrTokenNotFound)
 	require.NoError(m.Delete("123", oauthTestOwner))
 }
 
@@ -98,7 +98,7 @@ func TestThreadsTokenLifecycleRefreshBoundaries(t *testing.T) {
 				return err
 			})
 			if tt.invalid {
-				assert.ErrorIs(err, ErrReauthorizationRequired)
+				require.ErrorIs(err, ErrReauthorizationRequired)
 				assert.Empty(got.AccessToken())
 				assert.Zero(f.calls.Load())
 				return
@@ -136,7 +136,7 @@ func TestThreadsTokenLifecycleRefreshBoundaries(t *testing.T) {
 		r.DataAccessExpiresAt = oauthTestNow
 		require.NoError(t, m.Save(r))
 		_, err := m.EnsureCurrent(context.Background(), oauthTestSource, f.options())
-		assert.ErrorIs(t, err, ErrReauthorizationRequired)
+		require.ErrorIs(t, err, ErrReauthorizationRequired)
 		assert.Zero(t, f.calls.Load())
 	})
 }
@@ -181,7 +181,7 @@ func TestThreadsTokenLifecycleInvalidation(t *testing.T) {
 				assert.Equal(uint64(1), stored.Generation)
 			} else {
 				assert.Equal(before, f.calls.Load(), "disabled generation must not call provider again")
-				assert.ErrorIs(err, ErrReauthorizationRequired)
+				require.ErrorIs(err, ErrReauthorizationRequired)
 				// A newly verified connection clears only the old generation's invalidation.
 				f.failPath = ""
 				f.valid = true
@@ -254,11 +254,13 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 				require.Error(m.Save(testTokenRecord()))
 				_, err := m.Load("123", oauthTestOwner)
 				require.Error(err)
-				assert.Error(m.Delete("123", oauthTestOwner))
+				require.Error(m.Delete("123", oauthTestOwner))
 			} else if name == ".threads-token.lock" {
 				require.Error(m.Save(testTokenRecord()))
 			} else {
-				assert.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error { return nil }))
+				require.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error {
+					return nil
+				}))
 			}
 			data, err := os.ReadFile(target)
 			require.NoError(err)
@@ -339,7 +341,7 @@ func TestThreadsTokenLifecycleExplicitInvalidation(t *testing.T) {
 		require.NoError(t, m.Invalidate(old), "same generation invalidation is idempotent")
 		for range 2 {
 			got, err := m.EnsureCurrent(context.Background(), oauthTestSource, f.options())
-			assert.ErrorIs(t, err, ErrReauthorizationRequired)
+			require.ErrorIs(t, err, ErrReauthorizationRequired)
 			assert.Empty(t, got.AccessToken())
 		}
 		assert.Zero(t, f.calls.Load())
@@ -359,7 +361,7 @@ func TestThreadsTokenLifecycleExplicitInvalidation(t *testing.T) {
 		assert.Zero(t, f.calls.Load())
 		require.NoError(t, m.Invalidate(current))
 		_, err = m.EnsureCurrent(context.Background(), oauthTestSource, f.options())
-		assert.ErrorIs(t, err, ErrReauthorizationRequired)
+		require.ErrorIs(t, err, ErrReauthorizationRequired)
 		assert.Zero(t, f.calls.Load())
 		return nil
 	}))

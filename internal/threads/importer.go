@@ -57,13 +57,13 @@ func (i *Importer) Import(ctx context.Context, o ImportOptions) (sum *ImportSumm
 		return nil, err
 	}
 	if !o.Request.After.IsZero() && o.Request.After.Before(earliestHistoryTime()) {
-		return nil, errors.New("Threads history floor precedes the earliest supported time")
+		return nil, errors.New("threads history floor precedes the earliest supported time")
 	}
 	if _, _, err := ParseSourceIdentifier(o.SourceIdentifier); err != nil {
 		return nil, err
 	}
 	if o.Budget == nil {
-		return nil, errors.New("Threads run budget is required")
+		return nil, errors.New("threads run budget is required")
 	}
 	ctx, cancel := o.Budget.RunContext(ctx)
 	defer cancel()
@@ -76,7 +76,7 @@ func (i *Importer) Import(ctx context.Context, o ImportOptions) (sum *ImportSumm
 		return nil, err
 	}
 	if source.SourceType != "threads" || source.Identifier != o.SourceIdentifier || source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return nil, errors.New("Threads source binding is not writable")
+		return nil, errors.New("threads source binding is not writable")
 	}
 	execution := o.Execution
 	if execution == nil {
@@ -97,7 +97,7 @@ func (i *Importer) Import(ctx context.Context, o ImportOptions) (sum *ImportSumm
 		// Only production root selection can grant eligibility; an owner-authored
 		// child in someone else's conversation is insufficient.
 		if _, err = i.store.GetThreadsOwnRootContext(ctx, o.SourceID, o.Request.PostID); err != nil {
-			return nil, errors.New("Threads targeted sync requires an archived verified own root")
+			return nil, errors.New("threads targeted sync requires an archived verified own root")
 		}
 	} else {
 		cfg, err = PrepareSourceSyncConfigContext(ctx, i.store, o.SourceID, o.Request, now())
@@ -182,7 +182,7 @@ func (i *Importer) Import(ctx context.Context, o ImportOptions) (sum *ImportSumm
 		if !finished {
 			cause := retErr
 			if cause == nil {
-				cause = errors.New("Threads sync interrupted")
+				cause = errors.New("threads sync interrupted")
 			}
 			sum.Status = store.SyncStatusFailed
 			if jobctx.YieldedToWaiter(ctx) && jobctx.ErrorAfterYield(ctx, cause) == nil && cp.ErrorsCount == 0 {

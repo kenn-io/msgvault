@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-var ErrInvalidReplyBody = errors.New("Threads reply body must be valid UTF-8, nonblank, without NUL, and at most 500 bytes")
+var ErrInvalidReplyBody = errors.New("threads reply body must be valid UTF-8, nonblank, without NUL, and at most 500 bytes")
 
 // ValidateReplyBody applies the conservative outgoing UTF-8 byte limit. Drafts
 // retain their original text even when it is not eligible for publication.

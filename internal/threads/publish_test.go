@@ -27,7 +27,9 @@ func TestThreadsPublishProtocolHTTP(t *testing.T) {
 			assert.Equal("reply_quota_usage,reply_config", r.URL.Query().Get("fields"))
 			respond(w, 200, `{"data":[{"reply_quota_usage":17,"reply_config":{"quota_total":1000,"quota_duration":86400}}]}`)
 		case "/v1.0/me/threads":
-			require.NoError(r.ParseForm())
+			if !assert.NoError(r.ParseForm()) {
+				return
+			}
 			assert.Equal("TEXT", r.PostForm.Get("media_type"))
 			assert.Equal("100", r.PostForm.Get("reply_to_id"))
 			assert.Equal("reviewed & exact", r.PostForm.Get("text"))
@@ -38,7 +40,9 @@ func TestThreadsPublishProtocolHTTP(t *testing.T) {
 			assert.Equal("status,error_message", r.URL.Query().Get("fields"))
 			respond(w, 200, `{"id":"400","status":"FINISHED"}`)
 		case "/v1.0/456/threads_publish":
-			require.NoError(r.ParseForm())
+			if !assert.NoError(r.ParseForm()) {
+				return
+			}
 			assert.Equal("400", r.PostForm.Get("creation_id"))
 			assert.Empty(r.Header.Get("Idempotency-Key"))
 			assert.Empty(r.Header.Get("X-Idempotency-Key"))
@@ -65,21 +69,22 @@ func TestThreadsPublishProtocolHTTP(t *testing.T) {
 }
 func TestThreadsPublishProtocolBodyBytes(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	for _, tc := range []struct {
 		body  string
 		valid bool
 	}{{strings.Repeat("a", 499), true}, {strings.Repeat("a", 500), true}, {strings.Repeat("a", 501), false}, {strings.Repeat("é", 250), true}, {strings.Repeat("é", 251), false}, {" \n\t", false}, {"a\x00b", false}, {string([]byte{0xff}), false}} {
 		err := ValidateReplyBody(tc.body)
 		if tc.valid {
-			assert.NoError(err)
+			require.NoError(err)
 		} else {
-			assert.ErrorIs(err, ErrInvalidReplyBody)
+			require.ErrorIs(err, ErrInvalidReplyBody)
 		}
 	}
 	var calls atomic.Int32
 	client, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1); respond(w, 200, `{"id":"400"}`) }, nil)
 	_, err := client.CreateReply(t.Context(), "100", strings.Repeat("a", 501))
-	assert.ErrorIs(err, ErrInvalidReplyBody)
+	require.ErrorIs(err, ErrInvalidReplyBody)
 	assert.Zero(calls.Load())
 }
 func TestThreadsPublishProtocolNeverRetriesPosts(t *testing.T) {

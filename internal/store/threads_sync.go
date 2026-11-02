@@ -35,12 +35,12 @@ func (s *Store) GetThreadsSyncResumeContext(ctx context.Context, sourceID int64,
 	args := []any{ThreadsSyncBaseline, query.BaselineFingerprint, ThreadsSyncFull, query.FullFingerprint}
 	if query.PostFingerprint != "" {
 		if query.BaselineFingerprint != "" || query.FullFingerprint != "" {
-			return nil, nil, errors.New("Threads targeted resume cannot include source-wide fingerprints")
+			return nil, nil, errors.New("threads targeted resume cannot include source-wide fingerprints")
 		}
 		condition = `(sync_type = ? AND request_fingerprint = ?)`
 		args = []any{ThreadsSyncPost, query.PostFingerprint}
 	} else if query.BaselineFingerprint == "" || query.FullFingerprint == "" || query.BaselineFingerprint == query.FullFingerprint {
-		return nil, nil, errors.New("Threads source-wide resume requires distinct baseline and full fingerprints")
+		return nil, nil, errors.New("threads source-wide resume requires distinct baseline and full fingerprints")
 	}
 	const columns = `id, source_id, started_at, completed_at, status,
   messages_processed, messages_added, messages_updated, errors_count,
@@ -111,7 +111,7 @@ func (s *Store) ThreadsOwnRootUpperKeyContext(ctx context.Context, sourceID int6
 // all roots; hot passes must reuse their saved lower time on resumption.
 func (s *Store) ListThreadsOwnRootsContext(ctx context.Context, sourceID, afterID, throughID int64, hotSince time.Time, limit int) ([]ThreadsRoot, error) {
 	if afterID < 0 || throughID < 0 || limit <= 0 {
-		return nil, errors.New("Threads root keys must be nonnegative and limit positive")
+		return nil, errors.New("threads root keys must be nonnegative and limit positive")
 	}
 	query := `SELECT ` + s.threadsRootColumns() + ` FROM messages m
   WHERE m.source_id = ? AND m.id > ? AND m.id <= ? AND ` + s.threadsOwnRootPredicate()

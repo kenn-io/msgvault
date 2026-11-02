@@ -34,6 +34,8 @@ type sendFixture struct {
 	recoveryListCalls         int
 	createErrors              []APIError
 	statusErrors              []APIError
+	statusRetryAfter          func(time.Time) string
+	statusUsage               string
 	statuses                  []string
 	statusTimes               []time.Time
 	quotaUsage                int64
@@ -67,7 +69,9 @@ func newSendFixture(t *testing.T) *sendFixture {
 				respond(w, 200, `{"data":[`+strings.Join(f.recoveryReplies, ",")+`],"paging":{"cursors":{"after":"tail"}}}`)
 			}
 		case r.URL.Path == "/v1.0/me/threads":
-			require.NoError(t, r.ParseForm())
+			if !assert.NoError(t, r.ParseForm()) {
+				return
+			}
 			assert.Equal(t, f.draft.ReplyToSourceMessageID, r.PostForm.Get("reply_to_id"))
 			assert.Equal(t, f.draft.Body, r.PostForm.Get("text"))
 			id := 400 + f.creates.Add(1) - 1
@@ -83,14 +87,20 @@ func newSendFixture(t *testing.T) *sendFixture {
 					return
 				}
 				conn, _, err := hijacker.Hijack()
-				require.NoError(t, err)
-				require.NoError(t, conn.Close())
+				if !assert.NoError(t, err) {
+					return
+				}
+				if !assert.NoError(t, conn.Close()) {
+					return
+				}
 				return
 			}
 			respond(w, 200, fmt.Sprintf(`{"id":"%d"}`, id))
 		case r.URL.Path == "/v1.0/456/threads_publish":
 			n := f.publishes.Add(1)
-			require.NoError(t, r.ParseForm())
+			if !assert.NoError(t, r.ParseForm()) {
+				return
+			}
 			f.publishedContainers = append(f.publishedContainers, r.PostForm.Get("creation_id"))
 			switch f.publishMode {
 			case "drop":
@@ -99,8 +109,12 @@ func newSendFixture(t *testing.T) *sendFixture {
 					return
 				}
 				conn, _, err := hijacker.Hijack()
-				require.NoError(t, err)
-				require.NoError(t, conn.Close())
+				if !assert.NoError(t, err) {
+					return
+				}
+				if !assert.NoError(t, conn.Close()) {
+					return
+				}
 			case "500":
 				respond(w, 500, `{"error":{"code":1}}`)
 			default:
@@ -122,6 +136,12 @@ func newSendFixture(t *testing.T) *sendFixture {
 			}
 			f.statusTimes = append(f.statusTimes, f.clock.Now())
 			if len(f.statusErrors) > 0 {
+				if f.statusRetryAfter != nil {
+					w.Header().Set("Retry-After", f.statusRetryAfter(f.clock.Now()))
+				}
+				if f.statusUsage != "" {
+					w.Header().Set("X-App-Usage", f.statusUsage)
+				}
 				failure := f.statusErrors[0]
 				f.statusErrors = f.statusErrors[1:]
 				respond(w, failure.StatusCode, fmt.Sprintf(`{"error":{"code":%d}}`, failure.Code))
@@ -362,4 +382,103 @@ func TestThreadsRetryableCreationCanResumeSameRequest(t *testing.T) {
 			assert.Equal(int32(1), f.publishes.Load(), "known outcome must not publish again")
 		})
 	}
+}
+
+func TestThreadsPollingProviderCooldownSurvivesResume(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		for _, tc := range []struct {
+			name      string
+			header    func(time.Time) string
+			cooldown  time.Duration
+			highUsage bool
+		}{
+			{name: "seconds", header: func(time.Time) string { return "300" }, cooldown: 5 * time.Minute},
+			{name: "http-date", header: func(at time.Time) string { return at.Add(5 * time.Minute).UTC().Format(http.TimeFormat) }, cooldown: 5 * time.Minute},
+			{name: "beyond-run", header: func(time.Time) string { return "900" }, cooldown: 15 * time.Minute},
+			{name: "short", header: func(time.Time) string { return "10" }, cooldown: time.Minute},
+			{name: "malformed", header: func(time.Time) string { return "not-a-delay" }, cooldown: time.Minute},
+			{name: "high-usage", header: func(time.Time) string { return "300" }, cooldown: 5 * time.Minute, highUsage: true},
+		} {
+			t.Run(strconv.Itoa(status)+"/"+tc.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				f := newSendFixture(t)
+				f.statusErrors = []APIError{{StatusCode: status, Code: 1}}
+				f.statusRetryAfter = tc.header
+				if tc.highUsage {
+					f.statusUsage = `{"call_count":80}`
+				}
+				_, err := NewSender(f.st, f.options).Send(t.Context(), f.request())
+				require.Error(err)
+				f.mu.Lock()
+				times := append([]time.Time(nil), f.statusTimes...)
+				f.mu.Unlock()
+				require.Len(times, 1, "status must make only one HTTP attempt")
+				receipt, err := f.st.GetThreadsReplySendContext(t.Context(), f.draft.DraftID)
+				require.NoError(err)
+				require.NotNil(receipt.NextPollAt)
+				assert.GreaterOrEqual(receipt.NextPollAt.Sub(times[0]), tc.cooldown, "the database must retain the provider's full cooldown")
+				var result SendResult
+				for range 5 {
+					// Each daemon invocation gets a fresh request budget; the receipt must
+					// retain the cooldown even when it spans several five-minute send runs.
+					f.api, err = NewClient(ClientOptions{BaseURL: f.api.base.String(), AccessToken: testToken, Budget: f.clock.budget(1000)})
+					require.NoError(err)
+					result, err = NewSender(f.st, f.options).Send(t.Context(), f.request())
+					require.NoError(err)
+					if result.RemoteStatus == "sent" {
+						break
+					}
+					f.mu.Lock()
+					count := len(f.statusTimes)
+					f.mu.Unlock()
+					assert.Equal(1, count, "a bounded invocation must yield without polling before cooldown")
+				}
+				assert.Equal("sent", result.RemoteStatus)
+				f.mu.Lock()
+				times = append([]time.Time(nil), f.statusTimes...)
+				f.mu.Unlock()
+				require.Len(times, 2)
+				assert.GreaterOrEqual(times[1].Sub(times[0]), tc.cooldown, "a resumed sender must never poll before the provider deadline")
+				assert.Equal(int32(1), f.creates.Load())
+				assert.Equal(int32(1), f.publishes.Load())
+			})
+		}
+	}
+}
+
+// This wrapper delegates real HTTP and cancels at the received-response boundary.
+type cancelAfterStatusAPI struct {
+	PublishAPI
+	cancel context.CancelFunc
+}
+
+func (a cancelAfterStatusAPI) ContainerStatus(ctx context.Context, id string) (string, error) {
+	status, err := a.PublishAPI.ContainerStatus(ctx, id)
+	a.cancel()
+	return status, err
+}
+func TestThreadsPollingCooldownCheckpointSurvivesCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newSendFixture(t)
+	f.statusErrors = []APIError{{StatusCode: http.StatusTooManyRequests, Code: 1}}
+	f.statusRetryAfter = func(time.Time) string { return "300" }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.options.OpenAPI = func(context.Context, int64) (PublishAPI, []string, error) {
+		return cancelAfterStatusAPI{PublishAPI: f.api, cancel: cancel}, []string{"threads_basic", "threads_content_publish", "threads_manage_replies"}, nil
+	}
+	_, err := NewSender(f.st, f.options).Send(ctx, f.request())
+	require.Error(err)
+	require.ErrorIs(ctx.Err(), context.Canceled)
+	f.mu.Lock()
+	times := append([]time.Time(nil), f.statusTimes...)
+	f.mu.Unlock()
+	require.Len(times, 1)
+	receipt, err := f.st.GetThreadsReplySendContext(t.Context(), f.draft.DraftID)
+	require.NoError(err)
+	require.NotNil(receipt.NextPollAt)
+	assert.GreaterOrEqual(receipt.NextPollAt.Sub(times[0]), 5*time.Minute, "cancellation must not erase an already received provider cooldown")
+	assert.Zero(f.publishes.Load())
 }

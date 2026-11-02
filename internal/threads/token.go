@@ -19,8 +19,8 @@ import (
 )
 
 var (
-	ErrReauthorizationRequired = errors.New("Threads reauthorization required")
-	ErrTokenNotFound           = errors.New("Threads token not found")
+	ErrReauthorizationRequired = errors.New("threads reauthorization required")
+	ErrTokenNotFound           = errors.New("threads token not found")
 )
 
 // TokenRecord is verified credential metadata with an opaque, pointer-backed
@@ -121,10 +121,10 @@ func (m *TokenManager) inspectRoot(create bool) error {
 		return errors.New("inspect Threads token directory")
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("Threads token path is not a direct directory")
+		return errors.New("threads token path is not a direct directory")
 	}
 	if m.rootInfo != nil && !os.SameFile(m.rootInfo, info) {
-		return errors.New("Threads token directory changed")
+		return errors.New("threads token directory changed")
 	}
 	m.rootInfo = info
 	return nil
@@ -141,7 +141,7 @@ func tokenRegularPath(path string, missingOK bool) error {
 		return errors.New("inspect Threads credential file")
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("Threads credential path is not a regular file")
+		return errors.New("threads credential path is not a regular file")
 	}
 	return nil
 }
@@ -166,7 +166,7 @@ func (m *TokenManager) withFileLock(ctx context.Context, name string, fn func() 
 		return errors.New("lock Threads credential file")
 	}
 	if !ok {
-		return errors.New("Threads credential lock unavailable")
+		return errors.New("threads credential lock unavailable")
 	}
 	defer func() {
 		if err := lock.Unlock(); err != nil && retErr == nil {
@@ -233,7 +233,7 @@ func (m *TokenManager) Load(appID, ownerID string) (TokenRecord, error) {
 	defer func() { _ = file.Close() }()
 	after, err := file.Stat()
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
-		return TokenRecord{}, errors.New("Threads token file changed")
+		return TokenRecord{}, errors.New("threads token file changed")
 	}
 	const maxFile = 1 << 20
 	data, err := io.ReadAll(io.LimitReader(file, maxFile+1))
@@ -253,7 +253,7 @@ func (m *TokenManager) Load(appID, ownerID string) (TokenRecord, error) {
 		return TokenRecord{}, err
 	}
 	if r.AppID != appID || r.OwnerID != ownerID || r.Generation == 0 {
-		return TokenRecord{}, errors.New("Threads credential file binding mismatch")
+		return TokenRecord{}, errors.New("threads credential file binding mismatch")
 	}
 	return r, nil
 }
@@ -275,7 +275,7 @@ func (m *TokenManager) Save(record TokenRecord) error {
 			return errors.New("stale Threads credential generation")
 		}
 		if current.Generation == ^uint64(0) {
-			return errors.New("Threads credential generation exhausted")
+			return errors.New("threads credential generation exhausted")
 		}
 		record.Generation = current.Generation + 1
 		record.Invalidated = false
@@ -300,7 +300,7 @@ func validateThreadsToken(r TokenRecord) error {
 			}
 		}
 		if !found {
-			return errors.New("Threads credential lacks required granted scopes")
+			return errors.New("threads credential lacks required granted scopes")
 		}
 	}
 	return nil
@@ -423,7 +423,7 @@ func (m *TokenManager) Invalidate(r TokenRecord) error {
 		return err
 	}
 	if r.Generation == 0 {
-		return errors.New("Threads invalidation requires a durable generation")
+		return errors.New("threads invalidation requires a durable generation")
 	}
 	return m.withFileLock(context.Background(), ".threads-token.lock", func() error {
 		current, err := m.Load(r.AppID, r.OwnerID)
@@ -431,7 +431,7 @@ func (m *TokenManager) Invalidate(r TokenRecord) error {
 			return err
 		}
 		if current.Generation != r.Generation {
-			return errors.New("Threads credential changed during invalidation")
+			return errors.New("threads credential changed during invalidation")
 		}
 		current.Invalidated = true
 		return m.writeToken(current)

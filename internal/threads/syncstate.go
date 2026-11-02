@@ -92,7 +92,7 @@ func PrepareSourceSyncConfigContext(ctx context.Context, st *store.Store, source
 		return SourceSyncConfig{}, fmt.Errorf("load Threads coverage config: %w", err)
 	}
 	if source.SourceType != "threads" {
-		return SourceSyncConfig{}, errors.New("Threads coverage requires a Threads source")
+		return SourceSyncConfig{}, errors.New("threads coverage requires a Threads source")
 	}
 	if _, _, err := tokenSourceIDs(source.Identifier); err != nil {
 		return SourceSyncConfig{}, err
@@ -118,12 +118,12 @@ func PrepareSourceSyncConfigContext(ctx context.Context, st *store.Store, source
 	if !request.After.IsZero() {
 		floor := request.After.UTC()
 		if floor.Before(earliestHistoryTime()) {
-			return SourceSyncConfig{}, errors.New("Threads history floor precedes the earliest supported time")
+			return SourceSyncConfig{}, errors.New("threads history floor precedes the earliest supported time")
 		}
 		if !floor.Equal(cfg.HistoryFloor) {
 			if !changed {
 				if cfg.CoverageGeneration == math.MaxUint64 {
-					return SourceSyncConfig{}, errors.New("Threads coverage generation exhausted")
+					return SourceSyncConfig{}, errors.New("threads coverage generation exhausted")
 				}
 				cfg.CoverageGeneration++
 			}
@@ -165,13 +165,13 @@ func (c SourceSyncConfig) validate() error {
 // Validate rejects ambiguous modes and malformed bounds before any I/O.
 func (r SyncRequest) Validate() error {
 	if !r.After.IsZero() && r.After.Before(earliestHistoryTime()) {
-		return errors.New("Threads history floor precedes the earliest supported time")
+		return errors.New("threads history floor precedes the earliest supported time")
 	}
 	if r.Full && r.PostID != "" {
-		return errors.New("Threads full and targeted sync are mutually exclusive")
+		return errors.New("threads full and targeted sync are mutually exclusive")
 	}
 	if r.PostID != "" && !r.After.IsZero() {
-		return errors.New("Threads targeted sync cannot specify after")
+		return errors.New("threads targeted sync cannot specify after")
 	}
 	if r.PostID != "" && !validID(r.PostID) {
 		return errors.New("invalid Threads targeted root")
@@ -336,7 +336,7 @@ func (s *SyncState) validate() error {
 		}
 	}
 	if fp.Mode == store.ThreadsSyncPost && s.TargetRoot.ActiveRoot != fp.RootID {
-		return errors.New("Threads target state disagrees with fingerprint")
+		return errors.New("threads target state disagrees with fingerprint")
 	}
 	return nil
 }
@@ -388,10 +388,10 @@ func ResumeSyncState(request SyncRequest, baseline, checkpoint *store.SyncRun) (
 	}
 	if request.PostID != "" {
 		if state.Mode != store.ThreadsSyncPost || state.TargetRoot.ActiveRoot != request.PostID {
-			return nil, errors.New("Threads targeted resume state mismatch")
+			return nil, errors.New("threads targeted resume state mismatch")
 		}
 	} else if state.Mode == store.ThreadsSyncPost {
-		return nil, errors.New("Threads targeted state cannot replace source-wide state")
+		return nil, errors.New("threads targeted state cannot replace source-wide state")
 	}
 	if request.Full && state.Mode != store.ThreadsSyncFull {
 		return nil, nil //nolint:nilnil // Ordinary checkpoint is superseded by an explicit full epoch.

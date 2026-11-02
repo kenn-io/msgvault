@@ -104,7 +104,7 @@ func TestThreadsAuthorOccurrences(t *testing.T) {
 		assert.Equal(false, writerMetadata(t, s, explicitID)["root_owned"])
 		own.IsReplyOwnedByMe = new(false)
 		_, err = w.Apply(context.Background(), own, ItemOrigin{Kind: "own_replies"})
-		assert.Error(err)
+		require.Error(err)
 		own.IsReplyOwnedByMe = new(true)
 		own.Owner = &MediaReference{ID: "999"}
 		_, err = w.Apply(context.Background(), own, ItemOrigin{Kind: "own_replies"})

@@ -88,13 +88,13 @@ func TestThreadsClientEndpointContracts(t *testing.T) {
 		before := calls.Load()
 		for _, id := range []string{"", "../me", "1/2", "-1", "1e9", "1?access_token=secret", " 123"} {
 			_, err := c.Media(ctx, id)
-			assertions.Error(err)
+			requirements.Error(err)
 			_, err = c.Conversation(ctx, id, "")
-			assertions.Error(err)
+			requirements.Error(err)
 		}
 		for _, query := range []ListQuery{{}, {Since: q.Until, Until: q.Since}, {Since: q.Since.Add(-time.Second), Until: q.Until}, {Since: q.Since, Until: q.Until.Add(time.Hour)}, {Since: q.Since.Add(time.Nanosecond), Until: q.Since.Add(2 * time.Nanosecond)}} {
 			_, err := c.OwnPosts(ctx, query)
-			assertions.Error(err)
+			requirements.Error(err)
 		}
 		assertions.Equal(before, calls.Load())
 	})

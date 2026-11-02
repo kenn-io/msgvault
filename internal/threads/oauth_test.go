@@ -114,7 +114,9 @@ func newOAuthFixture(t *testing.T) *oauthFixture {
 		switch r.URL.Path {
 		case "/oauth/access_token":
 			assert.Equal(t, http.MethodPost, r.Method)
-			require.NoError(t, r.ParseForm())
+			if !assert.NoError(t, r.ParseForm()) {
+				return
+			}
 			assert.Empty(t, r.URL.RawQuery)
 			assert.Equal(t, "123", r.PostForm.Get("client_id"))
 			assert.Equal(t, "app-secret", r.PostForm.Get("client_secret"))
@@ -157,7 +159,9 @@ func newOAuthFixture(t *testing.T) *oauthFixture {
 				delete(data, "app_id")
 			}
 			data, err := json.Marshal(body)
-			require.NoError(t, err)
+			if !assert.NoError(t, err) {
+				return
+			}
 			_, err = w.Write(data)
 			assert.NoError(t, err)
 		default:

@@ -129,7 +129,7 @@ func TestThreadsCompatibleResumeRejectsAmbiguousQuery(t *testing.T) {
 	st, source := threadsStore(t)
 	for _, q := range []store.ThreadsResumeQuery{{}, {BaselineFingerprint: "a"}, {FullFingerprint: "f"}, {BaselineFingerprint: "a", FullFingerprint: "a"}, {BaselineFingerprint: "a", FullFingerprint: "f", PostFingerprint: "p"}} {
 		_, _, err := st.GetThreadsSyncResumeContext(t.Context(), source, q)
-		assert.Error(t, err)
+		require.Error(t, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -234,11 +234,11 @@ func TestThreadsRootKeysetAndPauseCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(st.PauseSyncWithCheckpointContext(ctx, id, &store.Checkpoint{PageToken: "state"}), context.Canceled)
-	assert.ErrorIs(st.UpdateSourceSyncConfigContext(ctx, source, `{"version":1}`), context.Canceled)
+	require.ErrorIs(st.UpdateSourceSyncConfigContext(ctx, source, `{"version":1}`), context.Canceled)
 	_, err = st.ThreadsOwnRootUpperKeyContext(ctx, source)
-	assert.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, context.Canceled)
 	_, err = st.ListThreadsOwnRootsContext(ctx, source, 0, 1, time.Time{}, 10)
-	assert.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, context.Canceled)
 	for _, limit := range []int{0, -1} {
 		_, err = st.ListThreadsOwnRootsContext(t.Context(), source, 0, 1, time.Time{}, limit)
 		assert.Error(err)

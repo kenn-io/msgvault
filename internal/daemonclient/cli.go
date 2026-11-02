@@ -657,7 +657,7 @@ func (c *Client) RunCLICommand(
 ) error {
 	if _, carriesThreadsOAuth := req.Env[clirun.EnvThreadsOAuth]; carriesThreadsOAuth {
 		if len(req.Args) == 0 || req.Args[0] != "add-threads" || c.agentToken != "" {
-			return errors.New("Threads connection requires an owner add-threads request")
+			return errors.New("threads connection requires an owner add-threads request")
 		}
 		u, err := url.Parse(c.baseURL)
 		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -666,7 +666,7 @@ func (c *Client) RunCLICommand(
 		ip := net.ParseIP(u.Hostname())
 		loopback := ip != nil && ip.IsLoopback()
 		if (u.Scheme == "http" && !loopback) || (u.Scheme == "https" && !loopback && c.apiKey == "") || (u.Scheme != "http" && u.Scheme != "https") {
-			return errors.New("Threads OAuth requires literal loopback HTTP or authenticated HTTPS")
+			return errors.New("threads OAuth requires literal loopback HTTP or authenticated HTTPS")
 		}
 		// This request carries an app secret and one-use authorization code.
 		// Clone both bindings: the shared owner client keeps its usual redirect
@@ -674,7 +674,7 @@ func (c *Client) RunCLICommand(
 		scoped := *c
 		strict := *c.httpClient
 		strict.CheckRedirect = func(*http.Request, []*http.Request) error {
-			return errors.New("Threads OAuth handoff does not follow redirects")
+			return errors.New("threads OAuth handoff does not follow redirects")
 		}
 		scoped.httpClient = &strict
 		scoped.typedClient = nil

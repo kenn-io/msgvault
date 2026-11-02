@@ -36,7 +36,7 @@ func newSyncThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 		if after != "" {
 			parsed, err := time.Parse(time.RFC3339Nano, after)
 			if err != nil {
-				return usageErr(cmd, errors.New("Threads --after must be RFC3339"))
+				return usageErr(cmd, errors.New("threads --after must be RFC3339"))
 			}
 			request.After = parsed
 		}

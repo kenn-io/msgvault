@@ -26,7 +26,7 @@ func (w *Writer) ownerEvidence(e snapshotEvidence, origin ItemOrigin) (bool, err
 		}
 		_, ownerID, _ := tokenSourceIDs(w.sourceIdentifier)
 		if ref != nil && ref.ID != ownerID {
-			return false, errors.New("Threads owner does not match connected account")
+			return false, errors.New("threads owner does not match connected account")
 		}
 	}
 	return owner, nil
@@ -54,7 +54,7 @@ func (w *Writer) resolveAuthor(ctx context.Context, mediaID string, e snapshotEv
 		// app scoping out of service scope fields (Threads scope policy: none).
 		provider = new("threads-owner:v1:" + appID + ":" + ownerID)
 		if err := w.store.AddAccountIdentityContext(ctx, w.sourceID, w.sourceIdentifier, "threads_user_id"); err != nil {
-			return 0, "", fmt.Errorf("Threads account identity: %w", err)
+			return 0, "", fmt.Errorf("threads account identity: %w", err)
 		}
 	} else {
 		e.put("author_occurrence", key)
@@ -62,7 +62,7 @@ func (w *Writer) resolveAuthor(ctx context.Context, mediaID string, e snapshotEv
 	// Never cache participant IDs: accepted Store merges repoint identifiers.
 	pid, err := w.store.EnsureParticipantByIdentifierContext(ctx, kind, key, label)
 	if err != nil {
-		return 0, "", fmt.Errorf("Threads author occurrence: %w", err)
+		return 0, "", fmt.Errorf("threads author occurrence: %w", err)
 	}
 	now := time.Now().UTC()
 	if w.now != nil {
@@ -78,13 +78,13 @@ func (w *Writer) resolveAuthor(ctx context.Context, mediaID string, e snapshotEv
 	}
 	if provider != nil {
 		if _, err := record(store.ContactAddressProviderIdentity, *provider); err != nil {
-			return 0, "", fmt.Errorf("Threads owner observation: %w", err)
+			return 0, "", fmt.Errorf("threads owner observation: %w", err)
 		}
 	}
 	if strings.TrimSpace(username) != "" {
 		observation, err := record(store.ContactAddressUsername, username)
 		if err != nil {
-			return 0, "", fmt.Errorf("Threads username observation: %w", err)
+			return 0, "", fmt.Errorf("threads username observation: %w", err)
 		}
 		observed := observation.Observation.ObservedAt
 		if observed != nil {

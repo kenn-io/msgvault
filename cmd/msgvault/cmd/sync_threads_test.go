@@ -140,7 +140,9 @@ func TestSyncThreadsEndToEnd(t *testing.T) {
 			return true
 		}
 		body, err := json.Marshal(map[string]any{"data": data, "paging": map[string]any{"cursors": map[string]string{"after": "next"}}})
-		require.NoError(err)
+		if !assert.NoError(err) {
+			return true
+		}
 		_, _ = w.Write(body)
 		return true
 	}

@@ -62,9 +62,9 @@ func TestThreadsSyncStateCoverageGeneration(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = PrepareSourceSyncConfigContext(ctx, st, source.ID, SyncRequest{After: floorA.Add(2 * time.Hour)}, now)
-	assert.ErrorIs(err, context.Canceled)
+	require.ErrorIs(err, context.Canceled)
 	_, err = PrepareSourceSyncConfigContext(t.Context(), st, source.ID, SyncRequest{After: time.Unix(1688540399, 0)}, now)
-	assert.Error(err)
+	require.Error(err)
 	// Targeted runs cannot silently replace source-wide coverage.
 	_, err = PrepareSourceSyncConfigContext(t.Context(), st, source.ID, SyncRequest{PostID: "800", After: floorA.Add(time.Hour)}, now)
 	assert.Error(err)
@@ -109,10 +109,10 @@ func TestThreadsSyncStateFingerprint(t *testing.T) {
 	assert.Equal(q, same)
 	for _, request := range []SyncRequest{{Full: true, PostID: "800"}, {PostID: "bad"}, {After: cfg.HistoryFloor.Add(time.Second)}} {
 		_, err := request.Fingerprint("threads:100:200", cfg)
-		assert.Error(err)
+		require.Error(err)
 	}
 	_, err = (SyncRequest{}).Fingerprint("threads:bad:200", cfg)
-	assert.Error(err)
+	require.Error(err)
 	cfg.Version = 2
 	_, err = (SyncRequest{}).Fingerprint("threads:100:200", cfg)
 	assert.Error(err)
@@ -186,11 +186,11 @@ func TestThreadsSyncStatePinnedWalks(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(post, resumed)
 	_, err = ResumeSyncState(SyncRequest{}, nil, cp)
-	assert.Error(err)
+	require.Error(err)
 	_, err = ResumeSyncState(SyncRequest{PostID: "801"}, nil, cp)
-	assert.Error(err)
+	require.Error(err)
 	_, err = DecodeSyncState(`{"version":99}`)
-	assert.Error(err)
+	require.Error(err)
 	_, err = DecodeSyncState(`{"version":1}`)
 	assert.Error(err)
 }
@@ -233,11 +233,11 @@ func TestThreadsSyncStateConfigIntegrity(t *testing.T) {
 	for _, raw := range []string{`{}`, `null`, `{"version":1}`, `{"version":2,"history_floor":"2026-01-01T00:00:00Z","history_ceiling":"2026-10-30T12:00:00Z","coverage_generation":1}`} {
 		require.NoError(st.UpdateSourceSyncConfigContext(t.Context(), source.ID, raw))
 		_, err := PrepareSourceSyncConfigContext(t.Context(), st, source.ID, SyncRequest{}, now)
-		assert.Error(err, "invalid config must not fabricate coverage: %s", raw)
+		require.Error(err, "invalid config must not fabricate coverage: %s", raw)
 	}
 	require.NoError(st.UpdateSourceSyncConfigContext(t.Context(), source.ID, `{"version":1,"history_floor":"2026-01-01T00:00:00Z","history_ceiling":"2026-10-01T12:00:00Z","coverage_generation":18446744073709551615}`))
 	_, err = PrepareSourceSyncConfigContext(t.Context(), st, source.ID, SyncRequest{After: now.Add(-24 * time.Hour)}, now)
-	assert.Error(err)
+	require.Error(err)
 	require.NoError(st.UpdateSourceSyncConfigContext(t.Context(), source.ID, `{"version":1,"history_floor":"2026-01-01T00:00:00Z","history_ceiling":"2026-10-01T12:00:00Z","coverage_generation":1,"extra":{"keep":true}}`))
 	conv, err := st.EnsureConversation(source.ID, "800", "Synthetic root")
 	require.NoError(err)
@@ -329,12 +329,12 @@ func TestThreadsSyncStateTargetedRejectsAfterBeforeIO(t *testing.T) {
 	cancel()
 	floor := time.Unix(1688540400, 0).UTC()
 	for _, request := range []SyncRequest{{PostID: "800", After: floor}, {PostID: "800", After: floor.Add(24 * time.Hour)}, {PostID: "800", Full: true}} {
-		assert.Error(request.Validate())
+		require.Error(request.Validate())
 		// A cancelled context on a real Store distinguishes option validation
 		// from a database read. Invalid options must win before any Store I/O.
 		_, err := PrepareSourceSyncConfigContext(ctx, st, 1, request, floor.Add(time.Hour))
 		require.Error(err)
-		assert.NotErrorIs(err, context.Canceled)
+		require.NotErrorIs(err, context.Canceled)
 	}
 	cfg := SourceSyncConfig{Version: 1, HistoryFloor: floor, HistoryCeiling: floor.Add(time.Hour), CoverageGeneration: 1}
 	_, err := (SyncRequest{PostID: "800", After: floor}).Fingerprint("threads:100:200", cfg)
