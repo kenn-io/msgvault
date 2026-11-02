@@ -725,6 +725,28 @@ func TestProcessorMessageOnlyMembershipSurvivesParticipantMerge(t *testing.T) {
 	}
 }
 
+func TestProcessorDirectMessageClassifiesAsInboundActivity(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	message := f.message("direct-activity", "direct chat text", f.now.UnixMilli())
+	message.Source = Source{Type: "user", UserID: testUser}
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	messageID := f.archived(t, message.Message.ID).id
+	var senderID int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), messageID).Scan(&senderID))
+	person, _, err := f.st.CreatePersonFromParticipantContext(t.Context(), senderID)
+	must.NoError(err)
+	candidates, err := f.st.LoadActivityCandidatesByIDContext(t.Context(), []int64{messageID})
+	must.NoError(err)
+	must.Len(candidates, 1)
+	classification := store.ClassifyActivityCandidate(candidates[0], store.DefaultMaxDirectActivityCounterparts)
+	checks.Equal(store.DirectionInbound, classification.Direction)
+	checks.Equal(store.ChannelChat, classification.Channel)
+	checks.Equal([]store.ActivityEventPerson{{PersonID: person.ID, Role: store.RoleSender, Evidence: store.EvidenceDirect}}, classification.Persons)
+}
+
 func TestProcessorDirectMessageDoesNotRecordGroupMembershipClock(t *testing.T) {
 	f := newInboxFixture(t)
 	message := f.message("direct", "direct chat text", f.now.UnixMilli())
