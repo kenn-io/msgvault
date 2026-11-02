@@ -308,3 +308,45 @@ func TestImportPostsWithoutPermalinksKeepDistinctMedia(t *testing.T) {
 	assert.Zero(sum.MessagesAdded)
 	assert.Equal(2, count(t, st, "SELECT COUNT(*) FROM messages"))
 }
+
+func TestImportLinklessCommentsNeverReplyToThemselves(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	writeCSV(t, dir, "Comments.csv", "Date,Message\n2026-10-02 12:00:00 UTC,A linkless comment\n")
+	opts := Options{Identifier: "example", Me: ownerURL}
+	for range 2 {
+		_, err := Import(t.Context(), st, dir, opts)
+		require.NoError(err)
+	}
+	assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM messages"))
+	assert.Zero(count(t, st, "SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL"))
+	var id int64
+	require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+	require.NoError(st.SetMessageReplyContext(t.Context(), id, id))
+	_, err := Import(t.Context(), st, dir, opts)
+	require.NoError(err)
+	assert.Zero(count(t, st, "SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL"))
+}
+
+func TestImportMalformedCommentsPreservesEarlierStandardRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	value := `Comma, literal C:\new\thing`
+	var data bytes.Buffer
+	writer := csv.NewWriter(&data)
+	require.NoError(writer.WriteAll([][]string{{"Date", "Link", "Message"}, {"2026-10-02 12:00:00 UTC", "https://example.com/post", value}}))
+	data.WriteString("2026-10-02 13:00:00 UTC,https://example.com/post,\"unterminated")
+	writeCSV(t, dir, "Comments.csv", data.String())
+	_, err := Import(t.Context(), st, dir, Options{Identifier: "example", Me: ownerURL})
+	require.ErrorContains(err, "invalid CSV at record 3")
+	assert.Equal(1, count(t, st, "SELECT COUNT(*) FROM messages"))
+	var id int64
+	require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
+	assert.Equal(value, body)
+}

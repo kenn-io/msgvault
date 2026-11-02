@@ -128,7 +128,14 @@ func readRows(ctx context.Context, file csvFile, visit func(row, int) error) err
 			return err
 		}
 		if !standard {
-			data = unescapeComments(data)
+			decoded := unescapeComments(data)
+			valid, err := validCSV(ctx, decoded)
+			if err != nil {
+				return err
+			}
+			if valid {
+				data = decoded
+			}
 		}
 	}
 	csvReader := csv.NewReader(bytes.NewReader(data))
@@ -182,20 +189,26 @@ func hasHeader(fields []string, name string) bool {
 	return false
 }
 
-// validCSV checks quoting without retaining rows. A backslash next to a valid
+// validCSV checks CSV structure without retaining rows. A backslash next to a valid
 // closing or doubled CSV quote is literal text, not evidence of legacy escaping.
 func validCSV(ctx context.Context, data []byte) (bool, error) {
 	reader := csv.NewReader(bytes.NewReader(data))
 	reader.FieldsPerRecord = -1
+	width := -1
 	for {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		_, err := reader.Read()
+		fields, err := reader.Read()
 		if errors.Is(err, io.EOF) {
 			return true, nil
 		}
 		if err != nil {
+			return false, nil
+		}
+		if width < 0 {
+			width = len(fields)
+		} else if len(fields) > width {
 			return false, nil
 		}
 	}

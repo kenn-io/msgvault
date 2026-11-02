@@ -49,7 +49,10 @@ URL lists retain empty positions. When names and URLs cannot be aligned, a
 record error stops the import instead of dropping recipients.
 
 Comments use standard CSV quoting when it parses successfully. The importer
-uses the legacy backslash form only when standard CSV parsing fails.
+uses the legacy backslash form only when the whole transformed CSV validates.
+If neither form parses, it keeps the original input and reports the malformed
+record. Comments without a valid post link remain standalone, with no reply
+parent.
 
 Message attachment URLs, post links, shared URLs, and media URLs remain link
 attachments. msgvault does not download their content, and the links may

@@ -416,7 +416,7 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	}
 	recipientSets = append(recipientSets, store.RecipientSet{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames})
 	var reply sql.NullInt64
-	if kind == "comments.csv" {
+	if kind == "comments.csv" && post != "" {
 		rootID := imp.roots[thread]
 		if rootID == 0 {
 			prior, err := imp.st.StoredMessagesContext(ctx, imp.sum.SourceID, rawFormat, []string{thread})
@@ -492,6 +492,10 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	}
 	if reply.Valid {
 		if err := imp.st.SetMessageReplyContext(ctx, id, reply.Int64); err != nil {
+			return err
+		}
+	} else if kind == "comments.csv" && post == "" {
+		if err := imp.st.ClearMessageRepliesContext(ctx, imp.sum.SourceID, []int64{id}); err != nil {
 			return err
 		}
 	}
