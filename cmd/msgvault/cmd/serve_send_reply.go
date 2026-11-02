@@ -33,9 +33,9 @@ func unsupportedReplySource(kind string) error {
 
 // replySender resolves receipts before drafts, so status/repair survives draft
 // deletion, credential revocation and write opt-out. New work gets current policy.
-func (a *storeAPIAdapter) replySender(ctx context.Context, req api.ReplyPrepareRequest) (*xapi.Sender, error) {
+func (a *storeAPIAdapter) replySender(ctx context.Context, req api.ReplyPrepareRequest) (*xapi.Sender, *store.Source, error) {
 	if a.store == nil {
-		return nil, xRegisterError("unavailable", nil)
+		return nil, nil, xRegisterError("unavailable", nil)
 	}
 	receipt, err := a.store.GetXReplyReceiptContext(ctx, req.DraftID)
 	var source *store.Source
@@ -44,36 +44,36 @@ func (a *storeAPIAdapter) replySender(ctx context.Context, req api.ReplyPrepareR
 	} else if errors.Is(err, store.ErrXReplyReceiptNotFound) {
 		draft, loadErr := a.store.GetChatDraftContext(ctx, req.DraftID)
 		if loadErr != nil {
-			return nil, replySurfaceError(loadErr)
+			return nil, nil, replySurfaceError(loadErr)
 		}
 		if draft.SourceType != "x" {
-			return nil, unsupportedReplySource(draft.SourceType)
+			return nil, nil, unsupportedReplySource(draft.SourceType)
 		}
 		source, err = a.store.GetSourceByIDContext(ctx, draft.SourceID)
 	}
 	if err != nil {
-		return nil, replySurfaceError(err)
+		return nil, nil, replySurfaceError(err)
 	}
 	if source.SourceType != "x" {
-		return nil, unsupportedReplySource(source.SourceType)
+		return nil, nil, unsupportedReplySource(source.SourceType)
 	}
 	// Terminal outcomes must not be gated on current configuration or credentials.
 	if receipt.State == "sent" || receipt.State == "remote_accepted" || (receipt.State != "" && receipt.State != "rejected" && req.AdoptPost == "") {
-		return xapi.NewSender(a.store, nil, config.XAccountConfig{}, nil), nil
+		return xapi.NewSender(a.store, nil, config.XAccountConfig{}, nil), source, nil
 	}
 	if a.config == nil {
-		return nil, xRegisterError("unavailable", nil)
+		return nil, nil, xRegisterError("unavailable", nil)
 	}
 	policy, err := a.config.XAccount(source.Identifier)
 	if err != nil {
-		return nil, xRegisterError("invalid_policy", err)
+		return nil, nil, xRegisterError("invalid_policy", err)
 	}
 	deps := defaultXCommandDeps()
 	if a.xDeps != nil {
 		deps = *a.xDeps
 	}
 	credentials := deps.manager(a.config.TokensDir()).Credentials(source.Identifier, deps.httpClient)
-	return xapi.NewSender(a.store, xapi.NewClient(deps.baseURL(), credentials.HTTPClient()), policy, credentials), nil
+	return xapi.NewSender(a.store, xapi.NewClient(deps.baseURL(), credentials.HTTPClient()), policy, credentials), source, nil
 }
 func (a *storeAPIAdapter) PrepareReply(ctx context.Context, req api.ReplyPrepareRequest, grant *agentgrant.Grant) (xapi.ReplyPreparation, error) {
 	if grant != nil {
@@ -82,12 +82,16 @@ func (a *storeAPIAdapter) PrepareReply(ctx context.Context, req api.ReplyPrepare
 	if err := req.Validate(); err != nil {
 		return xapi.ReplyPreparation{}, xRegisterError("invalid_args", err)
 	}
-	sender, err := a.replySender(ctx, req)
+	sender, source, err := a.replySender(ctx, req)
 	if err != nil {
 		return xapi.ReplyPreparation{}, err
 	}
 	result, err := sender.PrepareReply(ctx, xapi.SendRequest{DraftID: req.DraftID, Revision: req.Revision, AdoptPost: req.AdoptPost, Owner: true})
-	return result, errors.Join(replySurfaceError(err), a.finishReplyCleanup(ctx))
+	cleanupErr := a.finishReplyCleanup(ctx)
+	if req.AdoptPost != "" && cleanupErr == nil {
+		a.refreshDraftCache(context.WithoutCancel(ctx), source)
+	}
+	return result, errors.Join(replySurfaceError(err), cleanupErr)
 }
 
 // Sender has released source execution before the daemon takes ownership of
@@ -146,13 +150,20 @@ func (a *storeAPIAdapter) runCLISendReply(ctx context.Context, req api.CLIRunReq
 			return err
 		}
 	}
-	sender, err := a.replySender(ctx, intent.ReplyPrepareRequest)
+	sender, source, err := a.replySender(ctx, intent.ReplyPrepareRequest)
 	if err != nil {
 		return err
 	}
-	// Emit any durable result first, even if subsequent local cleanup fails.
-	defer func() { retErr = errors.Join(retErr, a.finishReplyCleanup(ctx)) }()
 	result, sendErr := sender.Send(ctx, xapi.SendRequest{DraftID: intent.DraftID, Revision: intent.Revision, AdoptPost: intent.AdoptPost, Owner: true})
+	// Emit durable results before cleanup/refresh. Sender has released source
+	// execution, and client cancellation cannot suppress cache publication.
+	defer func() {
+		cleanupErr := a.finishReplyCleanup(ctx)
+		retErr = errors.Join(retErr, cleanupErr)
+		if cleanupErr == nil && (result.Status == "sent" || intent.AdoptPost != "") {
+			a.refreshDraftCache(context.WithoutCancel(ctx), source)
+		}
+	}()
 	if result.DraftID != "" {
 		data := fmt.Sprintf("%s: draft %s revision %d, attempt %s, remote ID %s, reserved USD %d.%06d\n", result.Status, result.DraftID, result.Revision, result.AttemptID, result.RemoteID, result.ReservedMicros/1000000, result.ReservedMicros%1000000)
 		if intent.JSON {
