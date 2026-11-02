@@ -16,6 +16,7 @@ import (
 // its pending retries and before it checks which messages exist.
 type pausedProfileAPI struct {
 	*gmail.MockAPI
+
 	entered chan struct{}
 	resume  chan struct{}
 }
