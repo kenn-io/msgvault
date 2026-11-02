@@ -1,3 +1,4 @@
+import { requestOf } from '../directory/entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -96,10 +97,6 @@ function runsResponse(
 
 function syncResult(): SyncResult {
   return { books: 1, created: 1, updated: 0, removed: 0 };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 function deferredResponse() {

@@ -1,3 +1,4 @@
+import { requestOf } from '../directory/entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -19,10 +20,6 @@ function publication(personID: number, state: 'unpublished' | 'published' | 'pen
     ...forbidden,
     ...overrides
   };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 function deferredResponse() {
