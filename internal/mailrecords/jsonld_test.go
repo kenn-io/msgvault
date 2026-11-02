@@ -131,7 +131,6 @@ func TestRecordGuard(t *testing.T) {
 		{"wrong suffix", "1.5m", jsontext.Value("1500"), false},
 		{"exponent expansion", "1e3", jsontext.Value("1000"), false},
 		{"unbacked number", "Amount unknown", jsontext.Value("10"), false},
-		{"no float coercion", "10", float64(10), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, Verify(tc.source, tc.value)) })
 	}

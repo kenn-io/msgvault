@@ -345,6 +345,9 @@ func (s *Store) ApplySenderRepairContext(
 			); err != nil {
 				return fmt.Errorf("refresh message %d FTS after sender repair: %w", messageID, err)
 			}
+			if err := s.backfillFTSHTMLBodiesTx(ctx, tx, messageID, messageID+1); err != nil {
+				return fmt.Errorf("refresh message %d HTML-only FTS after sender repair: %w", messageID, err)
+			}
 		}
 		if err := s.bumpDerivedDataRevision(tx); err != nil {
 			return fmt.Errorf("invalidate derived data after repairing message %d sender: %w", messageID, err)

@@ -3048,6 +3048,37 @@ func TestCopySubset_FTSPopulated(t *testing.T) {
 	assert.NotZero(t, count, "expected FTS index to be populated")
 }
 
+func TestCopySubsetIndexesHTMLOnlyEmailBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 1)
+	sourceDB, err := sql.Open(sqliteutil.DriverName(), srcDB)
+	require.NoError(err)
+	_, err = sourceDB.Exec(
+		`UPDATE message_bodies SET body_text = '', body_html = ? WHERE message_id = 1`,
+		`<p>Copied subset htmlonlyneedle body</p>`,
+	)
+	require.NoError(err)
+	require.NoError(sourceDB.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err)
+
+	subsetDB, err := sql.Open(sqliteutil.DriverName(), filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(subsetDB.Close()) })
+	var count int64
+	err = subsetDB.QueryRow(
+		`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`,
+		"htmlonlyneedle",
+	).Scan(&count)
+	if err != nil {
+		t.Skip("FTS5 not available")
+	}
+	assert.Equal(int64(1), count)
+}
+
 func TestCopySubset_ConversationCounts(t *testing.T) {
 	require := require.New(t)
 	srcDir := t.TempDir()

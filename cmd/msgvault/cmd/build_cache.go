@@ -1379,6 +1379,9 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
+	if err := stageMailRecords(context.Background(), sourceSnapshot, analyticsDir, lastMessageID, maxID, replaceAll); err != nil {
+		return nil, err
+	}
 	if err := sourceSnapshot.Prepare(maxID); err != nil {
 		return nil, err
 	}
@@ -1437,6 +1440,9 @@ func buildCacheLockedAttempt(
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
 	publicationPlan := cachePublishPlanForMode(replaceAll)
+	if err := exportMailRecords(context.Background(), sourceSnapshot, staging.root); err != nil {
+		return nil, err
+	}
 	for dataset, changed := range relatedKinds.datasets() {
 		if changed {
 			delete(publicationPlan.Append, dataset)

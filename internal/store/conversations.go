@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	mailmime "go.kenn.io/msgvault/internal/mime"
 )
 
 // ConversationWindow is a bounded, stable slice of full message details.
@@ -351,11 +353,7 @@ func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, 
 		message := &messages[index]
 		message.BodyText = bodyText
 		message.BodyHTML = bodyHTML
-		if message.BodyText != "" {
-			message.Body = message.BodyText
-		} else {
-			message.Body = message.BodyHTML
-		}
+		message.Body = mailmime.TextBodyForDisplay(message.BodyText, message.BodyHTML)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate conversation bodies: %w", err)

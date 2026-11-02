@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	mailmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -339,7 +340,7 @@ type MessageDetail struct {
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
 	Body     string  `json:"body"`
-	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback."`
+	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body supplies readable text derived from HTML when no plain-text alternative exists."`
 	BodyHTML string  `json:"body_html,omitempty"`
 	IsFromMe bool    `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left
@@ -551,7 +552,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 
 	body := qMsg.BodyText
 	if body == "" {
-		body = qMsg.BodyHTML
+		body = mailmime.TextBodyForDisplay(qMsg.BodyText, qMsg.BodyHTML)
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(qMsg.Attachments))

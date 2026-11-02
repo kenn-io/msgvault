@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	mailmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -332,11 +333,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	}
 	m.BodyText = nullStringValue(bodyText)
 	m.BodyHTML = nullStringValue(bodyHTML)
-	if m.BodyText != "" {
-		m.Body = m.BodyText
-	} else {
-		m.Body = m.BodyHTML
-	}
+	m.Body = mailmime.TextBodyForDisplay(m.BodyText, m.BodyHTML)
 
 	// Get attachments
 	attRows, err := s.db.QueryContext(ctx, "SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), storage_path, COALESCE(source_attachment_id, '') FROM attachments WHERE message_id = ?", id)

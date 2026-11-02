@@ -4450,6 +4450,36 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
 }
 
+func TestHandleGetMessage_EngineHTMLOnlyBodyUsesDisplayText(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	const html = `<p>Readable <strong>HTML-only</strong> body</p>`
+	engine := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{
+			42: {
+				ID:       42,
+				Subject:  "HTML-only message",
+				SentAt:   time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+				BodyHTML: html,
+			},
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/42", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp MessageDetail
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal("Readable HTML-only body", resp.Body)
+	require.NotNil(resp.BodyText)
+	assert.Empty(*resp.BodyText, "derived display text does not change the canonical plain-text field")
+	assert.Equal(html, resp.BodyHTML)
+}
+
 // TestHandleGetMessage_EngineDeletedAt verifies the engine path surfaces
 // deleted_at in the response when the underlying message has a
 // deleted_from_source_at timestamp.

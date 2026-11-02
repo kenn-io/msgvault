@@ -49,10 +49,10 @@ func TestEmailRebuildsArchivedText(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET message_type = 'chat', sender_id = ? WHERE id = ?"), sender, id)
 	require.NoError(err)
 	Heal(t.Context(), slog.New(slog.DiscardHandler), st, src)
-	var body, html string
+	var body, html sql.NullString
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), id).Scan(&body, &html))
-	assert.Equal("Heizkörper", body)
-	assert.Equal("<p>Heizkörper</p>", html)
+	assert.False(body.Valid)
+	assert.Equal("<p>Heizkörper</p>", html.String)
 	for _, query := range []string{"Heizkörper", "Stored", "repaired"} {
 		matches, _, err := st.SearchMessages(query, 0, 10)
 		require.NoError(err)

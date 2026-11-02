@@ -1642,6 +1642,7 @@ type messageData struct {
 	conversationType  string
 	conversationTitle string
 	bodyText          string
+	searchBodyText    string
 	bodyHTML          string
 	rawMIME           []byte
 	from              []mime.Address
@@ -1746,6 +1747,7 @@ func (s *Syncer) prepareMessage(
 	// Ensure all text fields are valid UTF-8
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.BodyText)
+	searchBodyText := textutil.EnsureUTF8(parsed.GetBodyText())
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
 	snippet := textutil.EnsureUTF8(raw.Snippet)
 
@@ -1838,6 +1840,7 @@ func (s *Syncer) prepareMessage(
 		conversationType:  conversationType,
 		conversationTitle: convSubject,
 		bodyText:          bodyText,
+		searchBodyText:    searchBodyText,
 		bodyHTML:          bodyHTML,
 		rawMIME:           raw.Raw,
 		from:              parsed.From,
@@ -1932,7 +1935,7 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		fromAddr := joinEmails(data.from)
 		toAddrs := joinEmails(data.to)
 		ccAddrs := joinEmails(data.cc)
-		if err := s.store.UpsertFTS(messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
+		if err := s.store.UpsertFTS(messageID, subject, data.searchBodyText, fromAddr, toAddrs, ccAddrs); err != nil {
 			s.logger.Warn("failed to upsert FTS", "message", messageID, "error", err)
 		}
 	}

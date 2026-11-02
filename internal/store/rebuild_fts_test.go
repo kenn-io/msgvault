@@ -51,12 +51,17 @@ func TestStore_RebuildFTS_HappyPath(t *testing.T) {
 		sql.NullString{String: "banana bread recipe", Valid: true}, sql.NullString{}),
 		"UpsertMessageBody 2")
 
+	msgID3 := f.CreateMessage("rebuild-msg-html-only")
+	require.NoError(f.Store.UpsertMessageBody(msgID3, sql.NullString{},
+		sql.NullString{String: "<p>htmlrebuildtoken</p>", Valid: true}), "UpsertMessageBody HTML-only")
+
 	n, err := f.Store.RebuildFTS(nil)
 	require.NoError(err, "RebuildFTS")
-	assert.Equal(int64(2), n, "RebuildFTS rows")
+	assert.Equal(int64(3), n, "RebuildFTS rows")
 
 	assertFTSContains(t, f.Store, "banana", 1)
 	assertFTSContains(t, f.Store, "alice", 1)
+	assertFTSContains(t, f.Store, "htmlrebuildtoken", 1)
 }
 
 // TestStore_RebuildFTS_BypassesAvailabilityFlag verifies the critical

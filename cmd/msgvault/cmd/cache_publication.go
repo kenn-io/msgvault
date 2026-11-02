@@ -138,6 +138,7 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 		tableOwnerParticipants,
 		tableParticipantClusters,
 		tablePersonDisplayNames,
+		tableMessageRecords,
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
