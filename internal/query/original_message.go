@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -289,16 +290,17 @@ type ThreadQuery struct {
 
 // ThreadMessage is one archived message in a conversation listing.
 type ThreadMessage struct {
-	ID                  int64      `json:"id"`
-	SourceMessageID     string     `json:"source_message_id"`
-	Subject             string     `json:"subject"`
-	SentAt              *time.Time `json:"sent_at,omitzero"`
-	From                []Address  `json:"from"`
-	To                  []Address  `json:"to"`
-	Cc                  []Address  `json:"cc"`
-	HasRaw              bool       `json:"has_raw"`
-	AttachmentCount     int        `json:"attachment_count"`
-	DeletedFromSourceAt *time.Time `json:"deleted_from_source_at,omitzero"`
+	SenderAuth          *senderauth.Verdict `json:"sender_auth,omitempty"`
+	ID                  int64               `json:"id"`
+	SourceMessageID     string              `json:"source_message_id"`
+	Subject             string              `json:"subject"`
+	SentAt              *time.Time          `json:"sent_at,omitzero"`
+	From                []Address           `json:"from"`
+	To                  []Address           `json:"to"`
+	Cc                  []Address           `json:"cc"`
+	HasRaw              bool                `json:"has_raw"`
+	AttachmentCount     int                 `json:"attachment_count"`
+	DeletedFromSourceAt *time.Time          `json:"deleted_from_source_at,omitzero"`
 }
 
 // ThreadPage is one page of a conversation in chronological order. The
@@ -413,6 +415,14 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		if err := e.fillThreadParticipants(ctx, messages, index); err != nil {
 			return nil, err
 		}
+	}
+	ids := make([]int64, len(page.Messages))
+	for i, m := range page.Messages {
+		ids[i] = m.ID
+	}
+	auth := e.readSenderAuth(ctx, ids)
+	for i := range page.Messages {
+		page.Messages[i].SenderAuth = SenderAuthForAddresses(auth[page.Messages[i].ID], page.Messages[i].From)
 	}
 	return page, nil
 }

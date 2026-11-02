@@ -390,6 +390,9 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 			"attachment_count":       msg.AttachmentCount,
 			"labels":                 msg.Labels,
 		}
+		if msg.SenderAuth != nil {
+			output[i]["sender_auth"] = msg.SenderAuth
+		}
 		if msg.AttachmentNames != nil {
 			output[i]["attachment_names"] = msg.AttachmentNames
 		}

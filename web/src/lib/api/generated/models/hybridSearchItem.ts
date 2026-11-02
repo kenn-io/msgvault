@@ -3,6 +3,7 @@
  */
 import type { HybridSearchMatch } from "./hybridSearchMatch";
 import type { ScoreBreakdown } from "./scoreBreakdown";
+import type { Verdict } from "./verdict";
 
 export interface HybridSearchItem {
   attachment_count?: number;
@@ -23,6 +24,7 @@ export interface HybridSearchItem {
   matches_truncated?: boolean;
   message_type?: string;
   score?: ScoreBreakdown;
+  sender_auth?: Verdict;
   sent_at: string;
   size_bytes: number;
   snippet: string;

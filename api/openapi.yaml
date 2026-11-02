@@ -757,6 +757,21 @@ components:
       required:
         - type
       type: object
+    AuthservObservation:
+      additionalProperties: true
+      properties:
+        authserv_id:
+          type: string
+        content_trust:
+          type: string
+        count:
+          format: int64
+          type: integer
+      required:
+        - authserv_id
+        - count
+        - content_trust
+      type: object
     BackupFreezeBeginResponse:
       additionalProperties: true
       properties:
@@ -1087,6 +1102,8 @@ components:
           type: string
         message_type:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           format: date-time
           type: string
@@ -2765,6 +2782,8 @@ components:
           type: integer
         rfc822_message_id:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           format: date-time
           type: string
@@ -6623,6 +6642,8 @@ components:
           type: string
         score:
           $ref: "#/components/schemas/ScoreBreakdown"
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           type: string
         size_bytes:
@@ -8123,6 +8144,8 @@ components:
         related_message_id:
           format: int64
           type: integer
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           type: string
         size_bytes:
@@ -8305,6 +8328,8 @@ components:
           type: array
         message_type:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           type: string
         size_bytes:
@@ -14955,6 +14980,41 @@ components:
         - kind
         - message_id
       type: object
+    SenderAuthDiagnostics:
+      additionalProperties: true
+      properties:
+        basis_counts:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        has_more:
+          type: boolean
+        observations:
+          items:
+            $ref: "#/components/schemas/AuthservObservation"
+          type: array
+        sample_limit:
+          format: int64
+          type: integer
+        scanned:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        verified:
+          format: int64
+          type: integer
+      required:
+        - source_id
+        - sample_limit
+        - scanned
+        - has_more
+        - verified
+        - basis_counts
+        - observations
+      type: object
     SenderCount:
       additionalProperties: false
       properties:
@@ -16407,6 +16467,8 @@ components:
         id:
           format: int64
           type: integer
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           format: date-time
           type:
@@ -16801,6 +16863,30 @@ components:
       required:
         - status
       type: object
+    Verdict:
+      additionalProperties: true
+      properties:
+        authserv_id:
+          type: string
+        basis:
+          type: string
+        dkim:
+          type: string
+        dmarc:
+          type: string
+        kind:
+          type: string
+        spf:
+          type: string
+        verified:
+          type: boolean
+        verified_domain:
+          type: string
+      required:
+        - kind
+        - verified
+        - basis
+      type: object
     VirtualAccount:
       additionalProperties: true
       properties:
@@ -16935,7 +17021,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.34.0
+  version: 3.36.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -32120,6 +32206,80 @@ paths:
       summary: Find messages similar to a seed message
       tags:
         - API
+  /api/v1/sender-auth/diagnostics:
+    get:
+      operationId: getSenderAuthDiagnostics
+      parameters:
+        - description: Archive-local source ID to sample.
+          explode: false
+          in: query
+          name: source_id
+          required: true
+          schema:
+            description: Archive-local source ID to sample.
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Maximum newest messages to inspect; counts describe this sample only.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            description: Maximum newest messages to inspect; counts describe this sample only.
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+        - description: Include untrusted observed receiver hostnames for manual review.
+          explode: false
+          in: query
+          name: suggest
+          schema:
+            description: Include untrusted observed receiver hostnames for manual review.
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SenderAuthDiagnostics"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Inspect a bounded sample of sender receipt metadata
+      tags:
+        - Messages
   /api/v1/settings:
     get:
       operationId: getSettings

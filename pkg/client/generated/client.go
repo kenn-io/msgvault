@@ -1147,6 +1147,10 @@ type ClientInterface interface {
 	FindSimilarMessages(ctx context.Context, options *FindSimilarMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindSimilarMessagesResponse, error)
 	FindSimilarMessagesWithResponse(ctx context.Context, options *FindSimilarMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindSimilarMessagesResp, error)
 
+	// GetSenderAuthDiagnostics Inspect a bounded sample of sender receipt metadata
+	GetSenderAuthDiagnostics(ctx context.Context, options *GetSenderAuthDiagnosticsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSenderAuthDiagnosticsResponse, error)
+	GetSenderAuthDiagnosticsWithResponse(ctx context.Context, options *GetSenderAuthDiagnosticsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSenderAuthDiagnosticsResp, error)
+
 	// GetSettings Get browser-managed settings
 	GetSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetSettingsResponse, error)
 	GetSettingsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetSettingsResp, error)
@@ -18476,6 +18480,76 @@ func (c *Client) FindSimilarMessages(ctx context.Context, options *FindSimilarMe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/similar")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetSenderAuthDiagnostics Inspect a bounded sample of sender receipt metadata
+func (c *Client) GetSenderAuthDiagnostics(ctx context.Context, options *GetSenderAuthDiagnosticsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSenderAuthDiagnosticsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit":     {Style: "form", Explode: &[]bool{false}[0]},
+		"source_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"suggest":   {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/sender-auth/diagnostics",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetSenderAuthDiagnosticsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetSenderAuthDiagnosticsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetSenderAuthDiagnosticsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetSenderAuthDiagnosticsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetSenderAuthDiagnosticsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sender-auth/diagnostics")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

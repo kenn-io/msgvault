@@ -55,12 +55,16 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
 ) ([]MessageSummary, string, error) {
-	return readSQLiteTextSnapshot(
+	page, revision, err := readSQLiteTextSnapshot(
 		ctx, e, TextSnapshotScope{
 			ConversationID: &conversationID,
 			Filter:         filter,
 		}, 500, true, scanTextMessageSnapshotRow,
 	)
+	if err == nil {
+		e.fillSenderAuth(ctx, page)
+	}
+	return page, revision, err
 }
 
 type textSnapshotRowScanner[T any] func(*sql.Rows) (T, []any, error)
@@ -764,7 +768,11 @@ func (e *SQLiteEngine) ListConversationMessages(
 	}
 	defer func() { _ = rows.Close() }()
 
-	return scanMessageSummaries(rows)
+	messages, err := scanMessageSummaries(rows)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return messages, err
 }
 
 // sanitizeTextSearchMatch tokenizes a raw user query and builds an FTS5
@@ -841,7 +849,11 @@ func (e *SQLiteEngine) TextSearch(
 	if !e.hasFTSTable(ctx) {
 		return nil, nil
 	}
-	return sqliteFTSTextSearch(ctx, e.db, match, sourceID, limit, offset)
+	messages, err := sqliteFTSTextSearch(ctx, e.db, match, sourceID, limit, offset)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return messages, err
 }
 
 // GetTextStats returns aggregate stats for text messages.

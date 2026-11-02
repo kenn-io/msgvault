@@ -5515,3 +5515,14 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
+
+## Sender authentication diagnostics
+
+`msgvault sender-auth status --source-id ID [--limit 100] [--json]` reports
+verdict counts for a bounded sample of the source's newest messages.
+`msgvault sender-auth suggest --source-id ID [--limit 100] [--json]` also lists
+untrusted observed receiver hostnames for manual review. The maximum sample is
+1,000 messages; `scanned` and `has_more` describe sampling, not archive totals.
+Both commands use the daemon's owner-only diagnostic route and return no
+message content. They never change configuration or contact mail providers.
+See [sender authentication](usage/sender-auth.md) before pinning a hostname.
