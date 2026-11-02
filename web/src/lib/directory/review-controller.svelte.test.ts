@@ -300,14 +300,46 @@ describe('DirectoryReviewController', () => {
   });
 });
 
+it.each(['restoration', 'stale token'] as const)('refreshes evidence through %s', async reconciliation => {
+  const writes: Request[] = [];
+  let decided = false;
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = requestOf(input);
+    if (request.method === 'POST') {
+      writes.push(request);
+      decided = true;
+      return Response.json({ error: 'identity_match_review_stale', message: 'Changed' }, { status: 409 });
+    }
+    const path = new URL(request.url).pathname;
+    if (path.includes('/participants/')) return Response.json({ id: Number(path.split('/').at(-1)), display_label: decided ? 'Updated Example' : 'Original Example', activity_count: decided ? 9 : 3, identifiers: [{ participant_id: Number(path.split('/').at(-1)), type: 'email', is_primary: true, value: decided ? 'updated@example.com' : 'original@example.com' }] });
+    return page([{ ...candidate(1), review_token: decided ? 'fresh-token' : 'old-token' }]);
+  }));
+  try {
+    await controller.loadIdentityPage();
+    expect(controller.rows[0]?.review_token).toBe('old-token');
+    controller.requestSummaries();
+    await vi.waitFor(() => expect(controller.summaries.get('participant:10')).toMatchObject({ name: 'Original Example', address: 'original@example.com', count: 3 }));
+    if (reconciliation === 'restoration') {
+      decided = true;
+      controller.applyURLState({ identityState: 'candidate' }, true);
+    } else {
+      await expect(settle(controller, 1, 'accept')).resolves.toMatchObject({ ok: false, kind: 'stale', status: 409 });
+      expect(writes).toHaveLength(1);
+      expect(controller.decisionError).toContain('Review the refreshed evidence');
+      expect(controller.pageError).toBeNull();
+    }
+    await vi.waitFor(() => expect(controller.rows[0]?.review_token).toBe('fresh-token'));
+    controller.requestSummaries();
+    await vi.waitFor(() => expect(controller.summaries.get('participant:10')).toMatchObject({ name: 'Updated Example', address: 'updated@example.com', count: 9 }));
+  } finally { controller.destroy(); }
+});
+
 it.each([
   { decision: 'accept', reconciliation: 'ready' },
   { decision: 'reject', reconciliation: 'ready' },
   { decision: 'accept', reconciliation: 'pending' },
-  { decision: 'accept', reconciliation: 'failed' },
-  { decision: 'accept', reconciliation: 'restoration' },
-  { decision: 'accept', reconciliation: 'stale token' }
-] as const)('refreshes evidence and settles $decision through $reconciliation', async ({ decision, reconciliation }) => {
+  { decision: 'accept', reconciliation: 'failed' }
+] as const)('settles $decision through $reconciliation', async ({ decision, reconciliation }) => {
   const writes: Array<{ path: string; body: unknown; keepalive: boolean }> = [];
   const settled = vi.fn();
   const refresh = deferredResponse();
@@ -319,36 +351,16 @@ it.each([
     if (request.method === 'POST') {
       writes.push({ path: new URL(request.url).pathname, body: await request.json(), keepalive: request.keepalive });
       decided = true;
-      if (reconciliation === 'stale token') return Response.json({ error: 'identity_match_review_stale', message: 'Changed' }, { status: 409 });
       return Response.json({ candidate: accepted, cache_state: cacheState });
     }
     const path = new URL(request.url).pathname;
     if (path.includes('/participants/')) return Response.json({ id: Number(path.split('/').at(-1)), display_label: decided ? 'Updated Example' : 'Original Example', activity_count: decided ? 9 : 3, identifiers: [{ participant_id: Number(path.split('/').at(-1)), type: 'email', is_primary: true, value: decided ? 'updated@example.com' : 'original@example.com' }] });
-    if (reconciliation === 'restoration' || reconciliation === 'stale token') return page([{ ...candidate(1), review_token: decided ? 'fresh-token' : 'old-token' }]);
     if (decided && reconciliation === 'pending') return refresh.promise;
     if (decided && reconciliation === 'failed') return Response.json({ error: 'unavailable', message: 'Reload failed' }, { status: 503 });
     return page(decided ? [candidate(2)] : reconciliation === 'ready' ? [candidate(1), candidate(2)] : [candidate(1)]);
   }), undefined, settled);
   try {
     await controller.loadIdentityPage();
-    if (reconciliation === 'restoration' || reconciliation === 'stale token') {
-      expect(controller.rows[0]?.review_token).toBe('old-token');
-      controller.requestSummaries();
-      await vi.waitFor(() => expect(controller.summaries.get('participant:10')).toMatchObject({ name: 'Original Example', address: 'original@example.com', count: 3 }));
-      if (reconciliation === 'restoration') {
-        decided = true;
-        controller.applyURLState({ identityState: 'candidate' }, true);
-      } else {
-        await expect(settle(controller, 1, 'accept')).resolves.toMatchObject({ ok: false, kind: 'stale', status: 409 });
-        expect(writes).toHaveLength(1);
-        expect(controller.decisionError).toContain('Review the refreshed evidence');
-        expect(controller.pageError).toBeNull();
-      }
-      await vi.waitFor(() => expect(controller.rows[0]?.review_token).toBe('fresh-token'));
-      controller.requestSummaries();
-      await vi.waitFor(() => expect(controller.summaries.get('participant:10')).toMatchObject({ name: 'Updated Example', address: 'updated@example.com', count: 9 }));
-      return;
-    }
     const saved = { id: 7, name: 'Saved', address: 'Saved person', lastAt: null };
     controller.summaries.set('participant:999', saved);
     const completion = settle(controller, 1, decision, '  Different people  ');

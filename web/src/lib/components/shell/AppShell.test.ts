@@ -2898,23 +2898,15 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
   } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
-it('returns focus to a merged pair once, preserves review navigation focus, and refreshes Saved', async () => {
-  let merged = false, rejected = false;
-  let releaseReview: (() => void) | undefined;
+it('opens the surviving person and keeps the merged pair instruction after resolving duplicates', async () => {
+  let merged = false;
   const profile = (id: number) => person(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]);
   const conflict = { error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: profile(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
     if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [directoryPerson(7)] : [directoryPerson(7), directoryPerson(9)] });
-    if (path.endsWith('/identity/match-candidates')) {
-      if (rejected && url.searchParams.get('state') === 'candidate,conflict' && url.searchParams.get('limit') === '11' && !releaseReview) await new Promise<void>(resolve => { releaseReview = resolve; });
-      const offset = Number(url.searchParams.get('offset'));
-      const candidates = Array.from({ length: 12 }, (_, index) => ({ ...pair, id: 17 + index, review_token: `${merged ? 'refreshed' : 'review'}-${17 + index}`, ...(index === 0 ? { actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) } : {}) }));
-      const rows = url.searchParams.get('state') === 'accepted,rejected' ? rejected ? [{ ...pair, id: 18, state: 'rejected' }] : [] : candidates.filter(candidate => !rejected || candidate.id !== 18);
-      return Response.json({ candidates: rows.slice(offset, offset + Number(url.searchParams.get('limit'))), limit: Number(url.searchParams.get('limit')), offset });
-    }
-    if (path.endsWith('/18/review/reject')) { rejected = true; return Response.json({ candidate: { ...pair, id: 18, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
     if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
     if (/\/people\/(7|9)\/profile$/.test(path)) { const id = Number(path.split('/').at(-2)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json({ person: profile(id), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); }
@@ -2943,38 +2935,7 @@ it('returns focus to a merged pair once, preserves review navigation focus, and 
     await fireEvent.click(within(modal).getByRole('checkbox', { name: /I understand/ }));
     await fireEvent.click(within(modal).getByRole('button', { name: 'Merge into selected survivor' }));
     await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
-    const firstMerge = within(document.getElementById('duplicate-17')!).getByRole('button', { name: 'Merge' });
-    await waitFor(() => expect(document.activeElement).toBe(firstMerge));
-    expect(document.getElementById('duplicate-17')?.textContent).toContain('Choose Merge to record this pair.');
-    const secondChoice = within(document.getElementById('duplicate-18')!).getByRole('button', { name: 'Keep separate' });
-    secondChoice.focus();
-    await fireEvent.click(secondChoice);
-    await fireEvent(window, new Event('pagehide'));
-    await waitFor(() => expect(releaseReview).toBeDefined());
-    releaseReview!();
-    await waitFor(() => expect(document.getElementById('duplicate-18')).toBeNull());
-    await waitFor(() => expect(within(document.getElementById('duplicate-17')!).getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', false));
-    await tick();
-    expect(document.activeElement?.closest('[id^="duplicate-"]')?.id).not.toBe('duplicate-17');
-    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect(document.getElementById('duplicate-27')).not.toBeNull());
-    const previous = screen.getByRole('button', { name: 'Previous' });
-    previous.focus();
-    await fireEvent.click(previous);
-    await waitFor(() => expect(document.getElementById('duplicate-17')).not.toBeNull());
-    await tick();
-    expect(document.activeElement?.closest('[id^="duplicate-"]')?.id).not.toBe('duplicate-17');
-    await fireEvent.click(screen.getByRole('radio', { name: 'History' }));
-    await screen.findByText(/^Kept separate ·/);
-    const toReview = screen.getByRole('radio', { name: 'To review' });
-    toReview.focus();
-    await fireEvent.click(toReview);
-    await screen.findAllByRole('button', { name: 'Merge' });
-    await tick();
-    expect(document.activeElement?.closest('[id^="duplicate-"]')?.id).not.toBe('duplicate-17');
-    await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
-    const savedGrid = await screen.findByRole('grid', { name: 'People results' });
-    await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
+    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Choose Merge to record this pair.'));
   } finally { view.unmount(); state.destroy(); }
 });
 

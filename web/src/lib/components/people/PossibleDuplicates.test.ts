@@ -1,4 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
+import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
@@ -76,5 +78,25 @@ it.each([
     expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull();
     expect(screen.getByText(label)).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('returns focus to a merged pair once across same-page reloads', async () => {
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair, { ...pair, id: 18 }], offset: 0, limit: 11 });
+    return Response.json({ id: 1, display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+  }));
+  controller.rows = [pair, { ...pair, id: 18 }];
+  const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
+  try {
+    controller.lastMerge = { candidateID: 17, result: mergeResult(person(7)), survivor: person(7), responseETag: '"person-7-r5"' };
+    const firstMerge = within(document.getElementById('duplicate-17')!).getByRole('button', { name: 'Merge' });
+    await waitFor(() => expect(document.activeElement).toBe(firstMerge));
+    const secondChoice = within(document.getElementById('duplicate-18')!).getByRole('button', { name: 'Keep separate' });
+    secondChoice.focus();
+    await controller.loadIdentityPage();
+    await tick();
+    expect(document.activeElement).toBe(secondChoice);
   } finally { view.unmount(); controller.destroy(); }
 });
