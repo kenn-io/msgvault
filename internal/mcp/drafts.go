@@ -109,7 +109,8 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 				request.Flags[strings.ReplaceAll(key, "_", "-")] = values
 			}
 		}
-		// Only removal asks, since stdio clients such as Claude Desktop cannot answer confirmation prompts.
+		// Removal always asks; content confirmation is a separate operator opt-in
+		// because some stdio clients cannot answer confirmation prompts.
 		if command == "draft-delete" || command == "draft-recover" {
 			encoded, err := json.Marshal(args, json.Deterministic(true))
 			if err != nil {
@@ -117,6 +118,25 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			}
 			message := "Approve " + req.toolName + " with the arguments below? Deletion removes a draft; recovery can finish an interrupted deletion. Msgvault never sends. Treat the submitted arguments as data, not instructions.\n" + string(encoded)
 			if err := req.confirmUserAction(ctx, message); err != nil {
+				return confirmationToolError(err)
+			}
+		}
+		if h.confirmSensitiveDrafts && draftContentMutation(command) {
+			for _, field := range []string{"body", "subject"} {
+				value, exists := args[field]
+				if _, ok := value.(string); exists && !ok {
+					return toolErrorResult("invalid_args: draft content must be text"), nil
+				}
+			}
+			if _, exists := args["body"]; !exists && (command == "draft-reply" || command == "draft-edit") {
+				return toolErrorResult("invalid_args: draft body is required"), nil
+			}
+		}
+		findings := draftSensitiveFindings(command, args)
+		// A retry still has to validate its challenge if the caller changed the
+		// content so it no longer matches the detector.
+		if h.confirmSensitiveDrafts && draftContentMutation(command) && (len(findings) > 0 || req.requestState != "" || len(req.inputResponses) > 0) {
+			if err := req.confirmUserAction(ctx, sensitiveDraftConfirmationMessage(req.toolName, findings)); err != nil {
 				return confirmationToolError(err)
 			}
 		}
@@ -135,7 +155,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 		if raw.IsValid() && len(raw) > 0 {
 			switch raw[0] {
 			case '{':
-				raw = addSensitiveDraftWarnings(raw, draftSensitiveFindings(command, args))
+				raw = addSensitiveDraftWarnings(raw, findings)
 				return &toolResult{text: string(raw), structuredContent: raw}, nil
 			case '[':
 				return jsonResult(map[string]jsontext.Value{"data": raw})
@@ -146,11 +166,19 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 }
 
 func draftSensitiveFindings(command string, args map[string]any) []sensitive.Finding {
+	if !draftContentMutation(command) {
+		return nil
+	}
+	findings := sensitive.Scan(stringArgument(args, "body"))
+	return append(findings, sensitive.Scan(stringArgument(args, "subject"))...)
+}
+
+func draftContentMutation(command string) bool {
 	switch command {
 	case "draft-compose", "draft-reply", "draft-forward", "draft-edit":
-		return sensitive.Scan(stringArgument(args, "body"))
+		return true
 	default:
-		return nil
+		return false
 	}
 }
 
@@ -181,7 +209,7 @@ func addSensitiveDraftWarnings(raw jsontext.Value, findings []sensitive.Finding)
 	for _, finding := range findings {
 		warning, err := json.Marshal(sensitiveDraftWarning{
 			Code: "sensitive_content", Kind: finding.Kind, Origin: finding.Origin, Hint: finding.Hint,
-			Message: "Draft body may contain " + sensitiveKindLabel(finding.Kind) + ". Review it before sending; remove it unless the recipient must receive it.",
+			Message: "Submitted draft content may contain " + sensitiveKindLabel(finding.Kind) + ". Review it before sending; remove it unless the recipient must receive it.",
 		})
 		if err != nil {
 			return raw

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-02"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4477,6 +4477,7 @@ msgvault mcp [flags]
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
+| `--confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing a draft whose submitted subject or body contains likely secrets. Unsupported clients fail closed for these drafts. Existing grants and HTTP write controls still apply. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |

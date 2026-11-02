@@ -35,6 +35,7 @@ var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
 var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
+var mcpConfirmSensitiveDrafts bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
@@ -115,6 +116,7 @@ Add to Claude Desktop config:
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
 		opts.AllowKataWrites = mcpAllowKataWrites
 		opts.AllowCalendarWrites = mcpAllowCalendarWrites
+		opts.ConfirmSensitiveDrafts = mcpConfirmSensitiveDrafts
 		if mcpAllowProfileWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 		}
@@ -568,6 +570,8 @@ func init() {
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
+	mcpCmd.Flags().BoolVar(&mcpConfirmSensitiveDrafts, "confirm-sensitive-drafts", false,
+		"Require MCP client confirmation before creating or editing drafts containing likely secrets. Clients without confirmation support cannot create these drafts.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

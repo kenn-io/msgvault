@@ -198,6 +198,9 @@ type ServeOptions struct {
 	// Drafts runs managed draft commands with the caller's credential.
 	Drafts        DraftRunner
 	DraftCommands []string
+	// ConfirmSensitiveDrafts requires client approval for likely secrets in
+	// submitted draft content. It does not expose additional tools or permissions.
+	ConfirmSensitiveDrafts bool
 }
 
 type HTTPOptions struct {
@@ -403,6 +406,8 @@ func newMCPServerWithPolicy(
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+
+		confirmSensitiveDrafts: opts.ConfirmSensitiveDrafts,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

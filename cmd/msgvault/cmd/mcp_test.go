@@ -100,6 +100,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedAllowPersonMerges := mcpAllowPersonMerges
 	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedAllowCalendarWrites := mcpAllowCalendarWrites
+	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
 	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
@@ -107,6 +108,10 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	allowCalendarWritesFlag := mcpCmd.Flags().Lookup("allow-calendar-writes")
 	require.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
 	require.NoError(allowCalendarWritesFlag.Value.Set("true"))
+	confirmSensitiveFlag := mcpCmd.Flags().Lookup("confirm-sensitive-drafts")
+	require.NotNil(confirmSensitiveFlag)
+	assert.Equal("false", confirmSensitiveFlag.DefValue)
+	require.NoError(confirmSensitiveFlag.Value.Set("true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	mcpAllowProfileWrites = true
@@ -125,6 +130,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		mcpAllowPersonMerges = savedAllowPersonMerges
 		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		mcpAllowCalendarWrites = savedAllowCalendarWrites
+		mcpConfirmSensitiveDrafts = savedConfirmSensitiveDrafts
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
 
@@ -147,6 +153,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	assert.True(gotServeOpts.AllowPersonMerges)
 	assert.True(gotServeOpts.AllowCardDAVWrites)
 	assert.True(gotServeOpts.AllowCalendarWrites)
+	assert.True(gotServeOpts.ConfirmSensitiveDrafts)
 	assert.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
@@ -162,6 +169,8 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	previousHTTPAddr := mcpHTTPAddr
 	previousServe := serveMCPStdioWithOptions
 	previousSchemaCheck := remoteAPISchemaCheckEnabled
+	previousConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
+	mcpConfirmSensitiveDrafts = true
 	mcpHTTPAddr = ""
 	remoteAPISchemaCheckEnabled = true
 	var serveCalled bool
@@ -170,12 +179,14 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 		assertions.True(options.DelegatedOnly)
 		assertions.Nil(options.Calendar)
 		assertions.NotEmpty(options.DraftCommands)
+		assertions.True(options.ConfirmSensitiveDrafts)
 		return errors.New("stop after capture")
 	}
 	t.Cleanup(func() {
 		mcpHTTPAddr = previousHTTPAddr
 		serveMCPStdioWithOptions = previousServe
 		remoteAPISchemaCheckEnabled = previousSchemaCheck
+		mcpConfirmSensitiveDrafts = previousConfirmSensitiveDrafts
 	})
 
 	var healthRequests atomic.Int32
@@ -195,7 +206,10 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	t.Cleanup(daemon.Close)
 	tokenFile := filepath.Join(t.TempDir(), "agent-token")
 	requirements.NoError(os.WriteFile(tokenFile, []byte("mva1_test-token"), 0o600))
-	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = t.TempDir()
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{
 		agentURL: daemon.URL, agentTokenFile: tokenFile, agentAllowInsecure: true,
 		agentURLChanged: true, agentTokenChanged: true,
 	})

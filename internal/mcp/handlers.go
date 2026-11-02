@@ -132,6 +132,8 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	confirmSensitiveDrafts bool
+
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
 	downloads            *downloadCache

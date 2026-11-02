@@ -76,7 +76,7 @@ non-dry-run plan through client elicitation.
 
 These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
 
-`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
+`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. By default, clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
 | Tool | Command | Parameters |
 |---|---|---|
@@ -92,9 +92,9 @@ These tools run the matching CLI commands through your selected daemon. They req
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
 Successful `draft_compose`, `draft_reply`, `draft_forward`, and `draft_edit`
-object receipts include a `warnings` array when the submitted body appears to
-contain a payment card, IBAN, US Social Security number, API key, or anchored
-password. These warnings are advisory: the draft is still created or edited,
+object receipts include a `warnings` array when the submitted subject or body
+appears to contain a payment card, IBAN, US Social Security number, API key, or
+anchored password. These warnings are advisory: the draft is still created or edited,
 and its content is unchanged. Review the draft before sending it. No warning
 means nothing was detected, not that the content is safe.
 
@@ -108,6 +108,21 @@ it does not prove who wrote it. This scan includes quoted text pasted into the
 body but does not read server-appended reply or forward history, attachments,
 or stored drafts returned by `draft_get`. Checksums and anchored patterns limit
 false positives; unsupported formats and countries may go undetected.
+
+To require approval before a sensitive draft is created or edited, start the
+server with `msgvault mcp --confirm-sensitive-drafts`. The flag defaults to off.
+When enabled, a detected secret in the new subject or body requires MCP client
+confirmation before any provider mutation. Declined, cancelled, unavailable,
+replayed, or mismatched confirmations do not create or edit a draft. The prompt
+names only the detected categories; it does not copy the draft or credentials.
+The existing challenge binds approval to the exact tool and arguments.
+
+This opt-in covers all submitted content, including pasted quote blocks; quote
+markers do not establish authorization. Clients without confirmation support
+cannot create or edit a draft that triggers this check. The flag applies to
+owner and delegated sessions and grants no extra tools or permissions. HTTP
+writes still require `--http-allow-writes`. It does not cover sending, stored
+drafts, server-appended history, or attachments, and it remains a heuristic scan.
 
 Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
