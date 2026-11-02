@@ -241,7 +241,8 @@ it.each([
     '/api/v1/people/directory': () => Response.json({ people: [saved] }),
     '/api/v1/people/7': () => Response.json(saved, { headers: { ETag: '"person-7-r1"' } }),
     '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } }),
-    '/api/v1/participants/1': () => Response.json({ id: 1, profile: saved, display_label: 'Saved Person', identifiers: [], first_at: when, last_at: when, activity_count: activity, file_count: 0, source_counts: [] }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: saved, display_label: 'Saved Person', identifiers: [], first_at: activity ? when : '', last_at: activity ? when : '', activity_count: activity, file_count: 0, source_counts: [] }),
+    '/api/v1/people/7/contact-state': () => Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: activity, computed_at: when, stale: false }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
@@ -388,22 +389,24 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   let merged = false;
   const one = { ...profile(7, 4, [1]), organizations: [], categories: [], contact_state: 'active' };
   const two = { ...profile(9, 2, [2]), organizations: [], categories: [], contact_state: 'active' };
+  const survivor = { ...one, revision: 5, participant_ids: [1, 2] };
   const client = clientFor({
-    '/api/v1/people/directory': () => Response.json({ people: merged ? [one] : [one, two] }),
-    '/api/v1/people/7': () => Response.json(one, { headers: { ETag: '"person-7-r4"' } }),
-    '/api/v1/people/7/profile': () => Response.json({ person: one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }, { headers: { ETag: '"person-7-r4"' } }),
-    '/api/v1/participants/1': () => Response.json({ id: 1, profile: one, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/people/directory': () => Response.json({ people: merged ? [survivor] : [one, two] }),
+    '/api/v1/people/7': () => Response.json(merged ? survivor : one, { headers: { ETag: merged ? '"person-7-r5"' : '"person-7-r4"' } }),
+    '/api/v1/people/7/profile': () => Response.json({ person: merged ? survivor : one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }, { headers: { ETag: merged ? '"person-7-r5"' : '"person-7-r4"' } }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: merged ? survivor : one, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/identity/links': () => merged ? Response.json({ identity_revision: 8, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 }),
-    '/api/v1/people/7/merge': () => { merged = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: { ...one, revision: 5, participant_ids: [1, 2] }, merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } }); },
+    '/api/v1/people/7/merge': () => { merged = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: survivor, merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } }); },
   });
   const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
   const directory = new DirectoryController(client);
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:1', {}, false);
-  const onOpenDirectoryPerson = vi.fn();
-  const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
+  const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
+  const onOpenDirectoryPerson = vi.fn((id: number) => { state.commitNavigation({ workspace: 'relationships', directoryPersonID: id, relationshipTarget: null, relationshipFiles: false }); void sync(); });
+  const props = { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: (patch: Parameters<typeof state.replaceCommittedNavigation>[0]) => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson };
   const view = render(PeopleWorkspace, { props });
   let sawLoadingPerson = false;
   const observer = new MutationObserver(records => {
@@ -413,6 +416,9 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
+    const draft = screen.getByRole('textbox', { name: 'Contact value' });
+    await fireEvent.input(draft, { target: { value: '+12025550123' } });
     observer.observe(view.container, { childList: true, subtree: true });
     await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     const input = await openTypeahead('Search people to link');
@@ -426,6 +432,9 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     await waitFor(() => expect(merged).toBe(true));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
     expect(onOpenDirectoryPerson).toHaveBeenCalledWith(7);
+    expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('textbox', { name: 'Contact value' })).toBe(draft);
+    expect(draft).toHaveProperty('value', '+12025550123');
     await screen.findByText('absorbed@example.com');
     expect(sawLoadingPerson).toBe(false);
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).queryByText('Synthetic Two')).toBeNull());
