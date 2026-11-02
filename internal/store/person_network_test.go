@@ -139,11 +139,28 @@ func TestGetPersonNetworkContextBoundsHighDegreeEmploymentLayerInPublicOrder(t *
 	t.Cleanup(restore)
 
 	people := make([]*store.Person, 0, 1000)
+	values := make([]string, 1000)
+	args := make([]any, 0, 2000)
 	for index := range 1000 {
-		person := createNetworkPerson(t, f.Store, fmt.Sprintf("Zed %04d", index))
-		people = append(people, person)
-		createNetworkEmployment(t, f.Store, person.ID, organization.ID, true)
+		values[index] = "(?, ?)"
+		args = append(args, fmt.Sprintf("network-zed-%04d", index), fmt.Sprintf("Zed %04d", index))
 	}
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES `+strings.Join(values, ",")), args...)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO employments (person_id, organization_id)
+		SELECT id, ? FROM persons WHERE vcard_uid LIKE 'network-zed-%' ORDER BY id`), organization.ID)
+	require.NoError(err)
+	rows, err := f.Store.DB().QueryContext(t.Context(), `SELECT id FROM persons WHERE vcard_uid LIKE 'network-zed-%' ORDER BY id`)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		person := new(store.Person)
+		require.NoError(rows.Scan(&person.ID))
+		people = append(people, person)
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
+	require.Len(people, 1000)
 	earlier := createNetworkPerson(t, f.Store, "AAA Beyond Employment Page")
 	createNetworkEmployment(t, f.Store, earlier.ID, organization.ID, true)
 
