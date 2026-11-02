@@ -44,7 +44,7 @@ func TestQuerySQLToolReturnsRowsOrAcceptedBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := &sqlToolEngine{MockEngine: &querytest.MockEngine{}}
-	options := ServeOptions{Engine: engine, ArchiveSQLQuerier: engine}
+	options := ServeOptions{UnmaskVerification: true, Engine: engine, ArchiveSQLQuerier: engine}
 	listed := toolsByName(t, rawListTools(t, options, false))
 	require.Contains(listed, ToolQuerySQL)
 	assert.Equal(true, toolReadOnlyHint(t, listed[ToolQuerySQL]))
@@ -74,7 +74,7 @@ func TestQuerySQLToolOutputSchema(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
 	engine := &sqlToolEngine{MockEngine: &querytest.MockEngine{}}
-	options := ServeOptions{Engine: engine, ArchiveSQLQuerier: engine}
+	options := ServeOptions{UnmaskVerification: true, Engine: engine, ArchiveSQLQuerier: engine}
 	listed := toolsByName(t, rawListTools(t, options, false))
 	must.Contains(listed, ToolQuerySQL)
 	schema, ok := listed[ToolQuerySQL]["outputSchema"].(map[string]any)
@@ -109,7 +109,7 @@ func TestQuerySQLToolOutputSchema(t *testing.T) {
 
 func TestQuerySQLToolRequiresArchiveCapability(t *testing.T) {
 	engine := &sqlToolEngine{MockEngine: &querytest.MockEngine{}}
-	listed := toolsByName(t, rawListTools(t, ServeOptions{Engine: engine}, false))
+	listed := toolsByName(t, rawListTools(t, ServeOptions{UnmaskVerification: true, Engine: engine}, false))
 	_, hasQuerySQL := listed[ToolQuerySQL]
 	assert.False(t, hasQuerySQL)
 }
@@ -163,7 +163,7 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(client.Close()) })
 	adapter := daemonclient.NewEngineAdapter(client)
-	mcpHandler := newMCPHTTPServer(ServeOptions{Engine: adapter, ArchiveSQLQuerier: adapter}, HTTPOptions{APIKey: "synthetic-mcp-key"}).Handler
+	mcpHandler := newMCPHTTPServer(ServeOptions{UnmaskVerification: true, Engine: adapter, ArchiveSQLQuerier: adapter}, HTTPOptions{APIKey: "synthetic-mcp-key"}).Handler
 	archivePath := strings.ReplaceAll(filepath.ToSlash(filepath.Join(analyticsDir, "messages", "rows.parquet")), "'", "''")
 	result := callSQLToolHTTP(t, mcpHandler, "SELECT subject FROM read_parquet('"+archivePath+"')", "synthetic-mcp-key")
 	require.Empty(result.Error)
@@ -212,7 +212,7 @@ func TestQuerySQLToolDoesNotUseOwnerOnlyDaemon(t *testing.T) {
 	engine, err := daemonclient.NewEngine(daemonclient.Config{URL: daemon.URL, APIKey: "synthetic-owner-key", AllowInsecure: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	handler := newMCPHTTPServer(ServeOptions{Engine: engine, ArchiveSQLQuerier: engine}, HTTPOptions{}).Handler
+	handler := newMCPHTTPServer(ServeOptions{UnmaskVerification: true, Engine: engine, ArchiveSQLQuerier: engine}, HTTPOptions{}).Handler
 	result := callSQLToolHTTP(t, handler, "SELECT 1", "")
 	assert.NotEmpty(t, result.Error)
 	assert.Zero(t, ownerCalls.Load())

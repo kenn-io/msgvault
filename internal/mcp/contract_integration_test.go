@@ -409,6 +409,8 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 
 func task5ConnectClient(t *testing.T, opts ServeOptions, allowWrites bool) *sdkmcp.ClientSession {
 	t.Helper()
+	// This fixture verifies output contracts for the full owner tool catalog.
+	opts.UnmaskVerification = true
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)

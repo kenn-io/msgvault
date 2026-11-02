@@ -21,7 +21,10 @@ type EmbeddedReader struct {
 
 func NewEmbeddedReader(st *store.Store, attachmentsDir string) *EmbeddedReader {
 	downloads := &downloadCache{}
-	h := &handlers{engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), attachmentsDir: attachmentsDir, downloads: downloads, delegatedOnly: true}
+	// Embedded reads use the caller's per-call source scope against the local
+	// engine. Keep local verification masking enabled; delegated daemon reads
+	// use their own authorization and masking decisions.
+	h := &handlers{engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), attachmentsDir: attachmentsDir, downloads: downloads}
 	r := &EmbeddedReader{store: st, downloads: downloads, handlers: make(map[string]sdkmcp.ToolHandlerFor[map[string]any, any])}
 	for _, d := range stableOperationCatalogs.get(catalogCapabilities{}) {
 		switch d.name {

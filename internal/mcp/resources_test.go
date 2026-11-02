@@ -84,6 +84,7 @@ func task4RawRequest(
 func task4ResourceOptions(data []byte) ServeOptions {
 	const contentHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	return ServeOptions{
+		UnmaskVerification: true, // byte transport fixtures have no parent messages
 		Engine: &querytest.MockEngine{
 			Attachments: map[int64]*query.AttachmentInfo{
 				7: {
@@ -718,7 +719,7 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			args: map[string]any{"text": "needle"},
 			want: "visual_search_not_ready: visual attachment search is unavailable",
 			opts: func(client *daemonclient.Client) ServeOptions {
-				return ServeOptions{Engine: &querytest.MockEngine{}, VisualSearcher: task4DaemonVisualErrorSearcher{client}}
+				return ServeOptions{Engine: &querytest.MockEngine{}, VisualSearcher: task4DaemonVisualErrorSearcher{client}, UnmaskVerification: true}
 			},
 		},
 	}
@@ -1043,9 +1044,11 @@ func TestMCPInternalErrorIsolationCoversEveryDependencyClass(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			logs.Reset()
 			sentinel := "task4-secret-" + strings.ReplaceAll(test.name, " ", "-")
+			opts := test.opts(errors.New(sentinel))
+			opts.UnmaskVerification = true // dependency-error fixtures do not supply canonical parents
 			response, raw := task4RawRequest(
 				t,
-				newMCPHTTPServer(test.opts(errors.New(sentinel)), test.httpOpts).Handler,
+				newMCPHTTPServer(opts, test.httpOpts).Handler,
 				"tools/call",
 				map[string]any{"name": test.tool, "arguments": test.args},
 				nil,

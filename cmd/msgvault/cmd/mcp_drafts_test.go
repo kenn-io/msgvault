@@ -66,7 +66,7 @@ func mcpDraftAgentContext(t *testing.T, server *httptest.Server, sourceID int64,
 	})
 }
 
-func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSession {
+func mcpDraftTestSession(ctx context.Context, t *testing.T, unmaskVerification ...bool) *sdkmcp.ClientSession {
 	t.Helper()
 	require := require.New(t)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -77,6 +77,9 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 	}
 	mcpHTTPAddr = ""
 	cmd := &cobra.Command{Use: "mcp"}
+	if len(unmaskVerification) > 0 && unmaskVerification[0] {
+		cmd.Flags().Bool("unmask-verification", true, "")
+	}
 	cmd.SetContext(ctx)
 	done := make(chan error, 1)
 	go func() { done <- mcpCmd.RunE(cmd, nil) }()
@@ -252,7 +255,7 @@ func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), nil)
 	ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
-	session := mcpDraftTestSession(ctx, t)
+	session := mcpDraftTestSession(ctx, t, true)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 	require.NoError(err)
 	require.False(result.IsError)
@@ -355,6 +358,26 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 					ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 				}
 				probing.Store(true)
+				if !delegated {
+					// Masked owner reads require the protection schema before
+					// the MCP transport can advertise any archive-read tools.
+					served := false
+					previousServe := serveMCPStdioWithOptions
+					serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
+					t.Cleanup(func() { serveMCPStdioWithOptions = previousServe })
+					cmd := &cobra.Command{Use: "mcp"}
+					cmd.SetContext(ctx)
+					err := mcpCmd.RunE(cmd, nil)
+					if version == "failed" {
+						require.ErrorContains(err, "check verification protection")
+						require.ErrorContains(err, "probe unavailable")
+					} else {
+						require.ErrorContains(err, "masked MCP reads require daemon API schema")
+					}
+					assert.False(served)
+					assert.Equal(int64(2), healthCalls.Load())
+					return
+				}
 				if delegated && version != "3.0.0" {
 					// Delegated sessions offer nothing but draft tools, so they fail instead of serving an empty list.
 					served := false

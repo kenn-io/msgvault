@@ -213,3 +213,67 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	assertions.Contains(deletedText, textDraft.DraftID)
 	assertions.NotContains(deletedText, body)
 }
+
+func TestChatDraftVerificationReadProtectsGetListAndEdit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "synthetic-chat")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "C2", "channel", "Synthetic")
+	require.NoError(err)
+	const protectedBody = "Your verification code is 482913."
+	draft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, protectedBody, func(string, string) error { return nil })
+	require.NoError(err)
+	adapter := &storeAPIAdapter{store: st}
+	grantFor := func(readVerification bool) *agentgrant.Grant {
+		permissions := []agentgrant.Permission{agentgrant.PermissionDraftEdit}
+		if readVerification {
+			permissions = append(permissions, agentgrant.PermissionVerificationRead)
+		}
+		return &agentgrant.Grant{
+			ID: "chat-verification-grant", Permissions: permissions,
+			Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier}},
+		}
+	}
+	run := func(grant *agentgrant.Grant, args ...string) (string, error) {
+		var output strings.Builder
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+			output.WriteString(event.Data)
+			return nil
+		})
+		return output.String(), err
+	}
+
+	get, err := run(grantFor(false), api.CLIRunDraftGetCommand, draft.DraftID, "--json")
+	require.NoError(err)
+	var got chatDraftOutput
+	require.NoError(json.Unmarshal([]byte(get), &got))
+	assert.Empty(got.Body)
+	assert.NotContains(get, "482913")
+
+	list, err := run(grantFor(false), api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(conversationID, 10), "--json")
+	require.NoError(err)
+	var listed []chatDraftOutput
+	require.NoError(json.Unmarshal([]byte(list), &listed))
+	require.Len(listed, 1)
+	assert.Empty(listed[0].Body)
+	assert.NotContains(list, "482913")
+
+	_, err = run(grantFor(false), api.CLIRunDraftEditCommand, draft.DraftID, "--revision", "1", "--body", "replacement")
+	var coded *api.CLIRunCodedError
+	require.ErrorAs(err, &coded)
+	assert.Equal("not_permitted", coded.Code)
+	unchanged, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(protectedBody, unchanged.Body)
+
+	withRead, err := run(grantFor(true), api.CLIRunDraftGetCommand, draft.DraftID, "--json")
+	require.NoError(err)
+	assert.Contains(withRead, protectedBody)
+	_, err = run(grantFor(true), api.CLIRunDraftEditCommand, draft.DraftID, "--revision", "1", "--body", "replacement")
+	require.NoError(err)
+	updated, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal("replacement", updated.Body)
+}

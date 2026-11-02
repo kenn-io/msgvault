@@ -28,13 +28,14 @@ type downloadKey struct {
 }
 
 type downloadSnapshot struct {
-	validate   func(context.Context) error
-	data       []byte
-	digest     string
-	original   *query.OriginalMessage
-	attachment *attachmentPayload
-	expires    time.Time
-	timer      *time.Timer
+	validate           func(context.Context) error
+	validateAttachment func(context.Context) (*attachmentPayload, error)
+	data               []byte
+	digest             string
+	original           *query.OriginalMessage
+	attachment         *attachmentPayload
+	expires            time.Time
+	timer              *time.Timer
 }
 
 // downloadCache retains at most 256 MiB across eight downloads. A digest pins
@@ -47,10 +48,19 @@ type downloadCache struct {
 }
 
 func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkRequest, load func() (*downloadSnapshot, error)) (*downloadSnapshot, error) {
+	return c.getAttempt(ctx, key, req, load, false)
+}
+
+func (c *downloadCache) getAttempt(ctx context.Context, key downloadKey, req chunkRequest, load func() (*downloadSnapshot, error), restarted bool) (*downloadSnapshot, error) {
 	// ponytail: serialize snapshot loads; per-download locks if concurrent
 	// large exports need to avoid waiting behind another download.
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			c.mu.Unlock()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -58,24 +68,22 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 		return nil, errDownloadExpired
 	}
 	if entry := c.entries[key]; entry != nil {
-		if time.Now().Before(entry.expires) {
-			if entry.validate != nil {
-				if err := entry.validate(ctx); err != nil {
-					if !errors.Is(err, errDownloadExpired) {
-						return nil, err
-					}
-					c.remove(key)
-					entry = nil
-				}
-			}
-			if entry != nil {
-				if req.digest != "" && req.digest != entry.digest {
-					return nil, errDownloadExpired
-				}
-				return entry, nil
-			}
-		} else {
+		if !time.Now().Before(entry.expires) {
 			c.remove(key)
+		} else {
+			if req.digest != "" && req.digest != entry.digest {
+				return nil, errDownloadExpired
+			}
+			c.mu.Unlock()
+			locked = false
+			validated, err := c.validateCached(ctx, key, req, entry)
+			if errors.Is(err, errDownloadExpired) {
+				c.removeIfCurrent(key, entry)
+				if req.offset == 0 && !restarted {
+					return c.getAttempt(ctx, key, req, load, true)
+				}
+			}
+			return validated, err
 		}
 	}
 	if req.offset != 0 {
@@ -117,6 +125,41 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 		}
 	})
 	return entry, nil
+}
+
+func (c *downloadCache) validateCached(ctx context.Context, key downloadKey, req chunkRequest, cached *downloadSnapshot) (*downloadSnapshot, error) {
+	requestEntry := *cached
+	if cached.validate != nil {
+		if err := cached.validate(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if cached.validateAttachment != nil {
+		attachment, err := cached.validateAttachment(ctx)
+		if err != nil {
+			return nil, err
+		}
+		requestEntry.attachment = attachment
+	}
+	if req.digest != "" && req.digest != requestEntry.digest {
+		return nil, errDownloadExpired
+	}
+
+	c.mu.Lock()
+	current := !c.closed && c.entries[key] == cached && time.Now().Before(cached.expires)
+	c.mu.Unlock()
+	if !current {
+		return nil, errDownloadExpired
+	}
+	return &requestEntry, nil
+}
+
+func (c *downloadCache) removeIfCurrent(key downloadKey, entry *downloadSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries[key] == entry {
+		c.remove(key)
+	}
 }
 
 func (c *downloadCache) remove(key downloadKey) {

@@ -2,7 +2,9 @@ package daemonclient_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
@@ -120,6 +122,73 @@ func TestVerificationMetadataThroughDaemon(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Contains(detail.BodyText, "482913")
 			assertions.Nil(detail.Verification)
+
+			imageURL := "http://images.example/chart.png"
+			imageDigest := sha256.Sum256([]byte(imageURL))
+			imageKey := "remote-image:" + hex.EncodeToString(imageDigest[:])
+			htmlBody := `<p>Your verification code is 482<!-- > -->913.</p><img src="http://images.example/chart.png">`
+			htmlOnlyID, err := st.UpsertMessage(&store.Message{
+				SourceID: src.ID, ConversationID: conv, SourceMessageID: "html-only-provider-message", MessageType: "beeper",
+				Subject: sql.NullString{String: "HTML-only notice", Valid: true},
+				Snippet: sql.NullString{String: "Ordinary notice", Valid: true},
+			})
+			requirements.NoError(err)
+			requirements.NoError(st.UpsertMessageBody(htmlOnlyID, sql.NullString{}, sql.NullString{String: htmlBody, Valid: true}))
+			requirements.NoError(st.UpsertRemoteImageAttachment(t.Context(), htmlOnlyID, store.AttachmentWrite{
+				Filename: "chart.png", MIMEType: "image/png", StoragePath: "remote-images/chart.png",
+				ContentHash: strings.Repeat("e", 64), Size: 1, SourceAttachmentID: imageKey,
+				SourcePartKey: imageKey, ContentID: imageKey, MediaType: "image",
+			}))
+			requirements.NoError(st.UpsertFTS(htmlOnlyID, "HTML-only notice", "Ordinary notice", "", "", ""))
+			htmlDetail, err := daemonclient.NewEngineAdapter(owner).GetMessage(t.Context(), htmlOnlyID)
+			requirements.NoError(err)
+			assertions.Contains(htmlDetail.BodyHTML, "cid:"+imageKey)
+			assertions.NotContains(htmlDetail.BodyHTML, imageURL)
+			assertions.Empty(htmlDetail.BodyText)
+			assertions.NotNil(verification.Detect(verification.Input{
+				Subject: htmlDetail.Subject, BodyText: htmlDetail.BodyText, BodyHTML: htmlDetail.BodyHTML,
+			}))
 		})
 	}
+}
+
+func TestEngineGetMessageDoesNotFallBackToProviderID(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "synthetic-source")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "direct-chat", "direct_chat", "Synthetic chat")
+	requirements.NoError(err)
+	providerMessageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "42", MessageType: "beeper",
+		Subject: sql.NullString{String: "Unrelated provider message", Valid: true},
+	})
+	requirements.NoError(err)
+	assertions.NotEqual(int64(42), providerMessageID, "the provider ID is not the archive's internal ID")
+
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	cfg := &config.Config{
+		HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()},
+		Server: config.ServerConfig{APIKey: "synthetic-owner-key"},
+	}
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Engine: engine, Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() { requirements.NoError(server.Shutdown(context.Background())) })
+	httpServer := httptest.NewServer(server.Router())
+	t.Cleanup(httpServer.Close)
+	client, err := daemonclient.New(daemonclient.Config{
+		URL: httpServer.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: httpServer.Client(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	resolved, err := client.GetCLIMessage(t.Context(), "42")
+	requirements.NoError(err)
+	requirements.NotNil(resolved)
+	assertions.Equal(providerMessageID, resolved.ID, "the CLI resolver accepts provider IDs")
+
+	got, err := daemonclient.NewEngineAdapter(client).GetMessage(t.Context(), 42)
+	requirements.NoError(err)
+	assertions.Nil(got, "an internal-ID lookup must not return a provider-ID match")
 }

@@ -7989,14 +7989,17 @@ type MergeRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments    []AttachmentInfo    `json:"attachments" validate:"required"`
-	Bcc            []string            `json:"bcc,omitempty"`
-	Body           string              `json:"body" validate:"required"`
-	BodyHTML       *string             `json:"body_html,omitzero"`
-	BodyOmitted    *bool               `json:"body_omitted,omitempty"`
-	Calendar       *CalendarProjection `json:"calendar,omitempty"`
-	Cc             []string            `json:"cc,omitempty"`
-	ConversationID *int64              `json:"conversation_id,omitempty"`
+	Attachments []AttachmentInfo `json:"attachments" validate:"required"`
+	Bcc         []string         `json:"bcc,omitempty"`
+	Body        string           `json:"body" validate:"required"`
+
+	// BodyFormat Format selected for body: plain text, an HTML fallback, or empty.
+	BodyFormat     *MessageDetailBodyFormat `json:"body_format,omitempty"`
+	BodyHTML       *string                  `json:"body_html,omitzero"`
+	BodyOmitted    *bool                    `json:"body_omitted,omitempty"`
+	Calendar       *CalendarProjection      `json:"calendar,omitempty"`
+	Cc             []string                 `json:"cc,omitempty"`
+	ConversationID *int64                   `json:"conversation_id,omitempty"`
 
 	// ConversationTitle Conversation title, when available.
 	ConversationTitle *string   `json:"conversation_title,omitzero"`
@@ -8036,6 +8039,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Body, "required"); err != nil {
 		errors = errors.Append("Body", err)
+	}
+	if m.BodyFormat != nil {
+		if v, ok := any(m.BodyFormat).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("BodyFormat", err)
+			}
+		}
 	}
 	if m.Calendar != nil {
 		if v, ok := any(m.Calendar).(runtime.Validator); ok {

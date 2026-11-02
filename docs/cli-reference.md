@@ -1967,7 +1967,7 @@ msgvault calendar events --from 2027-03-01 --to 2027-04-01
 msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
 ```
 
-`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.36.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
 
 For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
@@ -4495,7 +4495,13 @@ Start the Model Context Protocol server for AI assistant integration.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
-With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.36.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+
+MCP masks detected verification codes and credential links by default, including
+expired values. Owner sessions require API schema 3.36.0 or newer and can opt
+into complete content with `--unmask-verification`. Delegated sessions require
+the source's `verification.read` modifier instead. See
+[verification protection](usage/chat.md#verification-protection) for limits.
 
 ```bash
 msgvault mcp [flags]
@@ -4503,6 +4509,7 @@ msgvault mcp [flags]
 
 | Flag | Default | Description |
 |---|---|---|
+| `--unmask-verification` | `false` | Reveal detected verification credentials for this owner MCP session. Refused in delegated mode; use the source-scoped `verification.read` modifier there. |
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
@@ -4619,6 +4626,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | Flag | Default | Effect |
 |---|---|---|
 | `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
+| `--mcp-unmask-verification` | `false` | Reveal detected verification credentials through the native owner MCP endpoints. |
 | `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
 | `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
 | `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
@@ -5464,7 +5472,7 @@ Delegated reads mask detected verification codes and sign-in, reset, and
 confirmation links, including expired values. This applies to archived email
 and chat messages. Add `verification.read` alongside the operation's read
 permission to reveal credentials. Existing grants stay masked. The daemon must
-provide API schema 3.38.0 or newer for this protection.
+provide API schema 3.39.0 or newer for this protection.
 
 Message results include `verification` metadata when detection finds a cue or
 credential. The kind, sender, host and expiry are claims derived from untrusted

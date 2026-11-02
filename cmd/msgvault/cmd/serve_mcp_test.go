@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -22,6 +24,8 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -184,7 +188,7 @@ func TestNativeMCPBridge(t *testing.T) {
 		require := require.New(t)
 		entered := make(chan struct{})
 		unwind, release := context.WithCancel(context.Background())
-		engine := &querytest.MockEngine{ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
+		engine := &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{1: {ID: 1, Subject: "completed during drain"}}, ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
 			close(entered)
 			<-unwind.Done()
 			if err := ctx.Err(); err != nil {
@@ -238,7 +242,7 @@ func TestNativeMCPBridge(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner"}}
-			engine := &querytest.MockEngine{ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
+			engine := &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{1: {ID: 1, Subject: "synthetic slow read"}}, ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
 				timer := time.NewTimer(50 * time.Millisecond)
 				defer timer.Stop()
 				select {
@@ -377,6 +381,71 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 					assert.Equal(origin.want+"/messages/42", rpc.Result.Structured.WebURL)
 				})
 			}
+		})
+	}
+}
+
+func TestNativeMCPVerificationUnmaskFlagProtectsHTMLOnlyMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		unmask         bool
+		wantCredential bool
+	}{
+		{name: "masked by default"},
+		{name: "owner opts in", unmask: true, wantCredential: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("gmail", "synthetic@example.test")
+			require.NoError(err)
+			conversationID, err := st.EnsureConversation(source.ID, "synthetic-thread", "Synthetic")
+			require.NoError(err)
+			const credentialPrefix = "482"
+			const credentialSuffix = "913"
+			const credentialLink = "example-token-value-0123456789abcdef"
+			messageID, err := st.PersistMessage(&store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: source.ID, ConversationID: conversationID,
+					SourceMessageID: "html-only-verification", MessageType: "email",
+					Subject: sql.NullString{String: "Your verification code", Valid: true},
+				},
+				BodyHTML: sql.NullString{String: `<p>Your verification code is <span>482</span><!-- split --><span>913</span>. <a href="https://example.test/verify?token=` + credentialLink + `">Continue</a></p>`, Valid: true},
+			})
+			require.NoError(err)
+			engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+			defer func() { require.NoError(engine.Close()) }()
+			cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", BindAddr: "127.0.0.1"}}
+			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Engine: engine, Logger: slog.New(slog.DiscardHandler)})
+			defer func() { require.NoError(server.Shutdown(context.Background())) }()
+			cmd := &cobra.Command{Use: "serve"}
+			addServeConfigFlags(cmd)
+			if tc.unmask {
+				require.NoError(cmd.Flags().Set("mcp-unmask-verification", "true"))
+			}
+			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
+
+			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(fmt.Sprintf(
+				`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_message","arguments":{"id":%d}}}`,
+				messageID,
+			)))
+			request.Header.Set("Authorization", "Bearer owner")
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			if tc.wantCredential {
+				assert.Contains(response.Body.String(), credentialPrefix)
+				assert.Contains(response.Body.String(), credentialSuffix)
+				assert.Contains(response.Body.String(), credentialLink)
+				return
+			}
+			assert.NotContains(response.Body.String(), credentialPrefix)
+			assert.NotContains(response.Body.String(), credentialSuffix)
+			assert.NotContains(response.Body.String(), credentialLink)
 		})
 	}
 }

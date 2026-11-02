@@ -17,7 +17,7 @@ type MediaSearcher interface {
 }
 
 func searchMediaDefinition() toolDefinition {
-	definition := readDefinition(ToolSearchMedia, "Find text in recording transcripts and Docbank-extracted mirrored attachments as visible messages. Recordings preserve origin, optional timing, and partial coverage. Attachments have their own results, truncation, and error.", closedObject(map[string]*jsonschema.Schema{
+	definition := readDefinition(ToolSearchMedia, "Find text in recording transcripts and Docbank-extracted mirrored attachments as visible messages. Recordings preserve origin, optional timing, and partial coverage. Attachments have their own results, truncation, and error. Masked owner sessions require --unmask-verification.", closedObject(map[string]*jsonschema.Schema{
 		toolArgQuery:    stringSchema("Words to find"),
 		toolArgMode:     stringSchema("Search mode", "lexical"),
 		toolArgPersonID: safeIDSchema("Optional durable person ID"),
@@ -61,6 +61,9 @@ func (h *handlers) searchMedia(ctx context.Context, req toolRequest) (*toolResul
 	}
 	for _, direction := range directions {
 		request.Directions = append(request.Directions, personscope.Direction(direction))
+	}
+	if denied := h.requireOwnerVerificationReveal("media search"); denied != nil {
+		return denied, nil
 	}
 	response, err := h.mediaSearcher.SearchMedia(ctx, request)
 	if err != nil {

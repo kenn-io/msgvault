@@ -71,6 +71,20 @@ type GetAttachmentContentErrorResponseJSON503 = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSONDefault = ErrorResponse
 
+type CheckAttachmentContentResponse = []byte
+
+type CheckAttachmentContentErrorResponse = ErrorResponse
+
+type CheckAttachmentContentErrorResponseJSON = ErrorResponse
+
+type CheckAttachmentContentErrorResponseJSON403 = ErrorResponse
+
+type CheckAttachmentContentErrorResponseJSON404 = ErrorResponse
+
+type CheckAttachmentContentErrorResponseJSON503 = ErrorResponse
+
+type CheckAttachmentContentErrorResponseJSONDefault = ErrorResponse
+
 type GetAttachmentResponse = AttachmentInfo
 
 type GetAttachmentErrorResponse = ErrorResponse
@@ -4160,6 +4174,18 @@ type GetAttachmentContentResp struct {
 	JSON500      *GetAttachmentContentErrorResponseJSON500
 	JSON503      *GetAttachmentContentErrorResponseJSON503
 	JSONDefault  *GetAttachmentContentErrorResponseJSONDefault
+}
+
+type CheckAttachmentContentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *CheckAttachmentContentErrorResponse
+	JSON401      *CheckAttachmentContentErrorResponseJSON
+	JSON403      *CheckAttachmentContentErrorResponseJSON403
+	JSON404      *CheckAttachmentContentErrorResponseJSON404
+	JSON503      *CheckAttachmentContentErrorResponseJSON503
+	JSONDefault  *CheckAttachmentContentErrorResponseJSONDefault
 }
 
 type GetAttachmentResp struct {

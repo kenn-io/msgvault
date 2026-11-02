@@ -1228,6 +1228,25 @@ func (m MeetingScopeRequestDeletion) Validate() error {
 	}
 }
 
+// MessageDetailBodyFormat Format selected for body: plain text, an HTML fallback, or empty.
+type MessageDetailBodyFormat string
+
+const (
+	HTML                         MessageDetailBodyFormat = "html"
+	MessageDetailBodyFormatEmpty MessageDetailBodyFormat = "empty"
+	Text                         MessageDetailBodyFormat = "text"
+)
+
+// Validate checks if the MessageDetailBodyFormat value is valid
+func (m MessageDetailBodyFormat) Validate() error {
+	switch m {
+	case HTML, MessageDetailBodyFormatEmpty, Text:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageDetailBodyFormat value, got: %v", m))
+	}
+}
+
 type MessageRecordingState string
 
 const (

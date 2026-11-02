@@ -24,12 +24,13 @@ func TestBoundedMessageDetails(t *testing.T) {
 		return id
 	}
 	for _, tc := range []struct {
-		name     string
-		setup    func(t *testing.T) int64
-		raw      bool
-		limit    int64
-		wantErr  error
-		wantBody string
+		name         string
+		setup        func(t *testing.T) int64
+		raw          bool
+		limit        int64
+		wantErr      error
+		wantBody     string
+		wantBodyHTML string
 	}{
 		{
 			name: "stored body counts UTF-8 bytes",
@@ -82,6 +83,24 @@ func TestBoundedMessageDetails(t *testing.T) {
 			limit:    1024,
 			wantBody: "Fallback body.",
 		},
+		{
+			name: "multipart MIME body fallback preserves HTML verification cue",
+			setup: func(t *testing.T) int64 {
+				t.Helper()
+				raw := "From: sender@example.invalid\r\nTo: recipient@example.invalid\r\n" +
+					"Subject: Fixture\r\nMIME-Version: 1.0\r\n" +
+					"Content-Type: multipart/alternative; boundary=synthetic-boundary\r\n\r\n" +
+					"--synthetic-boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
+					"Routine status update.\r\n--synthetic-boundary\r\n" +
+					"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+					"<p>Your verification code is <strong>482913</strong>.</p>\r\n" +
+					"--synthetic-boundary--\r\n"
+				return withRaw(t, raw)
+			},
+			limit:        1024,
+			wantBody:     "Routine status update.",
+			wantBodyHTML: "<p>Your verification code is <strong>482913</strong>.</p>",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -99,6 +118,7 @@ func TestBoundedMessageDetails(t *testing.T) {
 			}
 			require.NoError(err)
 			assert.Equal(t, tc.wantBody, strings.TrimSpace(detail.BodyText))
+			assert.Equal(t, tc.wantBodyHTML, strings.TrimSpace(detail.BodyHTML))
 		})
 	}
 }

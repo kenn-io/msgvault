@@ -390,7 +390,8 @@ import (
 // 3.36.0 adds stored plaintext range counts to document indexing status.
 // 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
 // 3.38.0 adds default verification masking and the verification.read modifier.
-const APISchemaVersion = "3.38.0"
+// 3.39.0 adds a metadata-only permission check for attachment content reads.
+const APISchemaVersion = "3.39.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

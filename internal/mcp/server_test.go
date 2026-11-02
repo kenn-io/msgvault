@@ -143,7 +143,9 @@ type paginatedListMessages struct {
 
 // newTestHandlers creates a handlers instance with the given mock engine.
 func newTestHandlers(eng query.Engine) *handlers {
-	return &handlers{engine: eng, downloads: &downloadCache{}}
+	// Most handler tests exercise query/format contracts with partial mocks.
+	// Verification policy fixtures opt back into the masked default explicitly.
+	return &handlers{engine: eng, downloads: &downloadCache{}, unmaskVerification: true}
 }
 
 type listAccountsTrackingEngine struct {
@@ -363,7 +365,7 @@ func (s *recordingVisualSearcher) SearchVisualAttachments(
 
 func TestSearchVisualAttachmentsPreservesSharedPersonScope(t *testing.T) {
 	searcher := &recordingVisualSearcher{}
-	h := &handlers{visualSearcher: searcher}
+	h := &handlers{visualSearcher: searcher, unmaskVerification: true}
 	runTool[visual.SearchResponse](t, ToolSearchVisualAttachments, h.searchVisualAttachments, map[string]any{
 		"text": "inspection diagram", "person_id": float64(40),
 		"directions": []any{"to_person", "group"},
@@ -398,7 +400,7 @@ func (s *recordingPersonFileSearcher) SearchPersonFiles(
 func TestSearchPersonFilesPreservesScopeAndProvenance(t *testing.T) {
 	assertions := assert.New(t)
 	searcher := &recordingPersonFileSearcher{}
-	h := &handlers{personFileSearcher: searcher}
+	h := &handlers{personFileSearcher: searcher, unmaskVerification: true}
 	response := runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
 		h.searchPersonFiles, map[string]any{
 			"person_id": float64(40), "directions": []any{"from_person", "group"},
@@ -431,7 +433,7 @@ func TestSearchPersonFilesRejectsInvalidScopeBeforeDispatch(t *testing.T) {
 
 func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
 	searcher := &recordingPersonFileSearcher{}
-	h := &handlers{personFileSearcher: searcher}
+	h := &handlers{personFileSearcher: searcher, unmaskVerification: true}
 	runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
 		h.searchPersonFiles, map[string]any{"person_id": float64(40)})
 
@@ -463,7 +465,7 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
+	h := &handlers{documentSearcher: searcher, unmaskVerification: true}
 	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
 		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
 		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
@@ -847,6 +849,58 @@ func TestSearchMessageBodies(t *testing.T) {
 			map[string]any{"query": "needle"})
 		assert.Contains(t, resultText(t, r), "does not support exact body-only search")
 	})
+}
+
+func TestSearchMessageBodiesMaskedOwnerPreservesVerifiedOrdinaryContext(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	body := "An ordinary message contains statusneedle for the body search."
+	contextSnippet := "contains statusneedle for the body search."
+	engine := &querytest.MockEngine{
+		SearchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{withBodySearchContext(
+				query.MessageSummary{ID: 81, Subject: "Routine status"}, []string{contextSnippet}, false,
+			)}, nil
+		},
+		Messages: map[int64]*query.MessageDetail{
+			81: {ID: 81, Subject: "Routine status", BodyText: body},
+		},
+	}
+	h := &handlers{engine: engine, downloads: &downloadCache{}}
+
+	resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies,
+		map[string]any{"query": "statusneedle"})
+
+	requirements.Len(resp.Data, 1)
+	requirements.Len(resp.Data[0].Matches, 1)
+	assertions.Equal(contextSnippet, resp.Data[0].Matches[0].Snippet)
+	assertions.False(resp.Data[0].MatchesTruncated)
+}
+
+func TestSearchMessageBodiesMaskedOwnerPreservesTruncatedOrdinaryContext(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	body := "An ordinary message contains statusneedle for the body search."
+	contextSnippet := "contains statusneedle for the body search"
+	engine := &querytest.MockEngine{
+		SearchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{withBodySearchContext(
+				query.MessageSummary{ID: 82, Subject: "Routine status"}, []string{contextSnippet}, true,
+			)}, nil
+		},
+		Messages: map[int64]*query.MessageDetail{
+			82: {ID: 82, Subject: "Routine status", BodyText: body},
+		},
+	}
+	h := &handlers{engine: engine, downloads: &downloadCache{}}
+
+	resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies,
+		map[string]any{"query": "statusneedle"})
+
+	requirements.Len(resp.Data, 1)
+	requirements.Len(resp.Data[0].Matches, 1)
+	assertions.Equal(contextSnippet, resp.Data[0].Matches[0].Snippet)
+	assertions.True(resp.Data[0].MatchesTruncated)
 }
 
 func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
@@ -1389,7 +1443,8 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 		},
 	}
 	h := &handlers{
-		engine: engine,
+		unmaskVerification: true,
+		engine:             engine,
 		hybridSearcher: hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
 			gotReq = req
 			return &HybridSearchResult{
@@ -1516,6 +1571,56 @@ func TestSearchMessageBodies_HybridResponseIncludesPhaseTimings(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(resultText(t, result)), &payload))
 	assert.Contains(payload, "took_ms")
 	assert.Contains(payload, "timings")
+}
+
+func TestSemanticSearchMessages_ProtectsStaleMatchExcerpts(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		delegatedOnly bool
+	}{
+		{name: "masked owner"},
+		{name: "delegated", delegatedOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const messageID = int64(42)
+			assert := assert.New(t)
+			require := require.New(t)
+			engine := &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+				messageID: testutil.NewMessageDetail(messageID).
+					WithSubject("current safe summary").
+					WithSnippet("current safe summary").
+					WithBodyText("The message changed after the search hit was created.").BuildPtr(),
+			}}
+			h := &handlers{
+				engine:        engine,
+				delegatedOnly: tc.delegatedOnly,
+				hybridSearcher: hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+					assert.False(req.IncludeMatches, "masked output must not request index-snapshot excerpts")
+					return &HybridSearchResult{Hits: []HybridSearchHit{{
+						ID: messageID,
+						Matches: []HybridSearchMatch{{
+							Snippet: "Your verification code is 482913",
+						}},
+					}}}, nil
+				}),
+			}
+
+			result := callToolDirect(t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
+				"query": "verification code",
+				"mode":  searchModeHybrid,
+			})
+			require.False(result.isError, "unexpected error: %s", resultText(t, result))
+			var response struct {
+				Data []struct {
+					Matches []json.RawMessage `json:"matches"`
+				} `json:"data"`
+			}
+			require.NoError(json.Unmarshal([]byte(resultText(t, result)), &response))
+			require.Len(response.Data, 1)
+			assert.Empty(response.Data[0].Matches)
+			assert.NotContains(resultText(t, result), "482913")
+		})
+	}
 }
 
 func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
@@ -2536,7 +2641,7 @@ func TestGetAttachment(t *testing.T) {
 			11: {ID: 11, Filename: "no-hash.pdf", MimeType: "application/pdf", Size: 100, ContentHash: ""},
 		},
 	}
-	h := &handlers{engine: eng, attachmentsDir: tmpDir}
+	h := &handlers{unmaskVerification: true, engine: eng, attachmentsDir: tmpDir}
 
 	t.Run("valid", func(t *testing.T) {
 		require := require.New(t)
@@ -2565,7 +2670,7 @@ func TestGetAttachment(t *testing.T) {
 		noMimeContent := []byte("binary data")
 		createAttachmentFixture(t, tmpDir, noMimeHash, noMimeContent)
 
-		h2 := &handlers{
+		h2 := &handlers{unmaskVerification: true,
 			engine: &querytest.MockEngine{
 				Attachments: map[int64]*query.AttachmentInfo{
 					50: {ID: 50, Filename: "data.bin", MimeType: "", Size: int64(len(noMimeContent)), ContentHash: noMimeHash},
@@ -2588,7 +2693,7 @@ func TestGetAttachment(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		var gotHash string
-		h2 := &handlers{
+		h2 := &handlers{unmaskVerification: true,
 			engine: &querytest.MockEngine{
 				Attachments: map[int64]*query.AttachmentInfo{
 					52: {ID: 52, Filename: "remote.pdf", MimeType: "application/pdf", Size: 12, ContentHash: hash},
@@ -2616,7 +2721,7 @@ func TestGetAttachment(t *testing.T) {
 		unicodeContent := []byte("unicode file")
 		createAttachmentFixture(t, tmpDir, unicodeHash, unicodeContent)
 
-		h2 := &handlers{
+		h2 := &handlers{unmaskVerification: true,
 			engine: &querytest.MockEngine{
 				Attachments: map[int64]*query.AttachmentInfo{
 					51: {ID: 51, Filename: "report 2024✓.pdf", MimeType: "application/pdf", Size: int64(len(unicodeContent)), ContentHash: unicodeHash},
@@ -2691,7 +2796,7 @@ func TestGetAttachment(t *testing.T) {
 	}
 	for _, tt := range customErrorCases {
 		t.Run(tt.name, func(t *testing.T) {
-			h2 := &handlers{
+			h2 := &handlers{unmaskVerification: true,
 				engine:         &querytest.MockEngine{Attachments: tt.attachments},
 				attachmentsDir: tt.attDir,
 			}
@@ -2708,7 +2813,7 @@ func TestGetAttachment(t *testing.T) {
 		bigPath := filepath.Join(tmpDir, bigHash[:2], bigHash)
 		require.NoError(t, os.Truncate(bigPath, maxAttachmentSize+1), "Truncate")
 
-		h2 := &handlers{
+		h2 := &handlers{unmaskVerification: true,
 			engine: &querytest.MockEngine{
 				Attachments: map[int64]*query.AttachmentInfo{
 					40: {ID: 40, Filename: "huge.bin", MimeType: "application/octet-stream", Size: maxAttachmentSize + 1, ContentHash: bigHash},
@@ -2732,7 +2837,7 @@ func TestExportAttachment(t *testing.T) {
 			10: {ID: 10, Filename: "report.pdf", MimeType: "application/pdf", Size: int64(len(content)), ContentHash: hash},
 		},
 	}
-	h := &handlers{engine: eng, attachmentsDir: srcDir}
+	h := &handlers{unmaskVerification: true, engine: eng, attachmentsDir: srcDir}
 
 	t.Run("export to custom destination", func(t *testing.T) {
 		assert := assert.New(t)
@@ -2848,7 +2953,7 @@ func TestExportAttachment_EdgeFilenames(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			destDir := t.TempDir()
-			h := &handlers{
+			h := &handlers{unmaskVerification: true,
 				engine: &querytest.MockEngine{
 					Attachments: map[int64]*query.AttachmentInfo{
 						1: {ID: 1, Filename: tc.filename, MimeType: "application/pdf", Size: int64(len(content)), ContentHash: hash},
@@ -2881,7 +2986,7 @@ func TestGetAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
 		ContentHash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 	}
 
-	h := &handlers{
+	h := &handlers{unmaskVerification: true,
 		engine: &querytest.MockEngine{
 			Attachments: map[int64]*query.AttachmentInfo{99: oversizeAtt},
 		},
@@ -2905,7 +3010,7 @@ func TestExportAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
 		ContentHash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 	}
 
-	h := &handlers{
+	h := &handlers{unmaskVerification: true,
 		engine: &querytest.MockEngine{
 			Attachments: map[int64]*query.AttachmentInfo{99: oversizeAtt},
 		},
@@ -3147,10 +3252,11 @@ func TestSearchInMessage_VectorNilMessage(t *testing.T) {
 		},
 	}
 	h := &handlers{
-		engine:       eng,
-		hybridEngine: engine,
-		backend:      backend,
-		vectorCfg:    cfg,
+		unmaskVerification: true,
+		engine:             eng,
+		hybridEngine:       engine,
+		backend:            backend,
+		vectorCfg:          cfg,
 	}
 	r := runToolExpectError(t, "search_in_message", h.searchInMessage, map[string]any{
 		"id":    float64(42),
@@ -3172,6 +3278,7 @@ func TestSearchInMessage_VectorScoresResolvedGeneration(t *testing.T) {
 		ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
 	})
 	h := &handlers{
+		unmaskVerification: true,
 		engine: &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
 			42: testutil.NewMessageDetail(42).WithBodyText("semantic body").BuildPtr(),
 		}},
@@ -3202,10 +3309,11 @@ func TestSearchInMessage_VectorClassifiesInitialBuild(t *testing.T) {
 		ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
 	})
 	h := &handlers{
-		engine:       &querytest.MockEngine{},
-		hybridEngine: engine,
-		backend:      backend,
-		vectorCfg:    cfg,
+		unmaskVerification: true,
+		engine:             &querytest.MockEngine{},
+		hybridEngine:       engine,
+		backend:            backend,
+		vectorCfg:          cfg,
 	}
 
 	r := runToolExpectError(t, "search_in_message", h.searchInMessage, map[string]any{
@@ -3682,7 +3790,8 @@ func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
 	hasAttachment := true
 	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	h := &handlers{
-		engine: &querytest.MockEngine{Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}}},
+		unmaskVerification: true,
+		engine:             &querytest.MockEngine{Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}}},
 		similarSearcher: similarSearcherFunc(func(_ context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
 			gotReq = req
 			return &SimilarSearchResult{

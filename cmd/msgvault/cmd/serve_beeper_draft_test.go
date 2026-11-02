@@ -336,3 +336,71 @@ func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
 	assert.Equal(created.DraftID, existing.DraftID)
 	assert.Nil(existing.Content)
 }
+
+func TestBeeperDraftVerificationReadProtectsCommittedAndPendingContent(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		committed string
+		pending   string
+		protected string
+	}{
+		{
+			name:      "committed content",
+			committed: "Your login code is 482913",
+			protected: "482913",
+		},
+		{
+			name:      "pending candidate",
+			committed: "ordinary owner draft",
+			pending:   "Your verification code is 735184",
+			protected: "735184",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newBeeperDraftFixture(t)
+			created, err := f.create(t, nil, tc.committed)
+			require.NoError(err)
+			if tc.pending != "" {
+				_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, tc.pending)
+				require.NoError(err)
+			}
+			grantFor := func(readVerification bool) *agentgrant.Grant {
+				permissions := []agentgrant.Permission{agentgrant.PermissionDraftEdit}
+				if readVerification {
+					permissions = append(permissions, agentgrant.PermissionVerificationRead)
+				}
+				return &agentgrant.Grant{
+					ID: "beeper-verification-grant", Permissions: permissions,
+					Sources: []agentgrant.SourceRef{{Type: f.source.SourceType, Identifier: f.source.Identifier}},
+				}
+			}
+
+			requestsBefore, _ := f.beeper.counts()
+			hidden, err := f.run(t, grantFor(false), api.CLIRunDraftGetCommand, created.DraftID)
+			require.NoError(err)
+			assert.Nil(hidden.Content)
+			assert.Empty(hidden.CandidateContent)
+			hiddenJSON, err := json.Marshal(hidden)
+			require.NoError(err)
+			assert.NotContains(string(hiddenJSON), tc.protected)
+			if tc.pending != "" {
+				assert.Equal(store.BeeperDraftOperationEdit, hidden.PendingOperation)
+			}
+
+			_, err = f.run(t, grantFor(false), api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "replacement")
+			assertBeeperDraftCode(t, err, "not_permitted")
+			requestsAfter, _ := f.beeper.counts()
+			assert.Equal(requestsBefore, requestsAfter, "verification denial must precede provider access")
+
+			visible, err := f.run(t, grantFor(true), api.CLIRunDraftGetCommand, created.DraftID)
+			require.NoError(err)
+			require.NotNil(visible.Content)
+			assert.Contains(*visible.Content, tc.committed)
+			if tc.pending != "" {
+				assert.Equal(tc.pending, visible.CandidateContent)
+			}
+		})
+	}
+}

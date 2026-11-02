@@ -1000,6 +1000,20 @@ func draftContentNeedsVerificationRead(raw []byte) bool {
 	}) != nil
 }
 
+func draftBodyNeedsVerificationRead(messageType, bodyText, bodyHTML string) bool {
+	return verification.Detect(verification.Input{
+		MessageType: messageType,
+		BodyText:    bodyText,
+		BodyHTML:    bodyHTML,
+	}) != nil
+}
+
+func draftGrantCanReadVerification(grant *agentgrant.Grant, sourceType, identifier string) bool {
+	return grant == nil || grant.Allows(agentgrant.PermissionVerificationRead, agentgrant.SourceRef{
+		Type: sourceType, Identifier: identifier,
+	})
+}
+
 func managedDraftSenderKey(raw []byte) (string, error) {
 	parsed, err := msgmime.Parse(raw)
 	if err != nil {

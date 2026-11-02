@@ -80,7 +80,7 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
+		Engine: &querytest.MockEngine{}, Meetings: backend, UnmaskVerification: true,
 	}, false).Connect(ctx, serverTransport, nil)
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
@@ -204,6 +204,51 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.NotNil(emptyMetrics)
 	checks.Nil(emptyMetrics.Totals.AverageKnownSeconds)
+}
+
+func TestMeetingContentToolsRequireOwnerVerificationReveal(t *testing.T) {
+	h := &handlers{meetings: meetingBackendFixture{}}
+
+	for _, tc := range []struct {
+		name    string
+		tool    string
+		handler toolHandler
+		args    map[string]any
+	}{
+		{
+			name: "meeting context", tool: ToolGetMeetingContext, handler: h.getMeetingContext,
+			args: map[string]any{"message_ids": []any{float64(1)}},
+		},
+		{name: "meeting action items", tool: ToolListMeetingActionItems, handler: h.listMeetingActionItems, args: map[string]any{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			denied := callToolDirect(t, tc.tool, tc.handler, tc.args)
+			must.True(denied.isError, resultText(t, denied))
+			checks.Contains(denied.text, "--unmask-verification")
+		})
+	}
+
+	h.unmaskVerification = true
+	for _, tc := range []struct {
+		name    string
+		tool    string
+		handler toolHandler
+		args    map[string]any
+	}{
+		{
+			name: "meeting context", tool: ToolGetMeetingContext, handler: h.getMeetingContext,
+			args: map[string]any{"message_ids": []any{float64(1)}},
+		},
+		{name: "meeting action items", tool: ToolListMeetingActionItems, handler: h.listMeetingActionItems, args: map[string]any{}},
+	} {
+		t.Run("revealed "+tc.name, func(t *testing.T) {
+			must := require.New(t)
+			result := callToolDirect(t, tc.tool, tc.handler, tc.args)
+			must.False(result.isError, resultText(t, result))
+		})
+	}
 }
 
 func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {

@@ -66,6 +66,25 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, intent dra
 	return emit(api.CLIRunEvent{Type: stream, Data: b.String()})
 }
 
+func beeperDraftNeedsVerificationRead(messageType string, draft store.BeeperDraft) bool {
+	if draft.Text != nil && draftBodyNeedsVerificationRead(messageType, *draft.Text, *draft.Text) {
+		return true
+	}
+	return draft.Pending != nil && draftBodyNeedsVerificationRead(messageType, draft.Pending.Text, draft.Pending.Text)
+}
+
+func applyBeeperDraftVerificationPolicy(intent *draftLifecycleIntent, grant *agentgrant.Grant, source *store.Source, draft store.BeeperDraft) error {
+	if grant == nil || source == nil || !beeperDraftNeedsVerificationRead(source.SourceType, draft) ||
+		draftGrantCanReadVerification(grant, source.SourceType, source.Identifier) {
+		return nil
+	}
+	intent.MetadataOnly = true
+	if intent.Operation == api.CLIRunDraftEditCommand {
+		return draftReplyNotPermitted(errors.New("verification.read is required to edit a protected draft"))
+	}
+	return nil
+}
+
 // beeperDraftFailure shows the draft's recorded state before returning code.
 func (a *storeAPIAdapter) beeperDraftFailure(ctx context.Context, emit func(api.CLIRunEvent) error, intent draftLifecycleIntent, draftID, code string, cause error) error {
 	evidenceCtx, cancel := localDraftEvidenceContext(ctx)
@@ -191,6 +210,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 // a Beeper draft. Each write first checks that Beeper still shows the
 // committed draft, so text someone else typed in the chat is never replaced.
 func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent draftLifecycleIntent, grant *agentgrant.Grant, draft store.BeeperDraft, emit func(api.CLIRunEvent) error) error {
+	var source *store.Source
 	if intent.Operation == api.CLIRunDraftRecoverCommand {
 		if grant != nil {
 			return draftReplyNotPermitted(errors.New("draft-recover supports IMAP drafts only"))
@@ -198,10 +218,11 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		return draftReplyError("not_supported", errors.New("draft-recover supports IMAP drafts only"))
 	}
 	if grant != nil {
-		source, err := a.store.GetSourceByIDContext(ctx, draft.SourceID)
+		loaded, err := a.store.GetSourceByIDContext(ctx, draft.SourceID)
 		if err != nil {
 			return draftReplyNotPermitted(err)
 		}
+		source = loaded
 		permissions := api.CLIRunDraftLifecyclePermissions(intent.Operation)
 		// Native drafts have no archived sender; create alone cannot read them.
 		if intent.Operation == api.CLIRunDraftGetCommand {
@@ -213,6 +234,9 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		intent.MetadataOnly = !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
 			Type: source.SourceType, Identifier: source.Identifier,
 		})
+		if err := applyBeeperDraftVerificationPolicy(&intent, grant, source, draft); err != nil {
+			return err
+		}
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
 		return emitBeeperDraft(emit, cliStreamStdout, intent, "ok", draft)
@@ -249,6 +273,9 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 	defer func() { _ = execution.Release() }()
 	if draft, err = a.store.GetBeeperDraftContext(ctx, draft.DraftID); err != nil {
 		return draftReplyError("draft_read_failed", err)
+	}
+	if err := applyBeeperDraftVerificationPolicy(&intent, grant, source, draft); err != nil {
+		return err
 	}
 	if draft.Revision != intent.Revision || draft.DiscardedAt != nil {
 		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))

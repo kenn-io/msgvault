@@ -163,8 +163,8 @@ func TestVerificationHTMLOnlyAttachmentRefusal(t *testing.T) {
 	requirements.NoError(os.WriteFile(path, data, 0600))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: engine, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
-	request := func(path, token string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+	request := func(method, path, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, nil)
 		r.Header.Set(apiprotocol.AgentTokenHeader, token)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
@@ -178,7 +178,7 @@ func TestVerificationHTMLOnlyAttachmentRefusal(t *testing.T) {
 		_, token, _, err := srv.agentGrants.Issue("synthetic reader", permissions, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 		requirements.NoError(err)
 		for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", id), fmt.Sprintf("/api/v1/attachments/%d", attachments[0].ID)} {
-			w := request(path, token)
+			w := request(http.MethodGet, path, token)
 			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 			assertions.Equal(reveal, strings.Contains(w.Body.String(), "482913"), path)
 			if path == fmt.Sprintf("/api/v1/messages/%d", id) && !reveal {
@@ -189,7 +189,7 @@ func TestVerificationHTMLOnlyAttachmentRefusal(t *testing.T) {
 			}
 		}
 		for _, path := range []string{"/api/v1/attachments/" + hash + "/content", "/api/v1/cli/attachment?content_hash=" + hash} {
-			w := request(path, token)
+			w := request(http.MethodGet, path, token)
 			if reveal {
 				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 				assertions.Equal(data, w.Body.Bytes())
@@ -198,6 +198,16 @@ func TestVerificationHTMLOnlyAttachmentRefusal(t *testing.T) {
 				assertions.Contains(w.Body.String(), "verification_masked")
 				assertions.NotContains(w.Body.String(), "482913")
 			}
+		}
+		w := request(http.MethodHead, "/api/v1/attachments/"+hash+"/content", token)
+		if reveal {
+			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+			assertions.Empty(w.Body.Bytes(), "permission checks must not transfer attachment bytes")
+		} else {
+			assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
+			assertions.Contains(w.Body.String(), "verification_masked")
+			assertions.NotEqual(data, w.Body.Bytes(), "permission checks must not transfer attachment bytes")
+			assertions.NotContains(w.Body.String(), "482913")
 		}
 	}
 }
@@ -278,4 +288,60 @@ func TestVerificationStoredCroppedSnippet(t *testing.T) {
 	assertions.NotContains(w.Body.String(), "AB4C")
 	assertions.Contains(w.Body.String(), "[verification content masked]")
 	assertions.Contains(w.Body.String(), `"masked":true`)
+}
+
+func TestVerificationDelegatedBodySearchPreservesVerifiedContexts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "synthetic-source")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		src.ID, "direct-chat", "direct_chat", "Synthetic direct chat",
+	)
+	requirements.NoError(err)
+	body := "An ordinary message contains statusneedle for the body search."
+	contextSnippet := body
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: conversationID, SourceMessageID: "provider-message",
+		MessageType: "email", Subject: sql.NullString{String: "Routine status", Valid: true},
+		Snippet: sql.NullString{String: "Ordinary preview", Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageBody(
+		id, sql.NullString{String: body, Valid: true}, sql.NullString{},
+	))
+	requirements.NoError(st.UpsertFTS(id, "Routine status", body, "", "", ""))
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	cfg := &config.Config{
+		HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()},
+		Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: cfg, Store: st, Engine: engine, Logger: testLogger(),
+	})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	scope := []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}
+	_, token, _, err := srv.agentGrants.Issue("synthetic reader", []agentgrant.Permission{
+		agentgrant.PermissionMessageRead,
+		agentgrant.PermissionSearchRead,
+		agentgrant.PermissionVerificationRead,
+	}, scope, time.Time{})
+	requirements.NoError(err)
+
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search/deep?q=statusneedle&scope=body", nil)
+	request.Header.Set(apiprotocol.AgentTokenHeader, token)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var got DeepSearchResponse
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&got))
+	requirements.Len(got.BodyContexts, 1)
+	assertions.Equal(id, got.BodyContexts[0].MessageID)
+	requirements.Len(got.BodyContexts[0].ContextSnippets, 1)
+	assertions.Equal(contextSnippet, got.BodyContexts[0].ContextSnippets[0])
+	assertions.False(got.BodyContexts[0].ContextSnippetsTruncated)
 }

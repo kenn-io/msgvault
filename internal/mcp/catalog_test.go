@@ -99,6 +99,9 @@ func rawListTools(t *testing.T, opts ServeOptions, allowWrites bool) []map[strin
 
 func rawCallTool(t *testing.T, opts ServeOptions, name string, arguments map[string]any) map[string]any {
 	t.Helper()
+	// Contract tests exercise the full owner capability set. Masking policy
+	// tests use rawModernCall with explicit options.
+	opts.UnmaskVerification = true
 	response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, "tools/call", map[string]any{
 		"name":      name,
 		"arguments": arguments,

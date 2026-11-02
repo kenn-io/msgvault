@@ -26,8 +26,9 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
 	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
-	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
-	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
+	"checkAttachmentContent": agentgrant.PermissionAttachmentRead,
+	"getCLIAttachment":       agentgrant.PermissionAttachmentRead,
+	"listCLIAccounts":        agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
 }
 
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
@@ -161,7 +162,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 			return agentReadDenied(permission)
 		}
 		return nil
-	case "getMessage", "getCLIMessage", "getAttachment", "getAttachmentContent", "getCLIAttachment", "listCLIAccounts", "listCLICollections":
+	case "getMessage", "getCLIMessage", "getAttachment", "getAttachmentContent", "checkAttachmentContent", "getCLIAttachment", "listCLIAccounts", "listCLICollections":
 		return nil
 	}
 	requested := []int64(nil)

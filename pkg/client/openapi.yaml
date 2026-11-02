@@ -8149,6 +8149,13 @@ components:
           type: array
         body:
           type: string
+        body_format:
+          description: "Format selected for body: plain text, an HTML fallback, or empty."
+          enum:
+            - text
+            - html
+            - empty
+          type: string
         body_html:
           type: string
         body_omitted:
@@ -16858,7 +16865,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.38.0
+  version: 3.39.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -17412,6 +17419,65 @@ paths:
       security:
         - apiKey: []
       summary: Download attachment content by SHA-256 hash
+      tags:
+        - API
+    head:
+      operationId: checkAttachmentContent
+      parameters:
+        - description: Attachment SHA-256 content hash
+          in: path
+          name: hash
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            "*/*":
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Check permission to read attachment content without downloading it
       tags:
         - API
   /api/v1/attachments/{id}:

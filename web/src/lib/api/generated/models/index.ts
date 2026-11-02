@@ -121,6 +121,7 @@ export * from "./changedMessageJSON";
 export * from "./changesResponse";
 export * from "./chatDiscoveryPage";
 export * from "./chatDiscoveryResult";
+export * from "./checkAttachmentContentPathParameters";
 export * from "./checkSettingsPeopleInferenceProviderPathParameters";
 export * from "./choiceDescriptor";
 export * from "./clearOrganizationAttributeParams";

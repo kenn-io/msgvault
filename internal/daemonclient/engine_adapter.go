@@ -816,7 +816,6 @@ func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail
 	if err != nil {
 		return nil, err
 	}
-
 	detail := queryDetailFromAPIMessage(msg)
 	if detail != nil {
 		detail.WebURL = e.store.messageWebURL(ctx, detail.ID)
@@ -848,7 +847,8 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		HasAttachments:       msg.HasAttachments,
 		HiddenTextPresent:    msg.HiddenTextPresent,
 		Labels:               msg.Labels,
-		BodyText:             msg.Body,
+		BodyText:             msg.BodyText,
+		BodyHTML:             msg.BodyHTML,
 		From:                 apiMessageFromAddress(msg),
 		To:                   apiMessageAddresses(msg.To),
 		Cc:                   apiMessageAddresses(msg.Cc),

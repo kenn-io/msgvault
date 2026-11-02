@@ -496,6 +496,20 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	)
 	registerAPIV1RawHumaBinaryRoute(
 		apiV1,
+		"checkAttachmentContent",
+		http.MethodHead,
+		"/attachments/{hash}/content",
+		"Check permission to read attachment content without downloading it",
+		"*/*",
+		s.handleCheckAttachmentContent,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusServiceUnavailable,
+	)
+	registerAPIV1RawHumaBinaryRoute(
+		apiV1,
 		"getMessageInlinePart",
 		http.MethodGet,
 		"/messages/{id}/inline",
@@ -711,7 +725,6 @@ func registerAPIV1RawHumaJSONOneOfRoute(
 	registerRawHumaRoute(api, op, handler)
 }
 
-//nolint:unparam // Retain method for symmetry with the other raw-route helpers and future non-GET binary endpoints.
 func registerAPIV1RawHumaBinaryRoute(
 	api huma.API,
 	operationID string,
@@ -991,7 +1004,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathIntegerParam("Any member participant ID of the counterpart's identity cluster")}
 	case "getDomain", "getDomainTimeline", "getDomainContextSummary", "searchDomainFiles":
 		return []*huma.Param{pathStringParam("domain", "Exact normalized domain fact")}
-	case "getAttachmentContent":
+	case "getAttachmentContent", "checkAttachmentContent":
 		return []*huma.Param{pathStringParam("hash", "Attachment SHA-256 content hash")}
 	case "getMessageInlinePart":
 		return []*huma.Param{

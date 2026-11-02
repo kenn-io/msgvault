@@ -127,6 +127,7 @@ func installServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server
 	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	opts := daemonMCPServeOptions(discoveryCtx, client, state)
+	opts.UnmaskVerification, _ = cmd.Flags().GetBool("mcp-unmask-verification")
 	if err := ctx.Err(); err != nil {
 		_ = client.Close()
 		return fmt.Errorf("initialize native MCP: %w", err)

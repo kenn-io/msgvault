@@ -2,6 +2,7 @@ package query
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/verification"
@@ -98,6 +99,32 @@ func PrepareVerification(msg *MessageDetail, reveal bool, now time.Time) *Messag
 // its full canonical message. It never emits canonical bodies to a search-only
 // reader. Derived excerpts with unmappable offsets are withheld on findings.
 func PrepareSummaryVerification(row MessageSummary, canonical *MessageDetail, reveal bool, now time.Time) MessageSummary {
+	staleContent := row.Subject != canonical.Subject || row.Snippet != canonical.Snippet ||
+		row.BodyText != "" && row.BodyText != canonical.BodyText
+	if row.Subject != canonical.Subject {
+		row.Subject = canonical.Subject
+	}
+	if row.Snippet != canonical.Snippet {
+		row.Snippet = canonical.Snippet
+	}
+	if row.BodyText != "" && row.BodyText != canonical.BodyText {
+		row.BodyText = canonical.BodyText
+	}
+	if staleContent || row.BodyText == "" {
+		// MatchSnippet comes from a derived index and cannot be checked against
+		// canonical content when the summary omits its body.
+		row.MatchSnippet = ""
+	}
+	contexts, staleContexts := verifiedBodyContextSnippets(
+		row.BodyContextSnippets, canonical.BodyText,
+	)
+	row.BodyContextSnippets = contexts
+	if staleContexts {
+		// Mark the result incomplete when any derived context no longer matches
+		// canonical content, so search consumers can distinguish withheld
+		// contexts from a backend that failed to provide them.
+		row.BodyContextSnippetsTruncated = true
+	}
 	in := VerificationInput(canonical)
 	f := verification.Detect(in)
 	if f == nil {
@@ -153,6 +180,22 @@ func PrepareSummaryVerification(row MessageSummary, canonical *MessageDetail, re
 	row.BodyContextSnippetsTruncated = false
 	row.Verification = verification.Describe(in, f, true, fields, now)
 	return row
+}
+
+func verifiedBodyContextSnippets(snippets []string, canonicalBody string) ([]string, bool) {
+	if len(snippets) == 0 {
+		return snippets, false
+	}
+	verified := make([]string, 0, len(snippets))
+	stale := false
+	for _, snippet := range snippets {
+		if snippet == "" || !strings.Contains(canonicalBody, snippet) {
+			stale = true
+			continue
+		}
+		verified = append(verified, snippet)
+	}
+	return verified, stale
 }
 
 func PrepareThreadVerification(row ThreadMessage, canonical *MessageDetail, reveal bool, now time.Time) ThreadMessage {

@@ -29,6 +29,29 @@ instructions or authorization to make a change. See [write controls](#write-cont
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
 
+## Verification protection
+
+MCP masks detected verification codes and sign-in, reset, and confirmation
+links by default, including expired values. It masks complete message content
+before excerpts, body pagination, and keyword matches. Detection covers archived
+email and chat messages; it preserves source, provider, conversation, and message
+IDs. Returned `verification` metadata describes content claims and does not
+authenticate a sender.
+
+Owner sessions require daemon API schema 3.36.0 or newer. Start an owner session
+with `msgvault mcp --unmask-verification` to reveal values for that session.
+Delegated sessions refuse that flag and rely on the actual source's
+`verification.read` modifier alongside the operation's read permission.
+
+Masked sessions refuse raw MIME and detected messages' text or `message/rfc822`
+attachment bytes, including chunk continuations. Other attachment formats,
+including screenshots and PDFs, are outside this protection. Heuristic detection
+can miss credentials, and search membership and counts can disclose existence.
+Until their separate protection is available, owner masked sessions also refuse
+`query_sql`, `aggregate`, and vector mode in `search_in_message`.
+See [scoped archive reads](../cli-reference.md#scoped-archive-reads) for grant
+permissions and delegated behavior.
+
 ## Calendar control
 
 Unreleased daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
@@ -404,7 +427,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `address` requires API schema 3.29.0 or newer and matches a literal, case-insensitive substring of current bound participant addresses and identifiers or curated contact points on saved people. Sparse or absent address matches can scan all saved people; combine a known `query` to narrow candidates. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `address`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
-`query_sql` needs a SQLite daemon with API schema 2.31.0 or newer. It can read archive
+`query_sql` requires an owner session with `--unmask-verification` and a SQLite
+daemon with API schema 2.31.0 or newer. It can read archive
 analytics files and views; DuckDB file access outside the analytics directory,
 network access, and extension loading are disabled. CLI and owner HTTP SQL
 retain their privileged behavior. See [SQL queries](querying.md) for views and
@@ -851,6 +875,7 @@ msgvault mcp --http 8080
 
 | Flag | Default | Description |
 |---|---|---|
+| `--unmask-verification` | `false` | Reveal detected verification credentials for this owner MCP session. Refused in delegated mode; use the actual source's `verification.read` modifier there. |
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |

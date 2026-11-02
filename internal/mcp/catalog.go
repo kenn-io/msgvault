@@ -73,7 +73,7 @@ func searchVisualAttachmentsDefinition() toolDefinition {
 		"from_person", "to_person", "group")
 	definition := readDefinition(
 		ToolSearchVisualAttachments,
-		"Search the visual content of authoritative standalone attachments by text or a bounded base64 query image. Results preserve exact attachment and owning-message provenance.",
+		"Search the visual content of authoritative standalone attachments by text or a bounded base64 query image. Results preserve exact attachment and owning-message provenance. Masked owner sessions require --unmask-verification.",
 		closedObject(map[string]*jsonschema.Schema{
 			bodyFormatText:       stringSchema("Natural-language visual query"),
 			"image_base64":       stringSchema("Base64 JPEG, PNG, or WebP query image; not persisted"),
@@ -297,7 +297,7 @@ func querySQLDefinition() toolDefinition {
 	accepted.Schema = ""
 	definition := readDefinition(
 		ToolQuerySQL,
-		"Run read-only SQL against the analytics cache. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
+		"Run read-only SQL against the analytics cache. Requires an owner session with verification unmasking enabled. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
 		closedObject(map[string]*jsonschema.Schema{
 			"sql":   stringSchema("One read-only SQL statement"),
 			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
@@ -663,6 +663,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
+			"Detected verification credentials are masked before paging unless this session may reveal them; byte offsets describe the returned representation. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
 			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
@@ -698,6 +699,7 @@ func exportEMLDefinition() toolDefinition {
 	return readDefinition(
 		ToolExportEML,
 		"Export one archived email as its original .eml bytes, exactly as the provider delivered them, in base64 chunks. "+
+			"Detected verification messages require explicit reveal permission. "+
 			"Pass exactly one of id (msgvault message ID) or source_message_id (provider ID, such as a Gmail message ID); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Call from offset 0, then offset += length until complete is true; concatenate the decoded chunks and verify them against size and sha256 (of the whole message). "+
@@ -800,7 +802,7 @@ func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition
 	}
 	return readDefinition(
 		ToolSearchInMessage,
-		description+" "+hiddenTextFlagDoc,
+		description+" Keyword matches use the masked representation; vector mode requires owner verification unmasking. "+hiddenTextFlagDoc,
 		closedObject(properties, "id", toolArgQuery),
 		outputSchemaFor[searchInMessageResponse](),
 		(*handlers).searchInMessage,
@@ -846,6 +848,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolAggregate,
 		"Get grouped statistics (top senders, recipients, domains, labels, mailing lists, or message volume by calendar year). "+
+			"Requires owner verification unmasking or delegated verification.read on every requested source. "+
 			"Returns an object with a data array containing objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgGroupBy: stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", toolArgSender, "recipient", "domain", "label", toolArgList, "time"),
@@ -926,7 +929,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 		"from_person", "to_person", "group")
 	definition := readDefinition(
 		ToolSearchDocuments,
-		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes.",
+		"Search locally indexed content and filenames from standalone document attachments extracted by the configured document provider. Results preserve the exact attachment occurrence, containing message, unit range, excerpt, and provider/model provenance. Paginate with the opaque cursor; restart when the index revision changes. Masked owner sessions require --unmask-verification.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery: stringSchema("Document content or filename query; terms are ANDed"),
 			"source_ids": {
@@ -968,7 +971,7 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 		"image", "pdf", "audio", "video", bodyFormatText, "document", "archive", "other")
 	return readDefinition(
 		ToolSearchPersonFiles,
-		"Search authoritative attachment metadata for one durable person. Results preserve exact attachment occurrence, owning message, conversation, source, matched participant, role, and direction provenance.",
+		"Search authoritative attachment metadata for one durable person. Results preserve exact attachment occurrence, owning message, conversation, source, matched participant, role, and direction provenance. Masked owner sessions require --unmask-verification.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgPersonID: safeIDSchema("Durable person ID"),
 			"directions": {

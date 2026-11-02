@@ -35,7 +35,7 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	h := &handlers{mediaSearcher: client}
+	h := &handlers{mediaSearcher: client, unmaskVerification: true}
 	response := runTool[generated.MediaSearchResponse](t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "quarterly numbers", "person_id": float64(7), "directions": []any{"from_person"}})
 	require.Len(response.Results, 1)
 	assert.Equal(int64(11), response.Results[0].MessageID)

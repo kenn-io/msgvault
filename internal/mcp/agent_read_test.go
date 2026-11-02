@@ -167,6 +167,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 		want       []string
 	}{
 		{"draft.create", nil},
+		{"verification.read", nil},
 		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
 		{"message.read", []string{ToolGetMessage, ToolListThread, ToolSearchInMessage}},
 		{"attachment.read", []string{ToolGetAttachment}},
@@ -208,7 +209,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 }
 
 func TestAgentAttachmentChunksReauthorize(t *testing.T) {
-	for _, action := range []string{"revoke", "replacement", "disappearance"} {
+	for _, action := range []string{"revoke", "replacement", "disappearance", "protected-content"} {
 		t.Run(action, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -226,7 +227,7 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 			requirements.NoError(os.WriteFile(path, data, 0600))
-			requirements.NoError(st.UpsertAttachment(id, "synthetic.bin", "application/octet-stream", path, digest, len(data)))
+			requirements.NoError(st.UpsertAttachment(id, "verification-482913.bin", "application/octet-stream", path, digest, len(data)))
 			engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 			attachments, err := engine.GetAttachmentsByHash(t.Context(), digest)
 			requirements.NoError(err)
@@ -253,13 +254,15 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			}
 			assertions.False(call(0).IsError)
 			assertions.False(call(4).IsError, "cached continuation before authority changes")
-			_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET filename=?, mime_type=?, size=? WHERE id=?"), "updated.bin", "text/plain", len(data)+7, attachmentID)
-			requirements.NoError(err)
-			updated := call(8)
-			assertions.False(updated.IsError, task5SDKResultText(updated))
-			assertions.Contains(task5SDKResultText(updated), "synthetic.bin")
-			assertions.Contains(task5SDKResultText(updated), "application/octet-stream")
-			assertions.NotContains(task5SDKResultText(updated), "updated.bin")
+			if action != "protected-content" {
+				_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET filename=?, mime_type=?, size=? WHERE id=?"), "updated.bin", "text/plain", len(data)+7, attachmentID)
+				requirements.NoError(err)
+				updated := call(8)
+				assertions.False(updated.IsError, task5SDKResultText(updated))
+				assertions.Contains(task5SDKResultText(updated), "updated.bin")
+				assertions.Contains(task5SDKResultText(updated), "text/plain")
+				assertions.NotContains(task5SDKResultText(updated), "verification-482913.bin")
+			}
 			switch action {
 			case "revoke":
 				requirements.NoError(owner.RevokeAgentToken(t.Context(), grant.ID))
@@ -275,6 +278,23 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			case "disappearance":
 				_, err = st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE id=?"), attachmentID)
 				requirements.NoError(err)
+			case "protected-content":
+				requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Your verification code is 482913", Valid: true}, sql.NullString{}))
+			}
+			if action == "protected-content" {
+				current, err := daemonclient.NewEngineAdapter(agent).GetAttachment(t.Context(), attachmentID)
+				requirements.NoError(err)
+				requirements.NotNil(current)
+				assertions.NotContains(current.Filename, "482913")
+				result := call(12)
+				response := task5SDKResultText(result)
+				assertions.NotContains(response, "482913")
+				if result.IsError {
+					assertions.NotContains(response, "data_base64")
+				} else {
+					assertions.Contains(response, current.Filename)
+				}
+				return
 			}
 			result := call(12)
 			assertions.True(result.IsError, task5SDKResultText(result))

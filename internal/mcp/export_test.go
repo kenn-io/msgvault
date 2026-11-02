@@ -289,7 +289,7 @@ func TestGetAttachmentChunks(t *testing.T) {
 	sum := sha256.Sum256(content)
 	hash := hex.EncodeToString(sum[:])
 	createAttachmentFixture(t, tmpDir, hash, content)
-	h := &handlers{
+	h := &handlers{unmaskVerification: true,
 		downloads: &downloadCache{},
 		engine: &querytest.MockEngine{Attachments: map[int64]*query.AttachmentInfo{
 			10: {ID: 10, Filename: "sheet.xlsx", MimeType: "application/octet-stream", Size: int64(len(content)), ContentHash: hash},

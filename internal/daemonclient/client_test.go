@@ -127,6 +127,28 @@ func TestMCPTracePropagationDaemonClientInjectsW3CHeaders(t *testing.T) {
 	checks.Equal(baggage, got.Get("Baggage"))
 }
 
+func TestCheckAttachmentContentUsesMetadataOnlyHeadRequest(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	const contentHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal(http.MethodHead, r.Method)
+		assertions.Equal("/api/v1/attachments/"+contentHash+"/content", r.URL.Path)
+		assertions.Equal("synthetic-agent-token", r.Header.Get(apiprotocol.AgentTokenHeader))
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(Config{
+		URL:           server.URL,
+		AgentToken:    "synthetic-agent-token",
+		AllowInsecure: true,
+		HTTPClient:    server.Client(),
+	})
+	requirements.NoError(err)
+
+	requirements.NoError(client.CheckAttachmentContent(t.Context(), contentHash))
+}
+
 func TestCLIIdentityDiscoverProviderStreamsConvertedEventsAndRequest(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

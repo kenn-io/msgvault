@@ -29,7 +29,7 @@ func draftConfirmationSession(t *testing.T, runner *draftTestRunner, commands ..
 	t.Helper()
 	require := require.New(t)
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := newMCPServer(ServeOptions{Drafts: runner, DraftCommands: commands}, true).Connect(t.Context(), serverTransport, nil)
+	serverSession, err := newMCPServer(ServeOptions{Drafts: runner, DraftCommands: commands, UnmaskVerification: true}, true).Connect(t.Context(), serverTransport, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = serverSession.Close() })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-confirmation-test", Version: "1"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
@@ -207,6 +207,9 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 		require.True(ok)
 		assert.Equal(true, annotations["openWorldHint"])
 	}
+	for _, name := range []string{ToolDraftReply, ToolDraftCompose, ToolDraftForward, ToolDraftGet, ToolDraftEdit, ToolDraftDelete, ToolDraftRecover} {
+		assert.Contains(toolsByName(t, owner)[name]["description"], "Masked owner sessions require --unmask-verification")
+	}
 	for _, name := range []string{ToolDraftDelete, ToolDraftRecover} {
 		annotations, ok := toolsByName(t, owner)[name]["annotations"].(map[string]any)
 		require.True(ok)
@@ -236,7 +239,7 @@ func TestDraftToolResultShapes(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			runner := &draftTestRunner{result: DraftCommandResult{Stdout: tc.stdout}, err: tc.err}
-			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-reply"}}, ToolDraftReply, map[string]any{"message_id": 7, "source_id": 9, "body": "reply", "all": false}, true)
+			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-reply"}, UnmaskVerification: true}, ToolDraftReply, map[string]any{"message_id": 7, "source_id": 9, "body": "reply", "all": false}, true)
 			if tc.text != "" {
 				assert.Equal(true, result["isError"])
 				content, ok := result["content"].([]any)

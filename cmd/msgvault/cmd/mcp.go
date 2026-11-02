@@ -64,7 +64,11 @@ Add to Claude Desktop config:
       }
     }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		unmaskVerification, _ := cmd.Flags().GetBool("unmask-verification")
 		state := invocationFromCommand(cmd)
+		if unmaskVerification && isAgentMode(state) {
+			return errors.New("--unmask-verification is unavailable with delegated credentials")
+		}
 		if state == nil || (state.cfg == nil && !isAgentMode(state)) {
 			return errors.New("configuration is unavailable")
 		}
@@ -106,8 +110,18 @@ Add to Claude Desktop config:
 				return err
 			}
 		} else {
+			if !unmaskVerification {
+				compatible, err := st.SupportsAPISchemaVersion(ctx, daemonclient.VerificationMinAPISchemaVersion)
+				if err != nil {
+					return fmt.Errorf("check verification protection: %w", err)
+				}
+				if !compatible {
+					return fmt.Errorf("masked MCP reads require daemon API schema %s or newer; upgrade the daemon", daemonclient.VerificationMinAPISchemaVersion)
+				}
+			}
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
+		opts.UnmaskVerification = unmaskVerification
 		applyMCPWriteFlags(cmd, "", &opts)
 
 		if httpAddr != "" {
@@ -519,6 +533,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 func init() {
 	mcpCmd.AddCommand(newMCPStatusCommand())
 	rootCmd.AddCommand(mcpCmd)
+	mcpCmd.Flags().Bool("unmask-verification", false, "Reveal verification codes and links in this owner session")
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")
 	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "",

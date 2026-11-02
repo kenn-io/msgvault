@@ -79,10 +79,11 @@ func TestVerificationSummaryHydrationContext(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
-	msg := &MessageDetail{ID: 17, SourceID: 3, BodyText: "Your verification code is 482913"}
+	msg := &MessageDetail{ID: 17, SourceID: 3, Subject: "482913", Snippet: "482913", BodyText: "Your verification code is 482913"}
 	row := MessageSummary{ID: 17, SourceID: 3, Subject: "482913", Snippet: "482913", MatchSnippet: "482", BodyContextSnippets: []string{"913"}, Labels: []string{"482913"}}
 	masked := PrepareSummaryVerification(row, msg, false, time.Time{})
 	assertions.NotContains(masked.Subject, "482913")
+	assertions.NotContains(masked.Snippet, "482913")
 	assertions.Empty(masked.MatchSnippet)
 	assertions.Empty(masked.BodyContextSnippets)
 	assertions.Empty(masked.BodyText, "a search read must not acquire the canonical body")
@@ -110,4 +111,90 @@ func TestVerificationWithholdsCroppedSnippet(t *testing.T) {
 	assertions.Equal("AB4C...", canonical.Snippet)
 	assertions.Equal("AB4C...", PrepareVerification(canonical, true, time.Time{}).Snippet)
 	assertions.Equal(row.Snippet, PrepareSummaryVerification(row, canonical, true, time.Time{}).Snippet)
+}
+
+func TestVerificationRefreshesStaleSummaryContent(t *testing.T) {
+	assertions := assert.New(t)
+	canonical := &MessageDetail{
+		ID: 17, SourceID: 3, Subject: "Updated status", Snippet: "The deployment finished",
+		BodyText: "The deployment finished successfully",
+	}
+	row := MessageSummary{
+		ID: 17, SourceID: 3, Subject: "Your verification code is 482913",
+		Snippet: "Your verification code is 482913", MatchSnippet: "verification code is 482913",
+		BodyContextSnippets: []string{"verification code is 482913"}, BodyContextSnippetsTruncated: true,
+	}
+
+	got := PrepareSummaryVerification(row, canonical, false, time.Time{})
+
+	assertions.Equal(canonical.Subject, got.Subject)
+	assertions.Equal(canonical.Snippet, got.Snippet)
+	assertions.Empty(got.MatchSnippet)
+	assertions.Empty(got.BodyContextSnippets)
+	assertions.True(got.BodyContextSnippetsTruncated)
+	assertions.Nil(got.Verification)
+}
+
+func TestVerificationPreservesCanonicalBodyContexts(t *testing.T) {
+	assertions := assert.New(t)
+	canonical := &MessageDetail{
+		ID: 17, Subject: "Routine notice", Snippet: "The picnic starts Monday",
+		BodyText: "The team picnic starts Monday at noon.",
+	}
+	contexts := []string{"picnic starts Monday at noon"}
+	row := MessageSummary{
+		ID: 17, Subject: canonical.Subject, Snippet: canonical.Snippet,
+		BodyContextSnippets: contexts,
+	}
+
+	got := PrepareSummaryVerification(row, canonical, false, time.Time{})
+
+	assertions.Equal(contexts, got.BodyContextSnippets)
+	assertions.False(got.BodyContextSnippetsTruncated)
+	assertions.Nil(got.Verification)
+	assertions.Equal(contexts, row.BodyContextSnippets, "verification must not mutate the input row")
+}
+
+func TestVerificationMarksWithheldStaleBodyContextsTruncated(t *testing.T) {
+	assertions := assert.New(t)
+	canonical := &MessageDetail{
+		ID: 17, Subject: "Routine notice", Snippet: "The picnic starts Monday",
+		BodyText: "The team picnic starts Monday at noon.",
+	}
+	row := MessageSummary{
+		ID: 17, Subject: canonical.Subject, Snippet: canonical.Snippet,
+		BodyContextSnippets: []string{"Your verification code is 482913"},
+	}
+
+	got := PrepareSummaryVerification(row, canonical, false, time.Time{})
+
+	assertions.Empty(got.BodyContextSnippets)
+	assertions.True(got.BodyContextSnippetsTruncated)
+	assertions.Nil(got.Verification)
+}
+
+func TestVerificationWithholdsUnverifiableSummaryExcerpts(t *testing.T) {
+	assertions := assert.New(t)
+	canonical := &MessageDetail{
+		ID: 17, SourceID: 3, Subject: "Routine notice", Snippet: "The picnic starts Monday",
+		BodyText: "The team picnic starts Monday at noon.",
+	}
+	row := MessageSummary{
+		ID: 17, SourceID: 3, Subject: canonical.Subject, Snippet: canonical.Snippet,
+		MatchSnippet:                 "Your verification code is 482913",
+		BodyContextSnippets:          []string{"Your verification code is 482913. This old body excerpt is stale."},
+		BodyContextSnippetsTruncated: true,
+	}
+
+	got := PrepareSummaryVerification(row, canonical, false, time.Time{})
+
+	assertions.Equal(canonical.Subject, got.Subject)
+	assertions.Equal(canonical.Snippet, got.Snippet)
+	assertions.Empty(got.MatchSnippet)
+	assertions.Empty(got.BodyContextSnippets)
+	assertions.True(got.BodyContextSnippetsTruncated)
+	assertions.Empty(got.BodyText, "a search read must not acquire the canonical body")
+	assertions.Nil(got.Verification, "the edited canonical body no longer contains a finding")
+	assertions.Equal("Your verification code is 482913", row.MatchSnippet)
+	assertions.Equal([]string{"Your verification code is 482913. This old body excerpt is stale."}, row.BodyContextSnippets)
 }

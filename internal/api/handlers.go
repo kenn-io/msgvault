@@ -303,7 +303,8 @@ type DeepSearchResponse struct {
 type BodySearchContext struct {
 	MessageID       int64    `json:"message_id"`
 	ContextSnippets []string `json:"context_snippets,omitempty"`
-	// ContextSnippetsTruncated reports contexts omitted by response or work caps.
+	// ContextSnippetsTruncated reports contexts omitted by response or work caps,
+	// or withheld because an excerpt no longer matches canonical content.
 	ContextSnippetsTruncated bool `json:"context_snippets_truncated,omitzero"`
 }
 
@@ -340,9 +341,10 @@ type MessageDetail struct {
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
-	Body     string `json:"body"`
-	BodyHTML string `json:"body_html,omitempty"`
-	IsFromMe bool   `json:"is_from_me,omitzero"`
+	Body       string `json:"body"`
+	BodyFormat string `json:"body_format,omitempty" enum:"text,html,empty" doc:"Format selected for body: plain text, an HTML fallback, or empty."`
+	BodyHTML   string `json:"body_html,omitempty"`
+	IsFromMe   bool   `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left
 	// out to keep the response within the cumulative inline-body budget.
 	// The snippet is still present; fetch the full body via
@@ -521,6 +523,16 @@ func nullableTimePtr(value time.Time) *string {
 	return &formatted
 }
 
+func messageBodyFormat(bodyText, bodyHTML string) string {
+	if bodyText != "" {
+		return "text"
+	}
+	if bodyHTML != "" {
+		return "html"
+	}
+	return "empty"
+}
+
 // messageDetailFromQuery builds a MessageDetail response from a query-engine
 // MessageDetail, formatting addresses the same way the store path does and
 // emitting body_html alongside body when both are present.
@@ -597,6 +609,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		IsFromMe:          qMsg.IsFromMe,
 		Calendar:          qMsg.Calendar,
 		Body:              body,
+		BodyFormat:        messageBodyFormat(qMsg.BodyText, qMsg.BodyHTML),
 		BodyHTML:          qMsg.BodyHTML,
 		Attachments:       attachments,
 	}
@@ -834,6 +847,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
 		Body:              msg.Body,
+		BodyFormat:        messageBodyFormat(msg.BodyText, msg.BodyHTML),
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,
 		Calendar:          msg.Calendar,
@@ -3641,6 +3655,22 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
 	}
+}
+
+// handleCheckAttachmentContent applies the same source and verification
+// authorization as a content download while returning no attachment bytes.
+func (s *Server) handleCheckAttachmentContent(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	if err := msgexport.ValidateContentHash(hash); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_hash", "Attachment hash must be a 64-character hex SHA-256")
+		return
+	}
+	if _, apiErr := s.attachmentCandidatesForRequest(r, hash); apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
+	releaseReadSnapshot(r)
+	w.WriteHeader(http.StatusOK)
 }
 
 func openLooseAttachmentCandidates(

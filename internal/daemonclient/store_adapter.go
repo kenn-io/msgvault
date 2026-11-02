@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,6 +141,22 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 	if m == nil {
 		return nil
 	}
+	bodyHTML := stringValue(m.BodyHTML)
+	bodyText := ""
+	bodyFormat := ""
+	if m.BodyFormat != nil {
+		bodyFormat = string(*m.BodyFormat)
+	}
+	switch bodyFormat {
+	case "text":
+		bodyText = m.Body
+	case "":
+		// Older daemons do not report the body format. If HTML is present,
+		// the body field is ambiguous, so keep it out of plain-text readers.
+		if bodyHTML == "" {
+			bodyText = m.Body
+		}
+	}
 	var deletedAt *time.Time
 	if m.DeletedAt != nil {
 		t := parseTime(*m.DeletedAt)
@@ -175,7 +192,8 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		HiddenTextPresent: m.HiddenTextPresent,
 		SizeEstimate:      m.SizeBytes,
 		Body:              m.Body,
-		BodyHTML:          stringValue(m.BodyHTML),
+		BodyText:          bodyText,
+		BodyHTML:          bodyHTML,
 		Attachments:       apiAttachmentsFromGenerated(m.Attachments),
 	}
 	return msg
@@ -244,7 +262,26 @@ func (c *Client) GetMessageContext(ctx context.Context, id int64) (*store.APIMes
 		return nil, err
 	}
 
-	return generatedDetailToAPIMessage(resp.JSON200), nil
+	message := generatedDetailToAPIMessage(resp.JSON200)
+	if message != nil && resp.JSON200.BodyFormat == nil && message.BodyHTML != "" && message.SourceMessageID != "" {
+		// Older daemons return one ambiguous body field alongside body_html.
+		// Fetch the CLI detail, which preserves plain-text and HTML variants
+		// separately, by the resolved archive ID before exposing the message.
+		variants, err := c.GetCLIMessage(ctx, strconv.FormatInt(message.ID, 10))
+		if err != nil {
+			return nil, fmt.Errorf("get legacy message body variants for message %d: %w", id, err)
+		}
+		if variants == nil || variants.ID != message.ID ||
+			(message.SourceID != 0 && variants.SourceID != 0 && variants.SourceID != message.SourceID) ||
+			(message.SourceMessageID != "" && variants.SourceMessageID != "" && variants.SourceMessageID != message.SourceMessageID) {
+			return nil, fmt.Errorf("legacy message body variants resolved a different message for message %d", id)
+		}
+		message.BodyText = variants.BodyText
+		if variants.BodyHTML != "" {
+			message.BodyHTML = variants.BodyHTML
+		}
+	}
+	return message, nil
 }
 
 // SearchMessages searches messages via the daemon API.

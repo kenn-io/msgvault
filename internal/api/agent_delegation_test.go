@@ -294,6 +294,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), src.Identifier},
 		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin"},
 		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
+		"checkAttachmentContent":  {"/api/v1/attachments/" + hash + "/content", ""},
 		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
 		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
 		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
@@ -328,7 +329,11 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 			read, isRead := reads[op.OperationID]
 			if isRead {
 				testPath = read.path
-				assertions.Equal("get", method)
+				if op.OperationID == "checkAttachmentContent" {
+					assertions.Equal("head", method)
+				} else {
+					assertions.Equal("get", method)
+				}
 			}
 			req := httptest.NewRequest(strings.ToUpper(method), testPath, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -358,7 +363,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 20)
+	assertions.Len(reads, 21)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

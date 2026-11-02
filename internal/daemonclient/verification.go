@@ -7,9 +7,9 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-// VerificationMinAPISchemaVersion adds default verification masking and the
-// verification.read modifier on delegated reads.
-const VerificationMinAPISchemaVersion = "3.38.0"
+// VerificationMinAPISchemaVersion adds default verification masking, the
+// verification.read modifier, and delegated attachment continuation checks.
+const VerificationMinAPISchemaVersion = "3.39.0"
 
 func verificationFromGenerated(m *generated.Metadata) *verification.Metadata {
 	if m == nil {

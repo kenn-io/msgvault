@@ -132,6 +132,7 @@ func messageRefArgs(args map[string]any) (query.MessageRef, error) {
 }
 
 func (h *handlers) exportEML(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	reader, unsupported := h.originalMessageReader()
 	if unsupported != nil {
 		return unsupported, nil
@@ -148,12 +149,24 @@ func (h *handlers) exportEML(ctx context.Context, req toolRequest) (*toolResult,
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
+	if err := h.protectVerificationOriginal(ctx, reader, ref); err != nil {
+		return originalExportError("protect original message", err)
+	}
 	snapshot, err := h.downloads.get(ctx, downloadKey{message: ref}, chunkReq, func() (*downloadSnapshot, error) {
 		original, err := reader.ReadOriginalMessage(ctx, ref, maxDownloadBytes)
 		if err != nil {
 			return nil, err
 		}
-		return &downloadSnapshot{data: original.MIME, original: original}, nil
+		snapshot := &downloadSnapshot{data: original.MIME, original: original, validate: func(ctx context.Context) error {
+			if err := h.protectVerificationOriginal(ctx, reader, ref); err != nil {
+				return err
+			}
+			return h.protectVerificationMIME(original.MIME)
+		}}
+		if err := snapshot.validate(ctx); err != nil {
+			return nil, err
+		}
+		return snapshot, nil
 	})
 	if err != nil {
 		return originalExportError("read original message", err)
@@ -185,6 +198,8 @@ func (h *handlers) exportEML(ctx context.Context, req toolRequest) (*toolResult,
 // errors and leaves anything else to the shared dependency mapping.
 func originalExportError(operation string, err error) (*toolResult, error) {
 	switch {
+	case errors.Is(err, errVerificationMasked), errors.Is(err, errVerificationUnavailable):
+		return toolErrorResult(err.Error()), nil
 	case errors.Is(err, errDownloadExpired), errors.Is(err, errDownloadTooLarge), errors.Is(err, query.ErrInvalidMessageRef):
 		return toolErrorResult(err.Error()), nil
 	case errors.Is(err, query.ErrOriginalMessageTooLarge):
@@ -205,6 +220,7 @@ func originalExportError(operation string, err error) (*toolResult, error) {
 }
 
 func (h *handlers) listThread(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	reader, unsupported := h.originalMessageReader()
 	if unsupported != nil {
 		return unsupported, nil
@@ -242,6 +258,10 @@ func (h *handlers) listThread(ctx context.Context, req toolRequest) (*toolResult
 	page, err := reader.ListThread(ctx, q)
 	if err != nil {
 		return originalExportError("list thread", err)
+	}
+	page, err = h.prepareVerificationThread(ctx, page)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
 	return jsonResult(page)
 }

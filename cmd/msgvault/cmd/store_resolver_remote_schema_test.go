@@ -239,7 +239,8 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 		{"3.0.0", daemonclient.AgentReadMinAPISchemaVersion, true},
 		{"3.8.0", daemonclient.AgentReadMinAPISchemaVersion, true},
 		{"3.37.0", daemonclient.AgentReadMinAPISchemaVersion, true},
-		{"3.38.0", daemonclient.AgentReadMinAPISchemaVersion, false},
+		{"3.38.0", daemonclient.AgentReadMinAPISchemaVersion, true},
+		{daemonclient.VerificationMinAPISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
 		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
 		{"3.0.0", "", true},
 	} {

@@ -66,6 +66,22 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	}
 }
 
+func TestAttachmentContentPermissionCheckOpenAPIPath(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	path := OpenAPIDocument().Paths["/api/v1/attachments/{hash}/content"]
+	requirements.NotNil(path)
+	requirements.NotNil(path.Head)
+	assertions.Equal("checkAttachmentContent", path.Head.OperationID)
+	requirements.Len(path.Head.Parameters, 1)
+	parameter := path.Head.Parameters[0]
+	assertions.Equal("hash", parameter.Name)
+	assertions.Equal("path", parameter.In)
+	assertions.True(parameter.Required)
+}
+
 func TestFilenameSuggestionIntegratedAPIVersion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

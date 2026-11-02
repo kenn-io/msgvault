@@ -30,6 +30,7 @@ type attachmentUnavailableError struct {
 func (e *attachmentUnavailableError) Error() string { return e.message }
 
 type attachmentService struct {
+	protect        func(context.Context, *query.AttachmentInfo) error
 	engine         query.Engine
 	attachmentsDir string
 	reader         AttachmentReader
@@ -37,6 +38,7 @@ type attachmentService struct {
 
 func (h *handlers) attachmentService() attachmentService {
 	return attachmentService{
+		protect:        h.protectVerificationAttachment,
 		engine:         h.engine,
 		attachmentsDir: h.attachmentsDir,
 		reader:         h.attachmentReader,
@@ -81,6 +83,11 @@ func (s attachmentService) loadBounded(ctx context.Context, id, maxBytes int64) 
 	}
 	if attachment == nil {
 		return nil, &attachmentUnavailableError{message: "attachment not found"}
+	}
+	if s.protect != nil {
+		if err := s.protect(ctx, attachment); err != nil {
+			return nil, err
+		}
 	}
 	if s.reader == nil && s.attachmentsDir == "" {
 		return nil, &attachmentUnavailableError{message: "attachments directory not configured"}

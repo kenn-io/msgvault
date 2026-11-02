@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
+	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/jsonexact"
@@ -1524,6 +1525,32 @@ func (c *Client) GetCLIAttachment(ctx context.Context, contentHash string) ([]by
 
 func (c *Client) ReadAttachment(ctx context.Context, contentHash string) ([]byte, error) {
 	return c.GetCLIAttachment(ctx, contentHash)
+}
+
+// CheckAttachmentContent rechecks permission to read attachment bytes without
+// downloading them. MCP uses it before returning every cached chunk.
+func (c *Client) CheckAttachmentContent(ctx context.Context, contentHash string) error {
+	if err := msgexport.ValidateContentHash(contentHash); err != nil {
+		return err
+	}
+	resp, err := c.DoGeneratedRequestWithContext(
+		ctx,
+		http.MethodHead,
+		"/api/v1/attachments/"+contentHash+"/content",
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("check attachment content permission: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		apiErr := HandleErrorResponse(resp)
+		if apiError, ok := errors.AsType[*APIError](apiErr); ok && apiError.Message == "" {
+			apiError.Message = "attachment content permission denied"
+		}
+		return apiErr
+	}
+	return nil
 }
 
 func (c *Client) OpenCLIAttachment(ctx context.Context, contentHash string) (io.ReadCloser, error) {

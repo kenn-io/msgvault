@@ -11,6 +11,7 @@ import (
 
 func addServeConfigFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("mcp-allow-writes", false, "Expose the independent /mcp/writes catalog for trusted owner bearer clients")
+	cmd.Flags().Bool("mcp-unmask-verification", false, "Reveal detected verification credentials through native owner MCP endpoints")
 	addMCPWriteFlags(cmd, "mcp-")
 	cmd.Flags().String("bind", "", "Bind address or iface:NAME (overrides environment and config)")
 	cmd.Flags().Int("port", 0, "HTTP API port (0 chooses an open port; overrides environment and config)")

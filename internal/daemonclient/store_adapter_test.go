@@ -2137,6 +2137,207 @@ func TestGetMessage_Success(t *testing.T) {
 	assert.Equal("doc.pdf", msg.Attachments[0].Filename, "Attachments[0].Filename")
 }
 
+func TestGetMessageLegacyResponseUsesExplicitBodyVariants(t *testing.T) {
+	tests := []struct {
+		name         string
+		legacyBody   string
+		legacyHTML   string
+		cliBodyText  string
+		cliBodyHTML  string
+		wantBodyText string
+		wantBodyHTML string
+	}{
+		{
+			name:         "multipart text and HTML",
+			legacyBody:   "Your verification code is 482913.",
+			legacyHTML:   "<p>Your verification code is <b>482913</b>.</p>",
+			cliBodyText:  "Your verification code is 482913.",
+			cliBodyHTML:  "<p>Your verification code is <b>482913</b>.</p>",
+			wantBodyText: "Your verification code is 482913.",
+			wantBodyHTML: "<p>Your verification code is <b>482913</b>.</p>",
+		},
+		{
+			name:         "HTML-only body after remote image rewrite",
+			legacyBody:   `<p>Your code is 482<!-- > -->913.</p><img src="https://images.example.test/logo.png">`,
+			legacyHTML:   `<p>Your code is 482<!-- > -->913.</p><img src="cid:remote-image:sha256:test">`,
+			cliBodyHTML:  `<p>Your code is 482<!-- > -->913.</p><img src="cid:remote-image:sha256:test">`,
+			wantBodyText: "",
+			wantBodyHTML: `<p>Your code is 482<!-- > -->913.</p><img src="cid:remote-image:sha256:test">`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			var cliRequests atomic.Int32
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/messages/42":
+					assertions.Equal(http.MethodGet, r.Method, "message detail method")
+					writeJSONResponse(t, w, generated.MessageDetail{
+						ID:              42,
+						SourceMessageID: stringPtr("legacy-42"),
+						Subject:         "Synthetic verification message",
+						From:            "sender@example.com",
+						To:              []string{"recipient@example.com"},
+						SentAt:          "2026-11-04T00:00:00Z",
+						Snippet:         "Synthetic verification preview",
+						Labels:          []string{},
+						Body:            tt.legacyBody,
+						BodyHTML:        stringPtr(tt.legacyHTML),
+						Attachments:     []generated.AttachmentInfo{},
+					})
+				case "/api/v1/cli/message":
+					assertions.Equal(http.MethodGet, r.Method, "CLI message method")
+					assertions.Equal("42", r.URL.Query().Get("id"), "CLI message archive ID")
+					cliRequests.Add(1)
+					writeJSONResponse(t, w, generated.CliMessageResponse{
+						ID:              42,
+						SourceMessageID: "legacy-42",
+						BodyText:        tt.cliBodyText,
+						BodyHTML:        tt.cliBodyHTML,
+					})
+				default:
+					assertions.Fail("unexpected request path", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			client := newTestStore(srv, "key")
+			message, err := client.GetMessageContext(context.Background(), 42)
+			requirements.NoError(err, "GetMessageContext")
+			requirements.NotNil(message, "message")
+			assertions.Equal(tt.wantBodyText, message.BodyText, "BodyText")
+			assertions.Equal(tt.wantBodyHTML, message.BodyHTML, "BodyHTML")
+			assertions.Equal(int32(1), cliRequests.Load(), "legacy responses fetch explicit body variants")
+		})
+	}
+}
+
+func TestGetMessageLegacyBodyFallbackUsesArchiveIdentity(t *testing.T) {
+	tests := []struct {
+		name            string
+		sourceMessageID string
+		otherMessageID  int64
+	}{
+		{
+			name:            "numeric provider ID collides with another archive ID",
+			sourceMessageID: "99",
+			otherMessageID:  99,
+		},
+		{
+			name:            "provider ID is duplicated across sources",
+			sourceMessageID: "shared-provider-id",
+			otherMessageID:  77,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			var requestedID string
+			sourceID := int64(10)
+			otherSourceID := int64(20)
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/messages/42":
+					writeJSONResponse(t, w, generated.MessageDetail{
+						ID:              42,
+						SourceID:        &sourceID,
+						SourceMessageID: stringPtr(tt.sourceMessageID),
+						Subject:         "Synthetic legacy message",
+						From:            "sender@example.invalid",
+						To:              []string{"recipient@example.invalid"},
+						SentAt:          "2026-11-04T00:00:00Z",
+						Snippet:         "Synthetic preview",
+						Labels:          []string{},
+						Body:            "Ambiguous fallback body",
+						BodyHTML:        stringPtr("<p>Legacy body</p>"),
+						Attachments:     []generated.AttachmentInfo{},
+					})
+				case "/api/v1/cli/message":
+					requestedID = r.URL.Query().Get("id")
+					if requestedID == "42" {
+						writeJSONResponse(t, w, generated.CliMessageResponse{
+							ID:              42,
+							SourceID:        &sourceID,
+							SourceMessageID: tt.sourceMessageID,
+							BodyText:        "Target message body",
+							BodyHTML:        "<p>Target message body</p>",
+						})
+						return
+					}
+					writeJSONResponse(t, w, generated.CliMessageResponse{
+						ID:              tt.otherMessageID,
+						SourceID:        &otherSourceID,
+						SourceMessageID: tt.sourceMessageID,
+						BodyText:        "Unrelated colliding body",
+						BodyHTML:        "<p>Unrelated colliding body</p>",
+					})
+				default:
+					assertions.Fail("unexpected request path", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			message, err := newTestStore(srv, "key").GetMessageContext(context.Background(), 42)
+			requirements.NoError(err, "GetMessageContext")
+			requirements.NotNil(message, "message")
+			assertions.Equal("42", requestedID, "body variants are fetched by archive ID")
+			assertions.Equal("Target message body", message.BodyText)
+			assertions.Equal("<p>Target message body</p>", message.BodyHTML)
+		})
+	}
+}
+
+func TestGetMessageLegacyBodyFallbackRejectsDifferentIdentity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	sourceID := int64(10)
+	otherSourceID := int64(20)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/messages/42":
+			writeJSONResponse(t, w, generated.MessageDetail{
+				ID:              42,
+				SourceID:        &sourceID,
+				SourceMessageID: stringPtr("provider-42"),
+				Subject:         "Synthetic legacy message",
+				From:            "sender@example.invalid",
+				To:              []string{"recipient@example.invalid"},
+				SentAt:          "2026-11-04T00:00:00Z",
+				Snippet:         "Synthetic preview",
+				Labels:          []string{},
+				Body:            "Ambiguous fallback body",
+				BodyHTML:        stringPtr("<p>Legacy body</p>"),
+				Attachments:     []generated.AttachmentInfo{},
+			})
+		case "/api/v1/cli/message":
+			assertions.Equal("42", r.URL.Query().Get("id"), "CLI message archive ID")
+			writeJSONResponse(t, w, generated.CliMessageResponse{
+				ID:              99,
+				SourceID:        &otherSourceID,
+				SourceMessageID: "provider-42",
+				BodyText:        "Unrelated body",
+				BodyHTML:        "<p>Unrelated body</p>",
+			})
+		default:
+			assertions.Fail("unexpected request path", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	message, err := newTestStore(srv, "key").GetMessageContext(context.Background(), 42)
+	requirements.Error(err, "identity mismatch must fail closed")
+	requirements.Nil(message, "mismatched content must not be returned")
+	assertions.Contains(err.Error(), "resolved a different message")
+}
+
 func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -63,6 +63,7 @@ import type {
   Catalog,
   ChangesResponse,
   ChatDiscoveryPage,
+  CheckAttachmentContentPathParameters,
   CheckSettingsPeopleInferenceProviderPathParameters,
   ClearOrganizationAttributeParams,
   ClearOrganizationAttributePathParameters,
@@ -599,6 +600,22 @@ export const getAttachmentContent = (
     {
       url: `/api/v1/attachments/${encodeURIComponent(String(hash))}/content`,
       method: "GET",
+      responseType: "blob",
+    },
+    options,
+  );
+};
+/**
+ * @summary Check permission to read attachment content without downloading it
+ */
+export const checkAttachmentContent = (
+  { hash }: CheckAttachmentContentPathParameters,
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/attachments/${encodeURIComponent(String(hash))}/content`,
+      method: "HEAD",
       responseType: "blob",
     },
     options,
