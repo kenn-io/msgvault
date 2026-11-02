@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityindex"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // ---------------------------------------------------------------------------
@@ -847,6 +848,7 @@ type parquetBuilder struct {
 // newParquetBuilder creates a new builder for Parquet test fixtures.
 func newParquetBuilder(tb testing.TB) *parquetBuilder {
 	tb.Helper()
+	dbtest.SkipIfPostgres(tb, "Parquet fixtures run on DuckDB only")
 	return &parquetBuilder{t: tb}
 }
 

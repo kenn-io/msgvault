@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // Wrapping the dialect selects the historical scan path without changing its
@@ -20,6 +21,7 @@ type metadataScanDialect struct{ SQLiteQueryDialect }
 
 func metadataSearchDB(tb testing.TB) *sql.DB {
 	tb.Helper()
+	dbtest.SkipIfPostgres(tb, "SQLite fixtures require SQLite")
 	st, err := store.OpenForTest(filepath.Join(tb.TempDir(), "metadata.db"))
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, st.Close()) })

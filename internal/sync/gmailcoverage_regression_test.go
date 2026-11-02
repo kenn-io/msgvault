@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 func gmailCoverageEnv(t *testing.T) *TestEnv {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "durable.db"))
 	require.NoError(t, err)

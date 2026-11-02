@@ -8,6 +8,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // openTextSearchDB creates a minimal in-memory SQLite DB with one text
@@ -15,6 +16,7 @@ import (
 // SQL after this call to verify live-message filtering.
 func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 	t.Helper()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })

@@ -10,6 +10,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 type messageDetailReader interface {
@@ -19,6 +20,7 @@ type messageDetailReader interface {
 
 func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
 	t.Helper()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err, "open sqlite fixture")

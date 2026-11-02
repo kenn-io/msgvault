@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/sqliteutil"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -21,6 +22,7 @@ import (
 // one non-deleted row (id=1).
 func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
@@ -41,6 +43,7 @@ func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 // must skip it.
 func openBackendWithOneDeletedMessage(t *testing.T) *Backend {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
@@ -78,6 +81,7 @@ func unitVec(dim, axis int) []float32 {
 // returns the DB plus its temp file path (needed for ATTACH).
 func openFusedMainDB(t *testing.T) (*sql.DB, string) {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.db")
 	db, err := sql.Open(sqliteutil.DriverName(), path)

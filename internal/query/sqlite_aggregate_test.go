@@ -791,6 +791,7 @@ func TestSQLiteEngine_Aggregate_InvalidViewType(t *testing.T) {
 // This prevents flaky tests and non-deterministic UI ordering.
 func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 
 	// Create minimal test data using helpers, explicitly threading IDs to avoid

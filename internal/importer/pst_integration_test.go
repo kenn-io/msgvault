@@ -22,6 +22,7 @@ const pstTestdataDir = "../pst/testdata"
 
 func openIntegrationStore(t *testing.T) *store.Store {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tmp := t.TempDir()
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
 	return st

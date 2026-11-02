@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // Fail at observable provider boundaries, after the preceding durable write.
@@ -400,6 +401,7 @@ func TestGmailRecoveryAbruptProcessExit(t *testing.T) {
 
 func recoveryStateEnv(t *testing.T, legacy bool) *TestEnv {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	st, err := store.OpenForTest(filepath.Join(dir, "durable.db"))
 	require.NoError(t, err)
