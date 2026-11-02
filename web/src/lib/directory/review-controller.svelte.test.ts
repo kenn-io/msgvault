@@ -367,7 +367,7 @@ describe('DirectoryReviewController', () => {
     } finally { controller.destroy(); }
   });
 
-  it('aborts page and decision requests when destroyed', async () => {
+  it('aborts the pending decision and clears its state when destroyed', async () => {
     const decisionRequest = deferredResponse();
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -417,8 +417,7 @@ it.each([
   try {
     await controller.loadIdentityPage();
     const saved = { id: 7, name: 'Saved', address: 'Saved person', lastAt: null };
-    controller.summaries.set('participant:20', saved);
-    controller.summaries.set('participant:11', saved);
+    controller.summaries.set('participant:999', saved);
     const completion = settle(controller, 1, decision, '  Different people  ');
     if (reconciliation === 'pending') {
       await vi.waitFor(() => expect(controller.rows).toEqual([accepted]));
@@ -431,8 +430,7 @@ it.each([
     expect(writes).toEqual([{ path: `/api/v1/identity/match-candidates/1/review/${decision}`, body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
     expect(controller.rows).toEqual(reconciliation === 'failed' ? [accepted] : [candidate(2)]);
     expect(controller.getDecisionDraft(1)).toBe('');
-    expect(controller.summaries.has('participant:20')).toBe(decision === 'reject');
-    expect(controller.summaries.has('participant:11')).toBe(decision === 'reject');
+    expect(controller.summaries.has('participant:999')).toBe(decision === 'reject');
     if (reconciliation === 'pending') expect(controller.status).toContain('accepted');
     if (reconciliation === 'failed') {
       expect(controller.pageError).toBe('Reload failed');

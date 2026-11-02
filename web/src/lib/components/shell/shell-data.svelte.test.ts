@@ -224,7 +224,7 @@ it('restores the visible view and reports a failed delete', async () => {
   expect(data.views).toContainEqual(saved);
 });
 
-it('polls jobs and duplicate counts, retains the count after failure, and refreshes deletions explicitly', async () => {
+it('polls jobs and duplicate counts and refreshes deletions explicitly', async () => {
   vi.useFakeTimers();
   const answers = { waiting: false, duplicateFailure: false };
   const { data, requests } = setup(answers);
@@ -234,11 +234,8 @@ it('polls jobs and duplicate counts, retains the count after failure, and refres
     answers.waiting = true;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(data.duplicateCount).toBe(1);
-    answers.duplicateFailure = true;
-    await data.refreshDuplicates();
-    expect(data.duplicateCount).toBe(1);
     const queries = requests.filter(request => new URL(request.url).pathname.endsWith('/identity/match-candidates')).map(request => new URL(request.url).search);
-    expect(queries).toEqual(Array(3).fill('?state=candidate%2Cconflict&limit=500&offset=0'));
+    expect(queries).toEqual(Array(2).fill('?state=candidate%2Cconflict&limit=500&offset=0'));
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
     await data.refresh();
@@ -246,11 +243,22 @@ it('polls jobs and duplicate counts, retains the count after failure, and refres
   } finally { data.stop(); vi.useRealTimers(); }
 });
 
-it('keeps the post-decision badge when an earlier read completes late', async () => {
+it.each(['failed refresh', 'late earlier read'])('keeps the current duplicate count after a %s', async outcome => {
   let finish!: (response: Response) => void;
   let reads = 0;
-  const data = new ShellData(createAPIClient(async () => ++reads === 1 ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json({ candidates: [] })));
+  const data = new ShellData(createAPIClient(async () => {
+    reads += 1;
+    if (outcome === 'failed refresh') return reads === 1 ? Response.json({ candidates: [pair] }) : Response.json({ error: 'unavailable' }, { status: 503 });
+    return reads === 1 ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json({ candidates: [] });
+  }));
   try {
+    if (outcome === 'failed refresh') {
+      await data.refreshDuplicates();
+      expect(data.duplicateCount).toBe(1);
+      await data.refreshDuplicates();
+      expect(data.duplicateCount).toBe(1);
+      return;
+    }
     const initial = data.refreshDuplicates();
     await vi.waitFor(() => expect(reads).toBe(1));
     await data.refreshDuplicates();

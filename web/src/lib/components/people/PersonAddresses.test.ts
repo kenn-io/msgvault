@@ -78,9 +78,8 @@ describe('PersonAddresses', () => {
 
   it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', evidence => {
     const base = clusteredPersonWithBareMember();
-    const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
     const members = evidence === 'email' ? [{ participant_id: 78, email: 'bare@example.com' }] : evidence === 'duplicate names' ? [{ participant_id: 56, display_name: 'Shared Example' }, { participant_id: 78, display_name: 'Shared Example' }] : [];
-    render(PersonAddresses, baseProps({ detail: { ...base, identifiers: evidence === 'duplicate names' ? base.identifiers.filter(identifier => identifier.participant_id !== 56) : base.identifiers, cluster: { ...base.cluster!, members } }, onUnlinkParticipants }));
+    render(PersonAddresses, baseProps({ detail: { ...base, identifiers: evidence === 'duplicate names' ? base.identifiers.filter(identifier => identifier.participant_id !== 56) : base.identifiers, cluster: { ...base.cluster!, members } } }));
     if (evidence === 'duplicate names') {
       expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (56)' })).toBeDefined();
       expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (78)' })).toBeDefined();

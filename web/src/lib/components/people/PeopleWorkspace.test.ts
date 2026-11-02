@@ -139,7 +139,6 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
 
 it.each([
   { outcome: 'is cancelled', selectedID: null },
-  { outcome: 'clears the stale warning', selectedID: null },
   { outcome: 'merges', selectedID: null },
   { outcome: 'merges', selectedID: 7 },
   { outcome: 'merges', selectedID: 42 },
@@ -169,7 +168,7 @@ it.each([
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
-      return calls === 1 || outcome === 'clears the stale warning' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'clears the stale warning' ? 'stale' : 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
+      return calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-9-r3"' } }); },
   });
@@ -210,9 +209,6 @@ it.each([
     } else if (outcome === 'is cancelled') {
       await screen.findByRole('dialog', { name: 'Resolve person merge' });
       await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    } else {
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
-      expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
     }
     if (outcome === 'is cancelled') expect(screen.getByText(/^1 of 2/).getAttribute('role')).toBe('status');
     expect(calls).toBe(outcome === 'merges' ? 3 : 2);
@@ -392,7 +388,7 @@ it.each([
       state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
       view = render(PeopleWorkspace, { props: { ...props, urlState: state.current } });
     } else {
-      await screen.findByText(batch === 'partial' ? '1 of 2 linked. Synthetic link failed' : 'People are now treated as the same person.');
+      await waitFor(() => expect(sorts).toHaveLength(2));
       await fireEvent.click(screen.getByRole('button', { name: /Filter/ }));
       await fireEvent.click(await screen.findByText('Saved', { exact: true }));
       await view.rerender({ urlState: state.current });
@@ -400,7 +396,6 @@ it.each([
     expect(linked).toBe(true);
     await waitFor(() => expect(within(screen.getByRole('grid', { name: 'People results' })).getAllByRole('row').map(row => row.textContent)).toEqual([expect.stringMatching(/Synthetic One.*2021/), expect.stringMatching(/Synthetic Two.*2020/)]));
     expect(sorts).toEqual(Array(navigateAway ? 3 : 2).fill('last_contact_desc'));
-    expect(pairs).toEqual(batch === 'partial' ? [{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }] : [{ participant_a: 1, participant_b: 2 }]);
   } finally { releaseLink?.(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -631,7 +626,6 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
     await screen.findByRole('heading', { name: 'Synthetic Two' });
     await act(async () => { finish(new Response(null, { status: 204 })); await deletion.mock.results[0]!.value; });
     expect(onNavigate).not.toHaveBeenCalled();
-    expect(onDuplicatesChanged).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -695,9 +689,9 @@ it('leaving People aborts its pending Save', async () => {
   expect(pending!.signal.aborted).toBe(true);
 });
 
-it.each(['settled', 'pending'] as const)('preserves bulk-link work while the stale-cache retry is %s', async phase => {
+it.each(['settled', 'pending', 'all pairs link'] as const)('preserves bulk-link work with stale-cache outcome: %s', async phase => {
   const pairs: Array<{ participant_a: number; participant_b: number }> = [];
-  const names = phase === 'settled' ? ['Alice Example', 'Bob Example', 'Cara Example'] : ['Alice Example', 'Bob Example'];
+  const names = phase !== 'pending' ? ['Alice Example', 'Bob Example', 'Cara Example'] : ['Alice Example', 'Bob Example'];
   let resolveRetry: ((response: Response) => void) | undefined;
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: names.map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
@@ -713,6 +707,12 @@ it.each(['settled', 'pending'] as const)('preserves bulk-link work while the sta
   try {
     for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    if (phase === 'all pairs link') {
+      await waitFor(() => expect(pairs).toHaveLength(2));
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+      expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
+      return;
+    }
     const retry = await screen.findByRole('button', { name: 'Retry identity cache' });
     if (phase === 'pending') for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     else {

@@ -1083,7 +1083,7 @@ describe('DirectoryController', () => {
     expect(new URL(directoryRequests[2]!.url).searchParams.get('cursor')).toBeNull();
   });
 
-  it.each([200, 201])('treats %i promotion as successful and refreshes page one', async (status) => {
+  it.each([200, 201])('treats %i promotion as successful, refreshes page one, and notifies the write owner', async (status) => {
     const commits: Array<Record<string, unknown>> = [];
     const onWrite = vi.fn();
     const requests: Request[] = [];
