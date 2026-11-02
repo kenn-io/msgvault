@@ -479,10 +479,15 @@ it('returns to the first page when deciding the last later-page row empties that
   } finally { controller.destroy(); }
 });
 
-it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination after settling its queued decision', async direction => {
+it.each([
+  { direction: 'next', failed: false },
+  { direction: 'retry', failed: false },
+  { direction: 'invalidate', failed: false },
+  { direction: 'next', failed: true },
+] as const)('keeps the $direction page destination after settling its queued decision, failed=$failed', async ({ direction, failed }) => {
   const decision = deferredResponse(), destination = deferredResponse();
   const start = 0;
-  const target = direction === 'invalidate' ? 0 : direction === 'next' ? 9 : 10;
+  const target = direction === 'invalidate' ? 0 : direction === 'next' && !failed ? 9 : 10;
   const order: string[] = [];
   let reads = 0;
   let moving = false, decided = false, posted = false, destinationRead = false;
@@ -490,7 +495,7 @@ it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
     order.push(request.method);
-    if (request.method === 'POST') { posted = true; const response = await decision.promise; decided = true; order.push('POST resolved'); return response; }
+    if (request.method === 'POST') { posted = true; const response = await decision.promise; decided = !failed; order.push('POST resolved'); return response; }
     if (direction === 'invalidate') return page([candidate(++reads)]);
     const offset = Number(new URL(request.url).searchParams.get('offset'));
     if (!moving && offset === target && direction === 'retry') return Response.json({ message: 'Queue unavailable' }, { status: 503 });
@@ -505,52 +510,27 @@ it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination
     const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'invalidate' ? controller.invalidate(true) : controller.retryPage();
     await vi.waitFor(() => expect(posted).toBe(true));
     if (direction === 'invalidate') expect(order).toEqual(['GET', 'POST']);
-    decision.resolve(Response.json({ candidate: candidate(start + 1, 'rejected'), cache_state: 'ready' }));
+    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(start + 1, 'rejected'), cache_state: 'ready' }));
     await vi.waitFor(() => expect(controller.pendingDecisions.size).toBe(0));
     if (direction !== 'invalidate') {
       await vi.waitFor(() => expect(destinationRead).toBe(true));
-      destination.resolve(page([candidate(101)], target));
+      destination.resolve(page([candidate(failed ? 11 : 101)], target));
     }
     await navigation;
     expect(controller.offset).toBe(target);
-    expect(controller.rows.map(row => row.id)).toEqual([direction === 'invalidate' ? 3 : 101]);
+    expect(controller.rows.map(row => row.id)).toEqual([direction === 'invalidate' ? 3 : failed ? 11 : 101]);
     if (direction === 'invalidate') {
       expect(order).toEqual(['GET', 'POST', 'POST resolved', 'GET', 'GET']);
       expect(controller.hidden.has(1)).toBe(false);
     }
-    if (direction === 'next') {
+    if (failed) {
+      expect(controller.hidden.size).toBe(0);
+      expect(controller.decisionError).toBe('Decision unavailable');
+    }
+    if (direction === 'next' && !failed) {
       await controller.loadPreviousPage();
       expect(controller.offset).toBe(0);
       expect(controller.rows.map(row => row.id)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     }
-  } finally { controller.destroy(); }
-});
-
-it('Next continues beyond the displayed page after a queued decision fails', async () => {
-  const rows = Array.from({ length: 11 }, (_, index) => ({ ...pair, id: index + 1, left_id: index * 2 + 1, right_id: index * 2 + 2, review_token: `review-${index + 1}` }));
-  const offsets: number[] = [];
-  const writes: Array<{ path: string; body: unknown }> = [];
-  const controller = new DirectoryReviewController(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const url = new URL(request.url);
-    if (request.method === 'POST') {
-      writes.push({ path: url.pathname, body: await request.json() });
-      return Response.json({ message: 'Decision unavailable' }, { status: 503 });
-    }
-    const offset = Number(url.searchParams.get('offset'));
-    const limit = Number(url.searchParams.get('limit'));
-    offsets.push(offset);
-    return Response.json({ candidates: rows.slice(offset, offset + limit), limit, offset });
-  }));
-  try {
-    await controller.loadIdentityPage();
-    expect(controller.rows.map(row => row.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    await controller.queueDecision(controller.rows[2]!, 'reject');
-    await controller.loadNextPage();
-    expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/3/review/reject', body: { review_token: 'review-3' } }]);
-    expect(controller.hidden.size).toBe(0);
-    expect(controller.decisionError).toBe('Decision unavailable');
-    expect(offsets.at(-1)).toBe(10);
-    expect(controller.rows.map(row => row.id)).toEqual([11]);
   } finally { controller.destroy(); }
 });

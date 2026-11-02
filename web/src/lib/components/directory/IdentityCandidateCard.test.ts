@@ -99,12 +99,13 @@ describe('IdentityCandidateCard', () => {
     expect(evidence.textContent).toContain('2026-08-01T10:06:00Z');
   });
 
-  it('shows a message when evidence is empty', () => {
+  it('shows pending decisions and a message when evidence is empty', () => {
     render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate(), evidence: [] }, pending: false
+      candidate: { ...completeCandidate(), evidence: [] }, pending: true
     });
 
     expect(screen.getByText('No evidence supplied.')).toBeDefined();
+    expect(screen.getByText('Decision pending…')).toBeDefined();
   });
 
 });

@@ -28,7 +28,6 @@ it.each([
     expect((merge as HTMLButtonElement).disabled).toBe(mergeDisabled);
     expect((separate as HTMLButtonElement).disabled).toBe(pending);
     if (blocker) expect(screen.getByText(blocker === 'person_merge_required' ? /Both are saved as different people/ : /Endpoint unsupported/)).toBeDefined();
-    if (pending) expect(screen.getByText('Decision pending…')).toBeDefined();
     if (!mergeDisabled) {
       await fireEvent.click(merge);
       expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'displayed-token' }), 'accept');
@@ -40,28 +39,34 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('wires Retry for an unavailable empty queue', async () => {
+it.each([
+  { failure: 'queue', message: 'Queue unavailable', action: 'Retry' },
+  { failure: 'page', message: 'Queue refresh failed', action: 'Retry page' },
+])('displays the $failure error and wires $action', async ({ failure, message, action }) => {
   const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
-  controller.error = 'Queue unavailable';
+  if (failure === 'queue') controller.error = message;
+  else controller.pageError = message;
   const retry = vi.spyOn(controller, 'retryPage').mockResolvedValue();
   const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
   try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    if (failure === 'page') expect(screen.getByRole('alert').textContent).toContain(message);
+    else expect(screen.getByText(message)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: action }));
     expect(retry).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); }
 });
 
 it.each([
-  { pending: false, label: /^Merged ·/, error: 'Queue refresh failed' },
-  { pending: true, label: /^Merge pending ·/, error: null },
-])('keeps an accepted pair read-only with pending=$pending', ({ pending, label, error }) => {
+  { reviewState: 'candidate', state: 'rejected', pending: false, label: /^Kept separate ·/ },
+  { reviewState: 'accepted', state: 'candidate', pending: false, label: /^candidate ·/ },
+  { reviewState: 'candidate', state: 'accepted', pending: false, label: /^Merged ·/ },
+  { reviewState: 'candidate', state: 'accepted', pending: true, label: /^Merge pending ·/ },
+] as const)('keeps $state read-only in $reviewState with pending=$pending', ({ reviewState, state, pending, label }) => {
   const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
-  controller.identityState = 'accepted';
-  controller.rows = [{ ...pair, state: 'accepted', application_pending: pending, actionable: false }];
-  controller.pageError = error;
+  controller.identityState = reviewState;
+  controller.rows = [{ ...pair, state, application_pending: pending, actionable: false }];
   const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
   try {
-    if (error) expect(screen.getByRole('alert').textContent).toContain(error);
     expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull();
     expect(screen.getByText(label)).toBeDefined();

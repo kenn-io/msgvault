@@ -1005,7 +1005,7 @@ describe('relationships workspace state', () => {
   it.each([
     { entry: 'search', previous: { workspace: 'everything', query: 'quarterly plan' }, cleared: { workspace: 'relationships', query: '' } },
     { entry: 'Possible duplicates', previous: { workspace: 'relationships', peopleDuplicates: true }, cleared: { workspace: 'relationships', peopleDuplicates: false } },
-  ] as const)('opens People and restores $entry on Back', async ({ entry, previous, cleared }) => {
+  ] as const)('commitWorkspace(relationships) clears carried $entry and Back restores it', async ({ entry, previous, cleared }) => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
     state.commitNavigation(previous);

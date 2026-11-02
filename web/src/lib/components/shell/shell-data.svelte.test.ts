@@ -224,7 +224,7 @@ it('restores the visible view and reports a failed delete', async () => {
   expect(data.views).toContainEqual(saved);
 });
 
-it('polls jobs and duplicate counts, and refreshes deletions explicitly', async () => {
+it('polls jobs and duplicate counts, retains the count after failure, and refreshes deletions explicitly', async () => {
   vi.useFakeTimers();
   const answers = { waiting: false, duplicateFailure: false };
   const { data, requests } = setup(answers);
