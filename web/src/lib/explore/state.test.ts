@@ -64,17 +64,26 @@ describe('Explore URL state', () => {
     }
   });
 
-  it.each(['Forward', 'Settings click'])('drops a held Back to an unindexed entry when %s returns to Settings first', async (navigation) => {
-    window.history.replaceState(null, '', '/?workspace=files');
-    window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+  it.each([
+    ['Forward', false], ['Settings click', false], ['Settings click', true],
+  ] as const)('drops a held Back when %s returns to Settings first, indexed entry: %s', async (navigation, indexed) => {
+    window.history.replaceState(null, '', indexed ? '/?workspace=sources' : '/?workspace=files');
+    if (!indexed) window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
     const state = new ExploreState(window);
     const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
     const cancel = vi.fn();
-    state.holdLeave = () => true;
-    state.cancelHeldLeave = cancel;
     try {
+      if (indexed) {
+        state.commitWorkspace('settings');
+        state.commitWorkspace('files');
+        window.history.back();
+        await popped();
+      }
+      state.holdLeave = () => true;
       window.history.back();
       await popped();
+      if (indexed) await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
+      state.cancelHeldLeave = cancel;
       if (navigation === 'Forward') {
         window.history.forward();
         await popped();
@@ -87,42 +96,12 @@ describe('Explore URL state', () => {
       window.history.back();
       await popped();
       if (navigation === 'Settings click') {
+        if (indexed) expect(state.current.workspace).toBe('settings');
         window.history.back();
         await popped();
       }
-      expect(state.current.workspace).toBe('files');
-      expect(window.location.search).toBe('?workspace=files');
-    } finally {
-      state.destroy();
-    }
-  });
-
-  it('drops a held indexed Back leave when Settings is clicked', async () => {
-    window.history.replaceState(null, '', '/?workspace=sources');
-    const state = new ExploreState(window);
-    const popped = () => new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    let leave!: () => void;
-    try {
-      state.commitWorkspace('settings');
-      state.commitWorkspace('files');
-      window.history.back();
-      await popped();
-      state.holdLeave = (next) => { leave = next; return true; };
-      window.history.back();
-      await popped();
-      await waitFor(() => expect(window.location.search).toBe('?workspace=settings&mode=full_text'));
-      const cancel = vi.fn();
-      state.cancelHeldLeave = cancel;
-      state.commitWorkspace('settings');
-      expect(cancel).toHaveBeenCalledOnce();
-      expect(state.current.workspace).toBe('settings');
-      state.holdLeave = undefined;
-      window.history.back();
-      await popped();
-      expect(state.current.workspace).toBe('settings');
-      window.history.back();
-      await popped();
-      expect(window.location.search).toBe('?workspace=sources&mode=full_text');
+      expect(state.current.workspace).toBe(indexed ? 'sources' : 'files');
+      expect(window.location.search).toBe(indexed ? '?workspace=sources&mode=full_text' : '?workspace=files');
     } finally {
       state.destroy();
     }
