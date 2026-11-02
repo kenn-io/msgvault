@@ -140,3 +140,34 @@ func TestSpoolRetriesHoldsAndReplaysWithoutExposingBodies(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(1, status.UnsupportedEU)
 }
+
+func TestSpoolCancellationPreservesUnprocessedDeliveries(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	root := t.TempDir()
+	spool, err := OpenSpool(root, 1<<20)
+	requirements.NoError(err)
+	for _, body := range []string{"first synthetic delivery", "second synthetic delivery"} {
+		_, _, err = spool.Accept(t.Context(), "app-example", []byte(body))
+		requirements.NoError(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	applied, err := spool.Drain(ctx, func(context.Context, string, []byte) (Outcome, error) {
+		cancel()
+		return Outcome{Class: "applied"}, nil
+	})
+	requirements.ErrorIs(err, context.Canceled)
+	assertions.Equal(1, applied)
+	restarted, err := OpenSpool(root, 1<<20)
+	requirements.NoError(err)
+	status, err := restarted.Status(t.Context(), "app-example")
+	requirements.NoError(err)
+	assertions.Equal(1, status.Done)
+	assertions.Equal(1, status.Pending)
+	applied, err = restarted.Drain(t.Context(), func(context.Context, string, []byte) (Outcome, error) {
+		return Outcome{Class: "applied"}, nil
+	})
+	requirements.NoError(err)
+	assertions.Equal(1, applied)
+}

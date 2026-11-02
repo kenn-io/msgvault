@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -126,39 +127,41 @@ func TestTikTokRuntimeRecoversSpoolAndStops(t *testing.T) {
 func TestTikTokDeliveryCoordinatesArchiveAndAttachmentMaintenance(t *testing.T) {
 	for _, held := range []string{"archive gate", "attachment maintenance"} {
 		t.Run(held, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			gate := api.NewSerialOperationGate()
-			maintenance := &attachmentMaintenance{coordinator: packstore.NewCoordinator()}
-			var release func()
-			if held == "archive gate" {
-				done, ok := gate.BeginWorkContext(t.Context())
-				requirements.True(ok)
-				release = done
-			} else {
-				lease, err := maintenance.coordinator.AcquireMaintenance(t.Context())
+			synctest.Test(t, func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				gate := api.NewSerialOperationGate()
+				maintenance := &attachmentMaintenance{coordinator: packstore.NewCoordinator()}
+				var release func()
+				if held == "archive gate" {
+					done, ok := gate.BeginWorkContext(t.Context())
+					requirements.True(ok)
+					release = done
+				} else {
+					lease, err := maintenance.coordinator.AcquireMaintenance(t.Context())
+					requirements.NoError(err)
+					release = func() { assertions.NoError(lease.Release()) }
+				}
+				releaseOnce := sync.OnceFunc(release)
+				t.Cleanup(releaseOnce)
+				calls := 0
+				handle := coordinateTikTokDeliveries(gate, maintenance, func(context.Context, string, []byte) (tiktokwebhook.Outcome, error) {
+					calls++
+					return tiktokwebhook.Outcome{Class: "applied"}, nil
+				})
+				// Cancellation bounds the wait for an occupied real gate or lease.
+				// Ingest must not begin while either maintenance boundary is held.
+				ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+				defer cancel()
+				_, err := handle(ctx, "app-example", []byte("synthetic delivery"))
+				requirements.ErrorIs(err, context.DeadlineExceeded)
+				assertions.Zero(calls)
+				releaseOnce()
+				outcome, err := handle(t.Context(), "app-example", []byte("synthetic delivery"))
 				requirements.NoError(err)
-				release = func() { assertions.NoError(lease.Release()) }
-			}
-			releaseOnce := sync.OnceFunc(release)
-			t.Cleanup(releaseOnce)
-			calls := 0
-			handle := coordinateTikTokDeliveries(gate, maintenance, func(context.Context, string, []byte) (tiktokwebhook.Outcome, error) {
-				calls++
-				return tiktokwebhook.Outcome{Class: "applied"}, nil
+				assertions.Equal("applied", outcome.Class)
+				assertions.Equal(1, calls)
 			})
-			// Cancellation bounds the wait for an occupied real gate or lease.
-			// Ingest must not begin while either maintenance boundary is held.
-			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
-			defer cancel()
-			_, err := handle(ctx, "app-example", []byte("synthetic delivery"))
-			requirements.ErrorIs(err, context.DeadlineExceeded)
-			assertions.Zero(calls)
-			releaseOnce()
-			outcome, err := handle(t.Context(), "app-example", []byte("synthetic delivery"))
-			requirements.NoError(err)
-			assertions.Equal("applied", outcome.Class)
-			assertions.Equal(1, calls)
 		})
 	}
 }
