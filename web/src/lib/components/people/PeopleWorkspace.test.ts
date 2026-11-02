@@ -579,4 +579,3 @@ it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %
     expect(within(grid).queryByText('Before sync')).toBeNull();
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
-
