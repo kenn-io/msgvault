@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -255,6 +256,7 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	senderAuthPins map[int64]senderauth.TrustSet
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -704,6 +706,8 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		started:                  make(chan struct{}),
 		readSnapshotSlots:        make(chan struct{}, readSnapshotConcurrency),
 	}
+	s.senderAuthPins = opts.Config.SenderAuth.Pins()
+	query.ConfigureSenderAuth(opts.Engine, s.senderAuthPins)
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,
 		analyticsInitializationActive: opts.AnalyticsInitializationActive,
@@ -1072,6 +1076,7 @@ func (s *Server) AnalyticsMode() string {
 // daemon-owned engines remain live until HTTP shutdown and background workers
 // have stopped.
 func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
+	query.ConfigureSenderAuth(engine, s.senderAuthPins)
 	for {
 		current := s.currentAnalyticsState()
 		next := &analyticsEngineState{engine: engine, mode: mode}

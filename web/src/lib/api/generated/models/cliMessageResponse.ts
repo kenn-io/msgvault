@@ -4,6 +4,7 @@
 import type { CalendarProjection } from "./calendarProjection";
 import type { CliMessageAddress } from "./cliMessageAddress";
 import type { CliMessageAttachment } from "./cliMessageAttachment";
+import type { Verdict } from "./verdict";
 
 export interface CliMessageResponse {
   attachments: CliMessageAttachment[];
@@ -25,6 +26,7 @@ export interface CliMessageResponse {
   received_at: string | null;
   related_message_id?: number;
   rfc822_message_id?: string;
+  sender_auth?: Verdict;
   sent_at: string;
   size_estimate: number;
   snippet: string;

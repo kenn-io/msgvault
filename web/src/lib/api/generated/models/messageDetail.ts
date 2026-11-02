@@ -3,6 +3,7 @@
  */
 import type { AttachmentInfo } from "./attachmentInfo";
 import type { CalendarProjection } from "./calendarProjection";
+import type { Verdict } from "./verdict";
 
 export interface MessageDetail {
   attachments: AttachmentInfo[];
@@ -32,6 +33,7 @@ export interface MessageDetail {
   local_auto_kind?: string;
   message_type?: string;
   related_message_id?: number;
+  sender_auth?: Verdict;
   sent_at: string;
   size_bytes: number;
   snippet: string;

@@ -1107,6 +1107,8 @@ components:
           type: string
         message_type:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           format: date-time
           type: string
@@ -2860,6 +2862,8 @@ components:
           type: integer
         rfc822_message_id:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           format: date-time
           type: string
@@ -6718,6 +6722,8 @@ components:
           type: string
         score:
           $ref: "#/components/schemas/ScoreBreakdown"
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           type: string
         size_bytes:
@@ -8366,6 +8372,8 @@ components:
         related_message_id:
           format: int64
           type: integer
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           type: string
         size_bytes:
@@ -8548,6 +8556,8 @@ components:
           type: array
         message_type:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           type: string
         size_bytes:
@@ -16650,6 +16660,8 @@ components:
         id:
           format: int64
           type: integer
+        sender_auth:
+          $ref: "#/components/schemas/Verdict"
         sent_at:
           format: date-time
           type:
@@ -17044,6 +17056,30 @@ components:
       required:
         - status
       type: object
+    Verdict:
+      additionalProperties: true
+      properties:
+        authserv_id:
+          type: string
+        basis:
+          type: string
+        dkim:
+          type: string
+        dmarc:
+          type: string
+        kind:
+          type: string
+        spf:
+          type: string
+        verified:
+          type: boolean
+        verified_domain:
+          type: string
+      required:
+        - kind
+        - verified
+        - basis
+      type: object
     VirtualAccount:
       additionalProperties: true
       properties:
@@ -17178,7 +17214,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.39.0
+  version: 3.40.0
 openapi: 3.1.0
 paths:
   /api/ping:

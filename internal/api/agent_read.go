@@ -101,6 +101,7 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	}
 	if s.queryEngineForContext(readContext) != nil {
 		engine := query.NewEngine(snapshotStore.DB(), snapshotStore.IsPostgreSQL())
+		query.ConfigureSenderAuth(engine, s.senderAuthPins)
 		readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: engine, mode: AnalyticsModeSQL})
 	}
 	*req = *req.WithContext(readContext)

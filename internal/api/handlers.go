@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
@@ -308,26 +309,27 @@ type BodySearchContext struct {
 
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
-	ID                int64    `json:"id"`
-	SourceID          int64    `json:"source_id,omitzero"`
-	SourceMessageID   string   `json:"source_message_id,omitempty"`
-	ConversationID    int64    `json:"conversation_id,omitzero"`
-	Subject           string   `json:"subject"`
-	MessageType       string   `json:"message_type,omitempty"`
-	From              string   `json:"from"`
-	FromEmail         string   `json:"from_email,omitempty"`
-	FromName          string   `json:"from_name,omitempty"`
-	FromPhone         string   `json:"from_phone,omitempty"`
-	To                []string `json:"to"`
-	Cc                []string `json:"cc,omitempty"`
-	Bcc               []string `json:"bcc,omitempty"`
-	SentAt            string   `json:"sent_at"`
-	DeletedAt         string   `json:"deleted_at,omitempty"`
-	Snippet           string   `json:"snippet"`
-	Labels            []string `json:"labels"`
-	HasAttach         bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	SizeBytes         int64    `json:"size_bytes"`
+	SenderAuth        *senderauth.Verdict `json:"sender_auth,omitempty"`
+	ID                int64               `json:"id"`
+	SourceID          int64               `json:"source_id,omitzero"`
+	SourceMessageID   string              `json:"source_message_id,omitempty"`
+	ConversationID    int64               `json:"conversation_id,omitzero"`
+	Subject           string              `json:"subject"`
+	MessageType       string              `json:"message_type,omitempty"`
+	From              string              `json:"from"`
+	FromEmail         string              `json:"from_email,omitempty"`
+	FromName          string              `json:"from_name,omitempty"`
+	FromPhone         string              `json:"from_phone,omitempty"`
+	To                []string            `json:"to"`
+	Cc                []string            `json:"cc,omitempty"`
+	Bcc               []string            `json:"bcc,omitempty"`
+	SentAt            string              `json:"sent_at"`
+	DeletedAt         string              `json:"deleted_at,omitempty"`
+	Snippet           string              `json:"snippet"`
+	Labels            []string            `json:"labels"`
+	HasAttach         bool                `json:"has_attachments"`
+	HiddenTextPresent bool                `json:"hidden_text_present"`
+	SizeBytes         int64               `json:"size_bytes"`
 }
 
 // MessageDetail represents a full message response.
@@ -569,9 +571,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	}
 
 	return MessageDetail{
-		RelatedMessageID:  qMsg.RelatedMessageID,
-		ConversationTitle: qMsg.ConversationTitle,
-
+		SenderAuth:        qMsg.SenderAuth,
 		ID:                qMsg.ID,
 		SourceID:          qMsg.SourceID,
 		SourceMessageID:   qMsg.SourceMessageID,
@@ -591,6 +591,8 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		HasAttach:         qMsg.HasAttachments,
 		HiddenTextPresent: qMsg.HiddenTextPresent,
 		SizeBytes:         qMsg.SizeEstimate,
+		RelatedMessageID:  qMsg.RelatedMessageID,
+		ConversationTitle: qMsg.ConversationTitle,
 		IsFromMe:          qMsg.IsFromMe,
 		Calendar:          qMsg.Calendar,
 		Body:              body,
@@ -612,6 +614,7 @@ func toMessageSummary(m APIMessage) MessageSummary {
 		labels = []string{}
 	}
 	return MessageSummary{
+		SenderAuth:        m.SenderAuth,
 		ID:                m.ID,
 		SourceID:          m.SourceID,
 		SourceMessageID:   m.SourceMessageID,
@@ -741,6 +744,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.fillStoreSenderAuth(r.Context(), messages)
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
@@ -812,6 +816,9 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
+	authMessage := []APIMessage{*msg}
+	s.fillStoreSenderAuth(r.Context(), authMessage)
+	msg.SenderAuth = authMessage[0].SenderAuth
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
@@ -1020,6 +1027,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.fillStoreSenderAuth(r.Context(), messages)
 	summaries := make([]MessageSummary, len(messages))
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
@@ -1180,6 +1188,7 @@ func (s *Server) handleHybridSearch(
 		s.logger.Warn("hydrate hybrid hits failed", "ids", len(hitIDs), "error", err)
 		summaries = nil
 	}
+	s.fillStoreSenderAuth(r.Context(), summaries)
 	byID := make(map[int64]APIMessage, len(summaries))
 	for _, m := range summaries {
 		byID[m.ID] = m
@@ -1386,6 +1395,7 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("hydrate similar hits failed", "ids", len(wantIDs), "error", err)
 		summaries = nil
 	}
+	s.fillStoreSenderAuth(r.Context(), summaries)
 	byID := make(map[int64]APIMessage, len(summaries))
 	for _, msg := range summaries {
 		byID[msg.ID] = msg
@@ -2855,6 +2865,7 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 		from = m.FromName
 	}
 	return MessageSummary{
+		SenderAuth:        m.SenderAuth,
 		ID:                m.ID,
 		SourceID:          m.SourceID,
 		SourceMessageID:   m.SourceMessageID,

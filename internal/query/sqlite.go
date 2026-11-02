@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
@@ -19,8 +20,9 @@ import (
 // Despite its name, it is dialect-agnostic and supports both SQLite
 // (default) and PostgreSQL via the dialect field.
 type SQLiteEngine struct {
-	db      *sql.DB
-	dialect Dialect
+	senderAuthPolicy atomic.Pointer[senderAuthPolicy]
+	db               *sql.DB
+	dialect          Dialect
 
 	// FTS availability cache - thread-safe with mutex.
 	// Only caches successful checks; errors cause retries on next call.
@@ -1212,7 +1214,11 @@ func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
 }
 
 func (e *SQLiteEngine) fetchLabelsForMessages(ctx context.Context, messages []MessageSummary) error {
-	return fetchLabelsForMessageList(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", messages)
+	err := fetchLabelsForMessageList(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", messages)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return err
 }
 
 // GetMessage retrieves a full message by internal ID.
@@ -1227,7 +1233,11 @@ func (e *SQLiteEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID
 }
 
 func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string, args ...any) (*MessageDetail, error) {
-	return getMessageByQueryShared(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", whereClause, args...)
+	msg, err := getMessageByQueryShared(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", whereClause, args...)
+	if err == nil && msg != nil {
+		msg.SenderAuth = SenderAuthForAddresses(e.readSenderAuth(ctx, []int64{msg.ID})[msg.ID], msg.From)
+	}
+	return msg, err
 }
 
 // GetAttachment retrieves attachment metadata by ID.

@@ -34,7 +34,7 @@ func TestMetadataSearchSQLiteOptionalStats(t *testing.T) {
 		limit, offset, rows, statements int
 		total                           int64
 	}{
-		{"page", "after:2024-01-01", 2, 0, 2, 3, 5},
+		{"page", "after:2024-01-01", 2, 0, 2, 4, 5},
 		{"end", "after:2024-01-01", 2, 9, 0, 2, 5},
 		{"empty", "after:2099-01-01", 2, 0, 0, 2, 0},
 		{"count only", "after:2024-01-01", 0, 0, 0, 1, 5},
@@ -67,5 +67,5 @@ func TestMetadataSearchSQLiteCountCancellationStopsStats(t *testing.T) {
 	}
 	_, err := engine.SearchFastWithStats(ctx, search.Parse("after:2024-01-01"), "after:2024-01-01", MessageFilter{}, ViewSenders, 2, 0)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Len(t, observer.Statements(), 3, "page, labels and canceled count only")
+	assert.Len(t, observer.Statements(), 4, "page, labels, bounded sender-auth batch and canceled count only")
 }

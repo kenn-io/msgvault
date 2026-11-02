@@ -764,7 +764,11 @@ func (e *SQLiteEngine) ListConversationMessages(
 	}
 	defer func() { _ = rows.Close() }()
 
-	return scanMessageSummaries(rows)
+	messages, err := scanMessageSummaries(rows)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return messages, err
 }
 
 // sanitizeTextSearchMatch tokenizes a raw user query and builds an FTS5
@@ -841,7 +845,11 @@ func (e *SQLiteEngine) TextSearch(
 	if !e.hasFTSTable(ctx) {
 		return nil, nil
 	}
-	return sqliteFTSTextSearch(ctx, e.db, match, sourceID, limit, offset)
+	messages, err := sqliteFTSTextSearch(ctx, e.db, match, sourceID, limit, offset)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return messages, err
 }
 
 // GetTextStats returns aggregate stats for text messages.

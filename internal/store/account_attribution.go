@@ -264,6 +264,15 @@ func (s *Store) withMessageAttributionTxContext(
 	return s.withAttributionTxContext(ctx, lock, fn)
 }
 
+// SentMessageSQL returns the provider Sent-folder/label predicate for message
+// alias m and its source alias src. Address-derived ownership is not evidence
+// that a message was sent, including legacy importer source_is_from_me values.
+func SentMessageSQL() string {
+	return `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+		WHERE ml.message_id = m.id AND l.source_id = m.source_id AND (` +
+		sentFolderLabelSQL("l") + " OR " + sentGmailLabelSQL("l", "src") + "))"
+}
+
 func sentFolderLabelSQL(l string) string {
 	return l + ".system_role = 'sent'"
 }

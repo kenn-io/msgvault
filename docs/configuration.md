@@ -2796,3 +2796,12 @@ schedule = "30 4 * * *"
 [telemetry]
 enabled = true # false turns off anonymous usage telemetry
 ```
+
+## Sender authentication
+
+`[[sender_auth.sources]]` binds `trusted_authserv_ids` to a positive, unique
+archive `source_id`. Empty configuration trusts no receipt headers. Exact
+hostnames and `*.suffix` patterns are supported; a wildcard does not match its
+apex. Restart the daemon after changing pins. See
+[Understand sender authentication](usage/sender-auth.md) for trust limits and
+message result fields.

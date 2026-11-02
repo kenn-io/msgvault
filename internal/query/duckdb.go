@@ -2118,6 +2118,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		}
 	}
 
+	e.fillSenderAuth(ctx, results)
 	return results, nil
 }
 
@@ -2850,6 +2851,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
 
+	e.fillSenderAuth(ctx, results)
 	return results, nil
 }
 
@@ -3050,6 +3052,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
 
+	e.fillSenderAuth(ctx, result.Messages)
 	return result, nil
 }
 

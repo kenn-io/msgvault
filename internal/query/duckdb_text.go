@@ -534,7 +534,11 @@ func (e *DuckDBEngine) listConversationMessages(
 	}
 	defer func() { _ = rows.Close() }()
 
-	return scanMessageSummaries(rows)
+	messages, err := scanMessageSummaries(rows)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return messages, err
 }
 
 // TextSearch performs plain full-text search over text messages via FTS5.
@@ -553,7 +557,11 @@ func (e *DuckDBEngine) TextSearch(
 	if match == "" {
 		return nil, nil
 	}
-	return sqliteFTSTextSearch(ctx, e.sqliteDB, match, sourceID, limit, offset)
+	messages, err := sqliteFTSTextSearch(ctx, e.sqliteDB, match, sourceID, limit, offset)
+	if err == nil {
+		e.fillSenderAuth(ctx, messages)
+	}
+	return messages, err
 }
 
 // GetTextStats returns aggregate stats for text messages.

@@ -103,3 +103,5 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 ## Other
 
 - [GitHub repository](https://github.com/kenn-io/msgvault): source, issues, releases
+
+- [Sender authentication](https://msgvault.io/docs/usage/sender-auth.md): Explicit receiver pins and advisory sender-domain evidence.

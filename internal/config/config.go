@@ -569,6 +569,7 @@ type MailConfig struct {
 
 type Config struct {
 	Mail               MailConfig                      `toml:"mail"`
+	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
@@ -1253,6 +1254,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.deferDaemonError(cfg.Sync.Validate())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.SenderAuth.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.Web.ApplyDefaults()

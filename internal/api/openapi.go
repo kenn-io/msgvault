@@ -391,7 +391,8 @@ import (
 // 3.37.0 adds purpose-scoped mail kind consent endpoints.
 // 3.38.0 adds local mail kind classification endpoints.
 // 3.39.0 adds provenance-checked local_auto_kind to message details.
-const APISchemaVersion = "3.39.0"
+// 3.40.0 adds advisory sender_auth metadata to message reads.
+const APISchemaVersion = "3.40.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

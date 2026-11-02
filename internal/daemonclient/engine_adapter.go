@@ -608,6 +608,7 @@ func querySummaryFromAPIMessage(msg store.APIMessage) query.MessageSummary {
 		fromEmail = msg.From
 	}
 	return query.MessageSummary{
+		SenderAuth:           msg.SenderAuth,
 		ID:                   msg.ID,
 		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
@@ -825,6 +826,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		return nil
 	}
 	detail := &query.MessageDetail{
+		SenderAuth:           msg.SenderAuth,
 		RelatedMessageID:     msg.RelatedMessageID,
 		ID:                   msg.ID,
 		IsFromMe:             msg.IsFromMe,
@@ -919,6 +921,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 			continue
 		}
 		summary := query.MessageSummary{
+			SenderAuth:           md.SenderAuth,
 			ID:                   md.ID,
 			WebURL:               md.WebURL,
 			SourceID:             md.SourceID,
