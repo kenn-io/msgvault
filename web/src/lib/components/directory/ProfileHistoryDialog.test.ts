@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -127,8 +127,13 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
-  it('refreshes structured history after split reconciliation', async () => {
+  it.each([false, true])('refreshes structured history after split reconciliation (initial history pending=%s)', async initialPending => {
     let reconciled = false;
+    let historyReads = 0;
+    let initialResponse: Response | undefined;
+    let initialBody: Promise<string> | undefined;
+    let releaseInitial!: (response: Response) => void;
+    const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
     const source = { ...person(), participant_ids: [1, 2] };
     const remaining = { ...source, revision: 4, participant_ids: [2] };
     const restored = { ...source, id: 9, revision: 1, display_name: 'Restored Person', participant_ids: [1], vcard_uid: 'person-9' };
@@ -136,13 +141,22 @@ describe('ProfileHistoryDialog', () => {
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/profile/history')) return Response.json({
-        person: reconciled ? remaining : source,
-        names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, ...(reconciled ? [] : [{ person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }])],
-        contact_points: reconciled ? [] : [{ person_id: 7, address_kind: 'email', original_value: 'moved@example.com', normalized_value: 'moved@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }],
-        observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
-        addresses: [], dates: [], categories: [], media: [],
-      });
+      if (path.endsWith('/profile/history')) {
+        const response = Response.json({
+          person: reconciled ? remaining : source,
+          names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, ...(reconciled ? [] : [{ person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }])],
+          contact_points: reconciled ? [] : [{ person_id: 7, address_kind: 'email', original_value: 'moved@example.com', normalized_value: 'moved@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }],
+          observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
+          addresses: [], dates: [], categories: [], media: [],
+        });
+        if (++historyReads === 1 && initialPending) {
+          const readBody = response.text.bind(response);
+          response.text = () => initialBody = readBody();
+          initialResponse = response;
+          return pendingInitial;
+        }
+        return response;
+      }
       if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
       if (path === '/api/v1/person-merges/41') return Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] });
       if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
@@ -152,7 +166,17 @@ describe('ProfileHistoryDialog', () => {
     const onSplitCommitted = vi.fn(async () => { reconciled = true; });
     const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
     try {
-      for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
+      let splitOfferedWhileLoading = false;
+      if (initialPending) {
+        await act(async () => { await vi.waitFor(() => expect(initialResponse).toBeDefined()); });
+        expect(screen.getByText('Loading profile history…')).toBeDefined();
+        if (screen.queryByRole('heading', { name: 'Merges' })) await screen.findByRole('button', { name: 'Inspect merge 41' });
+        splitOfferedWhileLoading = screen.queryByRole('button', { name: 'Inspect merge 41' }) !== null;
+        if (!splitOfferedWhileLoading) await act(async () => { releaseInitial(initialResponse!); });
+      }
+      if (!initialPending || !splitOfferedWhileLoading) {
+        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
+      }
       await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Split merged profile' }));
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'Participant 1' }));
@@ -163,7 +187,15 @@ describe('ProfileHistoryDialog', () => {
         expect(screen.getByText('Retained name')).toBeDefined();
         for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
       });
-    } finally { view.unmount(); }
+      if (initialPending) {
+        await act(async () => { releaseInitial(initialResponse!); });
+        await vi.waitFor(() => expect(initialBody).toBeDefined());
+        await act(async () => { await initialBody; });
+        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
+        expect(splitOfferedWhileLoading).toBe(false);
+        expect(screen.getByRole('heading', { name: 'Split completed' })).toBeDefined();
+      }
+    } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });
 
   it('keeps the dialog open and reports a failed history read', async () => {
