@@ -6,6 +6,7 @@
   import LinkIdentityDialog from '../relationships/LinkIdentityDialog.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import { onDestroy, untrack } from 'svelte';
+  import { showFlash } from '@kenn-io/kit-ui';
   let { client, controller, personID: currentPersonID, participantID: currentParticipantID, name, onReconcile, onOpenPerson, onLinked, onClose }:
     { client: APIClient; controller: RelationshipsController; personID: number | null; participantID: number | null; name: string;
       onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean) => Promise<void>; onOpenPerson?: (id: number) => void; onLinked?: (a: number, b: number, outcome: LinkOutcome) => void; onClose: () => void } = $props();
@@ -55,7 +56,7 @@
     } catch { return { ok: false, code: 'error', message: 'Could not read the selected person.' }; }
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
-    close();
+    close(); if (success.result.cache_state === 'stale') showFlash('People merged. Identity cache refresh failed.', { tone: 'warning', durationMs: 8000 });
     onOpenPerson?.(success.survivor.id);
     await onReconcile(context);
   }

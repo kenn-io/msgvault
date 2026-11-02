@@ -6,11 +6,13 @@ import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
 import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
+import { dismissFlash, FlashBanner } from '@kenn-io/kit-ui';
 
 vi.mock('../directory/PersonBindingConflictModal.svelte', { spy: true });
 
 it.each([
   { savedAnchor: true, promote: false, outcome: 'merge' },
+  { savedAnchor: true, promote: false, outcome: 'stale merge' },
   { savedAnchor: false, outcome: 'selected saved profile read fails' },
   { savedAnchor: true, promote: true, outcome: 'retry and merge' },
   { savedAnchor: true, promote: true, outcome: 'cancel' },
@@ -22,6 +24,7 @@ it.each([
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request.clone());
     const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people/7/merge' && request.method === 'POST') return Response.json(mergeResult(profile(7, 5), 'stale'), { headers: { ETag: '"person-7-r5"' } });
     if (path === '/api/v1/people/directory') return Response.json({ people: savedAnchor && promote ? [] : [directoryPerson(savedAnchor ? 9 : 7)] });
     if (path === '/api/v1/participants/search') return Response.json({ rows: savedAnchor && promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') return Response.json(profile(9));
@@ -36,8 +39,9 @@ it.each([
   const controller = new RelationshipsController(client, () => 'UTC');
   const context = controller.personMergeContextSnapshot();
   const onReconcile = vi.fn(async () => undefined);
-  const onOpenPerson = vi.fn(), onClose = vi.fn();
+  const onOpenPerson = vi.fn(), onClose = vi.fn(() => { if (outcome === 'stale merge') view.unmount(); });
   const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
+  const banner = outcome === 'stale merge' ? render(FlashBanner) : null;
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Two/ : /Synthetic One/ }));
@@ -62,6 +66,16 @@ it.each([
       expect(onClose).toHaveBeenCalledOnce();
       return;
     }
+    if (outcome === 'stale merge') {
+      await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+      await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(await screen.findByText('People merged. Identity cache refresh failed.')).toBeDefined();
+      expect(onOpenPerson).toHaveBeenCalledWith(7);
+      expect(onReconcile).toHaveBeenLastCalledWith(context);
+      return;
+    }
     controller.query = 'Another person';
     await modal.onSuccess({ result: mergeResult(profile(7)), survivor: profile(7), responseETag: '"person-7-r5"' });
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
@@ -69,7 +83,7 @@ it.each([
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? outcome === 'retry and merge' ? 2 : 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
-  } finally { view.unmount(); controller.destroy(); }
+  } finally { view.unmount(); banner?.unmount(); dismissFlash(); controller.destroy(); }
 });
 
 function renderRepresentativeLink(savedAnchor: boolean) {
