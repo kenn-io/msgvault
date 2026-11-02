@@ -539,29 +539,23 @@ it('keeps feature rows during refresh and recovers from a later status failure',
   await screen.findByText('On');
 });
 
-it('preserves stored search defaults and offers only approved choices', async () => {
-  for (const [stored, label, semanticState] of [
-    ['full_text', 'Exact words', undefined],
-    ['semantic', 'Semantic', true]
-  ] as const) {
-    const doc = settingsDoc();
-    doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
-    const { client, operationsController, onStatusChange } = fixture(doc);
-    const { unmount } = render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
-    const trigger = await screen.findByRole('combobox', { name: /^Search opens in:/ });
-    expect(trigger.textContent).toContain(label);
-    expect(screen.queryByText('1 unsaved change')).toBeNull();
-    await fireEvent.click(trigger);
-    expect((screen.queryByRole('option', { name: 'Semantic' }) as HTMLButtonElement | null)?.disabled).toBe(semanticState);
-    unmount();
-  }
-});
-
-it('saves the selected search default and reports the appearance changes', async () => {
-  const { client, operationsController, onStatusChange, seen } = fixture();
+it.each(['full_text', 'semantic'])('offers approved search defaults and preserves stored %s until a new choice', async stored => {
+  const doc = settingsDoc();
+  doc.settings.find(item => item.key === 'web.default_search_mode')!.value = typed(stored);
+  const { client, operationsController, onStatusChange, seen } = fixture(doc);
   const onAppearanceSaved = vi.fn();
   render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced', onAppearanceSaved });
-  await chooseSelectOption(await screen.findByRole('combobox', { name: /^Search opens in:/ }), 'Best match');
+  const trigger = await screen.findByRole('combobox', { name: /^Search opens in:/ });
+  expect(trigger.textContent).toContain(stored === 'semantic' ? 'Semantic' : 'Exact words');
+  expect(screen.queryByText('1 unsaved change')).toBeNull();
+  await fireEvent.click(trigger);
+  const semantic = screen.queryByRole('option', { name: 'Semantic' });
+  if (stored === 'semantic') {
+    expect((semantic as HTMLButtonElement).disabled).toBe(true);
+    return;
+  }
+  expect(semantic).toBeNull();
+  await fireEvent.click(screen.getByRole('option', { name: 'Best match' }));
   await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
   await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(screen.queryByText(/^\d+ unsaved changes?/)).toBeNull());
