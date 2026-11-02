@@ -3083,3 +3083,35 @@ it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view r
     rendered.unmount(); state.destroy();
   }
 });
+
+it('shows a failed duplicate decision after leaving the queue and offers a return action', async () => {
+  let finish!: (response: Response) => void;
+  const posted = vi.fn();
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/17/review/reject')) { posted(); return new Promise<Response>(resolve => { finish = resolve; }); }
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
+    await screen.findByRole('button', { name: 'Undo' });
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
+    await screen.findByRole('main', { name: 'Messages' });
+    await waitFor(() => expect(posted).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    finish(Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status: 503 }));
+    await waitFor(() => expect(document.querySelector('.kit-flash-banner')?.textContent ?? '').toContain('Decision unavailable'));
+    const action = document.querySelector<HTMLButtonElement>('.kit-flash-banner__action');
+    expect(action).not.toBeNull();
+    await fireEvent.click(action!);
+    await screen.findByRole('heading', { name: 'Possible duplicates' });
+    await screen.findByRole('button', { name: 'Keep separate' });
+  } finally { rendered.unmount(); state.destroy(); }
+});

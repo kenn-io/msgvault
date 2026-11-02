@@ -291,6 +291,10 @@
     const error = await result;
     if (error) showFlash(error, { tone: 'danger', durationMs: 8000 });
   }
+  function flashDecisionError(message: string): void {
+    if (exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates) announceOperation(message);
+    else showFlash(message, { tone: 'danger', durationMs: 8000, action: { label: 'Review duplicates', onclick: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true }) } });
+  }
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
   function openOperationAuthority(target: RelatedOperationStatus): void {
@@ -367,7 +371,7 @@
     untrack(() => client),
     (patch) => commitNavigation(patch),
     async result => {
-      if (!result.ok && result.kind !== 'merge_required') announceOperation(result.message);
+      if (!result.ok && result.kind !== 'merge_required') flashDecisionError(result.message);
       if (result.ok) await reconcileIdentity();
     },
   );
