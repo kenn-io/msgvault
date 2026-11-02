@@ -8,6 +8,7 @@ import { ShellData } from './shell-data.svelte';
 interface Answers {
   views?: SavedView[];
   failing?: string[];
+  deletions?: Promise<Response>;
 }
 
 function setup(answers: Answers = {}) {
@@ -17,7 +18,7 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
-    if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+    if (path === '/api/v1/deletions') return answers.deletions ?? Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
       answers.views = answers.views?.filter(view => !path.endsWith(`/${view.id}`));
@@ -42,16 +43,29 @@ describe('ShellData', () => {
     it.each([
       { field: 'name', input: '  Q3 budget ', update: { name: 'Q3 budget' }, order: ['Invoices', 'Q3 budget'] },
       { field: 'description', input: '  Quarterly review  ', update: { description: 'Quarterly review' }, order: ['Budget', 'Invoices'] },
-    ])('edits $field with the current revision and replaces the row', async ({ field, input, update, order }) => {
-      const views = [view(1, 'Budget'), view(2, 'Invoices')];
-      const { data, requests } = setup({ views });
-      await data.refresh();
+    ])('edits $field with the current revision while the deletions refresh is stalled', async ({ field, input, update, order }) => {
+      const answers: Answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
+      const { data, requests } = setup(answers);
+      let finish!: (response: Response) => void;
+      const pending = new Promise<Response>(resolve => { finish = resolve; });
+      const resolved = vi.fn();
+      let editing: Promise<void> | undefined;
+      try {
+        await data.refresh();
+        answers.deletions = pending;
+        editing = (field === 'name' ? data.renameView(data.views[0]!, input) : data.describeView(data.views[0]!, input)).then(resolved);
 
-      expect(await (field === 'name' ? data.renameView(data.views[0]!, input) : data.describeView(data.views[0]!, input))).toBeUndefined();
-      const patch = requests.find((request) => request.method === 'PATCH')!;
-      expect(patch.headers.get('If-Match')).toBe('"saved-view-1-r1"');
-      expect(data.views.map(view => view.name)).toEqual(order);
-      expect(data.views.find(view => view.id === 1)).toMatchObject({ id: 1, revision: 2, ...update });
+        await vi.waitFor(() => expect(resolved).toHaveBeenCalledWith(undefined));
+        const patch = requests.find((request) => request.method === 'PATCH')!;
+        expect(patch.headers.get('If-Match')).toBe('"saved-view-1-r1"');
+        expect(await patch.clone().json()).toEqual(update);
+        expect(data.views.map(view => view.name)).toEqual(order);
+        expect(data.views.find(view => view.id === 1)).toMatchObject({ id: 1, revision: 2, ...update });
+      } finally {
+        data.stop();
+        finish(Response.json({ manifests: [] }));
+        await editing;
+      }
     });
 
     it('does not call the server for an unchanged or empty name', async () => {
@@ -60,40 +74,6 @@ describe('ShellData', () => {
       expect(await data.renameView(data.views[0]!, 'Budget')).toBeUndefined();
       expect(await data.renameView(data.views[0]!, '   ')).toBe('Enter a name.');
       expect(requests.some((request) => request.method === 'PATCH')).toBe(false);
-    });
-
-    it.each(['rename', 'describe'])('resolves %s while the deletions refresh is stalled', async operation => {
-      let saved = view(1, 'Budget');
-      let stallDeletions = false;
-      let finish!: (response: Response) => void;
-      const pending = new Promise<Response>(resolve => { finish = resolve; });
-      const data = new ShellData(createAPIClient(async (input, init) => {
-        const request = new Request(input, init);
-        const path = new URL(request.url).pathname;
-        if (path === '/api/v1/deletions') return stallDeletions ? pending : Response.json({ manifests: [] });
-        if (path === '/api/v1/saved-views/1' && request.method === 'PATCH') {
-          saved = { ...saved, ...await request.json(), revision: 2 };
-          return Response.json(saved);
-        }
-        if (path === '/api/v1/saved-views') return Response.json({ saved_views: [saved] });
-        return Response.json({}, { status: 404 });
-      }));
-      const resolved = vi.fn();
-      let editing: Promise<void> | undefined;
-      try {
-        await data.refresh();
-        stallDeletions = true;
-        editing = (operation === 'rename' ? data.renameView(saved, 'Q3 budget') : data.describeView(saved, 'Quarterly review')).then(resolved);
-
-        await vi.waitFor(() => expect(resolved).toHaveBeenCalledWith(undefined));
-        expect(data.views[0]).toMatchObject(operation === 'rename'
-          ? { name: 'Q3 budget', revision: 2 }
-          : { description: 'Quarterly review', revision: 2 });
-      } finally {
-        data.stop();
-        finish(Response.json({ manifests: [] }));
-        await editing;
-      }
     });
 
     it('hides a deleted view at once and deletes it for real on commit', async () => {

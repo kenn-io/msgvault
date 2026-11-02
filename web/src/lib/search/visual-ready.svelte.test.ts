@@ -4,12 +4,12 @@ import { createAPIClient } from '../api/client';
 import VisualReadiness from './VisualReadiness.test-support.svelte';
 
 it.each([
-  { name: 'no generation', status: 200, body: {}, ready: false },
-  { name: 'inactive generation', status: 200, body: { generation: { state: 'building', consented: true } }, ready: false },
-  { name: 'active consented generation', status: 200, body: { generation: { state: 'active', consented: true } }, ready: true },
-])('$name', async ({ status, body, ready }) => {
+  { name: 'no generation', body: {}, ready: false },
+  { name: 'inactive generation', body: { generation: { state: 'building', consented: true } }, ready: false },
+  { name: 'active consented generation', body: { generation: { state: 'active', consented: true } }, ready: true },
+])('reports visual search readiness as $ready for $name', async ({ body, ready }) => {
   vi.useFakeTimers();
-  const fetchFn = vi.fn<typeof fetch>(async () => Response.json(body, { status }));
+  const fetchFn = vi.fn<typeof fetch>(async () => Response.json(body));
   const view = render(VisualReadiness, { client: createAPIClient(fetchFn) });
   try {
     await vi.advanceTimersByTimeAsync(0);

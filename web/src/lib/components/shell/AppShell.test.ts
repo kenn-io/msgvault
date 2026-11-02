@@ -2518,7 +2518,7 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('shows removable filename and type chips in grouped and ungrouped Files', async () => {
+  it('shows filename and type chips in grouped and ungrouped Files', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const groupRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -3318,7 +3318,7 @@ it('reloads a failed source job when Sources is already open', async () => {
   }
 });
 
-it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace despite an old status authority', async category => {
+it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace with the requested authority', async category => {
   window.history.replaceState(null, '', category === 'search' ? '/?workspace=files' : '/?workspace=sources');
   const state = new ExploreState(window);
   state.current.settingsAuthority = category === 'search' ? '' : 'visual_attachments';
@@ -3335,12 +3335,14 @@ it.each(['sources', 'carddav', 'search'])('opens %s settings from its workspace 
     render: () => '<div></div>',
     setup: () => { requests.push(getRequest()); }
   }));
-  const view = render(AppShell, { client, state, ...(category === 'carddav' ? { settings: settings as never } : {}) });
-  if (category !== 'search') await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example Slack' : 'Details for contacts@example.com' }));
-  await fireEvent.click(await screen.findByRole('button', { name: category === 'search' ? 'Set up' : category === 'sources' ? 'Edit in Settings › Sources' : 'Open Settings › Contacts' }));
-  await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: category === 'search' ? 'visual_attachments' : '' }));
-  if (category === 'carddav') await waitFor(() => expect(requests).toEqual([expect.objectContaining({ connection: 'work' })]));
-  view.unmount(); state.destroy();
+  const visual = new IntegrationReadiness(async () => undefined);
+  const view = render(AppShell, { props: { client, state, ...(category === 'carddav' ? { settings: settings as never } : {}) }, context: new Map([[visualReadinessKey, visual]]) });
+  try {
+    if (category !== 'search') await fireEvent.click(await screen.findByRole('button', { name: category === 'sources' ? 'Details for Example Slack' : 'Details for contacts@example.com' }));
+    await fireEvent.click(await screen.findByRole('button', { name: category === 'search' ? 'Set up' : category === 'sources' ? 'Edit in Settings › Sources' : 'Open Settings › Contacts' }));
+    await waitFor(() => expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: category, settingsAuthority: category === 'search' ? 'visual_attachments' : '' }));
+    if (category === 'carddav') await waitFor(() => expect(requests).toEqual([expect.objectContaining({ connection: 'work' })]));
+  } finally { view.unmount(); visual.dispose(); state.destroy(); }
 });
 
 it.each(['', 'invoice'])('clears Files filters and a pending filename edit from %j', async filename => {
