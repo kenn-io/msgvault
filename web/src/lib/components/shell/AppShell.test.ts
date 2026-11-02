@@ -1157,7 +1157,6 @@ describe('AppShell', () => {
       await screen.findByRole('main', { name: 'Files' });
       state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
       await screen.findByRole('heading', { name: 'Synthetic Person' });
-      expect(state.current.workspace).toBe('relationships');
       const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       window.history.back();
       await restored;

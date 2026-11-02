@@ -14,7 +14,6 @@ it.each([
   { savedAnchor: false, promote: true, outcome: 'read failure' }
 ])('merges profiles with saved anchor=$savedAnchor, promotion=$promote, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
   const requests: Request[] = [];
-  const links: unknown[] = [];
   let failProfile = outcome === 'retry and merge' || outcome === 'read failure';
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -23,7 +22,6 @@ it.each([
     if (path === '/api/v1/people/directory') return Response.json({ people: savedAnchor && promote ? [] : [directoryPerson(savedAnchor ? 9 : 7)] });
     if (path === '/api/v1/participants/search') return Response.json({ rows: savedAnchor && promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') return Response.json(profile(9));
-    if (path === '/api/v1/identity/links') { links.push(await request.json()); return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
     if (path === '/api/v1/people/7' || path === '/api/v1/people/9') {
       if (outcome === 'unreadable saved profile') return Response.json({ message: 'Target missing' }, { status: 404 });
       if (path.endsWith('/9') && failProfile) { failProfile = false; return Response.json({ error: 'unavailable' }, { status: 503 }); }

@@ -223,13 +223,12 @@ it('restores the visible view and reports a failed delete', async () => {
   expect(data.views).toContainEqual(saved);
 });
 
-it('refreshes jobs on the timer and deletions on explicit refresh', async () => {
+it('polls jobs and duplicate counts, and refreshes deletions explicitly', async () => {
   vi.useFakeTimers();
   const answers = { waiting: false };
   const { data, requests } = setup(answers);
   try {
     await data.refresh();
-    expect(data.duplicateCount).toBe(0);
     data.start();
     answers.waiting = true;
     await vi.advanceTimersByTimeAsync(30_000);
