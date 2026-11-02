@@ -179,6 +179,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "conversation_anchor_not_found", "Anchor message is not in this conversation")
 		return
 	}
+	s.fillStoreSenderAuth(r.Context(), window.Messages)
 	messages := make([]MessageDetail, 0, len(window.Messages))
 	for _, message := range window.Messages {
 		detail := MessageDetail{

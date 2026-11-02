@@ -386,7 +386,7 @@ import (
 // 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
-// 3.35.0 adds archived calendar occurrence listing.
+// 3.35.0 adds archived calendar occurrence listing and sender_auth metadata to message reads.
 const APISchemaVersion = "3.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
