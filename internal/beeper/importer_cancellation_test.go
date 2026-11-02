@@ -154,15 +154,16 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			_, _, err = imp.obs.services.resolveBridge(ctx, "telegram", "Telegram", "telegram")
 			require.NoError(err)
 
-			// Each cached resolver still checks legacy identifier adoption in
-			// a transaction. Roster replacement follows those checks, then the
-			// first anchor classification begins with the import context.
-			when, at := logMessage("sql tx begin"), count+2
+			// Room policy, route proof and the member count each commit first.
+			// Each cached resolver then checks legacy identifier adoption in a
+			// transaction. Roster replacement and refreshed route proof follow,
+			// then the first anchor classification begins with the import context.
+			when, at := logMessage("sql tx begin"), count+6
 			wantObserved := 0
 			if tc.afterCapture {
 				// Cancel after the first observation's transaction commits,
 				// before its result can start identity matching transactions.
-				when, at = logMessage("sql tx commit"), count+3
+				when, at = logMessage("sql tx commit"), count+7
 				wantObserved = 1
 			}
 			handler := installCancelOnLog(t, cancel, at, when)

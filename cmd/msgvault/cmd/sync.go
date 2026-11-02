@@ -72,7 +72,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageErr(cmd, err)
 	}
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openConversationPolicyWriterForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}

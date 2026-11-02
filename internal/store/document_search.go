@@ -619,7 +619,7 @@ func documentSearchValidityForConsent(consentName string) string {
 		AND ` + documentRoleScopeSQL(attachment, "COALESCE((SELECT include_inline FROM document_extraction_profiles WHERE id = ds.target_profile_id), FALSE)") + `
 		AND o.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		AND ` + attachment + `.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
-		AND ` + LiveMessagesWhere(message, true) + `
+		AND ` + LiveMessagesWhere(message, true) + ` AND ` + FullMessageWhere(message) + `
 		AND (` + attachment + `.content_hash = ` + head + `.canonical_blob_hash
 		     OR (COALESCE(` + attachment + `.content_hash, '') = ''
 		         AND ` + attachment + `.storage_path =

@@ -244,8 +244,18 @@ func (s *Store) AcquireSourceRemovalLockContext(ctx context.Context, sourceID in
 // disables the pool-wide 30s statement_timeout for this tx (finding S1).
 // No-op timeout reset on SQLite.
 func (s *Store) RemoveSource(sourceID int64) error {
-	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		return s.removeSourceExec(ctx, tx, sourceID)
+	return s.runConversationPolicyMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		state, err := s.captureSourceConversationPolicyTx(ctx, tx, sourceID)
+		if err != nil {
+			return err
+		}
+		if err = s.removeSourceExec(ctx, tx, sourceID); err != nil {
+			return err
+		}
+		return s.finishConversationPolicyLifecycleTx(ctx, tx, state)
 	})
 }
 
@@ -266,21 +276,41 @@ func (s *Store) RemoveSource(sourceID int64) error {
 func (s *Store) RemoveSourceSerialized(
 	ctx context.Context, sourceID int64,
 ) (hadActiveSync bool, packedMappingsRemoved int64, err error) {
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyExclusive)
+		if err != nil {
+			return false, 0, err
+		}
+		defer release()
+	}
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return false, 0, fmt.Errorf("acquire connection: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 
-	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
-		return false, 0, fmt.Errorf("begin exclusive: %w", err)
+	var beginErr error
+	if pg, ok := s.dialect.(*PostgreSQLDialect); ok {
+		beginErr = pg.beginExclusive(ctx, conn, func() error { return s.LockPostgresConversationPolicyTx(ctx, conn, ConversationPolicyExclusive) })
+	} else {
+		beginErr = s.dialect.BeginExclusive(ctx, conn)
 	}
+	if beginErr != nil {
+		return false, 0, fmt.Errorf("begin exclusive: %w", beginErr)
+	}
+
 	committed := false
 	defer func() {
 		if !committed {
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
+
+	tx := &loggedTx{manualConn: conn, rebind: s.Rebind, attribution: &attributionLockState{exclusive: true}}
+	policyState, err := s.captureSourceConversationPolicyTx(ctx, tx, sourceID)
+	if err != nil {
+		return false, 0, err
+	}
 
 	if err := s.requireSourceRemovalAllowed(ctx, conn, sourceID); err != nil {
 		return false, 0, err
@@ -382,6 +412,10 @@ func (s *Store) RemoveSourceSerialized(
 			return hadActiveSync, 0, fmt.Errorf("count deleted packed blob mappings: %w", err)
 		}
 		packedMappingsRemoved += removed
+	}
+
+	if err := s.finishConversationPolicyLifecycleTx(ctx, tx, policyState); err != nil {
+		return hadActiveSync, 0, err
 	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {

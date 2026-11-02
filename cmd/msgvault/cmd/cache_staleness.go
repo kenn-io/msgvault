@@ -479,7 +479,7 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 				return cacheStalenessFailure(ctx, "cannot verify cached message population")
 			}
 		}
-		if !result.HasRelatedRowDrift || (!markerOnly && coveredCount != state.Stats.TotalMessages) {
+		if !result.HasRelatedRowDrift || (!markerOnly && coveredCount != state.ArchivedMessageCount) {
 			result.HasUpdated = true
 			result.FullRebuild = true
 		}
@@ -516,6 +516,15 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 	// mutation also bumps identity_revision below.
 	if ctx.Err() != nil {
 		return cacheStaleness{}
+	}
+	policyRevision, err := db.ConversationPolicyRevision(ctx)
+	if err != nil {
+		return cacheStalenessFailure(ctx, "cannot verify conversation policy revision")
+	}
+	if policyRevision != state.ConversationPolicyRevision {
+		result.FullRebuild = true
+		result.HasUsablePublication = false
+		reasons = append(reasons, "conversation policy changed")
 	}
 	accountIdentityRevision, err := db.AccountIdentityRevisionContext(ctx)
 	if err != nil {

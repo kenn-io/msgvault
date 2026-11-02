@@ -260,6 +260,9 @@ func writeSnapshotField(hasher hash.Hash, value []byte) {
 
 func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string, []any) {
 	where, args := buildSQLiteTextFilterConditions(e.dialect, scope.Filter)
+	if scope.ConversationID == nil {
+		where += " AND " + store.FullMessageWhere("m")
+	}
 	if scope.ConversationID != nil {
 		where += " AND m.conversation_id = ?"
 		args = append(args, *scope.ConversationID)
@@ -509,6 +512,7 @@ func (e *SQLiteEngine) ListConversations(
 	ctx context.Context, filter TextFilter,
 ) ([]ConversationRow, error) {
 	where, args := buildSQLiteTextFilterConditions(e.dialect, filter)
+	where += " AND " + store.FullMessageWhere("m")
 
 	// Sort clause.
 	var orderBy string
@@ -671,7 +675,7 @@ func (e *SQLiteEngine) TextAggregate(
 		return nil, err
 	}
 
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.FullMessageWhere("m")}
 	var args []any
 
 	if opts.SourceID != nil {
@@ -788,7 +792,7 @@ func sqliteFTSTextSearch(
 	}
 
 	conditions, args := appendSourceFilter(
-		[]string{"fts.messages_fts MATCH ?", textMsgTypeFilter(), store.LiveMessagesWhere("m", true)},
+		[]string{"fts.messages_fts MATCH ?", textMsgTypeFilter(), store.LiveMessagesWhere("m", true), store.FullMessageWhere("m")},
 		[]any{match}, "m.", sourceID, nil,
 	)
 
@@ -850,7 +854,7 @@ func (e *SQLiteEngine) GetTextStats(
 ) (*TotalStats, error) {
 	stats := &TotalStats{}
 
-	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false), store.FullMessageWhere("m")}
 	var args []any
 
 	if opts.SourceID != nil {

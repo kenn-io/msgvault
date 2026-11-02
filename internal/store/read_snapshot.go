@@ -64,7 +64,7 @@ func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 // ReadDBContext selects the snapshot only for its owning database.
 func ReadDBContext(ctx context.Context, db *sql.DB) SQLReader {
 	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == db {
-		return snapshot.tx.Tx
+		return snapshot.tx.callerTransaction()
 	}
 	return db
 }
