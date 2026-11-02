@@ -107,8 +107,7 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 	// Consume a backfill request only after this job settles. A late poll must
 	// preserve the request while running, then retry a recoverable failure once.
 	const pendingRetry = `docbank_attachment_processing.outcome = 'retry_requested'
- AND docbank_attachment_processing.fingerprint = excluded.fingerprint
- AND (docbank_attachment_processing.job_id = excluded.job_id OR docbank_attachment_processing.job_id = '')`
+ AND docbank_attachment_processing.fingerprint = excluded.fingerprint`
 	recoverable := nextActionAt.IsZero() && slices.Contains(DocbankRequeueOutcomes, d.Outcome)
 	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO docbank_attachment_processing
  (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) VALUES (?, ?, ?, ?, ?, ?)
