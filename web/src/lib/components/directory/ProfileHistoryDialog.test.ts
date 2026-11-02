@@ -85,7 +85,7 @@ describe('ProfileHistoryDialog', () => {
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } }],
         addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
         dates: [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, date_text: 'February 14', original_value: '--02-14', envelope: { ...currentEnvelope, id: 32 } }],
-        categories: [{ person_id: 7, normalized_value: 'current category', original_value: 'Current category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
+        categories: [{ person_id: 7, normalized_value: 'scheduled end category', original_value: 'Scheduled end category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
           person_id: 7, original_value: 'Past category', normalized_value: 'past category',
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
@@ -105,7 +105,7 @@ describe('ProfileHistoryDialog', () => {
     for (const title of ['Names', 'Contact points', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
-    expect.soft(screen.getByText('Current category').closest('details')).not.toBeNull();
+    expect.soft(screen.getByText('Scheduled end category').closest('details')).not.toBeNull();
     expect.soft(screen.getByText('Current Name').closest('li')?.textContent).toContain('Valid from:');
     expect.soft(screen.getByText('observed@example.test').closest('li')?.textContent).toContain('Source 12');
     const dateText = '(Jul|Aug) \\d{1,2}, 2026';

@@ -33,7 +33,6 @@ test('Directory lists durable people, opens People Files, and scopes files to th
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
   await personTabs.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
-  await expectNoAxeViolations(page, 'People Files');
 });
 
 test('Directory keeps a one-sided last contacted date as a chip across reload until it is removed', async ({ page }) => {

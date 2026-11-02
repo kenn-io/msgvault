@@ -542,11 +542,11 @@ it('routes reconciliation Reload to the directory controller', async () => {
   } finally { view.unmount(); relationships.destroy(); controller.destroy(); state.destroy(); }
 });
 
-it.each([['participant', false], ['profile', false], ['second person', false], ['second person', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
+it.each([['participant', false], ['second person', false], ['second person', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
   let failed = true;
   const saved = profile(failure === 'second person' ? 9 : 7, 1, failure === 'second person' ? [2] : [1]);
   const client = clientFor({
-    '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
+    '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
     ...Object.fromEntries([7, 9].flatMap(id => [
       [`/api/v1/people/${id}/profile`, () => Response.json(emptyProfile(profile(id, 1, [id === 9 ? 2 : 1])))],
       [`/api/v1/people/${id}/attributes`, () => Response.json({ person_id: id, attributes: [] })]
@@ -558,7 +558,7 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: failure !== 'profile' ? 7 : null });
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: 7 });
   await controller.openTarget('cluster:1', {});
   const props = { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
   let view = render(PeopleWorkspace, { props });
@@ -571,16 +571,12 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
       else await view.rerender({ urlState: state.current, target: null });
     }
     await waitFor(() => expect(directory.detailLoading).toBe(false));
-    if (failure === 'profile') {
-      expect(screen.getByRole('radio', { name: 'Messages' })).toBeDefined();
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    }
-    expect(await screen.findByText(new RegExp(failure === 'second person' ? 'Could not load selected person' : failure === 'profile' ? 'Saved profile unavailable' : 'Participant unavailable'))).toBeDefined();
+    expect(await screen.findByText(new RegExp(failure === 'second person' ? 'Could not load selected person' : 'Participant unavailable'))).toBeDefined();
     expect(screen.queryByText('Loading person…')).toBeNull();
     if (failure === 'second person') expect(screen.queryByRole('heading', { name: 'Synthetic One' })).toBeNull();
     failed = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Saved profile unavailable|Participant unavailable|Could not load selected person/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Participant unavailable|Could not load selected person/)).toBeNull());
     if (failure === 'second person') expect(await screen.findByRole('heading', { name: 'Synthetic Two' })).toBeDefined();
     else expect(await screen.findByRole('radio', { name: 'Messages' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }

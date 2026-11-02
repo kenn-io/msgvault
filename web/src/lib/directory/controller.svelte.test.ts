@@ -22,7 +22,7 @@ function detailResponse(path: string, personID = 7): Response {
   if (path === `/api/v1/people/${personID}`) return Response.json({ id: personID, revision: 3 });
   if (path.endsWith('/profile')) return Response.json({ person: { id: personID, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
   if (path.endsWith('/attributes')) return Response.json({ person_id: personID, attributes: [] });
-  if (path.endsWith('/contact-state')) return Response.json({ person_id: personID, state: 'active' });
+  if (path.endsWith('/contact-state')) return Response.json({ person_id: personID, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false });
   if (path.endsWith('/employments')) return Response.json({ employments: [] });
   if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
   throw new Error(`unexpected detail path ${path}`);

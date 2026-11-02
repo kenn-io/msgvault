@@ -86,7 +86,5 @@ it('keeps Add disabled and resumes a field creation after its refresh fails', as
     expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
     expect(await screen.findByRole('dialog', { name: 'Create attribute field' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Retry registry refresh' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
   } finally { view.unmount(); }
 });

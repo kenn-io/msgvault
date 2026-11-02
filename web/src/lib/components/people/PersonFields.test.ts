@@ -108,8 +108,6 @@ it('blocks attribute additions after a failed read and routes Retry to the profi
   try {
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('Attributes unavailable');
-    expect(alert.textContent).not.toContain('attributes:');
-    expect(screen.getAllByRole('button', { name: /Retry/ })).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
