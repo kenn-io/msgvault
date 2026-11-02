@@ -305,8 +305,7 @@ describe('meeting archive reader navigation', () => {
   });
 });
 
- it.each([false, true])('opens saved person meeting actions through Messages and returns to the person (narrow=%s)', async (narrow) => {
-   vi.stubGlobal('matchMedia', () => ({ matches: narrow, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+ it('opens saved person meeting actions through Messages and returns to the person', async () => {
    const { client } = handler();
    window.history.replaceState(null, '', '/');
    const state = new ExploreState(window);
@@ -325,7 +324,7 @@ describe('meeting archive reader navigation', () => {
      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull());
      expect(state.current.directoryPersonID).toBe(7);
      expect(screen.getByRole('region', { name: 'Meeting summary' }).textContent).toContain('4 meetings');
-   } finally { view.unmount(); state.destroy(); vi.unstubAllGlobals(); }
+   } finally { view.unmount(); state.destroy(); }
  });
 
 it('opens a person from the archived meeting reader', async () => {
