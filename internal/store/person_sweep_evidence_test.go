@@ -65,6 +65,36 @@ func TestLoadPersonSweepWindowUsesExactDurableScope(t *testing.T) {
 	checks.Contains(sweepMessageIDs(window.Seeds), aliceMessage)
 }
 
+func TestPersonSweepHTMLOnlyEmailUsesFullBodyAndRehashesHTMLChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE sources SET source_type = 'gmail' WHERE id = ?`), f.sourceID)
+	require.NoError(err)
+	id := f.insertMessage(t, "html-only-evidence", "email", f.aliceID, time.Now().UTC())
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET snippet = ? WHERE id = ?`), "short provider preview", id)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, '', ?)`),
+		id, `<p>Full HTML-only evidence has important details.</p>`)
+	require.NoError(err)
+
+	first := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
+	assert.Contains(first.Excerpt, "Full HTML-only evidence has important details.")
+	assert.NotEqual("short provider preview", first.Excerpt)
+
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE message_bodies SET body_html = ? WHERE message_id = ?`),
+		`<p>Revised HTML-only evidence contains corrected details.</p>`, id)
+	require.NoError(err)
+	second := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
+	assert.Contains(second.Excerpt, "Revised HTML-only evidence contains corrected details.")
+	assert.NotEqual(first.ContentSHA256, second.ContentSHA256)
+	assert.NotEqual(first.SourceVersion, second.SourceVersion)
+}
+
 func TestPersonSweepDurableScopeMatchesResolver(t *testing.T) {
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, true)

@@ -465,6 +465,13 @@ the raw identity fields sent. `POST /api/v1/identity/scoring/consent` accepts
 `POST /api/v1/identity/scoring/revoke` accepts the same body to withdraw that
 fingerprint's consent without changing configuration.
 
+Optional mail kind authorization is separate. `GET /api/v1/mail/kind/status`
+returns configuration and exact disclosure readiness without any credential
+value. `POST /api/v1/mail/kind/consent` and `/api/v1/mail/kind/revoke` accept
+`{"disclosure_fingerprint":"<sha256>"}`. A grant must match the current enabled
+disclosure; revocation can name an older one. These owner-only endpoints do
+not make provider requests. See [mail kind configuration](configuration.md#mail-kind-consent).
+
 `POST /api/v1/identity/scoring/run` accepts `{}` or `{"limit":20}`. The limit
 defaults to the configured batch size and cannot exceed it. The daemon creates
 review suggestions and checks local blockers before sending eligible pairs to

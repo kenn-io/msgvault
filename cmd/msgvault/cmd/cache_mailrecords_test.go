@@ -154,3 +154,61 @@ func TestMailRecordsCachePinsBodySnapshot(t *testing.T) {
 	assertions.Equal("OLD", result.Rows[0][0])
 	assertions.True(cacheNeedsBuild(dbPath, analytics).FullRebuild, "a later body cannot be acknowledged by the older snapshot marker")
 }
+
+func TestMailRecordsCacheKeepsReceiptWithGenericSignInNavigation(t *testing.T) {
+	root := t.TempDir()
+	dbPath, analytics := filepath.Join(root, "archive.db"), filepath.Join(root, "analytics")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversation(source.ID, "orders", "Orders")
+	require.NoError(t, err)
+	bodyHTML := `<p>Your order B-43 is confirmed. Total: 1299.00 CHF. Sign in to view your order.</p><script type="application/ld+json">{"@context":"https://schema.org","@type":"Order","orderNumber":"B-43"}</script>`
+	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "navigation",
+		MessageType: "email", Subject: sql.NullString{String: "Your order is confirmed", Valid: true},
+		SentAt: sql.NullTime{Time: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Your order B-43 is confirmed. Total: 1299.00 CHF. Sign in to view your order.", Valid: true}, sql.NullString{String: bodyHTML, Valid: true}))
+
+	_, err = buildCache(dbPath, analytics, true)
+	require.NoError(t, err)
+	engine, err := query.NewArchiveDuckDBEngine(t.Context(), analytics)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	result, err := engine.QuerySQL(t.Context(), "SELECT message_id, kind, order_number FROM message_records")
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, []any{id, "order", "B-43"}, result.Rows[0])
+}
+
+func TestMailRecordsCacheKeepsInvoicesAndBookingsWithGenericSignIn(t *testing.T) {
+	root := t.TempDir()
+	dbPath, analytics := filepath.Join(root, "archive.db"), filepath.Join(root, "analytics")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversation(source.ID, "receipts", "Receipts")
+	require.NoError(t, err)
+	insert := func(key, text, jsonld string) int64 {
+		t.Helper()
+		id, insertErr := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: key,
+			MessageType: "email", Subject: sql.NullString{String: "Receipt", Valid: true},
+			SentAt: sql.NullTime{Time: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Valid: true}})
+		require.NoError(t, insertErr)
+		html := `<p>` + text + `</p><script type="application/ld+json">` + jsonld + `</script>`
+		require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: text, Valid: true}, sql.NullString{String: html, Valid: true}))
+		return id
+	}
+	invoice := insert("invoice", "Total 1299 CHF. Sign in to view your invoice.", `{"@context":"https://schema.org","@type":"Invoice","confirmationNumber":"INV-47","totalPaymentDue":{"value":1299,"currency":"CHF"}}`)
+	booking := insert("booking", "Confirmation number: ABC123. Sign in to manage your booking.", `{"@context":"https://schema.org","@type":"FlightReservation","reservationNumber":"ABC123"}`)
+	_, err = buildCache(dbPath, analytics, true)
+	require.NoError(t, err)
+	engine, err := query.NewArchiveDuckDBEngine(t.Context(), analytics)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	result, err := engine.QuerySQL(t.Context(), "SELECT message_id, kind, currency, confirmation_code FROM message_records ORDER BY message_id")
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, []any{invoice, "invoice", "CHF", nil}, result.Rows[0])
+	assert.Equal(t, []any{booking, "flight", nil, "ABC123"}, result.Rows[1])
+}

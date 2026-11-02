@@ -448,11 +448,10 @@ func (s *Store) hydratePersonSweepMessageSet(
 	args = append(args, boundArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
 		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''),
-		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(m.snippet, ''),
+		       COALESCE(m.subject, ''), COALESCE(m.snippet, ''),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at), m.archived_at
 		FROM messages m JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources s ON s.id = m.source_id
-		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id IN (%s) AND %s AND %s AND (%s)%s
 		ORDER BY m.id`, placeholders, LiveMessagesWhere("m", true), laneSQL, predicate,
 		boundSQL)), args...)
@@ -461,16 +460,16 @@ func (s *Store) hydratePersonSweepMessageSet(
 	}
 	defer func() { _ = rows.Close() }()
 	type messageRow struct {
-		id, sourceID                                        int64
-		sourceType, sourceMessageID, subject, body, snippet string
-		event, recorded                                     time.Time
+		id, sourceID                                  int64
+		sourceType, sourceMessageID, subject, snippet string
+		event, recorded                               time.Time
 	}
 	messageRowsByID := make(map[int64]messageRow, len(queryIDs))
 	messageIDs := make([]int64, 0, len(queryIDs))
 	for rows.Next() {
 		var row messageRow
 		var event, recorded requiredTimestamp
-		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceType, &row.sourceMessageID, &row.subject, &row.body, &row.snippet, &event, &recorded); err != nil {
+		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceType, &row.sourceMessageID, &row.subject, &row.snippet, &event, &recorded); err != nil {
 			return nil, nil, fmt.Errorf("scan person sweep message: %w", err)
 		}
 		row.event, row.recorded = event.Time.UTC(), recorded.Time.UTC()
@@ -479,6 +478,9 @@ func (s *Store) hydratePersonSweepMessageSet(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("close person sweep messages: %w", err)
 	}
 	provenance, err := s.PersonProvenanceForMessages(ctx, messageIDs, resolution)
 	if err != nil {
@@ -494,12 +496,20 @@ func (s *Store) hydratePersonSweepMessageSet(
 		if prov == nil {
 			continue
 		}
+		var bodyText, bodyHTML sql.NullString
+		err := s.db.QueryRowContext(ctx, s.Rebind(
+			`SELECT body_text, body_html FROM message_bodies WHERE message_id = ?`), row.id,
+		).Scan(&bodyText, &bodyHTML)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, fmt.Errorf("read person sweep message body %d: %w", row.id, err)
+		}
+		body := searchableEmailBodyText(bodyText.String, bodyHTML.String)
 		subjectPersonID, directness := personSweepAuthorship(
 			personID, prov, lane == peoplesweep.SourceConversationText,
 			personSweepSourceAuthenticatesSender(row.sourceType))
-		text := canonicalSweepMessageText(row.subject, row.body, row.snippet)
+		text := canonicalSweepMessageText(row.subject, body, row.snippet)
 		if slices.Contains(prov.Roles, personscope.RoleFrom) {
-			body, _ := preprocess.Preprocess("", row.body, 0, preprocess.Config{
+			body, _ = preprocess.Preprocess("", body, 0, preprocess.Config{
 				StripQuotes: true, StripSignatures: true, StripHTML: true,
 				StripBase64: true, CollapseWhitespace: true,
 			})

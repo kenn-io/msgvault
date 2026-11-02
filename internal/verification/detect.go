@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/html"
+	"golang.org/x/text/currency"
 )
 
 // Input contains complete canonical content, before excerpts or pagination.
@@ -80,12 +81,14 @@ var (
 	tokenPattern                     = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
 	codeWordPattern                  = regexp.MustCompile(`\bcode\b`)
 	oneTimeCredentialPattern         = regexp.MustCompile(`^\s*(?:(?:verification|security|login|sign[ -]in|authentication|access)\s+)?(?:code|password|passcode|otp|pin)\b`)
-	transactionalReferenceBeforeCode = regexp.MustCompile(`\b(?:order|tracking|shipment|invoice|reservation|booking)\s*(?:number|no\.?|id|code|#)?\s*[:#-]?\s*(?:is\s+)?$`)
-	transactionalReferenceAfterCode  = regexp.MustCompile(`^\s*(?:[.,:;#-]\s*)?(?:is\s+)?(?:your\s+)?(?:order|tracking|shipment|invoice|reservation|booking)\s*(?:number|no\.?|id|code)?\b`)
+	transactionalReferenceBeforeCode = regexp.MustCompile(`\b(?:order|tracking|shipment|invoice|reservation|booking|confirmation)\s*(?:number|no\.?|id|code|#)?\s*[:#-]?\s*(?:is\s+)?$`)
+	transactionalReferenceAfterCode  = regexp.MustCompile(`^\s*(?:[.,:;#-]\s*)?(?:is\s+)?(?:your\s+)?(?:order|tracking|shipment|invoice|reservation|booking|confirmation)\s*(?:number|no\.?|id|code)?\b`)
 	reverseCodeBeforeCuePattern      = regexp.MustCompile(`(?i)\b(?:[a-z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[a-z0-9]{4,8})\s+$`)
 	numericDatePattern               = regexp.MustCompile(`\b(?:[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{4})\b`)
 	decimalAmountPattern             = regexp.MustCompile(`\b[0-9]+[.,][0-9]+\b`)
-	moneyAmountPattern               = regexp.MustCompile(`(?i)(?:\p{Sc}\s*|\b(?:USD|CAD|EUR|GBP|JPY)\s+)[0-9][0-9.,]*|\b[0-9][0-9.,]*\s*(?:USD|CAD|EUR|GBP|JPY)\b`)
+	moneySymbolAmountPattern         = regexp.MustCompile(`\p{Sc}\s*[0-9][0-9.,]*`)
+	isoCurrencyBeforeAmountPattern   = regexp.MustCompile(`(?i)\b([a-z]{3})\s+[0-9][0-9.,]*\b`)
+	isoCurrencyAfterAmountPattern    = regexp.MustCompile(`(?i)\b[0-9][0-9.,]*\s*([a-z]{3})\b`)
 	promotionalCodePattern           = regexp.MustCompile(`\b(?:coupon|promo(?:tional)?|discount)\s+code\b|\b[0-9]{1,3}\s*(?:%|percent)\s*(?:off|discount)\b`)
 	expiryPattern                    = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
 )
@@ -190,6 +193,39 @@ func hasTransactionalReference(text string, start, end int) bool {
 	before := text[max(0, start-320):start]
 	after := text[end:min(len(text), end+320)]
 	return transactionalReferenceBeforeCode.MatchString(before) || transactionalReferenceAfterCode.MatchString(after)
+}
+
+func moneyAmountSpans(text string) [][]int {
+	spans := moneySymbolAmountPattern.FindAllStringIndex(text, -1)
+	for _, pattern := range []*regexp.Regexp{isoCurrencyBeforeAmountPattern, isoCurrencyAfterAmountPattern} {
+		for _, loc := range pattern.FindAllStringSubmatchIndex(text, -1) {
+			if len(loc) < 4 || loc[2] < 0 {
+				continue
+			}
+			code := strings.ToUpper(text[loc[2]:loc[3]])
+			if _, err := currency.ParseISO(code); err == nil {
+				spans = append(spans, []int{loc[0], loc[1]})
+			}
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i][0] != spans[j][0] {
+			return spans[i][0] < spans[j][0]
+		}
+		return spans[i][1] < spans[j][1]
+	})
+	merged := spans[:0]
+	for _, span := range spans {
+		if len(merged) == 0 || span[0] > merged[len(merged)-1][1] {
+			merged = append(merged, span)
+			continue
+		}
+		last := merged[len(merged)-1]
+		if span[1] > last[1] {
+			last[1] = span[1]
+		}
+	}
+	return merged
 }
 
 func containedInSpan(spans [][]int, start, end int) bool {
@@ -314,7 +350,7 @@ func credentialURLParts(path string, query url.Values) (endpoint, opaque, payloa
 		endpoint = endpoint || credentialKey
 		credentialKey = credentialKey || slices.Contains([]string{"code", "id", "ticket", "key", "nonce", "state"}, strings.ToLower(key))
 		for _, value := range values {
-			opaque = opaque || tokenPattern.MatchString(value)
+			opaque = opaque || credentialKey && tokenPattern.MatchString(value)
 			payload = payload || credentialKey && strings.TrimSpace(value) != ""
 		}
 	}
@@ -472,7 +508,7 @@ func Detect(in Input) *Finding {
 		var dateSpans, moneySpans, decimalAmountSpans [][]int
 		if len(genericSignInMatches) > 0 {
 			dateSpans = numericDatePattern.FindAllStringIndex(text, -1)
-			moneySpans = moneyAmountPattern.FindAllStringIndex(text, -1)
+			moneySpans = moneyAmountSpans(text)
 			decimalAmountSpans = decimalAmountPattern.FindAllStringIndex(text, -1)
 		}
 		if len(matches) > 0 {

@@ -4405,6 +4405,28 @@ cache files. With remote configuration, the remote server reports its own cache 
 
 ---
 
+## mail kind
+
+Manage the separate disclosure and consent for optional mail kind decisions:
+
+```bash
+msgvault mail kind status [--json]
+msgvault mail kind consent <disclosure-fingerprint> [--json]
+msgvault mail kind revoke <disclosure-fingerprint> [--json]
+```
+
+`status` reports whether configuration, a daemon-side credential, and exact
+mail-specific consent are ready. It shows the provider endpoint, model,
+retention declaration, thresholds, packet fields, fingerprint, and any blocker.
+It never prints a credential value. `--json` returns the complete status.
+
+Review that disclosure before granting its fingerprint. Repeating a grant or
+revocation is a no-op; revocation can target an older fingerprint after a
+configuration change. Consent for identity scoring or other processing does
+not authorize mail kind decisions. These owner commands use the daemon and
+are unavailable in agent-delegated CLI mode. They do not send a provider
+request. See [mail kind configuration](configuration.md#mail-kind-consent).
+
 ## query
 
 Run arbitrary SQL against the Parquet analytics cache using an in-memory DuckDB engine.

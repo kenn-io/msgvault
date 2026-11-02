@@ -599,6 +599,15 @@ CREATE TABLE IF NOT EXISTS provider_consents (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_consents_active
     ON provider_consents(purpose, fingerprint) WHERE revoked_at IS NULL;
 
+-- Exact immutable disclosure for the separate optional mail-kind purpose.
+CREATE TABLE IF NOT EXISTS mail_kind_profiles (
+    fingerprint TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    model TEXT NOT NULL,
+    policy_json TEXT NOT NULL
+);
+
 -- External person enrichment is a distinct egress purpose. Each immutable
 -- runtime policy requires its own exact grant; inference consent cannot
 -- authorize it even if a fingerprint were ever to coincide.

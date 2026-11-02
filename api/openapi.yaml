@@ -7541,6 +7541,98 @@ components:
         - query_parameters
         - request_properties
       type: object
+    MailKindConsentRequest:
+      additionalProperties: false
+      properties:
+        disclosure_fingerprint:
+          type: string
+      required:
+        - disclosure_fingerprint
+      type: object
+    MailKindConsentResponse:
+      additionalProperties: true
+      properties:
+        changed:
+          type: boolean
+        consent_active:
+          type: boolean
+        disclosure_fingerprint:
+          type: string
+      required:
+        - disclosure_fingerprint
+        - consent_active
+        - changed
+      type: object
+    MailKindDisclosure:
+      additionalProperties: true
+      properties:
+        credential_env:
+          type: string
+        data_fields:
+          type: string
+        endpoint:
+          type: string
+        minimum_choice_probability:
+          format: double
+          type: number
+        minimum_transactional:
+          format: double
+          type: number
+        model_id:
+          type: string
+        packet_schema:
+          type: string
+        policy_version:
+          type: string
+        provider:
+          type: string
+        question_version:
+          type: string
+        retention_declaration:
+          type: string
+      required:
+        - provider
+        - endpoint
+        - model_id
+        - credential_env
+        - packet_schema
+        - data_fields
+        - retention_declaration
+        - policy_version
+        - question_version
+        - minimum_transactional
+        - minimum_choice_probability
+      type: object
+    MailKindStatus:
+      additionalProperties: true
+      properties:
+        batch_size:
+          format: int64
+          type: integer
+        blocker:
+          type: string
+        consent_active:
+          type: boolean
+        credential_available:
+          type: boolean
+        data_fields:
+          type: string
+        disclosure:
+          $ref: "#/components/schemas/MailKindDisclosure"
+        disclosure_fingerprint:
+          type: string
+        enabled:
+          type: boolean
+        ready:
+          type: boolean
+      required:
+        - enabled
+        - ready
+        - credential_available
+        - consent_active
+        - batch_size
+        - data_fields
+      type: object
     Manifest:
       additionalProperties: false
       properties:
@@ -17033,7 +17125,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.36.0
+  version: 3.37.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24316,6 +24408,123 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/mail/kind/consent:
+    post:
+      operationId: mailKindConsent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailKindConsentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailKindConsentResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Record mail kind consent for an exact disclosure
+      tags:
+        - API
+  /api/v1/mail/kind/revoke:
+    post:
+      operationId: mailKindRevoke
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailKindConsentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailKindConsentResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Record mail kind revoke for an exact disclosure
+      tags:
+        - API
+  /api/v1/mail/kind/status:
+    get:
+      operationId: getMailKindStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailKindStatus"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get optional mail kind configuration and exact disclosure
       tags:
         - API
   /api/v1/mcp/capabilities:

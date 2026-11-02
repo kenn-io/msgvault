@@ -40,8 +40,8 @@ var (
 )
 
 const (
-	multimodalStatusSubcommand = "status"
-	multimodalBuildSubcommand  = "build"
+	statusSubcommand          = "status"
+	multimodalBuildSubcommand = "build"
 )
 
 var multimodalCmd = &cobra.Command{Use: "multimodal", Short: "Manage and search visual attachment embeddings"}
@@ -158,7 +158,7 @@ var multimodalSearchCmd = &cobra.Command{
 }
 
 var multimodalStatusCmd = &cobra.Command{
-	Use: multimodalStatusSubcommand, Short: "Show visual attachment embedding status", Args: cobra.NoArgs,
+	Use: statusSubcommand, Short: "Show visual attachment embedding status", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {

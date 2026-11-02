@@ -50,6 +50,9 @@ func TestDetectCorpus(t *testing.T) {
 		{"long DM", strings.Repeat("ordinary text ", 100) + "Verification code: 482913", "otp_code", "482913", 0},
 		{"cue only", "Your verification code will arrive separately", "otp_code", "", 0},
 		{"generic sign-in navigation", "Your order is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders", "", "", 0},
+		{"confirmation number before generic sign-in", "Confirmation number: ABC123. Sign in to manage your booking.", "", "", 0},
+		{"integer CHF total before generic sign-in", "Total 1299 CHF. Sign in to view your invoice.", "", "", 0},
+		{"CHF total before generic sign-in", "Your order is confirmed. Total: 1299.00 CHF. Sign in to view your order.", "", "", 0},
 		{"order number with generic sign-in", "Your order number is 482913. Sign in to view your order.", "", "", 0},
 		{"generic sign-in with order date", "Order date: 2026-11-03. Sign in to view your order.", "", "", 0},
 		{"reservation code with generic sign-in", "Reservation code: ABC123. Sign in to manage your booking.", "", "", 0},
@@ -338,6 +341,7 @@ func TestURLsDoNotSupplyTheirOwnCue(t *testing.T) {
 	} {
 		t.Run(body, func(t *testing.T) { assert.Nil(t, Detect(Input{BodyText: body})) })
 	}
+	assert.Nil(t, Detect(Input{BodyText: "Your order is confirmed. Sign in to view your order: https://shop.example.test/login?redirect=order_confirmation_ABC123456789"}))
 	f := Detect(Input{BodyText: "https://example.com/sign-in?token=abcdefghijklmnop"})
 	require.NotNil(t, f)
 	assert.Equal(t, []Secret{{Kind: "link", Value: "https://example.com/sign-in?token=abcdefghijklmnop", Host: "example.com"}}, f.Values)

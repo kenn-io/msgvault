@@ -149,21 +149,51 @@ func TestMessageRecordsDaemonAndEmbeddedScope(t *testing.T) {
 	assert.NotContains(task5SDKResultText(result), "654321")
 }
 
-func TestMessageRecordsKeepsOrdersWithReferenceAndCouponText(t *testing.T) {
+func TestMessageRecordsKeepsRecordsWithGenericSignIn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	for _, tc := range []struct {
-		name, bodyText, orderNumber string
+		name, bodyText, kind, field, value, jsonld string
 	}{
 		{
-			name:        "order number before sign-in navigation",
-			bodyText:    "Your order number is 482913. Sign in to view your order.",
-			orderNumber: "B-45",
+			name:     "order number before sign-in navigation",
+			bodyText: "Your order number is 482913. Sign in to view your order.",
+			kind:     "order",
+			field:    "order_number",
+			value:    "B-45",
+			jsonld:   `{"@context":"https://schema.org","@type":"Order","orderNumber":"B-45"}`,
 		},
 		{
-			name:        "one-time purchase with coupon code",
-			bodyText:    "Your one-time purchase is confirmed. Use coupon code SAVE20.",
-			orderNumber: "B-46",
+			name:     "one-time purchase with coupon code",
+			bodyText: "Your one-time purchase is confirmed. Use coupon code SAVE20.",
+			kind:     "order",
+			field:    "order_number",
+			value:    "B-46",
+			jsonld:   `{"@context":"https://schema.org","@type":"Order","orderNumber":"B-46"}`,
+		},
+		{
+			name:     "confirmation number before booking sign-in navigation",
+			bodyText: "Confirmation number: ABC123. Sign in to manage your booking.",
+			kind:     "flight",
+			field:    "confirmation_code",
+			value:    "ABC123",
+			jsonld:   `{"@context":"https://schema.org","@type":"FlightReservation","reservationNumber":"ABC123"}`,
+		},
+		{
+			name:     "integer CHF invoice total before sign-in navigation",
+			bodyText: "Total 1299 CHF. Sign in to view your invoice.",
+			kind:     "invoice",
+			field:    "currency",
+			value:    "CHF",
+			jsonld:   `{"@context":"https://schema.org","@type":"Invoice","confirmationNumber":"INV-47","totalPaymentDue":{"value":1299,"currency":"CHF"}}`,
+		},
+		{
+			name:     "CHF receipt total with generic sign-in navigation",
+			bodyText: "Your order is confirmed. Total: 1299.00 CHF. Sign in to view your order.",
+			kind:     "order",
+			field:    "order_number",
+			value:    "B-47",
+			jsonld:   `{"@context":"https://schema.org","@type":"Order","orderNumber":"B-47"}`,
 		},
 	} {
 		t.Logf("checking case %s", tc.name)
@@ -172,7 +202,7 @@ func TestMessageRecordsKeepsOrdersWithReferenceAndCouponText(t *testing.T) {
 			st, "reader@example.test", tc.name, "Your order receipt", tc.bodyText,
 		)
 		require.NoError(err)
-		bodyHTML := `<p>` + tc.bodyText + `</p><script type="application/ld+json">{"@context":"https://schema.org","@type":"Order","orderNumber":"` + tc.orderNumber + `"}</script>`
+		bodyHTML := `<p>` + tc.bodyText + `</p><script type="application/ld+json">` + tc.jsonld + `</script>`
 		require.NoError(st.UpsertMessageBody(messageID,
 			sql.NullString{String: tc.bodyText, Valid: true},
 			sql.NullString{String: bodyHTML, Valid: true},
@@ -189,8 +219,8 @@ func TestMessageRecordsKeepsOrdersWithReferenceAndCouponText(t *testing.T) {
 		result.StructuredContent = structured
 		require.False(result.IsError, task5SDKResultText(result))
 		value := task5StructuredAs[messageRecordsResponse](t, result)
-		assert.Equal("order", value.Kind)
+		assert.Equal(tc.kind, value.Kind)
 		require.Len(value.Records, 1)
-		assert.Equal(tc.orderNumber, value.Records[0].Fields["order_number"].Value)
+		assert.Equal(tc.value, value.Records[0].Fields[tc.field].Value)
 	}
 }

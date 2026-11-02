@@ -138,6 +138,10 @@ type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
+type MailKindConsentBody = MailKindConsentRequest
+
+type MailKindRevokeBody = MailKindConsentRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest

@@ -5767,6 +5767,94 @@ func (o *SearchIntegrationTasksRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// MailKindConsentRequestOptions is the options needed to make a request to MailKindConsent.
+type MailKindConsentRequestOptions struct {
+	Body *MailKindConsentBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *MailKindConsentRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MailKindConsentRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *MailKindConsentRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MailKindConsentRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MailKindConsentRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MailKindRevokeRequestOptions is the options needed to make a request to MailKindRevoke.
+type MailKindRevokeRequestOptions struct {
+	Body *MailKindRevokeBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *MailKindRevokeRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MailKindRevokeRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *MailKindRevokeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MailKindRevokeRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MailKindRevokeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SearchMediaRequestOptions is the options needed to make a request to SearchMedia.
 type SearchMediaRequestOptions struct {
 	Query *SearchMediaQuery
