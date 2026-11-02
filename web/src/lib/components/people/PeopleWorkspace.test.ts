@@ -152,7 +152,10 @@ it.each([
   const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
   const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    if (selectedID !== null) expect(await screen.findByText('Absorbed alias')).toBeDefined();
+    if (selectedID !== null) {
+      await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+      expect(await screen.findByText('Absorbed alias')).toBeDefined();
+    }
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
     if (outcome === 'merges') {
