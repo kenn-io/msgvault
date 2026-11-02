@@ -293,10 +293,10 @@ describe('PersonBriefCard', () => {
       if (request.method === 'PUT') { writes.push(await request.json()); return Response.json(enrollment(false)); }
       return archive(request);
     });
-    const onOpenSettings = vi.fn();
-    render(PersonBriefCard, { client, personID: 7, onSetUp: () => onOpenSettings('enrichment') });
+    const onSetUp = vi.fn();
+    render(PersonBriefCard, { client, personID: 7, onSetUp });
     await fireEvent.click(screen.getByRole('button', { name: 'Set up Briefs' }));
-    expect(onOpenSettings).toHaveBeenCalledWith('enrichment');
+    expect(onSetUp).toHaveBeenCalledOnce();
     await screen.findByRole('button', { name: sentenceTexts[0] });
     await fireEvent.click(screen.getByRole('switch', { name: 'Enroll this person in briefs' }));
     await waitFor(() => expect(writes).toEqual([{ enrolled: false, track: false }]));
