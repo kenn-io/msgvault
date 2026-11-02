@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { IdentityMatchCandidate } from '../../directory/review-controller.svelte';
 import IdentityCandidateCard from './IdentityCandidateCard.svelte';
 
-function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
+function completeCandidate(): IdentityMatchCandidate {
   return {
     id: 17,
     left_id: 170,
@@ -19,9 +19,9 @@ function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
     confidence: 0.82,
     source: 'synthetic_import',
     source_ref: 'fixture-17',
-    state,
-    review_token: `token-17-${state}`,
-    actionable: state === 'candidate',
+    state: 'accepted',
+    review_token: 'token-17-accepted',
+    actionable: false,
     application_pending: false,
     created_at: '2026-08-01T10:00:00Z',
     updated_at: '2026-08-02T11:00:00Z',
@@ -56,8 +56,8 @@ describe('IdentityCandidateCard', () => {
     });
 
     const card = screen.getByRole('article', { name: 'Identity match 17' });
-    expect(screen.getByText('Candidate')).toBeDefined();
-    expect(screen.queryByText('candidate')).toBeNull();
+    expect(screen.getByText('Accepted')).toBeDefined();
+    expect(screen.queryByText('accepted')).toBeNull();
     expect(within(card).getByRole('region', { name: 'Candidate endpoints for identity match 17' })).toBeDefined();
     expect(within(card).getByText('participant / 170')).toBeDefined();
     expect(within(card).getByText('participant / 171')).toBeDefined();
@@ -101,7 +101,7 @@ describe('IdentityCandidateCard', () => {
 
   it('shows a message when evidence is empty', () => {
     render(IdentityCandidateCard, {
-      candidate: { ...completeCandidate('candidate'), evidence: [] }, pending: false
+      candidate: { ...completeCandidate(), evidence: [] }, pending: false
     });
 
     expect(screen.getByText('No evidence supplied.')).toBeDefined();

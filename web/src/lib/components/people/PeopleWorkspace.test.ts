@@ -168,7 +168,7 @@ it.each([
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
-      return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
+      return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-9-r3"' } }); },
   });

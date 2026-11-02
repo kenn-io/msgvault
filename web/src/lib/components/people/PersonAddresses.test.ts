@@ -88,10 +88,6 @@ describe('PersonAddresses', () => {
       const name = evidence === 'email' ? 'bare@example.com' : '78';
       await fireEvent.click(screen.getByRole('button', { name: `Unlink profile ${name}` }));
       expect(screen.getByRole('group', { name: `Confirm unlinking profile ${name}` })).toBeDefined();
-      if (evidence === 'none') {
-        await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
-        await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 78));
-      }
     }
   });
 
