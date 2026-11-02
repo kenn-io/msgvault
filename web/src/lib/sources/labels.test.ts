@@ -17,7 +17,7 @@ describe('source labels', () => {
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
-  ])('names source type %j and its mailbox when supplied', (code, want, identifier, mailbox) => {
+  ])('names source type %j and its mailbox when supplied', (code, want, identifier?: string, mailbox?: string) => {
     expect(sourceTypeLabel(code)).toBe(want);
     if (identifier) expect(sourceMailbox(identifier)).toBe(mailbox);
   });
