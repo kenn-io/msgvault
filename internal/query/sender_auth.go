@@ -180,6 +180,7 @@ func (e *SQLiteEngine) fillSenderAuth(ctx context.Context, messages []MessageSum
 	for i := range messages {
 		messages[i].SenderAuth = SenderAuthForAddresses(results[messages[i].ID], []Address{{Email: messages[i].FromEmail}})
 	}
+	fillSummarySenderClasses(ctx, e, messages)
 }
 
 // SenderAuthReader derives advisory metadata for already selected message IDs.
@@ -220,6 +221,7 @@ func (e *DuckDBEngine) fillSenderAuth(ctx context.Context, messages []MessageSum
 	for i := range messages {
 		messages[i].SenderAuth = SenderAuthForAddresses(auth[messages[i].ID], []Address{{Email: messages[i].FromEmail}})
 	}
+	fillSummarySenderClasses(ctx, e, messages)
 }
 
 // SenderAuthForAddresses binds receipt evidence to the From value actually

@@ -20,9 +20,10 @@ import (
 // Despite its name, it is dialect-agnostic and supports both SQLite
 // (default) and PostgreSQL via the dialect field.
 type SQLiteEngine struct {
-	senderAuthPolicy atomic.Pointer[senderAuthPolicy]
-	db               *sql.DB
-	dialect          Dialect
+	senderAuthPolicy  atomic.Pointer[senderAuthPolicy]
+	senderClassPolicy atomic.Pointer[senderClassPolicy]
+	db                *sql.DB
+	dialect           Dialect
 
 	// FTS availability cache - thread-safe with mutex.
 	// Only caches successful checks; errors cause retries on next call.
@@ -1236,6 +1237,7 @@ func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string
 	msg, err := getMessageByQueryShared(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", whereClause, args...)
 	if err == nil && msg != nil {
 		msg.SenderAuth = SenderAuthForAddresses(e.readSenderAuth(ctx, []int64{msg.ID})[msg.ID], msg.From)
+		msg.Readout = e.ReadSenderClasses(ctx, []SenderClassInput{{ID: msg.ID, From: msg.From, SenderAuth: msg.SenderAuth}})[msg.ID]
 	}
 	return msg, err
 }

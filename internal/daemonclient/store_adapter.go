@@ -102,6 +102,7 @@ func generatedMessageToAPIMessage(m generated.MessageSummary) store.APIMessage {
 	}
 	return store.APIMessage{
 		SenderAuth:        senderAuthFromGenerated(m.SenderAuth),
+		Readout:           senderClassFromGenerated(m.SenderClass, m.SenderClassBasis, m.SenderRelationship),
 		ID:                m.ID,
 		SourceID:          int64Value(m.SourceID),
 		SourceMessageID:   stringValue(m.SourceMessageID),
@@ -149,6 +150,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 	}
 	msg := &store.APIMessage{
 		SenderAuth:        senderAuthFromGenerated(m.SenderAuth),
+		Readout:           senderClassFromGenerated(m.SenderClass, m.SenderClassBasis, m.SenderRelationship),
 		RelatedMessageID:  m.RelatedMessageID,
 		ConversationTitle: stringValue(m.ConversationTitle),
 

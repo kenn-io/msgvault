@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/senderclass"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -290,6 +291,7 @@ type ThreadQuery struct {
 
 // ThreadMessage is one archived message in a conversation listing.
 type ThreadMessage struct {
+	senderclass.Readout
 	SenderAuth          *senderauth.Verdict `json:"sender_auth,omitempty"`
 	ID                  int64               `json:"id"`
 	SourceMessageID     string              `json:"source_message_id"`
@@ -421,8 +423,14 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		ids[i] = m.ID
 	}
 	auth := e.readSenderAuth(ctx, ids)
+	inputs := make([]SenderClassInput, len(page.Messages))
 	for i := range page.Messages {
 		page.Messages[i].SenderAuth = SenderAuthForAddresses(auth[page.Messages[i].ID], page.Messages[i].From)
+		inputs[i] = SenderClassInput{ID: page.Messages[i].ID, From: page.Messages[i].From, SenderAuth: page.Messages[i].SenderAuth}
+	}
+	classes := e.ReadSenderClasses(ctx, inputs)
+	for i := range page.Messages {
+		page.Messages[i].Readout = classes[page.Messages[i].ID]
 	}
 	return page, nil
 }

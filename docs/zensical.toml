@@ -23,6 +23,7 @@ nav = [
     {"Terminal UI" = "usage/tui.md"},
     {"Searching" = "usage/searching.md"},
     {"Sender Authentication" = "usage/sender-auth.md"},
+    {"Sender Class" = "usage/sender-class.md"},
     {"Semantic and Visual Search" = "usage/vector-search.md"},
     {"Document Attachment Indexing" = "usage/document-indexing.md"},
     {"Recommended Configuration" = "usage/recommended-configuration.md"},

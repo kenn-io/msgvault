@@ -31,6 +31,7 @@ func (s *Server) fillStoreSenderAuth(ctx context.Context, messages []APIMessage)
 		}
 		messages[i].SenderAuth = query.SenderAuthForAddresses(verdict, []query.Address{{Email: from}})
 	}
+	s.fillStoreSenderClasses(ctx, messages)
 }
 
 // Store-backed responses derive receipt metadata from the same archive and

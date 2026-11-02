@@ -102,6 +102,7 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	if s.queryEngineForContext(readContext) != nil {
 		engine := query.NewEngine(snapshotStore.DB(), snapshotStore.IsPostgreSQL())
 		query.ConfigureSenderAuth(engine, s.senderAuthPins)
+		s.configureSenderClass(engine)
 		readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: engine, mode: AnalyticsModeSQL})
 	}
 	*req = *req.WithContext(readContext)
@@ -147,7 +148,18 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}
-	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
+	// Relationship history uses the same authorization scope as selected rows.
+	// Preserve any narrower caller scope when installing the grant boundary.
+	classScope := allowed
+	if caller := sourcescope.IDs(r.Context()); caller != nil {
+		classScope = make([]int64, 0, len(allowed))
+		for _, id := range allowed {
+			if slices.Contains(caller, id) {
+				classScope = append(classScope, id)
+			}
+		}
+	}
+	*r = *r.WithContext(sourcescope.WithSourceIDs(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}), classScope))
 	switch operation {
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {

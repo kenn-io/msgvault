@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/senderclass"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
@@ -309,6 +310,7 @@ type BodySearchContext struct {
 
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
+	senderclass.Readout
 	SenderAuth        *senderauth.Verdict `json:"sender_auth,omitempty"`
 	ID                int64               `json:"id"`
 	SourceID          int64               `json:"source_id,omitzero"`
@@ -570,6 +572,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 
 	return MessageDetail{
 		SenderAuth:        qMsg.SenderAuth,
+		Readout:           qMsg.Readout,
 		ID:                qMsg.ID,
 		SourceID:          qMsg.SourceID,
 		SourceMessageID:   qMsg.SourceMessageID,
@@ -612,6 +615,7 @@ func toMessageSummary(m APIMessage) MessageSummary {
 	}
 	return MessageSummary{
 		SenderAuth:        m.SenderAuth,
+		Readout:           m.Readout,
 		ID:                m.ID,
 		SourceID:          m.SourceID,
 		SourceMessageID:   m.SourceMessageID,
@@ -816,6 +820,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	authMessage := []APIMessage{*msg}
 	s.fillStoreSenderAuth(r.Context(), authMessage)
 	msg.SenderAuth = authMessage[0].SenderAuth
+	msg.Readout = authMessage[0].Readout
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
@@ -2861,6 +2866,7 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 	}
 	return MessageSummary{
 		SenderAuth:        m.SenderAuth,
+		Readout:           m.Readout,
 		ID:                m.ID,
 		SourceID:          m.SourceID,
 		SourceMessageID:   m.SourceMessageID,

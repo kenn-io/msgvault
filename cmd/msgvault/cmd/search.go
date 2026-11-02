@@ -396,6 +396,7 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 		if msg.AttachmentNames != nil {
 			output[i]["attachment_names"] = msg.AttachmentNames
 		}
+		addSenderClassJSON(output[i], msg.Readout)
 		if msg.MatchSnippet != "" {
 			output[i]["match_snippet"] = msg.MatchSnippet
 		}

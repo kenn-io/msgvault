@@ -2202,6 +2202,18 @@ func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api
 	return a.store.GetMessageContext(ctx, id)
 }
 
+func (a *storeAPIAdapter) MessageSenderIdentities(
+	ctx context.Context, messageIDs, allowedSourceIDs []int64,
+) (map[int64]store.MessageSenderIdentity, error) {
+	return a.store.MessageSenderIdentities(ctx, messageIDs, allowedSourceIDs)
+}
+
+func (a *storeAPIAdapter) SenderRelationships(
+	ctx context.Context, addresses []string, allowedSourceIDs []int64,
+) (map[string]store.SenderRelationshipEvidence, error) {
+	return a.store.SenderRelationships(ctx, addresses, allowedSourceIDs)
+}
+
 func (a *storeAPIAdapter) GetMessagesSummariesByIDsContext(
 	ctx context.Context, ids []int64,
 ) ([]api.APIMessage, error) {

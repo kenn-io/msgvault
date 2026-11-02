@@ -164,6 +164,7 @@ func threadPageFromGenerated(page *generated.ThreadPage) *query.ThreadPage {
 	for _, msg := range page.Messages {
 		out.Messages = append(out.Messages, query.ThreadMessage{
 			SenderAuth:          senderAuthFromGenerated(msg.SenderAuth),
+			Readout:             senderClassFromGenerated(msg.SenderClass, msg.SenderClassBasis, msg.SenderRelationship),
 			ID:                  msg.ID,
 			SourceMessageID:     msg.SourceMessageID,
 			Subject:             msg.Subject,
