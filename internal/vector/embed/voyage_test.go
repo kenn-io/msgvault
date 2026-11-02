@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -1006,4 +1007,34 @@ func TestVoyageClientBeforeRequestFencesQueryRetry(t *testing.T) {
 	require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	assert.Equal(t, int32(1), requests.Load(),
 		"revocation after the first 429 must fence the Voyage query retry")
+}
+
+func TestVoyageEmbedDocumentRequestsFinishesInFlightRequestBeforeYielding(t *testing.T) {
+	require := require.New(t)
+	ctx, requestYield := jobctx.WithPreemption(t.Context())
+	var requests [][][]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := decodeVoyageRequest(t, r)
+		requests = append(requests, got.Inputs)
+		// A waiting sync asks the pass to yield while this request is in flight.
+		requestYield()
+		writeVoyageResponse(t, w, sequentialVoyageResults(got.Inputs))
+	}))
+	defer server.Close()
+	client := embed.NewVoyageClient(embed.VoyageConfig{
+		Endpoint: server.URL, Model: "voyage-context-4", Dimension: 4,
+		Limits: embed.RequestLimits{MaxDocuments: 1},
+	})
+
+	var completed []int
+	err := client.EmbedDocumentRequests(ctx,
+		[]embed.DocumentInput{{Chunks: []string{"first"}}, {Chunks: []string{"second"}}}, nil,
+		func(first int, vectors [][][]float32) error {
+			completed = append(completed, first)
+			require.Len(vectors, 1)
+			return nil
+		})
+	require.ErrorIs(err, jobctx.ErrYieldedToWaiter)
+	assert.Equal(t, [][][]string{{{"first"}}}, requests, "the second request is never sent")
+	assert.Equal(t, []int{0}, completed, "the in-flight request reaches the caller before the pass yields")
 }

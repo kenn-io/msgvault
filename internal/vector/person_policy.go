@@ -60,6 +60,7 @@ type SemanticPersonEmbeddingProfile struct {
 	Fingerprint           string             `json:"fingerprint"`
 	Purpose               string             `json:"purpose"`
 	Destination           string             `json:"destination"`
+	LocalOnly             bool               `json:"-"`
 	APIFormat             EmbeddingAPIFormat `json:"api_format"`
 	Model                 string             `json:"model"`
 	APIKeyEnv             string             `json:"api_key_env"`
@@ -74,6 +75,7 @@ type SemanticPersonEmbeddingProfile struct {
 type semanticPersonEmbeddingPolicy struct {
 	Purpose               string             `json:"purpose"`
 	Destination           string             `json:"destination"`
+	LocalOnly             bool               `json:"local_only,omitzero"`
 	APIFormat             EmbeddingAPIFormat `json:"api_format"`
 	Model                 string             `json:"model"`
 	APIKeyEnv             string             `json:"api_key_env"`
@@ -103,7 +105,7 @@ func (c *Config) SemanticPersonEmbeddingProfile() (SemanticPersonEmbeddingProfil
 
 func semanticPersonEmbeddingPolicyForConfig(c Config) (semanticPersonEmbeddingPolicy, error) {
 	format := c.Embeddings.EffectiveAPIFormat()
-	endpoint := c.Embeddings.Endpoint
+	endpoint := c.Embeddings.IdentityDestination()
 	if endpoint != strings.TrimSpace(endpoint) {
 		return semanticPersonEmbeddingPolicy{}, errors.New(
 			"vector.people: embedding endpoint must not have surrounding whitespace",
@@ -151,6 +153,7 @@ func semanticPersonEmbeddingPolicyForConfig(c Config) (semanticPersonEmbeddingPo
 	return semanticPersonEmbeddingPolicy{
 		Purpose:               SemanticPersonEmbeddingPurpose,
 		Destination:           destination,
+		LocalOnly:             c.Embeddings.LocalOnly,
 		APIFormat:             format,
 		Model:                 model,
 		APIKeyEnv:             apiKeyEnv,
@@ -189,6 +192,7 @@ func newSemanticPersonEmbeddingProfile(
 		Fingerprint:           hex.EncodeToString(digest[:]),
 		Purpose:               policy.Purpose,
 		Destination:           policy.Destination,
+		LocalOnly:             policy.LocalOnly,
 		APIFormat:             policy.APIFormat,
 		Model:                 policy.Model,
 		APIKeyEnv:             policy.APIKeyEnv,
@@ -268,7 +272,7 @@ func (p SemanticPersonEmbeddingProfile) Validate() error {
 // and key ordering, but never policy content.
 func (p SemanticPersonEmbeddingProfile) Canonical() (SemanticPersonEmbeddingProfile, error) {
 	want, err := newSemanticPersonEmbeddingProfile(semanticPersonEmbeddingPolicy{
-		Purpose: p.Purpose, Destination: p.Destination, APIFormat: p.APIFormat,
+		Purpose: p.Purpose, Destination: p.Destination, APIFormat: p.APIFormat, LocalOnly: p.LocalOnly,
 		Model: p.Model, APIKeyEnv: p.APIKeyEnv,
 		RetentionPosture: p.RetentionPosture, TrainingPosture: p.TrainingPosture,
 		RendererPolicy:        p.RendererPolicy,

@@ -834,6 +834,8 @@ type CardDAVStatusResponse struct {
 	Enabled              bool                  `json:"enabled"`
 	Scheduled            bool                  `json:"scheduled"`
 	Schedule             string                `json:"schedule"`
+	SchedulerRunning     bool                  `json:"scheduler_running"`
+	QueuedAt             *time.Time            `json:"queued_at,omitempty"`
 	NextScheduledAt      *time.Time            `json:"next_scheduled_at,omitempty"`
 	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,microsoft_authorization_required,runtime_unavailable"`
 	Account              *CardDAVStatusAccount `json:"account,omitzero" nullable:"false"`
@@ -1108,6 +1110,10 @@ func (s *Server) handleCardDAVStatus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			status.Scheduled = true
+			status.SchedulerRunning = status.SchedulerRunning || job.Running
+			if job.Queued && !job.QueuedAt.IsZero() && (status.QueuedAt == nil || job.QueuedAt.Before(*status.QueuedAt)) {
+				status.QueuedAt = new(job.QueuedAt)
+			}
 			if !job.NextRun.IsZero() && (status.NextScheduledAt == nil || job.NextRun.Before(*status.NextScheduledAt)) {
 				next := job.NextRun
 				status.NextScheduledAt = &next
