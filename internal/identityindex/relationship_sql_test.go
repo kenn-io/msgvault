@@ -464,6 +464,43 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 	assertions.JSONEq(`["alpha.test", "gamma.test"]`, domainKeysJSON)
 }
 
+// Each chat conversation must meet only its own messages. Pairing every
+// conversation with every activity row grows with their product and spills
+// gigabytes to disk long before the archive itself is large.
+func TestBuildReducesManyChatConversationsUnderLowMemory(t *testing.T) {
+	const conversations = 100
+	requirements := require.New(t)
+	root, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+		firstMessageID: 1, messageCount: 20_000, memberCount: 50, conversationCount: conversations,
+		startDate: "2026-01-01", messageType: "imessage", conversationType: "direct_chat",
+	})
+	// Spread authorship so every message carries direct edges for several people.
+	replaceRelationshipParquet(t, db, root, "message_recipients", `
+		SELECT message_id::BIGINT AS message_id,
+		       (1 + (message_id + shift) % 50)::BIGINT AS participant_id,
+		       recipient_type::VARCHAR AS recipient_type,
+		       ''::VARCHAR AS display_name
+		FROM range(1, 20_001) AS messages(message_id)
+		CROSS JOIN (VALUES (0, 'from'), (1, 'to'), (2, 'cc')) AS edges(shift, recipient_type)`)
+	// Pairing every conversation with every activity row needs over 1GB of temp
+	// storage here even with 512MB of memory.
+	requirements.NoError(setRelationshipTestMemoryLimit(db, "256MB"))
+	_, err := db.Exec("SET max_temp_directory_size = '256MB'")
+	requirements.NoError(err)
+
+	_, err = Build(context.Background(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+	})
+	requirements.NoError(err)
+	var chatUnits int64
+	requirements.NoError(db.QueryRow(
+		"SELECT count(*) FROM read_parquet(?) WHERE relation_kind = 4",
+		relationshipParquetGlob(root, DatasetLogicalContributions),
+	).Scan(&chatUnits))
+	assert.Equal(t, int64(conversations), chatUnits)
+}
+
 func TestBuildRelationshipActivityAvoids100MillionEdgeExpansion(t *testing.T) {
 	if os.Getenv(stressRelationshipActivity100MEnv) != "1" {
 		t.Skip("set " + stressRelationshipActivity100MEnv + "=1 to run")
@@ -576,12 +613,15 @@ func writeRelationshipEquivalenceFixture(t *testing.T) (string, *sql.DB) {
 }
 
 type syntheticRelationshipFanOutOptions struct {
-	firstMessageID   int64
-	messageCount     int64
-	memberCount      int64
-	startDate        string
-	messageType      string
-	conversationType string
+	firstMessageID int64
+	messageCount   int64
+	memberCount    int64
+	// conversationCount spreads messages round-robin over that many
+	// conversations, each with every member; zero means one conversation.
+	conversationCount int64
+	startDate         string
+	messageType       string
+	conversationType  string
 }
 
 func writeSyntheticRelationshipFanOut(
@@ -592,11 +632,12 @@ func writeSyntheticRelationshipFanOut(
 ) {
 	t.Helper()
 	lastMessageID := opts.firstMessageID + opts.messageCount
+	conversationCount := max(opts.conversationCount, 1)
 	replaceRelationshipParquet(t, db, root, "messages", fmt.Sprintf(`
 		SELECT (i + %d)::BIGINT AS id,
 		       1::BIGINT AS source_id,
 		       ('message-' || (i + %d))::VARCHAR AS source_message_id,
-		       10::BIGINT AS conversation_id,
+		       (10 + i %% %d)::BIGINT AS conversation_id,
 		       'Synthetic subject'::VARCHAR AS subject,
 		       ''::VARCHAR AS snippet,
 		       (TIMESTAMP '%s' + i * INTERVAL '1 second')::TIMESTAMP AS sent_at,
@@ -611,17 +652,18 @@ func writeSyntheticRelationshipFanOut(
 		       year(TIMESTAMP '%s' + i * INTERVAL '1 second')::INTEGER AS year,
 		       month(TIMESTAMP '%s' + i * INTERVAL '1 second')::INTEGER AS month
 		FROM range(0, %d) AS t(i)`,
-		opts.firstMessageID, opts.firstMessageID, opts.startDate,
+		opts.firstMessageID, opts.firstMessageID, conversationCount, opts.startDate,
 		quoteSQLString(opts.messageType), opts.startDate, opts.startDate, opts.messageCount))
 	replaceRelationshipParquet(t, db, root, "sources", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@example.test'::VARCHAR, 'gmail'::VARCHAR)
 		) AS t(id, account_email, source_type)`)
-	replaceRelationshipParquet(t, db, root, "conversations", `
-		SELECT * FROM (VALUES
-			(10::BIGINT, 'conversation-10'::VARCHAR, 'Synthetic thread'::VARCHAR,
-			 '`+quoteSQLString(opts.conversationType)+`'::VARCHAR)
-		) AS t(id, source_conversation_id, title, conversation_type)`)
+	replaceRelationshipParquet(t, db, root, "conversations", fmt.Sprintf(`
+		SELECT (10 + c)::BIGINT AS id,
+		       ('conversation-' || (10 + c))::VARCHAR AS source_conversation_id,
+		       'Synthetic thread'::VARCHAR AS title,
+		       '%s'::VARCHAR AS conversation_type
+		FROM range(0, %d) AS t(c)`, quoteSQLString(opts.conversationType), conversationCount))
 	replaceRelationshipParquet(t, db, root, "participants", fmt.Sprintf(`
 		SELECT i::BIGINT AS id,
 		       ('person-' || i || '@example.test')::VARCHAR AS email_address,
@@ -645,8 +687,9 @@ func writeSyntheticRelationshipFanOut(
 		CROSS JOIN (VALUES (1, 'from'), (1, 'to')) AS edges(participant_id, recipient_type)`,
 		opts.firstMessageID, lastMessageID))
 	replaceRelationshipParquet(t, db, root, "conversation_participants", fmt.Sprintf(`
-		SELECT 10::BIGINT AS conversation_id, i::BIGINT AS participant_id
-		FROM range(1, %d) AS t(i)`, opts.memberCount+1))
+		SELECT (10 + c)::BIGINT AS conversation_id, i::BIGINT AS participant_id
+		FROM range(0, %d) AS conversations(c)
+		CROSS JOIN range(1, %d) AS members(i)`, conversationCount, opts.memberCount+1))
 	replaceRelationshipParquet(t, db, root, "owner_participants", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 1::BIGINT)
