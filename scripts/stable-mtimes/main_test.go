@@ -25,9 +25,6 @@ func TestStableMtimes(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
-	binary := filepath.Join(t.TempDir(), "stable-mtimes.exe")
-	output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput()
-	require.NoError(t, err, string(output))
 	for _, tc := range []struct {
 		name string
 		edit bool
@@ -69,10 +66,8 @@ func TestStableMtimes(t *testing.T) {
 				require.NoError(os.WriteFile(filepath.Join(repos[1], paths[0]), []byte("abd"), 0o644))
 			}
 			for _, repo := range repos {
-				cmd := exec.Command(binary)
-				cmd.Dir = repo
-				output, err := cmd.CombinedOutput()
-				require.NoError(err, string(output))
+				t.Chdir(repo)
+				require.NoError(run())
 			}
 			for _, path := range paths {
 				first, err := os.Stat(filepath.Join(repos[0], path))
