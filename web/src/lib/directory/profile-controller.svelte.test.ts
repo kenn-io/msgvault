@@ -43,6 +43,74 @@ function pathOf(request: Request): string {
 }
 
 describe('DirectoryProfileController', () => {
+  it.each(['pending attribute save', 'pending profile reload', 'pending structured PATCH'])('refreshes linked bindings after a %s and permits the next structured edit', async cause => {
+    let releaseSave!: (response: Response) => void;
+    let releaseReload!: (response: Response) => void;
+    const pendingSave = new Promise<Response>(resolve => releaseSave = resolve);
+    const pendingReload = new Promise<Response>(resolve => releaseReload = resolve);
+    let holdProfileRead = false;
+    let staleProfile: Response | undefined;
+    let linked = false;
+    const patches: Request[] = [];
+    const definition = { id: 1, universal_id: '00000000-0000-4000-8000-000000000001', object_type: 'person', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_sensitive: false, is_active: true, revision: 1 };
+    const value = { id: 41, person_id: 7, definition_id: 1, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'A note' }, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', source: 'user' };
+    const person = () => ({ id: 7, revision: linked ? 4 : cause === 'pending structured PATCH' && patches.length === 0 ? 2 : 3, display_name: 'Synthetic Person', participant_ids: linked ? [11, 12] : [11], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
+    const profile = () => ({ person: person(), names: cause === 'pending structured PATCH' && patches.length > 0 ? [{ person_id: 7, name_kind: 'nickname', formatted: 'Saved nickname', original_value: 'Saved nickname', is_derived: false, envelope: { id: 81, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} } }] : [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/7/attributes/note') return pendingSave;
+      if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') {
+        patches.push(request);
+        if (cause === 'pending structured PATCH' && patches.length === 1) { staleProfile = Response.json(profile(), { headers: { ETag: '"person-7-r3"' } }); return pendingSave; }
+        if (request.headers.get('If-Match') !== '"person-7-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
+      }
+      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: linked ? 1 : 3, last_contact_at: linked ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: linked ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
+      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+      if (path === '/api/v1/people/7/profile') {
+        const response = Response.json(profile(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+        if (holdProfileRead) { holdProfileRead = false; staleProfile = response; return pendingReload; }
+        return response;
+      }
+      if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [definition] });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: linked ? [value] : [], history: [] }] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const controller = new DirectoryProfileController(client, 7, bundle());
+    let save: ReturnType<typeof controller.setAttribute> | undefined;
+    let reload: ReturnType<typeof controller.reload> | undefined;
+    try {
+      await controller.reload();
+      if (cause === 'pending attribute save') save = controller.setAttribute('note', { value: { type: 'text', text: 'A note' } });
+      if (cause === 'pending structured PATCH') save = controller.patchProfile({ names: { add: [{ name_kind: 'nickname', formatted: 'Saved nickname', envelope: { source: 'user' } }] } });
+      if (cause === 'pending attribute save' || cause === 'pending structured PATCH') expect(controller.mutationPending).toBe(true);
+      if (cause === 'pending profile reload') {
+        holdProfileRead = true;
+        reload = controller.reload();
+        await vi.waitFor(() => expect(staleProfile).toBeDefined());
+      }
+      linked = true;
+      await controller.reload();
+      releaseSave(cause === 'pending structured PATCH' ? staleProfile! : Response.json({ dry_run: false, value }));
+      await save;
+      releaseReload(staleProfile ?? Response.json({}));
+      await reload;
+      expect(controller.person?.participant_ids).toEqual([11, 12]);
+      expect(controller.structuredProfile?.person.participant_ids).toEqual([11, 12]);
+      expect(controller.personETag).toBe('"person-7-r4"');
+      expect(controller.structuredProfileETag).toBe('"person-7-r4"');
+      await controller.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
+      expect(patches).toHaveLength(cause === 'pending structured PATCH' ? 2 : 1);
+      expect(patches.at(-1)!.headers.get('If-Match')).toBe('"person-7-r4"');
+      expect(controller.conflict).toBeNull();
+    } finally {
+      releaseSave(Response.json({ message: 'Save unavailable' }, { status: 503 }));
+      releaseReload(staleProfile ?? Response.json({ message: 'Profile unavailable' }, { status: 503 }));
+      await Promise.all([save, reload]);
+      controller.destroy();
+    }
+  });
+
   it('notifies deletion with a cleared draft without reading the deleted person', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);

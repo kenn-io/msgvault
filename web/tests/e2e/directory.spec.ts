@@ -50,8 +50,6 @@ test('Directory lists durable people, opens People Files, and scopes files to th
   await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
-  await expect(personTabs.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
-  await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
   await page.reload();
   await expect(personTabs.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();

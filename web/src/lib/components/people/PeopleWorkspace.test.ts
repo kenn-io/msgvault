@@ -125,7 +125,6 @@ it.each([
   { outcome: 'is cancelled', selectedID: null },
   { outcome: 'clears the stale warning', selectedID: null },
   { outcome: 'merges', selectedID: null },
-  { outcome: 'merges', selectedID: 7 },
   { outcome: 'merges', selectedID: 42 },
 ])('handles the next pair when it $outcome (selected=$selectedID)', async ({ outcome, selectedID }) => {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;

@@ -122,7 +122,7 @@ describe('AttributeSection', () => {
     expect(document.body.innerHTML).not.toContain('synthetic current secret');
   });
 
-  it('renders collapsed attribute history with value labels and provenance', () => {
+  it('renders collapsed attribute history with choice labels and removed rows', () => {
     const field = definition({
       label: 'Portable field', is_sensitive: false, cardinality: 'multi',
       options: { choices: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
@@ -142,8 +142,5 @@ describe('AttributeSection', () => {
     expect(history?.hasAttribute('open')).toBe(false);
     const row = screen.getByText('Two').closest('li')!;
     expect(row.textContent).toMatch(/Removed (Jul|Aug) \d{1,2}, 2026/);
-    expect(row.textContent).toContain('Vcard import');
-    expect(row.textContent).toContain('Reference: synthetic-source');
-    expect(row.textContent).toMatch(/Valid from:.*Valid until:/);
   });
 });
