@@ -184,6 +184,7 @@ it.each([
         const expectedID = selectedID === 7 ? 9 : 42;
         await waitFor(() => expect(directory.selectedPersonID).toBe(expectedID));
         expect(state.current.directoryPersonID).toBe(expectedID);
+        await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
         expect(await screen.findByText(selectedID === 7 ? 'Survivor alias' : 'Unrelated alias')).toBeDefined();
         expect(screen.queryByText('Absorbed alias')).toBeNull();
       }
@@ -225,6 +226,43 @@ it('resetting People filters commits one complete navigation', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
     expect(onNavigate.mock.calls.length + onShowAllChange.mock.calls.length).toBe(1);
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each([
+  { entry: 'list', activity: 50, bindings: [1] },
+  { entry: 'deep link', activity: 50, bindings: [1] },
+  { entry: 'list', activity: 0, bindings: [1] },
+  { entry: 'deep link', activity: 0, bindings: [1] },
+  { entry: 'deep link', activity: 0, bindings: [] },
+])('opens a saved person from $entry on the activity-appropriate tab (activity=$activity, bindings=$bindings)', async ({ entry, activity, bindings }) => {
+  const saved = { ...profile(7, 1, bindings), display_name: 'Saved Person', categories: [], organizations: [], contact_state: 'active' };
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [saved] }),
+    '/api/v1/people/7': () => Response.json(saved, { headers: { ETag: '"person-7-r1"' } }),
+    '/api/v1/people/7/profile': () => Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: saved, display_label: 'Saved Person', identifiers: [], first_at: when, last_at: when, activity_count: activity, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: entry === 'deep link' ? 7 : null });
+  const navigate = (patch: Parameters<typeof state.commitNavigation>[0]) => {
+    state.commitNavigation(patch);
+    void view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
+    if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false);
+  };
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: patch => void navigate(patch), onReplaceNavigation: patch => void navigate(patch), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    if (entry === 'list') await fireEvent.click(await within(screen.getByRole('grid', { name: 'People results' })).findByText('Saved Person'));
+    await screen.findByRole('heading', { name: 'Saved Person' });
+    if (bindings.length) await waitFor(() => expect(controller.detail?.activity_count).toBe(activity));
+    if (activity > 0) {
+      expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
+    } else {
+      expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
+    }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

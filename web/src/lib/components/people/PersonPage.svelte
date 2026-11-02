@@ -94,7 +94,7 @@
   {/if}
   {#if controller.timelineLoading && !detail && durablePersonID === null}
     <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-  {:else if durablePersonID !== null && (!detail || controller.detailMissing)}
+  {:else if durablePersonID !== null && (!detail || controller.detailMissing || person?.activity_count === 0)}
     {#if controller.timelineLoading}<p role="status">Loading…</p>{/if}
     {#if controller.timelineError}<div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>{/if}
     <div class="tabs"><SegmentedControl ariaLabel="Person tabs" value={filesOpen && !details ? 'files' : 'details'} options={[{ value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]} onchange={(value) => { details = value === 'details'; onFilesToggle(value === 'files'); }} /></div>
@@ -138,8 +138,8 @@
       {/key}
     {/if}
   {/if}
-  <div class="details" hidden={!(details || (durablePersonID !== null && (!detail || controller.detailMissing) && !filesOpen))}>
-    {#if profileID !== null && (details || (durablePersonID !== null && (!detail || controller.detailMissing) && !filesOpen))}
+  <div class="details" hidden={!(details || (durablePersonID !== null && (!detail || controller.detailMissing || person?.activity_count === 0) && !filesOpen))}>
+    {#if profileID !== null && (details || (durablePersonID !== null && (!detail || controller.detailMissing || person?.activity_count === 0) && !filesOpen))}
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
