@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mailkind"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -122,4 +123,50 @@ func TestMailKindRevokeWaitsForDispatch(t *testing.T) {
 		return nil, errors.New("fixture operation gate busy")
 	})
 	require.ErrorContains(t, err, "gate busy")
+}
+
+func TestMailKindAutomaticCandidateScanUsesAuthorizedSourceScope(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	disclosure := mailKindDisclosure(t)
+	fingerprint, err := disclosure.Fingerprint()
+	require.NoError(t, err)
+
+	ctx := t.Context()
+	sourceB, messageB1, err := testutil.CreateIndexedSourceMessage(st, "scope-b@example.test", "b-1", "Older B", "Body")
+	require.NoError(t, err)
+	sourceA, messageA1, err := testutil.CreateIndexedSourceMessage(st, "scope-a@example.test", "a-1", "Older A", "Body")
+	require.NoError(t, err)
+	_, messageA2, err := testutil.CreateIndexedSourceMessage(st, "scope-a@example.test", "a-2", "Newer A", "Body")
+	require.NoError(t, err)
+	_, messageB2, err := testutil.CreateIndexedSourceMessage(st, "scope-b@example.test", "b-2", "Newer B", "Body")
+	require.NoError(t, err)
+
+	sourceACTX := sourcescope.WithSourceIDs(ctx, []int64{sourceA.ID})
+	ids, err := st.NextMailKindCandidatesContext(sourceACTX, fingerprint, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{messageA2}, ids)
+
+	sourceBCTX := sourcescope.WithSourceIDs(ctx, []int64{sourceB.ID})
+	ids, err = st.NextMailKindCandidatesContext(sourceBCTX, fingerprint, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{messageB2}, ids)
+
+	// Explicit IDs do not consult or advance the automatic cursor.
+	ids, err = st.ListMailKindCandidatesContext(sourceBCTX, 1, []int64{messageB1})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{messageB1}, ids)
+	ids, err = st.NextMailKindCandidatesContext(sourceBCTX, fingerprint, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{messageB1}, ids)
+	ids, err = st.NextMailKindCandidatesContext(sourceACTX, fingerprint, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{messageA1}, ids)
+
+	otherDisclosure := disclosure
+	otherDisclosure.RetentionDeclaration += " separate fingerprint"
+	otherFingerprint, err := otherDisclosure.Fingerprint()
+	require.NoError(t, err)
+	ids, err = st.NextMailKindCandidatesContext(sourceACTX, otherFingerprint, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{messageA2}, ids)
 }

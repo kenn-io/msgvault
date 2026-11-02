@@ -7362,6 +7362,48 @@ func (m MailKindDisclosure) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
+type MailKindRunRequest struct {
+	DisclosureFingerprint string  `json:"disclosure_fingerprint" validate:"required"`
+	Limit                 *int64  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	MessageIds            []int64 `json:"message_ids,omitempty"`
+}
+
+func (m MailKindRunRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.DisclosureFingerprint, "required"); err != nil {
+		errors = errors.Append("DisclosureFingerprint", err)
+	}
+	if m.Limit != nil {
+		if err := typesValidator.Var(m.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if m.MessageIds != nil && len(m.MessageIds) < 1 {
+		errors = errors.Add("MessageIds", fmt.Sprintf("must have at least 1 items, got %d", len(m.MessageIds)))
+	}
+	if len(m.MessageIds) > 100 {
+		errors = errors.Add("MessageIds", fmt.Sprintf("must have at most 100 items, got %d", len(m.MessageIds)))
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MailKindRunResponse struct {
+	Blocker    *string `json:"blocker,omitzero"`
+	Classified int64   `json:"classified"`
+	Errors     int64   `json:"errors"`
+	Labeled    int64   `json:"labeled"`
+	Requests   int64   `json:"requests"`
+	Undecided  int64   `json:"undecided"`
+	Warning    string  `json:"warning" validate:"required"`
+}
+
+func (m MailKindRunResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type MailKindStatus struct {
 	BatchSize             int64               `json:"batch_size"`
 	Blocker               *string             `json:"blocker,omitzero"`

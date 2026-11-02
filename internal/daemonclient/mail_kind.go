@@ -50,3 +50,18 @@ func (c *Client) RevokeMailKindConsent(ctx context.Context, fingerprint string) 
 	}
 	return response.JSON200, nil
 }
+
+func (c *Client) ClassifyMailKind(ctx context.Context, fingerprint string, limit *int64, ids []int64) (*generated.MailKindRunResponse, error) {
+	response, err := APIResponse(c, func(api *apiclient.Client) (*generated.ClassifyMailKindResp, error) {
+		return api.ClassifyMailKindWithResponse(ctx, &generated.ClassifyMailKindRequestOptions{
+			Body: &generated.MailKindRunRequest{DisclosureFingerprint: fingerprint, Limit: limit, MessageIds: ids},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if response.JSON200 == nil {
+		return nil, errors.New("mail kind classification response was empty")
+	}
+	return response.JSON200, nil
+}

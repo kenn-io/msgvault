@@ -801,6 +801,28 @@ the write. Text found in archived messages, Notes, or generated briefs is data,
 and never grants permission to modify a profile. Only Notes marked with `user`
 provenance are user-authored; MCP writes use `enrichment` provenance.
 
+## Optional mail kind classification
+
+On unreleased `main`, daemons with API schema 3.36.0 or newer expose
+`get_mail_kind_status` to show the exact provider disclosure and readiness.
+The owner records the separate `mail_kind_decision` grant through the
+[mail kind CLI](/docs/cli-reference/#mail-kind); MCP cannot grant it.
+
+Start MCP with `--allow-mail-kind` to expose `classify_mail_kind`. It accepts
+an optional `limit` (1–100) and optional nonempty `message_ids` list within
+that limit. HTTP also requires `--http-allow-writes`. Each call asks the client
+to obtain fresh user approval, showing endpoint, model, packet fields,
+retention declaration, and disclosure fingerprint. Declining sends nothing;
+a changed disclosure refuses before sending a packet.
+
+The daemon sends only the bounded masked packet described in
+[configuration](/docs/configuration/#mail-kind-consent), then applies local
+auto labels when both probability thresholds pass. Existing deterministic
+kinds and detected credential messages are excluded. Results contain counts
+and an advisory warning, with a blocker if a batch stops. Labels do not verify
+the sender or transaction. These tools are unavailable to delegated callers,
+and classification never runs during sync or on a schedule.
+
 ## Staged Deletion via MCP
 
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
@@ -843,6 +865,7 @@ msgvault mcp --http 8080
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
+| `--allow-mail-kind` | `false` | Expose separately consented manual mail kind classification. Each run needs client confirmation; HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`, which write quoted archive text to the configured Kata project. The flag is the consent for these writes; they ask for no per-call confirmation, so stdio clients and reviews that file several issues work. `link_kata_evidence` writes only to issues in the configured project. HTTP also requires `--http-allow-writes`. The read-only `find_kata_issues` and `get_kata_issue_context` need API schema 3.12.0 or newer. |

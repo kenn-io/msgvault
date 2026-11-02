@@ -138,6 +138,8 @@ type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
+type ClassifyMailKindBody = MailKindRunRequest
+
 type MailKindConsentBody = MailKindConsentRequest
 
 type MailKindRevokeBody = MailKindConsentRequest

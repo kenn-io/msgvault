@@ -7608,6 +7608,55 @@ components:
         - minimum_transactional
         - minimum_choice_probability
       type: object
+    MailKindRunRequest:
+      additionalProperties: false
+      properties:
+        disclosure_fingerprint:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 100
+          minItems: 1
+          type: array
+      required:
+        - disclosure_fingerprint
+      type: object
+    MailKindRunResponse:
+      properties:
+        blocker:
+          type: string
+        classified:
+          format: int64
+          type: integer
+        errors:
+          format: int64
+          type: integer
+        labeled:
+          format: int64
+          type: integer
+        requests:
+          format: int64
+          type: integer
+        undecided:
+          format: int64
+          type: integer
+        warning:
+          type: string
+      required:
+        - warning
+        - classified
+        - labeled
+        - undecided
+        - errors
+        - requests
+      type: object
     MailKindStatus:
       properties:
         batch_size:
@@ -16887,7 +16936,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.37.0
+  version: 3.38.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24192,6 +24241,51 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/mail/kind/classify:
+    post:
+      operationId: classifyMailKind
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailKindRunRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailKindRunResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Classify a bounded mail batch and apply local auto labels
       tags:
         - API
   /api/v1/mail/kind/consent:

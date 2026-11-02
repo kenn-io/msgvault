@@ -33,6 +33,7 @@ const (
 	toolSecurityProfileWrite
 	toolSecurityIdentityDecision
 	toolSecurityIdentityScoring
+	toolSecurityMailKind
 	toolSecurityPersonMerge
 	toolSecurityCardDAVWrite
 	toolSecurityCalendarWrite
@@ -184,6 +185,9 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	definitions := []toolDefinition{}
 	if !opts.DelegatedOnly {
 		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
+		if opts.MailKind != nil {
+			definitions = append(definitions, stableMailKindDefinitions...)
+		}
 		if opts.IdentityScoring != nil {
 			definitions = append(definitions, stableIdentityScoringDefinitions...)
 		}

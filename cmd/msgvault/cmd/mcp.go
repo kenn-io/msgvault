@@ -31,6 +31,7 @@ var mcpHTTPAllowWrites bool
 var mcpAllowProfileWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
+var mcpAllowMailKind bool
 var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
 var mcpAllowKataWrites bool
@@ -111,6 +112,7 @@ Add to Claude Desktop config:
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
+		opts.AllowMailKind = mcpAllowMailKind
 		opts.AllowPersonMerges = mcpAllowPersonMerges
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
 		opts.AllowKataWrites = mcpAllowKataWrites
@@ -182,6 +184,7 @@ const savedViewsMinAPISchemaVersion = "2.21.0"
 const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
+const mailKindMinAPISchemaVersion = "3.38.0"
 const draftsMinAPISchemaVersion = "3.0.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
@@ -358,6 +361,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageTagsMinAPISchemaVersion) {
 		opts.MessageTags = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, mailKindMinAPISchemaVersion) {
+		opts.MailKind = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st
@@ -556,6 +562,7 @@ func init() {
 			"has explicitly authorized profile writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,
 		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowMailKind, "allow-mail-kind", false, "Expose manual, confirmed external mail kind classification")
 	mcpCmd.Flags().BoolVar(&mcpAllowIdentityScoring, "allow-identity-scoring", false,
 		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,

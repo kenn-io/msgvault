@@ -310,6 +310,24 @@ func TestEmailTagsGmailLeavesUnassignedCatalogLabelsAlone(t *testing.T) {
 	assert.Equal(before, after)
 }
 
+func TestEmailTagsGmailPreservesLocalMailKindLabel(t *testing.T) {
+	st, source, id := tagFixture(t, "gmail", "mail-kind-message")
+	_, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"INBOX": {Name: "INBOX", Type: "system"},
+	})
+	require.NoError(t, err)
+	addLocalMailKindLabelForTest(t, st, id, "receipt")
+	target, err := st.EmailTagTargetContext(t.Context(), id, "")
+	require.NoError(t, err)
+	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{
+		Provider: "gmail", Tags: []string{"INBOX"}, Verified: true,
+	}))
+
+	kind, err := st.MailKindLabelContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "receipt", kind)
+}
+
 func TestEmailTagsGmailPreservesCrossRenamedLabelIdentities(t *testing.T) {
 	for _, thirdName := range []string{"Alpha", "Delta"} {
 		t.Run(thirdName, func(t *testing.T) {

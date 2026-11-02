@@ -1869,6 +1869,16 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ClassifyMailKindResponse = MailKindRunResponse
+
+type ClassifyMailKindErrorResponse = ErrorResponse
+
+type ClassifyMailKindErrorResponseJSON = ErrorResponse
+
+type ClassifyMailKindErrorResponseJSON503 = ErrorResponse
+
+type ClassifyMailKindErrorResponseJSONDefault = ErrorResponse
+
 type MailKindConsentResponseJSON = MailKindConsentResponse
 
 type MailKindConsentErrorResponse = ErrorResponse
@@ -5752,6 +5762,17 @@ type TestTaskIntegrationResp struct {
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
 	JSONDefault  *TestTaskIntegrationErrorResponse
+}
+
+type ClassifyMailKindResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ClassifyMailKindResponse
+	JSON400      *ClassifyMailKindErrorResponse
+	JSON409      *ClassifyMailKindErrorResponseJSON
+	JSON503      *ClassifyMailKindErrorResponseJSON503
+	JSONDefault  *ClassifyMailKindErrorResponseJSONDefault
 }
 
 type MailKindConsentResp struct {

@@ -533,6 +533,8 @@ export * from "./listTextConversationsParams";
 export * from "./mailKindConsentRequest";
 export * from "./mailKindConsentResponse";
 export * from "./mailKindDisclosure";
+export * from "./mailKindRunRequest";
+export * from "./mailKindRunResponse";
 export * from "./mailKindStatus";
 export * from "./manifest";
 export * from "./matchSummary";

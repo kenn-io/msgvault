@@ -3275,6 +3275,30 @@ func (s *Store) reconcileMessageLabelsTxContext(
 	for _, labelID := range labelIDs {
 		desired[labelID] = struct{}{}
 	}
+	if replace {
+		rows, err := tx.QueryContext(ctx, `SELECT ml.label_id FROM message_labels ml
+			JOIN labels l ON l.id = ml.label_id
+			WHERE ml.message_id = ? AND l.source_id IS NULL AND l.label_type = 'auto'
+			AND l.name LIKE 'mv:kind/%'`, messageID)
+		if err != nil {
+			return false, err
+		}
+		for rows.Next() {
+			var labelID int64
+			if err := rows.Scan(&labelID); err != nil {
+				_ = rows.Close()
+				return false, err
+			}
+			desired[labelID] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		if err := rows.Close(); err != nil {
+			return false, err
+		}
+	}
 
 	if replace {
 		changed := len(existing) != len(desired)
@@ -3316,7 +3340,11 @@ func (s *Store) reconcileMessageLabelsTxContext(
 
 func replaceMessageLabelsTx(tx querier, messageID int64, labelIDs []int64) error {
 	_, err := tx.Exec(`
-		DELETE FROM message_labels WHERE message_id = ?
+		DELETE FROM message_labels
+		WHERE message_id = ? AND NOT EXISTS (
+			SELECT 1 FROM labels l WHERE l.id = message_labels.label_id
+			AND l.source_id IS NULL AND l.label_type = 'auto' AND l.name LIKE 'mv:kind/%'
+		)
 	`, messageID)
 	if err != nil {
 		return err
@@ -3330,6 +3358,7 @@ func replaceMessageLabelsTx(tx querier, messageID int64, labelIDs []int64) error
 		totalRows:    len(labelIDs),
 		valuesPerRow: 2,
 		prefix:       "INSERT INTO message_labels (message_id, label_id) VALUES ",
+		suffix:       " ON CONFLICT (message_id, label_id) DO NOTHING",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
 		args := make([]any, 0, (end-start)*2)

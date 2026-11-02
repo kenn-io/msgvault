@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -10,9 +11,65 @@ import (
 func newMailCommand() *cobra.Command {
 	mail := &cobra.Command{Use: "mail", Short: "Inspect optional transactional-mail classification"}
 	kind := &cobra.Command{Use: "kind", Short: "Manage disclosure and consent"}
-	kind.AddCommand(newMailKindStatusCommand(), newMailKindConsentCommand(true), newMailKindConsentCommand(false))
+	kind.AddCommand(newMailKindStatusCommand(), newMailKindConsentCommand(true), newMailKindConsentCommand(false), newMailKindClassifyCommand())
 	mail.AddCommand(kind)
 	return mail
+}
+
+func newMailKindClassifyCommand() *cobra.Command {
+	var jsonOutput bool
+	var limit int64
+	var ids []int64
+	command := &cobra.Command{Use: "classify", Short: "Explicitly classify a bounded batch and apply local kind labels", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("limit") && (limit < 1 || limit > 100) {
+				return errors.New("limit must be between 1 and 100")
+			}
+			if len(ids) > 100 {
+				return errors.New("at most 100 message IDs may be classified")
+			}
+			for _, id := range ids {
+				if id < 1 || id > 1<<53-1 {
+					return errors.New("message IDs must be positive safe integers")
+				}
+			}
+			client, _, err := OpenHTTPStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			status, err := client.GetMailKindStatus(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !status.Ready || status.DisclosureFingerprint == nil {
+				return errors.New("mail kind classification is not ready; read mail kind status")
+			}
+			var requestedLimit *int64
+			if cmd.Flags().Changed("limit") {
+				requestedLimit = &limit
+			}
+			result, err := client.ClassifyMailKind(cmd.Context(), *status.DisclosureFingerprint, requestedLimit, ids)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				if err := writePersonScoringJSON(cmd, result); err != nil {
+					return err
+				}
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Classified: %d\nLabeled: %d\nUndecided: %d\nErrors: %d\nRequests: %d\n%s\n",
+					result.Classified, result.Labeled, result.Undecided, result.Errors, result.Requests, result.Warning)
+			}
+			if result.Blocker != nil {
+				return fmt.Errorf("mail kind classification stopped: %s", *result.Blocker)
+			}
+			return nil
+		}}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "Print counts and advisory warning as JSON")
+	command.Flags().Int64Var(&limit, "limit", 0, "Maximum messages; defaults to the configured batch size")
+	command.Flags().Int64SliceVar(&ids, "message-id", nil, "Explicit archived message IDs (repeat or comma-separate)")
+	return command
 }
 
 func newMailKindStatusCommand() *cobra.Command {

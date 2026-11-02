@@ -1667,6 +1667,19 @@ func TestStore_ReconcileMessageLabelsReportsChanges(t *testing.T) {
 	f.AssertMessageHasLabel(messageID, labels["SENT"])
 }
 
+func TestStore_ReplaceMessageLabelsPreservesLocalMailKind(t *testing.T) {
+	f := storetest.New(t)
+	messageID := f.CreateMessage("mail-kind-sync")
+	labels := f.EnsureLabels(map[string]string{"INBOX": "Inbox"}, "system")
+	addLocalMailKindLabelForTest(t, f.Store, messageID, "receipt")
+
+	require.NoError(t, f.Store.ReplaceMessageLabels(messageID, []int64{labels["INBOX"]}))
+	kind, err := f.Store.MailKindLabelContext(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Equal(t, "receipt", kind)
+	f.AssertMessageHasLabel(messageID, labels["INBOX"])
+}
+
 func TestStore_DedupReconciliationReportsChanges(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

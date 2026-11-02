@@ -470,7 +470,15 @@ returns configuration and exact disclosure readiness without any credential
 value. `POST /api/v1/mail/kind/consent` and `/api/v1/mail/kind/revoke` accept
 `{"disclosure_fingerprint":"<sha256>"}`. A grant must match the current enabled
 disclosure; revocation can name an older one. These owner-only endpoints do
-not make provider requests. See [mail kind configuration](configuration.md#mail-kind-consent).
+not make provider requests. `POST /api/v1/mail/kind/classify` accepts the exact
+current `disclosure_fingerprint`, an optional positive `limit`, and an optional
+nonempty `message_ids` array. The batch cannot exceed the configured size or
+100 messages. A changed fingerprint refuses before disclosure. It returns
+counts and an advisory warning; a mid-batch stop also returns a blocker while
+retaining completed local labels. Every retry and label write checks the
+mail-specific grant again. These routes are unavailable to delegated callers.
+MCP mail kind tools require daemon API schema 3.38.0 or newer.
+See [mail kind configuration](configuration.md#mail-kind-consent).
 
 `POST /api/v1/identity/scoring/run` accepts `{}` or `{"limit":20}`. The limit
 defaults to the configured batch size and cannot exceed it. The daemon creates

@@ -289,6 +289,24 @@ func TestApplyIMAPMailboxDeltas_VanishedMembershipReconcilesLabelsAndTombstone(t
 	assert.Empty(messageLabels(t, f.store, messageID))
 }
 
+func TestApplyIMAPMailboxDeltasPreservesLocalMailKindLabel(t *testing.T) {
+	f := newIMAPMembershipFixture(t)
+	messageID := f.createMessage(t, "mail-kind-message", "<mail-kind@example.test>")
+	addLocalMailKindLabelForTest(t, f.store, messageID, "receipt")
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2, HighestModSeq: 1},
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "INBOX", UIDValidity: 1, UID: 1, SourceMessageID: "mail-kind-message",
+		}},
+	}}))
+
+	kind, err := f.store.MailKindLabelContext(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Equal(t, "receipt", kind)
+	assert.Contains(t, messageLabels(t, f.store, messageID), "INBOX")
+}
+
 func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
