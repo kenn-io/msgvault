@@ -423,7 +423,7 @@ describe('OrganizationEmploymentTab', () => {
     }
   });
 
-  it('loads employer names for every Work row independently of search results', async () => {
+  it('uses retained employer records for Work row names after organization search', async () => {
     const controller = controllerWith(async input => {
       const path = pathOf(requestOf(input));
       if (path.startsWith('/api/v1/organizations')) return Response.json({ organizations: [organization(99, 1, 'Search Result')], total: 1, limit: 50, offset: 0 });

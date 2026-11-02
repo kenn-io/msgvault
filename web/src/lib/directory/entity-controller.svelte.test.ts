@@ -62,6 +62,8 @@ describe('DirectoryEntityController', () => {
     const client = createAPIClient(async input => {
       const request = requestOf(input);
       const path = pathOf(request);
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment(11), employment(12, 1, { organization_id: 22 })] });
+      if (path === '/api/v1/organizations/22') return Response.json({ ...organizationProfile(), organization: organization(22, 1, 'Second employer') }, { headers: { ETag: '"organization-22-r1"' } });
       if (path === '/api/v1/organizations/21' && request.method === 'GET') {
         if (++organizationReads === 1) return oldLookup.promise;
         return Response.json(organizationProfile(renamed ? 2 : 1, renamed ? 'Renamed employer' : 'Synthetic Org'), { headers: { ETag: renamed ? '"organization-21-r2"' : '"organization-21-r1"' } });
@@ -80,6 +82,7 @@ describe('DirectoryEntityController', () => {
       oldLookup.resolve(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
       await opening;
       expect(controller.organizationRecords.get(21)?.organization.name).toBe('Renamed employer');
+      expect(controller.organizationRecords.get(22)?.organization.name).toBe('Second employer');
     } finally {
       oldLookup.resolve(Response.json(organizationProfile()));
       await opening;
