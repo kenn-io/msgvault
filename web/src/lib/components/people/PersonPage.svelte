@@ -115,7 +115,7 @@
         onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(identityChanged)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(identityChanged)} />
     </div>
     {#if !details && scope}
-      {#key `${target}:${controller.activityRevision}`}
+      {#key `${target}:${controller.activityRevision}:${detail.cache_revision}`}
         {#if filesOpen}
           {@render files()}
         {:else}
