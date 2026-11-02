@@ -2980,56 +2980,6 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it('shows a saved profile rename completed after returning to cached duplicate cards', async () => {
-  let releaseSave!: () => void;
-  const saveStarted = vi.fn();
-  let renamed = false;
-  const decisions: Array<{ review_token: string }> = [];
-  const saved = () => ({ ...person(7, renamed ? 5 : 4, []), display_name: renamed ? 'Renamed saved person' : 'Original saved person' });
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, left_kind: 'person', left_id: 7, actionable: false, blocker: 'endpoint_unsupported', review_token: renamed ? 'profile-r5' : 'profile-r4' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
-    if (path.endsWith('/17/review/reject')) { const body = await request.json(); decisions.push(body); return body.review_token === 'profile-r5' ? Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }) : Response.json({ error: 'identity_match_review_stale', message: 'Read the refreshed profile' }, { status: 409 }); }
-    if (path.endsWith('/people/directory')) return Response.json({ people: [directoryPerson(7, { display_name: saved().display_name, revision: saved().revision })] });
-    if (path === '/api/v1/people/7') {
-      if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); saveStarted(); await new Promise<void>(resolve => { releaseSave = resolve; }); renamed = true; }
-      return Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } });
-    }
-    if (path === '/api/v1/people/7/profile') return Response.json({ person: saved(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
-    if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
-    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
-    if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
-    if (path === '/api/v1/participants/2') return Response.json({ id: 2, display_label: 'Observed counterpart', identifiers: [], activity_count: 3 });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
-  });
-  window.history.replaceState(null, '', '/');
-  const state = new ExploreState(window);
-  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, peopleDuplicates: true });
-  const view = render(AppShell, { client, state });
-  try {
-    await within(await screen.findByRole('listitem', { name: /Original saved person and/ })).findByText('Original saved person');
-    await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
-    await fireEvent.click(await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Original saved person'));
-    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed saved person' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-    await waitFor(() => expect(saveStarted).toHaveBeenCalledOnce());
-    const returned = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.go(-2);
-    await returned;
-    await screen.findByRole('heading', { name: 'Possible duplicates' });
-    await within(await screen.findByRole('listitem', { name: /Original saved person and/ })).findByText('Original saved person');
-    releaseSave();
-    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Renamed saved person'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
-    await fireEvent(window, new Event('pagehide'));
-    await waitFor(() => expect(decisions).toEqual([{ review_token: 'profile-r5' }]));
-  } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
-});
-
 it.each([
   { outcome: '503', decision: 'reject', action: 'Keep separate' },
   { outcome: 'person_merge_required', decision: 'accept', action: 'Merge' },

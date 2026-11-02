@@ -430,7 +430,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
-    expect(fetchFn.mock.calls.some(([input]) => requestOf(input).method !== 'GET')).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('deletes the single underlying edge with its fresh ETag', async () => {

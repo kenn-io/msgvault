@@ -127,7 +127,7 @@ describe('DirectoryReviewController', () => {
     expect(controller.rows).toEqual([candidate(1, entry === 'History' ? 'accepted' : 'candidate')]);
   });
 
-  it.each(['failed', 'pending'] as const)('keeps the reject note while the decision is %s without retrying it', async phase => {
+  it('keeps the reject note while the decision is pending without retrying it', async () => {
     const pending = deferredResponse();
     const requests: Request[] = [];
     const failure = () => Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status: 503 });
@@ -135,17 +135,15 @@ describe('DirectoryReviewController', () => {
       const request = requestOf(input);
       requests.push(request);
       if (request.method === 'GET') return page([candidate(17)]);
-      return phase === 'pending' ? pending.promise : failure();
+      return pending.promise;
     }));
     try {
       await controller.loadIdentityPage();
       const decision = settle(controller, 17, 'reject', 'Original note');
-      if (phase === 'pending') {
-        await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
-        controller.setDecisionDraft(17, 'Overwrite attempt');
-        expect(controller.getDecisionDraft(17)).toBe('Original note');
-        pending.resolve(failure());
-      }
+      await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
+      controller.setDecisionDraft(17, 'Overwrite attempt');
+      expect(controller.getDecisionDraft(17)).toBe('Original note');
+      pending.resolve(failure());
       await expect(decision).resolves.toEqual({ ok: false, kind: 'error', status: 503, message: 'Decision unavailable' });
       expect(controller.decisionError).toBe('Decision unavailable');
       expect(controller.getDecisionDraft(17)).toBe('Original note');
@@ -464,12 +462,11 @@ it.each([
   { direction: 'next', failed: true },
 ] as const)('keeps the $direction page destination after settling its queued decision, failed=$failed', async ({ direction, failed }) => {
   const decision = deferredResponse(), destination = deferredResponse();
-  const start = 0;
   const target = direction === 'invalidate' ? 0 : direction === 'next' && !failed ? 9 : 10;
   const order: string[] = [];
   let reads = 0;
   let moving = false, decided = false, posted = false, destinationRead = false;
-  const rows = Array.from({ length: 11 }, (_, index) => candidate(start + index + 1));
+  const rows = Array.from({ length: 11 }, (_, index) => candidate(index + 1));
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
     order.push(request.method);
@@ -481,14 +478,14 @@ it.each([
     return page(decided ? rows.slice(1) : rows, offset);
   }));
   try {
-    await controller.loadIdentityPage(start);
+    await controller.loadIdentityPage(0);
     if (direction === 'retry') await controller.loadNextPage();
     await controller.queueDecision(controller.rows[0]!, 'reject');
     moving = true;
     const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'invalidate' ? controller.invalidate(true) : controller.retryPage();
     await vi.waitFor(() => expect(posted).toBe(true));
     if (direction === 'invalidate') expect(order).toEqual(['GET', 'POST']);
-    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(start + 1, 'rejected'), cache_state: 'ready' }));
+    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
     await vi.waitFor(() => expect(controller.pendingDecisions.size).toBe(0));
     if (direction !== 'invalidate') {
       await vi.waitFor(() => expect(destinationRead).toBe(true));

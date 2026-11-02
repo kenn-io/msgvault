@@ -10,7 +10,6 @@ interface Answers {
   failing?: string[];
   deletions?: Promise<Response>;
   waiting?: boolean;
-  duplicateFailure?: boolean;
 }
 
 function setup(answers: Answers = {}) {
@@ -20,7 +19,7 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
-    if (path.endsWith('/identity/match-candidates')) return answers.duplicateFailure ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json({ candidates: answers.waiting ? [pair] : [] });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: answers.waiting ? [pair] : [] });
     if (path === '/api/v1/deletions') return answers.deletions ?? Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
@@ -226,7 +225,7 @@ it('restores the visible view and reports a failed delete', async () => {
 
 it('polls jobs and duplicate counts and refreshes deletions explicitly', async () => {
   vi.useFakeTimers();
-  const answers = { waiting: false, duplicateFailure: false };
+  const answers = { waiting: false };
   const { data, requests } = setup(answers);
   try {
     await data.refresh();

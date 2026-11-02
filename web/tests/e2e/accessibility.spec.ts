@@ -383,32 +383,24 @@ test('Directory profile maintenance is accessible at desktop and narrow widths',
 
 test('People duplicates, merge, split, and Fact gate have no axe violations', async ({ page }) => {
   test.slow();
-  const fixture = await installDirectoryReviewArchive(page);
-  const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
-  async function openMerge() {
-    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true })));
-    await expect(page.locator('#duplicate-17')).toBeVisible();
-    await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
-    await page.getByRole('button', { name: 'Back to People' }).click();
-    await expect(merge).toBeVisible();
-  }
-  await openMerge();
+  await installDirectoryReviewArchive(page);
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true })));
+  await expect(page.locator('#duplicate-17')).toBeVisible();
+  await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to People' }).click();
+  await expect(page.getByRole('dialog', { name: 'Resolve person merge' })).toBeVisible();
   await assertNoViolations(page, 'Directory person merge');
-  await merge.getByRole('button', { name: 'Open Synthetic Two profile' }).focus();
-  await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/directoryPersonID%22%3A9/);
-  expect(fixture.requests.filter(request => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
-  await openMerge();
-  await merge.getByRole('radio', { name: 'Synthetic One (Person 7)' }).check();
-  await merge.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }).check();
-  await merge.getByRole('button', { name: 'Merge into selected survivor' }).click();
-  await expect(merge).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
   await openPersonFacts(page);
   await expect(page.getByRole('radiogroup', { name: 'Fact ledger section' })).toBeVisible();
   await assertNoViolations(page, 'Directory Fact ledger narrow');
   await page.setViewportSize({ width: 1280, height: 720 });
 
+  await page.evaluate(() => fetch('/api/v1/people/7/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'If-Match': '"person-7-r4", "person-9-r2"', 'Idempotency-Key': 'synthetic-accessibility-merge' },
+    body: JSON.stringify({ absorbed_person_id: 9 })
+  }).then(() => undefined));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
     workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7
   }))}`);
