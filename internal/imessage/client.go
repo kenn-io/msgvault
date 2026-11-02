@@ -4,14 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -21,14 +25,21 @@ const defaultPageSize = 500
 // Client reads from macOS's iMessage chat.db and imports messages
 // directly into the msgvault store.
 type Client struct {
-	db             *sql.DB
-	afterDate      time.Time // only import messages after this date
-	beforeDate     time.Time // only import messages before this date
-	limit          int       // max total messages to import (0 = unlimited)
-	useNanoseconds bool      // whether chat.db uses nanosecond timestamps
-	ownerHandle    string    // phone/email of device owner (from --me flag)
-	logger         *slog.Logger
-	pageSize       int
+	db                *sql.DB
+	afterDate         time.Time // only import messages after this date
+	beforeDate        time.Time // only import messages before this date
+	limit             int       // max total messages to import (0 = unlimited)
+	useNanoseconds    bool      // whether chat.db uses nanosecond timestamps
+	ownerHandle       string    // phone/email of device owner (from --me flag)
+	logger            *slog.Logger
+	pageSize          int
+	attachmentsDir    string
+	messagesRoot      string
+	rebaseAttachments bool
+	mediaPolicy       attachmentpolicy.Policy
+	attachmentQuery   string
+	participantCounts map[int64]int
+	maxMessageID      int64 // messages above this id were created by this run
 }
 
 // ClientOption configures a Client.
@@ -87,6 +98,31 @@ func NewClient(dbPath string, opts ...ClientOption) (*Client, error) {
 
 	for _, opt := range opts {
 		opt(c)
+	}
+	if err := c.mediaPolicy.Validate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if c.mediaPolicy.MaxBytes == 0 {
+		c.mediaPolicy.MaxBytes = attachmentpolicy.DefaultChatMaxBytes
+	}
+	if c.attachmentsDir != "" && c.rebaseAttachments {
+		info, err := os.Stat(c.messagesRoot)
+		if err == nil && !info.IsDir() {
+			err = errors.New("not a directory")
+		}
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("messages root %q: %w", c.messagesRoot, err)
+		}
+	}
+	if c.messagesRoot == "" && c.attachmentsDir != "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		c.messagesRoot = filepath.Join(home, "Library", "Messages")
 	}
 
 	if err := c.detectTimestampFormat(); err != nil {
@@ -151,6 +187,12 @@ func (c *Client) Import(
 	sourceID int64,
 ) (*ImportSummary, error) {
 	summary := &ImportSummary{}
+	if err := c.prepareAttachments(ctx); err != nil {
+		return summary, fmt.Errorf("read attachment schema: %w", err)
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM messages`).Scan(&c.maxMessageID); err != nil {
+		return summary, fmt.Errorf("read message boundary: %w", err)
+	}
 
 	// Pre-create iMessage and SMS labels
 	imessageLabelID, err := s.EnsureLabel(
@@ -198,6 +240,13 @@ func (c *Client) Import(
 	convCache := map[string]int64{}  // chatGUID -> conversationID
 	imported := 0
 	lastROWID := int64(0)
+	// Committed messages need their conversation counts however the run ends.
+	finalize := func(err error) error {
+		if statsErr := s.RecomputeConversationStats(sourceID); statsErr != nil {
+			return errors.Join(err, fmt.Errorf("recompute stats: %w", statsErr))
+		}
+		return err
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -230,6 +279,22 @@ func (c *Client) Import(
 				phoneCache, emailCache, convCache,
 				ownerPID, summary,
 			); err != nil {
+				if fatal := fatalImportError(ctx, err); fatal != nil {
+					return summary, finalize(fatal)
+				}
+				if errors.Is(err, ErrAttachmentImport) {
+					// Keep scanning later messages and report the count once the scan ends.
+					// importMessage has already persisted this message row.
+					imported++
+					lastROWID = msg.ROWID
+					// The first failure explains the run; the count covers the rest.
+					level := slog.LevelDebug
+					if summary.AttachmentFailures == 1 {
+						level = slog.LevelWarn
+					}
+					c.logger.Log(ctx, level, "failed to import message attachments", "rowid", msg.ROWID, "error", err)
+					continue
+				}
 				c.logger.Warn(
 					"failed to import message",
 					"rowid", msg.ROWID,
@@ -248,11 +313,22 @@ func (c *Client) Import(
 		}
 	}
 
-	if err := s.RecomputeConversationStats(sourceID); err != nil {
-		return summary, fmt.Errorf("recompute stats: %w", err)
+	var scanErr error
+	if summary.AttachmentFailures > 0 {
+		scanErr = fmt.Errorf("%d messages had attachment errors: %w", summary.AttachmentFailures, ErrAttachmentImport)
 	}
+	return summary, finalize(scanErr)
+}
 
-	return summary, nil
+// fatalImportError returns the error that ends the run: cancellation or a failed archive write.
+func fatalImportError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, errAttachmentStore) {
+		return err
+	}
+	return nil
 }
 
 // fetchPage queries the next batch of messages from chat.db.
@@ -418,8 +494,9 @@ func (c *Client) importMessage(
 			String: snippet(body, 100),
 			Valid:  body != "",
 		},
-		SizeEstimate:   int64(len(body)),
-		HasAttachments: msg.HasAttachments != 0,
+		SizeEstimate:            int64(len(body)),
+		HasAttachments:          msg.HasAttachments != 0,
+		PreserveAttachmentStats: true,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
@@ -461,12 +538,14 @@ func (c *Client) importMessage(
 		return fmt.Errorf("link label: %w", err)
 	}
 
-	// Warn about attachments
-	if msg.HasAttachments != 0 {
-		c.logger.Debug(
-			"message has attachments (extraction not yet implemented)",
-			"rowid", msg.ROWID,
-		)
+	if err := c.importAttachments(ctx, s, msgID, msg, summary); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		// The message row is already persisted, so it counts as imported.
+		summary.MessagesImported++
+		summary.AttachmentFailures++
+		return fmt.Errorf("%w: %w", ErrAttachmentImport, err)
 	}
 
 	summary.MessagesImported++
@@ -665,6 +744,12 @@ func (c *Client) ensureConversation(
 	)
 	if err != nil {
 		return 0, false, err
+	}
+	// Purge trusts the stored roster size, so refresh it for every chat the run sees.
+	if msg.ChatROWID != nil {
+		if _, err := c.chatParticipantCount(ctx, s, convID, *msg.ChatROWID); err != nil {
+			return 0, false, err
+		}
 	}
 	convCache[chatGUID] = convID
 
