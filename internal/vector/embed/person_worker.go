@@ -362,6 +362,9 @@ func (w *PersonWorker) recordRejectedPersons(
 	} else if err != nil {
 		return fmt.Errorf("record rejected person revisions for generation %d: %w", gen, err)
 	}
+	if len(publications) > 0 {
+		jobctx.RecordProgress(ctx)
+	}
 	return nil
 }
 

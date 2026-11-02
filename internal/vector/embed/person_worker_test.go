@@ -536,9 +536,11 @@ func TestPersonWorkerTerminatesLonePoisonRevisionAfterHealthyProbe(t *testing.T)
 	client := &poisonPersonWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 1)
 
-	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
+	passCtx := jobctx.WithProgress(t.Context())
+	result, err := worker.RunOnce(passCtx, 8, testEmbeddingPassScope())
 	must.NoError(err)
 	check.Equal(RunResult{Claimed: 1, Failed: 1}, result)
+	check.True(jobctx.HasProgress(passCtx), "a durable rejection marker lets a timed-out pass continue")
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
 	must.NoError(listErr)
 	check.Equal(map[int64]string{1: "rev-reject"}, revisions)
