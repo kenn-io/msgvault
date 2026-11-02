@@ -275,6 +275,8 @@ func TestDedupPurgeSettlesAcquisitionDebt(t *testing.T) {
 					Status: store.SyncRunItemStatusError, ErrorKind: "fetch_error",
 				}))
 			}
+			// The run that recorded the failures has ended and released the source.
+			require.NoError(f.Store.CompleteSync(runID, ""))
 			_, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-debt")
 			require.NoError(err)
 
@@ -289,6 +291,43 @@ func TestDedupPurgeSettlesAcquisitionDebt(t *testing.T) {
 				ids = append(ids, item.SourceMessageID)
 			}
 			assert.Equal([]string{"keep"}, ids)
+		})
+	}
+}
+
+// A dedup purge does not wait for a sync: while one owns the source, it is
+// refused and deletes nothing. A Gmail sync that read retry debt before the
+// purge would otherwise download the purged message again.
+func TestDedupPurgeRefusedWhileSourceSyncs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		purge func(*storetest.Fixture) (int64, error)
+	}{
+		{"batch", func(f *storetest.Fixture) (int64, error) { return f.Store.DeleteDedupedBatch("batch-busy") }},
+		{"all", func(f *storetest.Fixture) (int64, error) {
+			deleted, _, err := f.Store.DeleteAllDeduped()
+			return deleted, err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			idKeep := newRFC822Message(t, f, "keep", "rfc822-busy")
+			idDrop := newRFC822Message(t, f, "drop", "rfc822-busy")
+			_, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-busy")
+			require.NoError(err)
+
+			execution, err := f.Store.AcquireSyncExecutionContext(context.Background(), f.Source.ID)
+			require.NoError(err)
+			_, err = tc.purge(f)
+			require.ErrorIs(err, store.ErrSyncAlreadyActive)
+			assertDedupDeleted(t, f.Store, idDrop, true)
+
+			require.NoError(execution.Release())
+			deleted, err := tc.purge(f)
+			require.NoError(err)
+			assert.Equal(int64(1), deleted)
 		})
 	}
 }

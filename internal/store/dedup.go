@@ -765,26 +765,38 @@ func (s *Store) DeleteDedupedBatches(batchIDs []string) (int64, error) {
 func (s *Store) DeleteDedupedBatchesContext(
 	ctx context.Context,
 	batchIDs []string,
-) (int64, error) {
+) (deleted int64, retErr error) {
 	if len(batchIDs) == 0 {
 		return 0, nil
 	}
 
+	batchFilter := "delete_batch_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(batchIDs)), ",") +
+		") AND deleted_at IS NOT NULL"
+	batchArgs := make([]any, len(batchIDs))
+	for i, batchID := range batchIDs {
+		batchArgs[i] = batchID
+	}
+	sources, release, err := s.lockDedupPurgeSources(ctx, batchFilter, batchArgs...)
+	if err != nil || len(sources.args) == 0 {
+		return 0, err
+	}
+	defer func() { retErr = errors.Join(retErr, release()) }()
+
 	// runMaintenance disables the pool-wide 30s statement_timeout for this
 	// tx: the cascade DELETE is unbounded and exceeds 30s on a large archive
 	// (finding S1). No-op timeout reset on SQLite.
-	var deleted int64
-	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
 			if err := s.settlePurgedAcquisitionDebt(ctx, tx,
-				"m.delete_batch_id = ? AND m.deleted_at IS NOT NULL", batchID,
+				"m.delete_batch_id = ? AND m.deleted_at IS NOT NULL AND m."+sources.filter,
+				append([]any{batchID}, sources.args...)...,
 			); err != nil {
 				return fmt.Errorf("settle dedup batch %q: %w", batchID, err)
 			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
-				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
-			`, batchID)
+				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL AND `+sources.filter,
+				append([]any{batchID}, sources.args...)...)
 			if err != nil {
 				return fmt.Errorf("delete dedup batch %q: %w", batchID, err)
 			}
@@ -800,6 +812,54 @@ func (s *Store) DeleteDedupedBatchesContext(
 		return 0, err
 	}
 	return deleted, nil
+}
+
+// dedupPurgeSources restricts a purge to the sources whose sync execution it
+// owns, using the filter source_id IN (args).
+type dedupPurgeSources struct {
+	filter string
+	args   []any
+}
+
+// lockDedupPurgeSources takes the sync execution lock of every source with
+// rows matching messageFilter. A Gmail sync reads its retry debt before it
+// checks which messages exist, so a purge between those steps would let it
+// download a purged message again. Like channel purge, the purge fails with
+// ErrSyncAlreadyActive while a sync runs. Rows hidden in other sources after
+// the lookup stay for the next purge.
+func (s *Store) lockDedupPurgeSources(
+	ctx context.Context, messageFilter string, args ...any,
+) (dedupPurgeSources, func() error, error) {
+	var sources dedupPurgeSources
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT DISTINCT source_id FROM messages WHERE "+messageFilter+" ORDER BY source_id", args...)
+	if err != nil {
+		return sources, nil, fmt.Errorf("list dedup purge sources: %w", err)
+	}
+	var sourceIDs []int64
+	for rows.Next() {
+		var sourceID int64
+		if err := rows.Scan(&sourceID); err != nil {
+			_ = rows.Close()
+			return sources, nil, fmt.Errorf("scan dedup purge source: %w", err)
+		}
+		sourceIDs = append(sourceIDs, sourceID)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return sources, nil, fmt.Errorf("list dedup purge sources: %w", err)
+	}
+	if len(sourceIDs) == 0 {
+		return sources, func() error { return nil }, nil
+	}
+	lock, err := s.acquireSyncExecutionLocks(ctx, sourceIDs)
+	if err != nil {
+		return sources, nil, fmt.Errorf("lock dedup purge sources: %w", err)
+	}
+	sources.filter = "source_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(sourceIDs)), ",") + ")"
+	for _, sourceID := range sourceIDs {
+		sources.args = append(sources.args, sourceID)
+	}
+	return sources, func() error { return s.abandonSyncExecutionLocks(sourceIDs, lock) }, nil
 }
 
 // settlePurgedAcquisitionDebt resolves the outstanding sync acquisition
@@ -911,6 +971,13 @@ func (s *Store) DeleteAllDeduped() (deleted int64, distinctBatches int64, err er
 func (s *Store) DeleteAllDedupedContext(
 	ctx context.Context,
 ) (deleted int64, distinctBatches int64, err error) {
+	const hiddenFilter = "deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"
+	sources, release, err := s.lockDedupPurgeSources(ctx, hiddenFilter)
+	if err != nil || len(sources.args) == 0 {
+		return 0, 0, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+
 	// runMaintenance wraps the count + cascade DELETE in one transaction with
 	// the pool-wide 30s statement_timeout disabled: the unbounded cascade
 	// DELETE exceeds 30s on a large archive (finding S1). The count and the
@@ -920,20 +987,23 @@ func (s *Store) DeleteAllDedupedContext(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(DISTINCT delete_batch_id)
 			FROM messages
-			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
-		`).Scan(&distinctBatches); err != nil {
+			WHERE `+hiddenFilter+` AND `+sources.filter,
+			sources.args...,
+		).Scan(&distinctBatches); err != nil {
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
 
 		if err := s.settlePurgedAcquisitionDebt(ctx, tx,
-			"m.deleted_at IS NOT NULL AND m.delete_batch_id IS NOT NULL",
+			"m.deleted_at IS NOT NULL AND m.delete_batch_id IS NOT NULL AND m."+sources.filter,
+			sources.args...,
 		); err != nil {
 			return fmt.Errorf("delete all dedup-hidden: %w", err)
 		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM messages
-			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
-		`)
+			WHERE `+hiddenFilter+` AND `+sources.filter,
+			sources.args...,
+		)
 		if err != nil {
 			return fmt.Errorf("delete all dedup-hidden: delete: %w", err)
 		}

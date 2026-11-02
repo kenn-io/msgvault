@@ -2028,6 +2028,46 @@ func TestCLIDeleteDedupedRejectsChangedBatchPlan(t *testing.T) {
 	assert.Equal(2, count, "deduped rows should remain when plan changes")
 }
 
+// A purge while an affected account syncs is refused with a retryable
+// conflict and leaves the hidden rows in place.
+func TestCLIDeleteDedupedRefusedWhileSourceSyncs(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	keep := createAPIDedupMessage(t, f, "keep", "dedup-api-busy")
+	drop := createAPIDedupMessage(t, f, "drop", "dedup-api-busy")
+	_, err := f.Store.MergeDuplicates(keep, []int64{drop}, "batch-busy")
+	require.NoError(err, "merge batch-busy")
+	execution, err := f.Store.AcquireSyncExecutionContext(t.Context(), f.Source.ID)
+	require.NoError(err, "hold source sync")
+	t.Cleanup(func() { assert.NoError(execution.Release()) })
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+	executeReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped",
+		strings.NewReader(`{
+			"batch_ids":["batch-busy"],
+			"no_backup": true,
+			"expected_total": 1,
+			"expected_batch_count": 1,
+			"expected_batches": [{"id":"batch-busy", "count": 1}]
+		}`),
+	)
+	executeReq.Header.Set("Content-Type", "application/json")
+	executeResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(executeResp, executeReq)
+
+	assert.Equal(http.StatusConflict, executeResp.Code, "execute status: %s", executeResp.Body.String())
+	assert.Contains(executeResp.Body.String(), "sync_already_active")
+	var count int
+	err = f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), drop).Scan(&count)
+	require.NoError(err, "count rows after refused execute")
+	assert.Equal(1, count, "hidden row should remain while the source syncs")
+}
+
 func TestCLIDeleteDedupedRequiresExpectedBatchesForBatchExecute(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
