@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -54,8 +55,9 @@ type bodyContextMarkers struct {
 }
 
 type bodyContextSourceState struct {
-	scanTruncated bool
-	chunked       bool
+	scanTruncated         bool
+	spanBoundaryTruncated bool
+	chunked               bool
 }
 
 type bodyContextChunk struct {
@@ -457,91 +459,84 @@ func newBodyContextMarkers() (bodyContextMarkers, error) {
 	}, nil
 }
 
-func bodyContextIDPlaceholders(ids []int64) (string, []any) {
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	return strings.Join(placeholders, ", "), args
-}
-
 func (e *SQLiteEngine) loadBodyContextChunks(
 	ctx context.Context,
 	ids []int64,
 	scanBytes int,
 ) (map[int64]bodyContextSourceState, []bodyContextChunk, map[int64]string, error) {
-	idPlaceholders, idArgs := bodyContextIDPlaceholders(ids)
-	var args []any
-	var querySQL string
-	switch e.dialect.messageBodyContextBackend() {
-	case messageBodyContextSQLite:
-		// SQLite materializes an entire TEXT cell before evaluating substr(),
-		// even when only a tiny prefix is requested. octet_length() is served
-		// from record metadata, so CASE can reject an oversized cell before it
-		// is loaded. Eligible values sum to the request-wide scan budget (plus
-		// one UTF-8 guard per result); oversized values become explicitly
-		// truncated with no misleading fallback context.
-		limit := scanBytes + utf8.UTFMax
-		args = append([]any{limit, limit}, idArgs...)
-		querySQL = fmt.Sprintf(`
-			SELECT mb.message_id,
-				CASE
-					WHEN COALESCE(octet_length(mb.body_text), 0) <= ?
-					THEN CAST(COALESCE(mb.body_text, '') AS BLOB)
-					ELSE X''
-				END,
-				COALESCE(octet_length(mb.body_text), 0) > ?
-			FROM message_bodies mb
-			WHERE mb.message_id IN (%s)
-			ORDER BY mb.message_id
-		`, idPlaceholders)
-	case messageBodyContextPostgreSQL:
-		args = append([]any{scanBytes + utf8.UTFMax}, idArgs...)
-		querySQL = fmt.Sprintf(`
-			SELECT mb.message_id,
-				COALESCE(convert_to(
-					SUBSTRING(COALESCE(mb.body_text, '') FROM 1 FOR ?), 'UTF8'
-				), ''::bytea),
-				FALSE
-			FROM message_bodies mb
-			WHERE mb.message_id IN (%s)
-			ORDER BY mb.message_id
-		`, idPlaceholders)
-	default:
-		return nil, nil, nil, errors.New("message body context is unavailable for this query dialect")
-	}
-	rows, err := e.queryContext(ctx, querySQL, args...)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("load bounded message body prefixes: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
 	states := make(map[int64]bodyContextSourceState, len(ids))
 	bodies := make(map[int64]string, len(ids))
 	chunks := make([]bodyContextChunk, 0)
-	for rows.Next() {
-		var messageID int64
+	for _, messageID := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		var raw []byte
-		var sourceTruncated bool
-		if err := rows.Scan(&messageID, &raw, &sourceTruncated); err != nil {
-			return nil, nil, nil, fmt.Errorf("scan bounded message body prefix: %w", err)
+		var sourceTruncated, htmlBody bool
+		limit := scanBytes + utf8.UTFMax
+		var querySQL string
+		var args []any
+		switch e.dialect.messageBodyContextBackend() {
+		case messageBodyContextSQLite:
+			// A single message detail uses its body-table primary key. SQLite
+			// can measure TEXT from record metadata, and the HTML prefix is
+			// sliced as bytes before it is materialized.
+			querySQL = `
+				SELECT
+					CASE WHEN COALESCE(body_text, '') <> '' THEN
+						CASE WHEN octet_length(body_text) <= ?
+							THEN CAST(body_text AS BLOB) ELSE X'' END
+					ELSE CAST(substr(CAST(COALESCE(body_html, '') AS BLOB), 1, ?) AS BLOB)
+					END,
+					CASE WHEN COALESCE(body_text, '') <> ''
+						THEN COALESCE(octet_length(body_text), 0) > ?
+						ELSE COALESCE(octet_length(body_html), 0) > ? END,
+					COALESCE(body_text, '') = ''
+				FROM message_bodies WHERE message_id = ?
+			`
+			args = []any{limit, limit, limit, limit, messageID}
+		case messageBodyContextPostgreSQL:
+			// PostgreSQL returns a bounded UTF-8 prefix; the Go-side guard below
+			// enforces the byte budget before tokenizing or rendering context.
+			body := `CASE WHEN COALESCE(body_text, '') <> '' THEN body_text ELSE COALESCE(body_html, '') END`
+			querySQL = fmt.Sprintf(`
+				SELECT COALESCE(convert_to(SUBSTRING(%s FROM 1 FOR ?), 'UTF8'), ''::bytea),
+					COALESCE(octet_length(%s), 0) > ?, COALESCE(body_text, '') = ''
+				FROM message_bodies WHERE message_id = ?
+			`, body, body)
+			args = []any{limit, limit, messageID}
+		default:
+			return nil, nil, nil, errors.New("message body context is unavailable for this query dialect")
+		}
+		err := e.queryRowContext(ctx, querySQL, args...).Scan(&raw, &sourceTruncated, &htmlBody)
+		if errors.Is(err, sql.ErrNoRows) {
+			states[messageID] = bodyContextSourceState{}
+			bodies[messageID] = ""
+			continue
+		}
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("load bounded message body prefix for %d: %w", messageID, err)
 		}
 		prefix, prefixTruncated, err := validBodyContextPrefix(raw, scanBytes)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("message %d body context: %w", messageID, err)
 		}
+		spanBoundaryTruncated := sourceTruncated || prefixTruncated
+		if htmlBody {
+			var hiddenAtEnd bool
+			prefix, hiddenAtEnd = mime.StripHTMLPrefixWithState(prefix)
+			if hiddenAtEnd {
+				spanBoundaryTruncated = false
+			}
+		}
 		bodies[messageID] = prefix
 		messageChunks := makeBodyContextChunks(messageID, prefix, len(chunks)+1)
 		states[messageID] = bodyContextSourceState{
-			scanTruncated: sourceTruncated || prefixTruncated,
-			chunked:       len(messageChunks) > 1,
+			scanTruncated:         sourceTruncated || prefixTruncated,
+			spanBoundaryTruncated: spanBoundaryTruncated,
+			chunked:               len(messageChunks) > 1,
 		}
 		chunks = append(chunks, messageChunks...)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, nil, fmt.Errorf("iterate bounded message body prefixes: %w", err)
 	}
 	return states, chunks, bodies, nil
 }
@@ -715,7 +710,7 @@ func bodyContextSpanIsSafe(
 	if span.start == 0 && chunk.start > 0 {
 		return false
 	}
-	if span.end == len(chunk.body) && (chunk.end > chunk.coreEnd || state.scanTruncated) {
+	if span.end == len(chunk.body) && (chunk.end > chunk.coreEnd || state.spanBoundaryTruncated) {
 		return false
 	}
 	return true

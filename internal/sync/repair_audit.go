@@ -141,7 +141,7 @@ func auditGmailEvidence(evidence store.GmailAuditEvidence) (RepairAuditResult, b
 		evidence.Subject.Valid, evidence.Subject.String, textutil.EnsureUTF8(parsed.Subject),
 	)
 	result.Fields[AuditFieldBodyText] = compareOptionalString(
-		evidence.BodyText.Valid, evidence.BodyText.String, textutil.EnsureUTF8(parsed.GetBodyText()),
+		evidence.BodyText.Valid, evidence.BodyText.String, textutil.EnsureUTF8(parsed.BodyText),
 	)
 	result.Fields[AuditFieldBodyHTML] = compareOptionalString(
 		evidence.BodyHTML.Valid, evidence.BodyHTML.String, textutil.EnsureUTF8(parsed.BodyHTML),

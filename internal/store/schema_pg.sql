@@ -4317,7 +4317,7 @@ CREATE TRIGGER trg_loop_evidence_message_raw AFTER INSERT OR UPDATE OR DELETE ON
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_raw();
 CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_bodies() RETURNS TRIGGER AS $$
 BEGIN
- IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text THEN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text AND OLD.body_html IS NOT DISTINCT FROM NEW.body_html THEN
  RETURN NULL;
  END IF;
  DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;

@@ -10,6 +10,8 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
+	msgmime "go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestAuthorizeGmailDraftRequiresEnabledSourcePolicy(t *testing.T) {
@@ -42,6 +44,30 @@ func TestParseDraftSendAsArgs(t *testing.T) {
 	assertions.True(jsonOutput)
 	_, _, err = parseDraftSendAsArgs([]string{"draft-send-as"})
 	requirements.ErrorContains(err, "invalid_args")
+}
+
+func TestGmailDraftMessagePersistDataUsesHTMLForDerivedText(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	parsed := &msgmime.Message{
+		From:     []msgmime.Address{{Email: "sender@example.test"}},
+		Subject:  "Synthetic draft",
+		BodyHTML: `<p>HTML-only draft content.</p>`,
+	}
+	build := gmailDraftMessagePersistData(
+		7, 0, parsed, []byte("synthetic mime"),
+		store.GmailDraftReceipt{GmailMessageID: "draft-message", ThreadID: "draft-thread"}, "",
+	)
+	data := build([]int64{11})
+	requirements.NotNil(data)
+	checks.True(data.BodyText.Valid)
+	checks.Empty(data.BodyText.String, "canonical plain text remains empty")
+	checks.True(data.BodyHTML.Valid)
+	checks.Equal(parsed.BodyHTML, data.BodyHTML.String)
+	checks.True(data.Message.Snippet.Valid)
+	checks.Equal("HTML-only draft content.", data.Message.Snippet.String)
+	requirements.NotNil(data.FTS)
+	checks.Equal("HTML-only draft content.", data.FTS.Body)
 }
 
 func TestGmailReadErrorCodeUsesProviderMessages(t *testing.T) {

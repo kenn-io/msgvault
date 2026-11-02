@@ -159,6 +159,30 @@ func TestAuditGmailMessagesTreatsParsedEmptyFieldsAsAuthoritative(t *testing.T) 
 	assert.Equal(AuditMismatch, results[0].Fields[AuditFieldSubject])
 }
 
+func TestAuditGmailMessagesTreatsHTMLOnlyBodyTextAsEmpty(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	id := seedRepairRow(t, env.Store, source.ID, "gmail-html", "thread-html", "html only")
+	htmlBody := `<html><body><p>Synthetic receipt body</p></body></html>`
+	raw := testemail.MakeRaw(testemail.Options{
+		From:        "sender@example.com",
+		To:          "recipient@example.com",
+		Subject:     "html only",
+		ContentType: "text/html; charset=utf-8",
+		Headers:     map[string]string{"Message-ID": "<gmail-html@example.com>"},
+		Body:        htmlBody,
+	})
+	require.NoError(env.Store.UpsertMessageRaw(id, raw))
+	require.NoError(env.Store.UpsertMessageBody(id,
+		sql.NullString{String: "", Valid: true},
+		sql.NullString{String: htmlBody, Valid: true}))
+
+	assert.Empty(collectAudit(t, env.Syncer, source.ID))
+}
+
 func TestAuditGmailMessagesMarksNonMIMEStoredRawInconclusive(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

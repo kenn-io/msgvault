@@ -83,10 +83,10 @@ func (s *Store) SetCardDAVConflictTombstonePreparationSnapshotHookForTest(fn fun
 }
 
 // SetBackfillFTSBatchErrHookForTest installs (or, with nil, clears) the
-// test-only hook that forces backfillFTSBatch to fail for a chosen id range.
-// Tests use it to deterministically trigger backfillFTSRowByRow's
-// skip-the-bad-row-and-continue fallback. Returns a restore func that clears
-// the hook, so callers can defer it.
+// test-only hook that interrupts a chosen id range after the set-based update
+// but before the HTML-only body pass. The update and pass share a transaction,
+// so tests can verify an interruption rolls both back. Returns a restore func
+// that clears the hook, so callers can defer it.
 //
 // Scoped to this Store: other Stores migrating concurrently in the same test
 // binary — test fixtures build their schemas in the background — must not see

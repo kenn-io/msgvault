@@ -51,12 +51,26 @@ func TestStore_RebuildFTS_HappyPath(t *testing.T) {
 		sql.NullString{String: "banana bread recipe", Valid: true}, sql.NullString{}),
 		"UpsertMessageBody 2")
 
+	msgID3 := f.CreateMessage("rebuild-msg-html-only")
+	require.NoError(f.Store.UpsertMessageBody(msgID3,
+		sql.NullString{}, sql.NullString{String: "<p>htmlrebuildtoken</p>", Valid: true}),
+		"UpsertMessageBody HTML-only")
+	msgID4 := f.CreateMessage("rebuild-msg-google-chat-html-only")
+	require.NoError(f.Store.UpsertMessageBody(msgID4,
+		sql.NullString{}, sql.NullString{String: "<p>htmlchatrebuildtoken</p>", Valid: true}),
+		"UpsertMessageBody Google Chat HTML-only")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		"UPDATE messages SET message_type = ? WHERE id = ?"), store.MessageTypeGoogleChat, msgID4)
+	require.NoError(err, "mark HTML-only test message as Google Chat")
+
 	n, err := f.Store.RebuildFTS(nil)
 	require.NoError(err, "RebuildFTS")
-	assert.Equal(int64(2), n, "RebuildFTS rows")
+	assert.Equal(int64(4), n, "RebuildFTS rows")
 
 	assertFTSContains(t, f.Store, "banana", 1)
 	assertFTSContains(t, f.Store, "alice", 1)
+	assertFTSContains(t, f.Store, "htmlrebuildtoken", 1)
+	assertFTSContains(t, f.Store, "htmlchatrebuildtoken", 1)
 }
 
 // TestStore_RebuildFTS_BypassesAvailabilityFlag verifies the critical

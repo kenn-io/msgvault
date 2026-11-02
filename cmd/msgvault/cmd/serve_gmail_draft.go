@@ -369,6 +369,7 @@ func gmailDraftMessagePersistDataWithAttachments(
 		ccAddresses := gmailAddressStrings(parsed.Cc)
 		bccAddresses := gmailAddressStrings(parsed.Bcc)
 		fromAddresses := gmailAddressStrings(parsed.From)
+		searchableBody := parsed.GetBodyText()
 		return &store.MessagePersistData{
 			Message: &store.Message{
 				SourceID: sourceID, SourceMessageID: receipt.GmailMessageID,
@@ -377,7 +378,7 @@ func gmailDraftMessagePersistDataWithAttachments(
 				SenderID:         sql.NullInt64{Int64: fromIDs[0], Valid: true},
 				ReplyToMessageID: sql.NullInt64{Int64: replyToMessageID, Valid: replyToMessageID > 0},
 				Subject:          sql.NullString{String: parsed.Subject, Valid: parsed.Subject != ""},
-				Snippet:          sql.NullString{String: strings.TrimSpace(parsed.BodyText), Valid: parsed.BodyText != ""},
+				Snippet:          sql.NullString{String: strings.TrimSpace(searchableBody), Valid: searchableBody != ""},
 				SentAt:           sql.NullTime{Time: parsed.Date, Valid: !parsed.Date.IsZero()},
 				InternalDate:     sql.NullTime{Time: parsed.Date, Valid: !parsed.Date.IsZero()},
 				SizeEstimate:     int64(len(raw)), ArchivedAt: time.Now(),
@@ -398,7 +399,7 @@ func gmailDraftMessagePersistDataWithAttachments(
 			LabelRefs:                 []store.MessageLabelRef{{SourceLabelID: "DRAFT", Info: store.LabelInfo{Name: "DRAFT", Type: "system"}}},
 			MIMEAttachmentReplacement: attachmentWrites,
 			FTS: &store.FTSDoc{
-				Subject: parsed.Subject, Body: parsed.BodyText, FromAddr: firstGmailAddress(parsed.From),
+				Subject: parsed.Subject, Body: searchableBody, FromAddr: firstGmailAddress(parsed.From),
 				ToAddrs: strings.Join(toAddresses, " "), CcAddrs: strings.Join(ccAddresses, " "),
 			},
 		}

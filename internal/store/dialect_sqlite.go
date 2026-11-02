@@ -510,6 +510,36 @@ func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.
 	return d.FTSBackfillBatchSQL() + predicate, nil
 }
 
+func (d *SQLiteDialect) FTSBackfillHTMLOnlyCandidateSQL(
+	ctx context.Context, db *sql.DB, onlyMissing bool,
+) (string, error) {
+	indexedPredicate := ""
+	if onlyMissing {
+		var id int64
+		err := db.QueryRowContext(ctx, "SELECT id FROM messages_fts_docsize LIMIT 0").Scan(&id)
+		indexedPredicate = ` AND NOT EXISTS (
+			SELECT 1 FROM messages_fts_docsize d WHERE d.id = m.id
+		)`
+		if d.IsNoSuchTableError(err) {
+			indexedPredicate = ` AND NOT EXISTS (
+				SELECT 1 FROM messages_fts f WHERE f.rowid = m.id
+			)`
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("probe FTS indexed IDs for HTML-only candidates: %w", err)
+		}
+	}
+	return `SELECT m.id FROM messages m
+		WHERE m.id >= ? AND m.id < ?
+		  AND m.message_type IN ('email', 'google_chat')
+		  AND EXISTS (
+			SELECT 1 FROM message_bodies mb
+			WHERE mb.message_id = m.id
+			  AND COALESCE(mb.body_text, '') = ''
+			  AND COALESCE(mb.body_html, '') <> ''
+		  )` + indexedPredicate + `
+		ORDER BY m.id`, nil
+}
+
 // FTSAvailable probes for FTS5 by querying the virtual table.
 // Checking sqlite_master alone is insufficient: a binary built without FTS5
 // support will fail with "no such module: fts5" even if the table exists.

@@ -1763,7 +1763,7 @@ func (s *Syncer) prepareMessage(
 
 	// Ensure all text fields are valid UTF-8
 	subject := textutil.EnsureUTF8(parsed.Subject)
-	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
+	bodyText := textutil.EnsureUTF8(parsed.BodyText)
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
 	snippet := textutil.EnsureUTF8(raw.Snippet)
 
@@ -1952,7 +1952,9 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		fromAddr := joinEmails(data.from)
 		toAddrs := joinEmails(data.to)
 		ccAddrs := joinEmails(data.cc)
-		if err := s.store.UpsertFTS(messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
+		if err := s.store.UpsertFTS(messageID, subject,
+			mime.SearchableBodyText(data.bodyText, data.bodyHTML),
+			fromAddr, toAddrs, ccAddrs); err != nil {
 			s.logger.Warn("failed to upsert FTS", "message", messageID, "error", err)
 		}
 	}

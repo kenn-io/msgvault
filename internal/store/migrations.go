@@ -108,7 +108,30 @@ const (
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
 	migrationChatMembers                    = "chat_members_v1"
+	migrationLoopEvidenceBodyHTML           = "loop_evidence_body_html_v1"
 )
+
+// migrateLoopEvidenceBodyHTML replaces SQLite's persisted update trigger and
+// clears classifications made before HTML body edits invalidated cached facts.
+// PostgreSQL recreates its trigger function from schema_pg.sql on every open.
+func (s *Store) migrateLoopEvidenceBodyHTML(ctx context.Context) error {
+	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if !s.IsPostgreSQL() {
+			if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies_update;
+				CREATE TRIGGER trg_loop_evidence_message_bodies_update
+				AFTER UPDATE ON message_bodies FOR EACH ROW
+				WHEN OLD.message_id IS NOT NEW.message_id OR OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html BEGIN
+					DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
+				END;`); err != nil {
+				return fmt.Errorf("replace SQLite loop evidence body trigger: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM loop_message_evidence`); err != nil {
+			return fmt.Errorf("invalidate cached loop evidence: %w", err)
+		}
+		return nil
+	})
+}
 
 // hiddenTextBackfillCursorKey is the archive_metadata key holding the last
 // message ID the hidden text backfill committed, so an interrupted run resumes.
