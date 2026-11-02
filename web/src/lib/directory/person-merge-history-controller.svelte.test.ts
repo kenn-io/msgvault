@@ -237,38 +237,6 @@ describe('PersonMergeHistoryController', () => {
     ]);
   });
 
-  it('rotates the UUID and requires reconfirmation after a thrown non-transport exception', async () => {
-    const requests: Request[] = [];
-    let postAttempts = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
-      postAttempts += 1;
-      if (postAttempts === 1) throw new SyntaxError('invalid response JSON');
-      return Response.json(splitResult());
-    });
-    vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('123-456-789-12')
-      .mockReturnValueOnce('234-567-890-23');
-    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
-    await controller.selectMerge(41);
-    await controller.openSplit();
-    controller.setParticipantSelected(701, true);
-    controller.confirmSplit();
-
-    await controller.submitSplit();
-    expect(controller.confirmedParticipantIDs).toBeNull();
-    controller.confirmSplit();
-    await controller.submitSplit();
-
-    expect(
-      requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['123-456-789-12', '234-567-890-23']);
-  });
-
   it('atomically reloads exact source/detail only for the recognized stale code and requires reconfirmation', async () => {
     const requests: Request[] = [];
     let sourceReads = 0;

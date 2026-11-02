@@ -51,6 +51,48 @@ it('refreshes the open person after linking and profile reconciliation', async (
   } finally { view.unmount(); controller.destroy(); }
 });
 
+it('reloads Messages after calendar revision recovery with no selected day', async () => {
+  let rebuilt = false;
+  const calendarYears: number[] = [];
+  const timelineRequests: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    const cacheRevision = rebuilt ? 'cache-2' : 'cache-1';
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: rebuilt ? 'Refreshed person' : 'Original person', identifiers: [], first_at: '2025-01-01T00:00:00Z', last_at: when, activity_count: 1, file_count: 0, source_counts: [], cache_revision: cacheRevision });
+    if (path === '/api/v1/relationships/1/calendar') {
+      const { year } = await request.json();
+      calendarYears.push(year);
+      return Response.json({ participant_id: 1, canonical_id: 1, year, timezone: 'UTC', current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', days: [], annual: [], identity_revision: 1, cache_revision: cacheRevision } satisfies RelationshipCalendar);
+    }
+    if (path === '/api/v1/participants/1/timeline') {
+      timelineRequests.push(await request.json());
+      return Response.json({ rows: [{ key: 'message:1', kind: 'email', match: {}, title: rebuilt ? 'Refreshed message' : 'Original message', occurred_at: when, message_count: 1, participant_labels: [], participant_ids: [1], message_type: 'email', conversation_type: 'email', attachment_count: 0, attachment_size: 0, deleted_from_source: false, source_identifier: 'owner@example.com', source_type: 'gmail', source_id: 1 }], total_count: 1, cache_revision: cacheRevision, search_provenance: {} });
+    }
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const directory = new DirectoryController(client);
+  const predicate = { filters: [], presentation: 'table' as const };
+  await controller.openTarget('cluster:1', predicate, false);
+  const view = render(PersonPage, { props: { client, directory, controller, target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  try {
+    await screen.findByText('Original message');
+    await waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+    expect(calendarYears).toEqual([2026]);
+    expect(screen.queryByRole('button', { name: 'Clear date' })).toBeNull();
+    rebuilt = true;
+    await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
+    await screen.findByRole('heading', { name: 'Refreshed person' });
+    await waitFor(() => expect(controller.relationshipCalendar?.cache_revision).toBe('cache-2'));
+    expect(calendarYears).toEqual([2026, 2025, 2025]);
+    await screen.findByText('Refreshed message');
+    expect(screen.queryByText('Original message')).toBeNull();
+    expect(timelineRequests).toHaveLength(2);
+    expect(timelineRequests.at(-1)).toMatchObject({ filters: [] });
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
+});
+
 it('opening Files drops the selected day from the conversation reader', async () => {
   const at = '2026-07-18T10:00:00Z';
   vi.stubEnv('TZ', 'UTC');
@@ -239,9 +281,13 @@ it('keeps the current person retry pair when an earlier Retry finishes late', as
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
-it('keeps Messages and its filters when a saved person has no contextual activity', async () => {
-  const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: [1], vcard_uid: 'saved-7', created_at: when, updated_at: when };
-  const summary = { id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
+it.each([
+  { activity: 50, bindings: [1] },
+  { activity: 0, bindings: [1] },
+  { activity: 0, bindings: [] },
+])('chooses the saved person tab from unfiltered activity (activity=$activity, bindings=$bindings)', async ({ activity, bindings }) => {
+  const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: bindings, vcard_uid: 'saved-7', created_at: when, updated_at: when };
+  const summary = { id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: activity ? when : '', last_at: activity ? when : '', activity_count: activity, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
   const predicate = { filters: [{ dimension: 'source' as const, values: ['999'] }], presentation: 'table' as const };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
@@ -253,24 +299,31 @@ it('keeps Messages and its filters when a saved person has no contextual activit
     if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
-    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 1, computed_at: when, stale: false });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: activity, computed_at: when, stale: false });
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
   const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC');
-  await directory.loadSelection(7); await controller.openTarget('cluster:1', predicate, false);
+  const target = bindings.length ? 'cluster:1' : null;
+  await directory.loadSelection(7);
+  if (target) await controller.openTarget(target, predicate, false);
   const onFiltersChange = vi.fn();
-  const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange, onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target, filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange, onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
-    expect(controller.detail?.activity_count).toBe(0);
-    expect(controller.firstContactAt).toBe(when);
-    expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
-    expect(await screen.findByText('No items match this view')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(onFiltersChange).toHaveBeenCalledWith([]));
+    if (activity > 0) {
+      expect(controller.detail?.activity_count).toBe(0);
+      expect(controller.firstContactAt).toBe(when);
+      expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
+      expect(await screen.findByText('No items match this view')).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
+      await waitFor(() => expect(onFiltersChange).toHaveBeenCalledWith([]));
+    } else {
+      expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
+    }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });

@@ -88,7 +88,7 @@ it('identifies row actions and confirmations by value and service scope', async 
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('blocks attribute additions after a failed read', async () => {
+it('blocks attribute additions after a failed read and routes Retry to the profile controller', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -102,10 +102,19 @@ it('blocks attribute additions after a failed read', async () => {
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   await controller.reload();
+  const reload = vi.spyOn(controller, 'reload');
   const view = render(PersonFields, { controller });
   try {
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Attributes unavailable');
+    expect(alert.textContent).not.toContain('attributes:');
+    expect(screen.getAllByRole('button', { name: /Retry/ })).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry attributes' }));
+    expect(reload).toHaveBeenCalledOnce();
+    await reload.mock.results[0]!.value;
   } finally { view.unmount(); controller.destroy(); }
 });
 

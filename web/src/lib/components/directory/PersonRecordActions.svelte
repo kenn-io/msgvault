@@ -79,7 +79,7 @@
         bind:value={renameValue}
         ariaLabel="Display name"
         block
-        disabled={controller.mutationPending}
+        disabled={controller.mutationPending || controller.reloadPending}
       /></label
     >
     <div class="action-buttons">
