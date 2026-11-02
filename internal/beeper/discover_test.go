@@ -41,6 +41,7 @@ func searchRequests(reqs []string) int {
 // treats its native platform-sdk networks) must still be discovered, with the
 // network name and the account owner's identity taken from chat data.
 func TestDiscoverAccountsFindsAccountMissingFromAccountsEndpoint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -78,6 +79,7 @@ func TestDiscoverAccountsFindsAccountMissingFromAccountsEndpoint(t *testing.T) {
 // An account reported by /v1/accounts must not be re-added just because it
 // also owns chats, and its endpoint-provided identity must survive.
 func TestDiscoverAccountsDoesNotDuplicateListedAccounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -108,6 +110,7 @@ func TestDiscoverAccountsDoesNotDuplicateListedAccounts(t *testing.T) {
 // Discovery is additive: when the chat sweep fails, registration must still
 // proceed with whatever /v1/accounts returned.
 func TestDiscoverAccountsDegradesWhenChatSweepFails(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -127,6 +130,7 @@ func TestDiscoverAccountsDegradesWhenChatSweepFails(t *testing.T) {
 // A rejected accounts endpoint is fatal: the token is bad, which the chat
 // sweep cannot paper over and must not mask.
 func TestDiscoverAccountsFailsWhenAccountsEndpointFails(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -147,6 +151,7 @@ func TestDiscoverAccountsFailsWhenAccountsEndpointFails(t *testing.T) {
 // caught at each: during the sweep, and during the identity probe that follows
 // it. Neither may be reported as success.
 func TestDiscoverAccountsPropagatesCancellation(t *testing.T) {
+	t.Parallel()
 	// cancelOn names the request path at which the caller gives up.
 	for _, tc := range []struct {
 		name     string
@@ -187,6 +192,7 @@ func TestDiscoverAccountsPropagatesCancellation(t *testing.T) {
 // The sweep must stay bounded on a busy install rather than walking every
 // chat the user has ever had.
 func TestDiscoverAccountsBoundsTheChatSweep(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -209,6 +215,7 @@ func TestDiscoverAccountsBoundsTheChatSweep(t *testing.T) {
 // Beeper exposes different identity fields on different chats, so the identity
 // probe merges what it finds instead of trusting the first chat it sees.
 func TestDiscoverAccountsMergesSelfIdentityAcrossChats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -244,6 +251,7 @@ func TestDiscoverAccountsMergesSelfIdentityAcrossChats(t *testing.T) {
 // An account whose chats cannot be read is still worth registering: the sync
 // path only needs the account ID.
 func TestDiscoverAccountsRegistersAccountWithUnreadableChat(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)

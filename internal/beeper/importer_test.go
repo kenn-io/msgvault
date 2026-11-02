@@ -18,6 +18,7 @@ import (
 )
 
 func TestImporterScopesEveryStoreOwningHelper(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource(sourceTypeBeeper, "account-a")
@@ -103,6 +104,7 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 }
 
 func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
+	t.Parallel()
 	for _, unknown := range []bool{false, true} {
 		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -160,6 +162,7 @@ func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 }
 
 func TestQuietRosterRepairRetriesAfterParticipantReplacementFails(t *testing.T) {
+	t.Parallel()
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	quiet := mediaChat()
@@ -228,6 +231,7 @@ func TestQuietRosterRepairRetriesAfterParticipantReplacementFails(t *testing.T) 
 }
 
 func TestQuietRosterRepairRunsDespiteMessageFetchErrors(t *testing.T) {
+	t.Parallel()
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	quiet := mediaChat()
@@ -259,6 +263,7 @@ func TestQuietRosterRepairRunsDespiteMessageFetchErrors(t *testing.T) {
 }
 
 func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
+	t.Parallel()
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	quiet := mediaChat()
@@ -340,6 +345,7 @@ func installQuietRosterReplacementFailure(t *testing.T, st *store.Store) func() 
 }
 
 func TestQuietRosterFailureDoesNotBlockActiveSync(t *testing.T) {
+	t.Parallel()
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	quiet := mediaChat()
@@ -382,6 +388,7 @@ func TestQuietRosterFailureDoesNotBlockActiveSync(t *testing.T) {
 	assertions.Empty(latestBeeperState(t, imp).Chats[quiet.ID].RosterRetryAfter, "a successful active refresh clears the backoff")
 }
 
+// serial: changes routeProbeTimeout.
 func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 	requirements := require.New(t)
 	f := newFakeBeeper(t)
@@ -463,6 +470,7 @@ func TestQuietRosterBudgetExpiryBacksOffBeforeTryingLaterRoom(t *testing.T) {
 }
 
 func TestQuietRosterRepairsMakeProgressInBatches(t *testing.T) {
+	t.Parallel()
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	for i := range 17 {
@@ -498,6 +506,7 @@ func TestQuietRosterRepairsMakeProgressInBatches(t *testing.T) {
 }
 
 func TestBeeperHTMLPersists(t *testing.T) {
+	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	ch := mediaTranscriptChat()
@@ -514,6 +523,7 @@ func TestBeeperHTMLPersists(t *testing.T) {
 }
 
 func TestImportBackfillEndToEnd(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -645,6 +655,7 @@ func TestImportBackfillEndToEnd(t *testing.T) {
 }
 
 func TestImportScopesFallbackUserIDsByAccount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -724,6 +735,7 @@ func TestImportScopesFallbackUserIDsByAccount(t *testing.T) {
 }
 
 func TestImportSecondRunIncremental(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -773,6 +785,7 @@ func TestImportSecondRunIncremental(t *testing.T) {
 }
 
 func TestImportLimitIsSharedAcrossIncrementalAndReconcile(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -820,6 +833,7 @@ func TestImportLimitIsSharedAcrossIncrementalAndReconcile(t *testing.T) {
 }
 
 func TestImportResumeAfterLimit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -901,6 +915,7 @@ func TestImportResumeAfterLimit(t *testing.T) {
 }
 
 func TestImportReactionEventRefreshesTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -943,6 +958,7 @@ func TestImportReactionEventRefreshesTarget(t *testing.T) {
 }
 
 func TestImportReconcileCatchesRecentDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -998,6 +1014,7 @@ func TestImportReconcileCatchesRecentDeletion(t *testing.T) {
 }
 
 func TestImportReconcileVisitsRecentChatWithoutNewActivity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1046,6 +1063,7 @@ func TestImportReconcileVisitsRecentChatWithoutNewActivity(t *testing.T) {
 }
 
 func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1096,6 +1114,7 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 }
 
 func TestImportTruncatedParticipantsFetchesDetail(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1132,6 +1151,7 @@ func TestImportTruncatedParticipantsFetchesDetail(t *testing.T) {
 }
 
 func TestImportFullReconcilesConversationParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1189,6 +1209,7 @@ func TestImportFullReconcilesConversationParticipants(t *testing.T) {
 }
 
 func TestImportFullRepairsWithoutDuplicates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1208,6 +1229,7 @@ func TestImportFullRepairsWithoutDuplicates(t *testing.T) {
 }
 
 func TestImportEmptyChatPicksUpLaterMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1244,6 +1266,7 @@ func TestImportEmptyChatPicksUpLaterMessages(t *testing.T) {
 // the end. The new messages carry old timestamps, so they neither advance the
 // chat's lastActivity nor land in the reconcile window — without the tail scan
 // the chat stays done and that history is never archived.
+// serial: changes tailScanInterval.
 func TestImportPicksUpHistoryBackfilledAfterChatCompleted(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1295,6 +1318,7 @@ func TestImportPicksUpHistoryBackfilledAfterChatCompleted(t *testing.T) {
 }
 
 func TestTailScanVisitsChatsCompletedInInterruptedDiscoveryCycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1365,6 +1389,7 @@ func TestTailScanVisitsChatsCompletedInInterruptedDiscoveryCycle(t *testing.T) {
 	assert.Equal(1, archived, "a due tail scan must still probe chats marked visited by an interrupted discovery cycle")
 }
 
+// serial: changes tailScanInterval.
 func TestImportTailOnlyCursorlessChatStillChecksForBackfill(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1410,6 +1435,7 @@ func TestImportTailOnlyCursorlessChatStillChecksForBackfill(t *testing.T) {
 	assert.Equal(2, total, "a cursorless tail-only chat must still run its empty-chat recovery")
 }
 
+// serial: changes tailScanInterval.
 func TestImportTailProbeSkipsEventOnlyPagesToFindOlderContent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1463,6 +1489,7 @@ func TestImportTailProbeSkipsEventOnlyPagesToFindOlderContent(t *testing.T) {
 	assert.Equal("older content", text)
 }
 
+// serial: changes tailScanInterval.
 func TestImportTailScanIgnoresUnarchivedNonContentEvents(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1516,6 +1543,7 @@ func TestImportTailScanIgnoresUnarchivedNonContentEvents(t *testing.T) {
 	assert.Equal(2, total, "non-content events must remain excluded from the archive")
 }
 
+// serial: changes tailScanInterval.
 func TestImportTailOnlyUnchangedChatSkipsIncrementalAndReconcile(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1566,6 +1594,7 @@ func TestImportTailOnlyUnchangedChatSkipsIncrementalAndReconcile(t *testing.T) {
 }
 
 func TestImportTailProbeCancellationLeavesScanDue(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1627,6 +1656,7 @@ func TestImportTailProbeCancellationLeavesScanDue(t *testing.T) {
 // costs one request per completed chat, so a run soon after a clean scan must
 // leave completed chats alone.
 func TestImportTailScanThrottled(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1651,6 +1681,7 @@ func TestImportTailScanThrottled(t *testing.T) {
 	assert.Zero(sum.ChatsReopened, "a scan within the interval must not re-probe completed chats")
 }
 
+// serial: changes tailScanInterval.
 func TestImportResumesActiveTailScanWithinThrottleInterval(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1709,6 +1740,7 @@ func TestImportResumesActiveTailScanWithinThrottleInterval(t *testing.T) {
 }
 
 func TestTailScanDue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	assert.True(tailScanDue("", now), "an archive predating tail scanning is due")
@@ -1718,6 +1750,7 @@ func TestTailScanDue(t *testing.T) {
 }
 
 func TestImportDegenerateTailPagination(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1777,6 +1810,7 @@ func TestImportDegenerateTailPagination(t *testing.T) {
 	assert.True(state.Chats["!tail:beeper.local"].Done)
 }
 
+// serial: changes checkpointMinInterval.
 func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 	require := require.New(t)
 
@@ -1865,6 +1899,7 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 }
 
 func TestImportUnfinishedChatGoneMarksDone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	f := newFakeBeeper(t)
@@ -1909,6 +1944,7 @@ func TestImportUnfinishedChatGoneMarksDone(t *testing.T) {
 }
 
 func TestImportIncrementalStuckCursorTerminates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	f := newFakeBeeper(t)
@@ -1936,6 +1972,7 @@ func TestImportIncrementalStuckCursorTerminates(t *testing.T) {
 }
 
 func TestImportWatermarkHeldOnFetchError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	f := newFakeBeeper(t)

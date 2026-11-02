@@ -119,6 +119,7 @@ func rosterMembers(t *testing.T, st *store.Store, sourceID int64, chatID string)
 	return members
 }
 
+// serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		count        int
@@ -210,6 +211,7 @@ func TestEnsureConversationCancellation(t *testing.T) {
 	}
 }
 
+// serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 	// Begins 1 and 2 are the members' resolver adoption checks; begin 3 is
 	// roster replacement.
@@ -252,6 +254,7 @@ func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 // A chat whose full roster cannot be fetched keeps its archived members and
 // adds the listed ones one write at a time. Cancellation between those writes
 // must stop the remaining members without counting or logging failures.
+// serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	const chatID = "!partial:example.com"
@@ -287,6 +290,7 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 		"only the member written before cancellation joins the roster")
 }
 
+// serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -312,6 +316,7 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 }
 
 func TestProcessMessageCancellation(t *testing.T) {
+	t.Parallel()
 	for _, event := range []string{"normal", "deleted", "hidden", "reaction"} {
 		t.Run(event, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

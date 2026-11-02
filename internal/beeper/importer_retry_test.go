@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// serial: changes fetchRetryBackoff.
 func TestImportRetriesTransientMessageListFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -31,6 +32,7 @@ func TestImportRetriesTransientMessageListFailure(t *testing.T) {
 	assert.Equal(5, countBeeperMessages(t, imp))
 }
 
+// serial: changes fetchRetryBackoff.
 func TestImportGivesUpAfterRetries(t *testing.T) {
 	require := require.New(t)
 	oldBackoff := fetchRetryBackoff
@@ -50,6 +52,7 @@ func TestImportGivesUpAfterRetries(t *testing.T) {
 	assert.EqualValues(t, 1, sum.FetchErrors)
 }
 
+// serial: changes fetchRetryBackoff.
 func TestTailProbeFailureRemainsDueAndCountsAsFetchError(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -99,6 +102,7 @@ func TestTailProbeFailureRemainsDueAndCountsAsFetchError(t *testing.T) {
 }
 
 func TestListMessagesPageDoesNotRetryPermanentErrors(t *testing.T) {
+	t.Parallel()
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!bad-request:beeper.local", 2, time.Now().Add(-48*time.Hour))
 	f.addChat(chat)

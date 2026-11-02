@@ -20,6 +20,7 @@ import (
 // The real importer must capture authoritative bridge proof and the exact
 // roster. A display label or provider user ID must not classify the network.
 func TestImportMessagingRouteBridgeProof(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ name, accountJSON, status, reason string }{
 		{"bridge", "{\"accountID\":\"account-a\",\"bridge\":{\"type\":\"whatsapp\"},\"status\":\"connected\"}", "archive_verified", ""},
 		{"label only", "{\"accountID\":\"account-a\",\"network\":\"WhatsApp\"}", "unresolved", "network_unverified"},
@@ -89,6 +90,7 @@ func TestImportMessagingRouteBridgeProof(t *testing.T) {
 }
 
 func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newFakeBeeper(t)
@@ -180,6 +182,7 @@ func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
 }
 
 func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, accountJSON, reason string
 	}{
@@ -277,6 +280,7 @@ func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
 }
 
 func TestImportAccountLookupCancellationInvalidatesMessagingRoutes(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -341,6 +345,7 @@ func TestImportAccountLookupCancellationInvalidatesMessagingRoutes(t *testing.T)
 }
 
 func TestImportClearsSourceRouteFailureAfterAccountLookupRecovers(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -396,6 +401,7 @@ func TestImportClearsSourceRouteFailureAfterAccountLookupRecovers(t *testing.T) 
 	assertions.NotContains(page.Routes.Items[0].Reasons, "account_lookup_failed")
 }
 
+// serial: changes tailScanInterval.
 func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -551,6 +557,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 }
 
 func TestImportUnfinishedChatFetchFailureInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -624,10 +631,12 @@ func TestImportUnfinishedChatFetchFailureInvalidatesMessagingRoute(t *testing.T)
 }
 
 func TestEnumerateUnfinishedChatBudgetExpiredProbeInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t, false)
 }
 
 func TestEnumerateUnfinishedChatCanceledProbeInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t, true)
 }
 
@@ -754,6 +763,7 @@ func testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t *te
 }
 
 func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -804,6 +814,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 }
 
 func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		cancelContext bool
@@ -888,6 +899,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 // Media refresh does not reconcile the roster, so it clears route proof
 // whatever it reads. Only a later sync that visits the chat restores it.
 func TestMediaChatRefreshInvalidatesPriorRouteProof(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		chat       bool
@@ -961,6 +973,7 @@ func TestMediaChatRefreshInvalidatesPriorRouteProof(t *testing.T) {
 }
 
 func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1051,6 +1064,7 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 }
 
 func TestRouteEvidenceUsesServiceNetworkForBeeperBridgeTypes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ bridgeType, want string }{
 		{bridgeType: "discordgo", want: "discord"},
 		{bridgeType: "slackgo", want: "slack"},
@@ -1070,6 +1084,7 @@ func TestRouteEvidenceUsesServiceNetworkForBeeperBridgeTypes(t *testing.T) {
 // Route proof is written before a chat's messages are read. A chat that
 // disappears in between must not keep that proof.
 func TestChatMissingDuringMessageFetchInvalidatesMessagingRoute(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1140,6 +1155,7 @@ func TestChatMissingDuringMessageFetchInvalidatesMessagingRoute(t *testing.T) {
 
 // A throttled account endpoint must not spend a scheduled run's budget: the
 // lookup gives up, records the failure, and chats still sync.
+// serial: changes routeProbeTimeout.
 func TestScheduledImportSyncsChatsWhenAccountLookupIsThrottled(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -1195,6 +1211,7 @@ func TestScheduledImportSyncsChatsWhenAccountLookupIsThrottled(t *testing.T) {
 // before visiting any chat, so neither can clear that chat's route proof.
 // Both record the re-anchor marker, which route lookup reports.
 func TestReanchorRequiredKeepsRoutesUnresolved(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		run  func(*Importer) error
@@ -1268,6 +1285,7 @@ func TestReanchorRequiredKeepsRoutesUnresolved(t *testing.T) {
 // A chat synced earlier in a tail scan and deleted before the scan resumes
 // is skipped without a probe, but it must not keep its route proof.
 func TestResumedTailScanClearsProofForChatMissingSinceItsVisit(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1331,6 +1349,7 @@ func TestResumedTailScanClearsProofForChatMissingSinceItsVisit(t *testing.T) {
 // Probes of chats missing from an unfiltered listing run before listed chats
 // sync. A throttled probe must not spend the scheduled budget: each run gives
 // up after one probe timeout, defers the rest, and still syncs listed chats.
+// serial: changes tailScanInterval, routeProbeTimeout.
 func TestThrottledMissingChatProbesDoNotBlockListedChats(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestRepairAfterMergePreservesCopiedAttachmentClassification(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	const (
@@ -122,6 +123,7 @@ func TestRepairAfterMergePreservesCopiedAttachmentClassification(t *testing.T) {
 // pass must reach both from the stored payload alone, without contacting
 // Beeper Desktop.
 func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -242,6 +244,7 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 }
 
 func TestRepairArchiveRollsBackDerivedTextTogether(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite trigger injects a failure after the body write")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -288,6 +291,7 @@ func TestRepairArchiveRollsBackDerivedTextTogether(t *testing.T) {
 }
 
 func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite trigger injects a row-level repair failure")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -346,6 +350,7 @@ func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
 }
 
 func TestRepairArchiveRefreshesSnippetAndFTSWhenBodyIsCurrent(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "directly corrupts the SQLite FTS5 table")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -386,6 +391,7 @@ func TestRepairArchiveRefreshesSnippetAndFTSWhenBodyIsCurrent(t *testing.T) {
 }
 
 func TestSyncReportsIncompleteRepair(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite trigger injects a row-level metadata failure")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -416,6 +422,7 @@ func TestSyncReportsIncompleteRepair(t *testing.T) {
 // TestRepairArchiveLeavesStoredMediaAlone covers the pass rewriting only
 // derived columns: a repair must never disturb downloaded blobs.
 func TestRepairArchiveLeavesStoredMediaAlone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -492,6 +499,7 @@ func shareAndHTMLChat() *fakeChat {
 // without the user knowing a repair exists. The ledger then keeps later syncs
 // from repeating the work.
 func TestSyncHealsRowsFromAnOlderBuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -531,6 +539,7 @@ func TestSyncHealsRowsFromAnOlderBuild(t *testing.T) {
 }
 
 func TestSyncRunsCurrentRepairAfterV2WasApplied(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "directly corrupts the SQLite FTS5 table")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -589,6 +598,7 @@ func beeperSourceID(t *testing.T, st *store.Store) int64 {
 }
 
 func TestRepairSourceResumesAfterCanceledBatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
