@@ -643,6 +643,9 @@ func TestEnumerateUnfinishedChatCanceledProbeInvalidatesMessagingRoute(t *testin
 
 func testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t *testing.T, cancelParent bool) {
 	t.Helper()
+	st := testutil.NewSQLiteTestStore(t)
+	client := NewClient("http://beeper.test", testToken, 10000)
+	imp := NewImporter(st, client)
 	synctest.Test(t, func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
@@ -684,7 +687,6 @@ func testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t *te
 			}
 			provider(w, r)
 		})
-		imp, st := newHandlerTestImporter(t, f)
 		imp.client.http.Transport = handlerTransport(handler)
 		source, err := st.GetOrCreateSource("beeper", "account-a")
 		requirements.NoError(err)
@@ -823,6 +825,9 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 		{name: "caller cancellation", cancelContext: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			client := NewClient("http://beeper.test", testToken, 10000)
+			imp := NewImporter(st, client)
 			synctest.Test(t, func(t *testing.T) {
 				assertions := assert.New(t)
 				requirements := require.New(t)
@@ -833,7 +838,6 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 					<-r.Context().Done()
 				})
 
-				imp, st := newHandlerTestImporter(t, newFakeBeeper(t))
 				imp.client.http.Transport = handlerTransport(handler)
 				source, err := st.GetOrCreateSource("beeper", "account-a")
 				requirements.NoError(err)

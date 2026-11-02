@@ -742,15 +742,17 @@ func TestImportRunsTailsBeforeBackfill(t *testing.T) {
 
 // serial: changes tailScanInterval.
 func TestImportTailScanProgressesAcrossBudgetedRuns(t *testing.T) {
+	f := newFakeBeeper(t)
+	imp, st := newHandlerTestImporter(t, f)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
+		// Connections opened by the import own timers that must close inside the bubble.
+		t.Cleanup(func() { require.NoError(st.Close()) })
 		base := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(time.Second)
-		f := newFakeBeeper(t)
 		for i := range 4 {
 			f.addChat(budgetTestChat("!quiet"+strconv.Itoa(i)+":beeper.local", 3, base.Add(time.Duration(i)*time.Hour)))
 		}
-		imp, st := newHandlerTestImporter(t, f)
 		_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 		require.NoError(err, "first run finishes every chat and a tail scan")
 
