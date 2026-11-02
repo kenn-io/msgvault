@@ -75,7 +75,7 @@ describe('PersonBindingConflictModal', () => {
       requests.push(request);
       return Response.json(mergeResult(merged, 'stale'), { headers: { ETag: '"person-7-r5"' } });
     });
-    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('123-456-789-12');
     const { onSuccess, onClose } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -85,7 +85,7 @@ describe('PersonBindingConflictModal', () => {
     expect(requests).toHaveLength(1);
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/people/7/merge');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r4", "person-9-r2"');
-    expect(requests[0]!.headers.get('Idempotency-Key')).toBe('11111111-1111-4111-8111-111111111111');
+    expect(requests[0]!.headers.get('Idempotency-Key')).toBe('123-456-789-12');
     await expect(requests[0]!.clone().json()).resolves.toEqual({ absorbed_person_id: 9 });
     expect(onSuccess).toHaveBeenCalledWith({
       result: mergeResult(merged, 'stale'),
@@ -106,7 +106,7 @@ describe('PersonBindingConflictModal', () => {
       if (attempts === 1) throw new TypeError('connection reset');
       return Response.json(mergeResult(merged), { headers: { ETag: '"person-7-r5"' } });
     });
-    const uuid = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('11111111-1111-4111-8111-111111111111');
+    const uuid = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('123-456-789-12');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -116,8 +116,8 @@ describe('PersonBindingConflictModal', () => {
 
     await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '11111111-1111-4111-8111-111111111111',
+      '123-456-789-12',
+      '123-456-789-12',
     ]);
     expect(uuid).toHaveBeenCalledOnce();
   });
@@ -130,8 +130,8 @@ describe('PersonBindingConflictModal', () => {
       throw new TypeError('offline');
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     renderModal(fetchFn);
 
     await selectSurvivor();
@@ -150,8 +150,8 @@ describe('PersonBindingConflictModal', () => {
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/people/9/merge');
     expect(requests[1]!.headers.get('If-Match')).toBe('"person-9-r2", "person-7-r4"');
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
+      '123-456-789-12',
+      '234-567-890-23',
     ]);
   });
 
@@ -177,8 +177,8 @@ describe('PersonBindingConflictModal', () => {
       return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -214,7 +214,7 @@ describe('PersonBindingConflictModal', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.headers.get('If-Match')).toBe('"person-7-r5", "person-9-r3"');
-    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('22222222-2222-4222-8222-222222222222');
+    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
   it.each([
@@ -229,8 +229,8 @@ describe('PersonBindingConflictModal', () => {
     });
     const uuid = vi
       .spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     renderModal(fetchFn);
 
     await selectSurvivor();
@@ -246,8 +246,8 @@ describe('PersonBindingConflictModal', () => {
 
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
+      '123-456-789-12',
+      '234-567-890-23',
     ]);
     expect(uuid).toHaveBeenCalledTimes(2);
   });
@@ -432,8 +432,8 @@ describe('PersonBindingConflictModal', () => {
       return Response.json(refreshed, { headers: { ETag: `"person-${requestedID}-r${refreshed.revision}"` } });
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -468,7 +468,7 @@ describe('PersonBindingConflictModal', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.headers.get('If-Match')).toBe('"person-7-r5", "person-9-r3"');
-    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('22222222-2222-4222-8222-222222222222');
+    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
   it('offers one non-mutating inspection action per profile', async () => {

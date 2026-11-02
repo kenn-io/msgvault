@@ -167,7 +167,7 @@ describe('PersonMergeHistoryController', () => {
         headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' },
       });
     });
-    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('123-456-789-12');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
 
     await controller.selectMerge(41);
@@ -179,7 +179,7 @@ describe('PersonMergeHistoryController', () => {
     const post = requests.find((request) => request.method === 'POST')!;
     expect(new URL(post.url).pathname).toBe('/api/v1/people/12/split');
     expect(post.headers.get('If-Match')).toBe('"person-12-r4"');
-    expect(post.headers.get('Idempotency-Key')).toBe('11111111-1111-4111-8111-111111111111');
+    expect(post.headers.get('Idempotency-Key')).toBe('123-456-789-12');
     await expect(post.clone().json()).resolves.toEqual({ merge_id: 41, participant_ids: [701] });
   });
 
@@ -220,7 +220,7 @@ describe('PersonMergeHistoryController', () => {
       if (postAttempts === 1) throw new TypeError('connection reset');
       return Response.json(splitResult());
     });
-    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('123-456-789-12');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -232,8 +232,8 @@ describe('PersonMergeHistoryController', () => {
 
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '11111111-1111-4111-8111-111111111111',
+      '123-456-789-12',
+      '123-456-789-12',
     ]);
   });
 
@@ -251,8 +251,8 @@ describe('PersonMergeHistoryController', () => {
       return Response.json(splitResult());
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -266,7 +266,7 @@ describe('PersonMergeHistoryController', () => {
 
     expect(
       requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    ).toEqual(['123-456-789-12', '234-567-890-23']);
   });
 
   it('atomically reloads exact source/detail only for the recognized stale code and requires reconfirmation', async () => {
@@ -336,8 +336,8 @@ describe('PersonMergeHistoryController', () => {
         : Response.json(splitResult());
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -379,7 +379,7 @@ describe('PersonMergeHistoryController', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.headers.get('If-Match')).toBe('"person-12-r6"');
-    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('22222222-2222-4222-8222-222222222222');
+    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
   it.each([
@@ -396,8 +396,8 @@ describe('PersonMergeHistoryController', () => {
       return Response.json({ error, message: 'Application failure' }, { status });
     });
     vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -410,7 +410,7 @@ describe('PersonMergeHistoryController', () => {
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(2);
     expect(
       requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    ).toEqual(['123-456-789-12', '234-567-890-23']);
   });
 
   it('commits once, keeps malformed receipt tags out of state, and reports reconciliation separately', async () => {

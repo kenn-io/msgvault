@@ -3,7 +3,7 @@ import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 const peopleURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships' }));
 const duplicatesURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true }));
 
-test('People Filter opens duplicate cards and browser-restored History', async ({ page }) => {
+test('People Filter restores History on reload and To review on Back', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   await page.goto(peopleURL);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();

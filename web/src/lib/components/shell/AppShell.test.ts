@@ -2797,6 +2797,38 @@ function settingsWithLeaveGuard(client: ReturnType<typeof createAPIClient>) {
   });
 }
 
+it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view replaces the Settings leave choice, then %s', async (choice) => {
+  window.history.replaceState(null, '', '/?workspace=files');
+  window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+  const state = new ExploreState(window);
+  const client = settingsLeaveClient();
+  const rendered = render(AppShell, { client, state, settings: settingsWithLeaveGuard(client) });
+  try {
+    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    window.history.back();
+    await popped;
+    await screen.findByRole('button', { name: 'Stay' });
+    expect(state.current.workspace).toBe('settings');
+    expect(window.location.search).toBe('?workspace=files');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+    expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+    await fireEvent.click(await screen.findByRole('button', { name: choice }));
+    if (choice === 'Stay') {
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+      expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '15m');
+    } else {
+      await screen.findByRole('grid', { name: 'Messages results' });
+      expect(state.current.workspace).toBe('everything');
+      expect(new URLSearchParams(window.location.search).get('workspace')).toBe('everything');
+    }
+  } finally {
+    rendered.unmount(); state.destroy();
+  }
+});
+
 it('keeps the Settings leave choice after Past runs closes through Source status', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
   const state = new ExploreState(window);
@@ -3051,38 +3083,6 @@ it.each(['before returning', 'after returning'])('shows a saved profile rename c
       await waitFor(() => expect(decisions).toEqual([{ review_token: 'profile-r5' }]));
     }
   } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
-});
-
-it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view replaces the Settings leave choice, then %s', async (choice) => {
-  window.history.replaceState(null, '', '/?workspace=files');
-  window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
-  const state = new ExploreState(window);
-  const client = settingsLeaveClient();
-  const rendered = render(AppShell, { client, state, settings: settingsWithLeaveGuard(client) });
-  try {
-    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await popped;
-    await screen.findByRole('button', { name: 'Stay' });
-    expect(state.current.workspace).toBe('settings');
-    expect(window.location.search).toBe('?workspace=files');
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
-    expect(window.location.search).toBe('?workspace=settings&mode=full_text');
-    await fireEvent.click(await screen.findByRole('button', { name: choice }));
-    if (choice === 'Stay') {
-      expect(state.current.workspace).toBe('settings');
-      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
-      expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '15m');
-    } else {
-      await screen.findByRole('grid', { name: 'Messages results' });
-      expect(state.current.workspace).toBe('everything');
-      expect(new URLSearchParams(window.location.search).get('workspace')).toBe('everything');
-    }
-  } finally {
-    rendered.unmount(); state.destroy();
-  }
 });
 
 it('shows a failed duplicate decision after leaving the queue and offers a return action', async () => {

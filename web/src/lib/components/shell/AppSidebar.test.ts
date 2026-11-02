@@ -33,7 +33,7 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: 'People' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
   });
 
-  it('lists four places', () => {
+  it('lists four places with the active one current', () => {
     renderSidebar();
     expect(
       primary()
