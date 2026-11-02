@@ -29,6 +29,7 @@ import (
 
 // Tool name constants.
 const (
+	ToolSendReply                 = "send_reply"
 	ToolDraftReply                = "draft_reply"
 	ToolDraftCompose              = "draft_compose"
 	ToolDraftForward              = "draft_forward"

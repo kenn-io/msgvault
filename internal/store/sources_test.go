@@ -19,6 +19,107 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestSQLiteSourceIDsSurviveRemovalAndSchemaUpgrade(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "archive.db"))
+	// Model an older archive whose source row IDs could be reused.
+	_, err := st.DB().Exec(`DROP TRIGGER sources_id_high_water_insert;
+DROP TRIGGER sources_id_high_water_delete;
+DROP TABLE source_id_reservations;
+DELETE FROM archive_metadata WHERE key='source_id_high_water';
+UPDATE archive_metadata SET value='16' WHERE key='schema_version'`)
+	require.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO sources(id, source_type, identifier) VALUES(500, 'threads', 'threads:123:20')`)
+	require.NoError(err)
+	require.NoError(st.InitSchemaContext(t.Context()))
+	require.NoError(st.RemoveSource(500))
+	// Setup and removal must not forget the identity bound by an old opt-in.
+	require.NoError(st.InitSchemaContext(t.Context()))
+	replacement, err := st.GetOrCreateSource("threads", "threads:123:21")
+	require.NoError(err)
+	assert.Greater(replacement.ID, int64(500))
+	require.NoError(st.RemoveSource(replacement.ID))
+	next, err := st.GetOrCreateSource("threads", "threads:123:22")
+	require.NoError(err)
+	assert.Greater(next.ID, replacement.ID)
+}
+
+func TestSQLiteSourceIDReservationsAllowUnusedOutOfOrderIDs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(st.ReserveSourceIDsContext(t.Context(), []int64{500}))
+	// Restores and bulk writers may legitimately insert unused IDs below the
+	// allocation high-water mark, in either order and in the same statement.
+	_, err := st.DB().Exec(`INSERT INTO sources(id, source_type, identifier) VALUES
+(98, 'threads', 'threads:123:20'), (97, 'threads', 'threads:123:21')`)
+	require.NoError(err)
+	for _, id := range []int64{98, 97} {
+		source, err := st.GetSourceByID(id)
+		require.NoError(err)
+		assert.Equal(id, source.ID)
+	}
+	_, err = st.DB().Exec(`INSERT INTO sources(id, source_type, identifier) VALUES(500, 'threads', 'threads:123:22')`)
+	require.ErrorContains(err, "source ID has already been allocated or reserved")
+	require.NoError(st.RemoveSource(98))
+	_, err = st.DB().Exec(`INSERT INTO sources(id, source_type, identifier) VALUES(98, 'threads', 'threads:123:23')`)
+	require.ErrorContains(err, "source ID has already been allocated or reserved")
+	next, err := st.GetOrCreateSource("threads", "threads:123:24")
+	require.NoError(err)
+	assert.Greater(next.ID, int64(500))
+}
+
+func TestPostgreSQLSourceIDReservation(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("requires a disposable PostgreSQL fixture")
+	}
+	for _, scenario := range []string{"future-configured-id", "lagging-restored-sequence", "cached-and-advanced-sequence"} {
+		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			source, err := st.GetOrCreateSource("threads", "threads:123:20")
+			require.NoError(err)
+			conn, err := st.DB().Conn(ctx)
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(conn.Close()) })
+			var sequence string
+			require.NoError(conn.QueryRowContext(ctx, `SELECT pg_get_serial_sequence('sources', 'id')`).Scan(&sequence))
+			ceiling := int64(100)
+			switch scenario {
+			case "lagging-restored-sequence":
+				// Model an out-of-band restore with explicit IDs and a lagging sequence.
+				_, err = conn.ExecContext(ctx, `INSERT INTO sources(id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES(500, 'threads', 'threads:123:22')`)
+				require.NoError(err)
+				_, err = conn.ExecContext(ctx, `SELECT setval($1::regclass, 1, true)`, sequence)
+				require.NoError(err)
+				ceiling = 500
+			case "cached-and-advanced-sequence":
+				// Exercise the same connection after reservation: its cached values
+				// must be invalidated, including when config is below the sequence.
+				_, err = conn.ExecContext(ctx, `ALTER SEQUENCE sources_id_seq CACHE 8`)
+				require.NoError(err)
+				_, err = conn.ExecContext(ctx, `SELECT setval($1::regclass, 1000, true)`, sequence)
+				require.NoError(err)
+				var warmed int64
+				require.NoError(conn.QueryRowContext(ctx, `INSERT INTO sources(source_type, identifier) VALUES('threads', 'threads:123:23') RETURNING id`).Scan(&warmed))
+				require.Greater(warmed, int64(1000))
+				require.NoError(conn.QueryRowContext(ctx, `SELECT last_value FROM sources_id_seq`).Scan(&ceiling))
+			}
+			require.NoError(st.ReserveSourceIDsContext(ctx, []int64{100}))
+			var replacement int64
+			require.NoError(conn.QueryRowContext(ctx, `INSERT INTO sources(source_type, identifier) VALUES('threads', 'threads:123:21') RETURNING id`).Scan(&replacement))
+			assert.Greater(replacement, ceiling)
+			assert.NotEqual(source.ID, replacement)
+		})
+	}
+}
+
 func TestStore_GetSourcesByIdentifier(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -135,19 +135,7 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		query = `SELECT child.relname, columns.attname
-			FROM pg_catalog.pg_constraint constraints
-			JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
-			JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
-			JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
-			CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
-			JOIN pg_catalog.pg_attribute columns
-			  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
-			WHERE constraints.contype = 'f'
-			  AND namespace.nspname = current_schema()
-			  AND target.relnamespace = namespace.oid
-			  AND target.relname = 'persons'
-			ORDER BY child.relname, columns.attname`
+		query = postgresPersonReferencesQuery
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)
@@ -271,4 +259,43 @@ func TestNormalizePersonMergeSnapshotJSONPreservesLargeIntegers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, value.Text)
 	assert.Equal(t, `{"large":9007199254740993,"small":1}`, *value.Text)
+}
+
+// postgresPersonReferencesQuery reads all components of composite foreign keys.
+const postgresPersonReferencesQuery = `SELECT child.relname, columns.attname
+			FROM pg_catalog.pg_constraint constraints
+			JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
+			JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
+			JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+			CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
+			JOIN pg_catalog.pg_attribute columns
+			  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
+			WHERE constraints.contype = 'f'
+			  AND namespace.nspname = current_schema()
+			  AND target.relnamespace = namespace.oid
+			  AND target.relname = 'persons'
+			ORDER BY child.relname, columns.attname`
+
+func TestPostgresPersonReferenceCatalogIncludesCompositeKeys(t *testing.T) {
+	require := require.New(t)
+	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	_, err := st.db.ExecContext(t.Context(), `CREATE UNIQUE INDEX inventory_person_revision ON persons(id,revision);
+ CREATE TABLE inventory_composite_person(
+ composite_person_id BIGINT, composite_revision BIGINT,
+ FOREIGN KEY(composite_person_id,composite_revision) REFERENCES persons(id,revision))`)
+	require.NoError(err)
+	rows, err := st.db.QueryContext(t.Context(), postgresPersonReferencesQuery)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var composite []string
+	for rows.Next() {
+		var table, column string
+		require.NoError(rows.Scan(&table, &column))
+		if table == "inventory_composite_person" {
+			composite = append(composite, column)
+		}
+	}
+	require.NoError(rows.Err())
+	require.Equal([]string{"composite_person_id", "composite_revision"}, composite,
+		"inventory must include every component of a composite foreign key exactly once")
 }

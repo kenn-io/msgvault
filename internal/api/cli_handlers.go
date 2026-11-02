@@ -1433,6 +1433,10 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
+		} else if IsCLIRunSendReply(req.Args) {
+			// Replies carry private --body text. Output can fail even after a
+			// successful send, so uncoded reply failures must omit arguments too.
+			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error", err)
 		} else {
 			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
 		}
@@ -1447,10 +1451,13 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if name == clirun.EnvThreadsOAuth {
+		return len(args) > 0 && args[0] == "add-threads"
+	}
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunSendReply(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1692,6 +1699,10 @@ const cliRunPersonCommand = "person"
 const cliRunStatusSubcommand = "status"
 
 func cliRunCommandAllowed(args []string) bool {
+	if IsCLIRunSendReply(args) {
+		_, err := ParseCLIRunSendReply(CLIRunRequest{Args: args})
+		return err == nil
+	}
 	if len(args) == 0 {
 		return false
 	}
@@ -1770,6 +1781,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-twenty",
 		"add-pocket",
 		"add-discord",
+		"add-threads",
 		"add-granola",
 		"add-omi",
 		"add-imap",
@@ -1830,8 +1842,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-chatwoot",
 		"sync-plaud",
 		"sync-twenty",
-		"sync-pocket",
-		"sync-discord",
+		"sync-discord", "sync-threads", "sync-pocket",
 		"sync-granola",
 		"sync-inline",
 		"sync-muesli",

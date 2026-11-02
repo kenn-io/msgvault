@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -212,4 +213,74 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(deletedText, textDraft.DraftID)
 	assertions.NotContains(deletedText, body)
+}
+
+func TestThreadsDraftDaemonRequiresArchivedParent(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("threads", "threads:100:200")
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "100", "channel", "Synthetic post")
+	require.NoError(err)
+	parent, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "100", MessageType: "threads"})
+	require.NoError(err)
+	adapter := &storeAPIAdapter{store: st}
+	for _, target := range []int64{0, parent} {
+		var output strings.Builder
+		args := []string{"draft-compose", "--conversation", strconv.FormatInt(conv, 10), "--body", "reviewed", "--json"}
+		if target != 0 {
+			args = append(args, "--reply-to", strconv.FormatInt(target, 10))
+		}
+		err := adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error { output.WriteString(event.Data); return nil })
+		if target == 0 {
+			require.Error(err)
+			assert.Contains(err.Error(), "invalid_destination")
+		} else {
+			require.NoError(err)
+			var draft chatDraftOutput
+			require.NoError(json.Unmarshal([]byte(output.String()), &draft))
+			assert.Equal("100", draft.ReplyToSourceMessageID)
+		}
+	}
+}
+
+func TestThreadsDraftGrantLifecycleKeepsClaimAndBodyScope(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("threads", "threads:100:200")
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "100", "channel", "Synthetic post")
+	require.NoError(err)
+	parent, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "100", MessageType: "threads"})
+	require.NoError(err)
+	draft, err := st.CreateChatDraftContext(t.Context(), conv, parent, "immutable reviewed text", func(string, string) error { return nil })
+	require.NoError(err)
+	receipt, err := st.ClaimThreadsReplySendContext(t.Context(), draft.DraftID, 1)
+	require.NoError(err)
+	adapter := &storeAPIAdapter{store: st}
+	run := func(permission agentgrant.Permission, args ...string) (string, error) {
+		grant := &agentgrant.Grant{ID: "synthetic-threads-grant", Permissions: []agentgrant.Permission{permission}, Sources: []agentgrant.SourceRef{{Type: "threads", Identifier: source.Identifier}}}
+		var out strings.Builder
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
+		return out.String(), err
+	}
+	out, err := run(agentgrant.PermissionDraftCreate, "draft-get", draft.DraftID, "--json")
+	require.Error(err)
+	assert.Empty(out)
+	out, err = run(agentgrant.PermissionDraftEdit, "draft-edit", draft.DraftID, "--revision", "1", "--body", "changed", "--json")
+	require.Error(err)
+	assert.Contains(err.Error(), "draft_claimed")
+	assert.Empty(out)
+	out, err = run(agentgrant.PermissionDraftDelete, "draft-delete", draft.DraftID, "--revision", "1", "--json")
+	require.Error(err)
+	assert.Contains(err.Error(), "draft_claimed")
+	assert.Empty(out)
+	_, err = st.AdvanceThreadsReplySendContext(t.Context(), draft.DraftID, receipt.RowRevision, store.ThreadsReplyTransition{State: "send_failed"})
+	require.NoError(err)
+	out, err = run(agentgrant.PermissionDraftDelete, "draft-delete", draft.DraftID, "--revision", "1", "--json")
+	require.NoError(err)
+	assert.NotContains(out, "immutable reviewed text")
+	got, err := st.GetThreadsReplySendContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal("immutable reviewed text", got.Body)
 }

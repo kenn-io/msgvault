@@ -20,8 +20,9 @@ func FuzzMetadataSearchParity(f *testing.F) {
 		// Bound database materialization, not the generated input domain.
 		data = data[:min(len(data), 2048)]
 		term = term[:min(len(term), 128)]
+		// Keep source1 from the fixture; its identity must not be deleted/reused.
 		db := metadataSearchDB(t)
-		_, err := db.Exec(`DELETE FROM messages; DELETE FROM participants; DELETE FROM conversations; DELETE FROM sources; INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','archive@example.org'), (2,'gmail','other@example.org');
+		_, err := db.Exec(`DELETE FROM messages; DELETE FROM participants; DELETE FROM conversations; INSERT INTO sources(id,source_type,identifier) VALUES(2,'gmail','other@example.org');
   INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(1,1,'synthetic-thread','email_thread'), (2,2,'other-thread','email_thread');`)
 		require.NoError(t, err)
 		values := strings.Split(string(data), "|")

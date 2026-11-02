@@ -11,7 +11,7 @@ const draftFromFlag = "from"
 func newDraftReplyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-reply <message-id>",
-		Short: "Create an IMAP or Gmail reply draft from an archived message",
+		Short: "Create an email or Threads reply draft",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !cmd.Flags().Changed("body") {

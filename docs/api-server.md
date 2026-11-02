@@ -158,7 +158,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.34.0**.
+it is separate from the binary release version. The current schema is **3.35.0**.
+
+Schema 3.35.0 adds owner-only source-dispatched Threads replies through the
+`send-reply` daemon CLI command and `send_reply` MCP tool. Earlier schemas do
+not provide this reply contract. Delegated tokens cannot send replies.
 
 Schema 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity: `queued_at` in scheduler account and CardDAV status, `scheduler_queued_at` in Sources status, and CardDAV `scheduler_running`.
 
@@ -3183,11 +3187,31 @@ policy and deletion visibility. Changes under
 
 | Key | Default | Description |
 |---|---|---|
-| `email` | (required) | Gmail/IMAP/Teams identifier or display name, or exact Discord guild ID |
+| `email` | (required) | Gmail/IMAP/Teams identifier or display name, exact Discord guild ID, or exact Threads source identifier |
 | `schedule` | — | Cron expression for sync schedule |
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Owner-managed send-reply command
+
+On unreleased `main`, `POST /api/v1/cli/run` admits the shared `send-reply`
+command for owner credentials and executes it inside the daemon's mutation gate.
+The archived message or local draft determines the source, which dispatches to
+the sender registered for that source type. This branch adds Threads. A direct
+reply uses a positional archived message ID and `--body`; a reviewed draft uses
+`--draft` plus `--revision` and optional `--adopt-media-id`. Quota inspection
+uses a positional archived message ID plus `--quota`. Environment overrides,
+working directories and delegated
+credentials are rejected. Current source policy and verified scopes are checked
+inside source lifecycle/execution ownership before provider writes.
+
+A stdout JSON result precedes any nonzero completion for an incomplete action.
+Keep `remote_status`, `local_status`, exact string media IDs and
+`archive_complete` when handling an error; interrupted stream delivery does not
+establish whether a publish occurred. Cache publication runs after source leases
+are released. See [CLI contract](cli-reference.md#send-reply) and
+[Threads recovery](usage/threads.md#inspect-and-recover-an-interrupted-send).
 
 ## Message embedding status
 

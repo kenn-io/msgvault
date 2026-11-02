@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,10 +283,10 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 	session := mcpDraftTestSession(ctx, t)
 	listed, err := session.ListTools(t.Context(), nil)
 	require.NoError(err)
-	positionals := map[string]string{"draft_reply": "message_id", "draft_forward": "message_id", "draft_get": "draft_id", "draft_edit": "draft_id", "draft_delete": "draft_id", "draft_recover": "draft_id", "draft_send_as": "account"}
+	positionals := map[string]string{"draft_reply": "message_id", "draft_forward": "message_id", "draft_get": "draft_id", "draft_edit": "draft_id", "draft_delete": "draft_id", "draft_recover": "draft_id", "draft_send_as": "account", "send_reply": "message_id"}
 	var names []string
 	for _, tool := range listed.Tools {
-		if !strings.HasPrefix(tool.Name, "draft_") {
+		if !strings.HasPrefix(tool.Name, "draft_") && tool.Name != mcpserver.ToolSendReply {
 			continue
 		}
 		names = append(names, tool.Name)
@@ -303,14 +304,68 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 		require.True(ok)
 		for key := range inputProperties {
 			if key != positionals[tool.Name] {
-				properties = append(properties, strings.ReplaceAll(key, "_", "-"))
+				flag := strings.ReplaceAll(key, "_", "-")
+				if key == "draft_id" && tool.Name == mcpserver.ToolSendReply {
+					flag = "draft"
+				}
+				properties = append(properties, flag)
 			}
 		}
 		sort.Strings(flags)
 		sort.Strings(properties)
 		assert.Equal(flags, properties, tool.Name)
 	}
-	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names)
+	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as", "send_reply"}, names)
+}
+
+func TestMCPSendReplyCapabilityGate(t *testing.T) {
+	for _, delegated := range []bool{false, true} {
+		for _, version := range []string{"3.27.0", "3.28.0", "3.29.0", "3.30.0", "3.31.0", "3.32.0", "3.33.0", "3.34.0", "3.35.0"} {
+			name := "owner/" + version
+			if delegated {
+				name = "delegated/" + version
+			}
+			t.Run(name, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+
+				fixture := newDraftReplyFixture(t)
+				server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.URL.Path == "/api/v1/health" {
+							w.Header().Set("Content-Type", "application/json")
+							_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
+							return
+						}
+
+						next.ServeHTTP(w, r)
+					})
+				})
+				client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
+				require.NoError(err)
+				t.Cleanup(func() { _ = client.Close() })
+				// Only the supported version probes the actual production dispatcher.
+				if version == "3.35.0" {
+					err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"send-reply", strconv.FormatInt(fixture.parentID, 10), "--quota"}}, func(string, string) error { return nil })
+					require.ErrorContains(err, "replies are not supported for imap sources")
+				}
+				var ctx context.Context
+				if delegated {
+					ctx = mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"})
+				} else {
+					ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
+				}
+				session := mcpDraftTestSession(ctx, t)
+				names := mcpDraftToolNames(t, session)
+				assert.Contains(names, "draft_reply", "supported draft controls remain available")
+				if version == "3.35.0" && !delegated {
+					assert.Contains(names, "send_reply")
+				} else {
+					assert.NotContains(names, "send_reply")
+				}
+			})
+		}
+	}
 }
 
 func TestMCPDraftCapabilityGate(t *testing.T) {

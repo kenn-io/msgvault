@@ -386,7 +386,8 @@ import (
 // 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
-const APISchemaVersion = "3.34.0"
+// 3.35.0 adds owner-only source-dispatched send-reply CLI and send_reply MCP for Threads.
+const APISchemaVersion = "3.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

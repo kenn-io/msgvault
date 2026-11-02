@@ -38,6 +38,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
 | Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings; available on `main` |
+| Threads | [Threads archive and replies](../usage/threads.md) | Own posts and available replies; reviewed owner-only sending on unreleased `main` |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
 | Matrix | [Matrix sync](../usage/matrix.md) | Plaintext history from joined rooms on any homeserver |

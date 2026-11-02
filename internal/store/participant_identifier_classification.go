@@ -18,6 +18,10 @@ func classifyParticipantIdentifier(
 	value := strings.TrimSpace(identifierValue)
 	classification := participantIdentifierClassification{}
 	switch {
+	case kind == "threads_user_id" || kind == "threads_reply_author":
+		// Occurrence keys are opaque; classification never normalizes them
+		// into usernames or asserts a third-party provider identity.
+		classification.ServiceSlug = "threads"
 	case kind == "imessage":
 		classification.ServiceSlug = "imessage"
 	case kind == "whatsapp":

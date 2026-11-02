@@ -43,6 +43,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
+- [Threads](https://msgvault.io/docs/usage/threads.md): own posts, available replies, reviewed sending and recovery
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
 - [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls

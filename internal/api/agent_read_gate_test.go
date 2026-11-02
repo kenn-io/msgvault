@@ -122,13 +122,8 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 				defer done()
 				_, _, err := st.RemoveSourceSerialized(t.Context(), src.ID)
 				if err == nil {
-					var outside *store.Source
-					if st.IsPostgreSQL() {
-						_, err = st.DB().Exec(st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					} else {
-						outside, err = st.GetOrCreateSource("test", "outside@example.test")
-					}
+					outside, createErr := st.GetOrCreateSource("test", "outside@example.test")
+					err = createErr
 					if err == nil {
 						var conv int64
 						conv, err = st.EnsureConversation(outside.ID, "thread", "Synthetic")
@@ -154,14 +149,13 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			if route == "message" || route == "store message" {
 				assertions.Contains(response.Body.String(), "allowed body")
 			}
-			if !st.IsPostgreSQL() {
-				replacement, err := st.GetSourceByIdentifier("outside@example.test")
-				requirements.NoError(err)
-				requirements.Equal(src.ID, replacement.ID)
-			}
+			replacement, err := st.GetSourceByIdentifier("outside@example.test")
+			requirements.NoError(err)
+			requirements.Greater(replacement.ID, src.ID, "replacement sources receive fresh IDs")
 			response = get()
 			assertions.NotContains(response.Body.String(), "glacier private")
 			assertions.NotContains(response.Body.String(), "outside@example.test")
+			assertions.NotContains(response.Body.String(), "glacier allowed", "a fresh request must not retain the removed grant binding")
 		})
 	}
 }

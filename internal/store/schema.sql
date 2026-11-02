@@ -103,6 +103,30 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
+-- Source IDs bind permissions in daemon configuration. Preserve their high-water
+-- mark when rows disappear, including archives upgraded from reusable row IDs.
+CREATE TABLE IF NOT EXISTS source_id_reservations (
+    source_id INTEGER PRIMARY KEY
+);
+INSERT OR IGNORE INTO source_id_reservations(source_id) SELECT id FROM sources;
+INSERT INTO archive_metadata(key, value)
+SELECT 'source_id_high_water', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM sources WHERE TRUE
+ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT);
+CREATE TRIGGER IF NOT EXISTS sources_id_high_water_insert AFTER INSERT ON sources
+BEGIN
+    SELECT CASE WHEN EXISTS (SELECT 1 FROM source_id_reservations WHERE source_id=NEW.id)
+        THEN RAISE(ABORT, 'source ID has already been allocated or reserved') END;
+    INSERT INTO source_id_reservations(source_id) VALUES(NEW.id);
+    INSERT INTO archive_metadata(key, value) VALUES ('source_id_high_water', CAST(NEW.id AS TEXT))
+    ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), NEW.id) AS TEXT);
+END;
+CREATE TRIGGER IF NOT EXISTS sources_id_high_water_delete BEFORE DELETE ON sources
+BEGIN
+    INSERT OR IGNORE INTO source_id_reservations(source_id) VALUES(OLD.id);
+    INSERT INTO archive_metadata(key, value) VALUES ('source_id_high_water', CAST(OLD.id AS TEXT))
+    ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), OLD.id) AS TEXT);
+END;
+
 -- Account-level route proof failures apply to every archived chat, including
 -- quiet chats that an incremental sync does not revisit.
 CREATE TABLE IF NOT EXISTS source_messaging_route_failures (
@@ -2239,6 +2263,35 @@ CREATE INDEX IF NOT EXISTS idx_chat_drafts_source
 
 CREATE INDEX IF NOT EXISTS idx_chat_drafts_conversation
     ON chat_drafts(conversation_id);
+
+-- Durable publication receipts outlive draft consumption. Only source removal
+-- cascades them; publish_dispatched_at never depends on presentation state.
+CREATE TABLE IF NOT EXISTS threads_reply_sends (
+    draft_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    source_identifier TEXT NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    draft_revision INTEGER NOT NULL CHECK (draft_revision > 0),
+    root_media_id TEXT NOT NULL,
+    parent_media_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    body_hash TEXT NOT NULL,
+    row_revision INTEGER NOT NULL DEFAULT 1 CHECK (row_revision > 0),
+    state TEXT NOT NULL CHECK (state IN ('claimed','container_saved','ready',
+        'publish_dispatched','remote_unknown','sent_archive_pending','complete',
+        'rate_limited','reply_not_permitted','invalid_body','send_failed')),
+    container_id TEXT,
+    media_id TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    container_created_at DATETIME,
+    last_status_at DATETIME,
+    next_poll_at DATETIME,
+    publish_dispatched_at DATETIME,
+    archive_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    local_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_threads_reply_sends_source ON threads_reply_sends(source_id);
 
 -- Beeper drafts bind a chat's native composer, which holds the content, so
 -- the shared pending columns carry no archive message link.

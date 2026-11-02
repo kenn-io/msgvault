@@ -59,6 +59,7 @@ limit an archive view.
 | Verify stored mail | [Archive verification](guides/verification.md) |
 | Hide duplicate copies | [Deduplication](usage/deduplication.md) |
 | Remove mail from a provider | [Deletion staging and execution](usage/deletion.md) |
+| Archive Threads posts and publish a reviewed reply | [Threads](usage/threads.md), on unreleased `main` |
 | Prepare a message draft for review | [Mail drafts](cli-reference.md#draft-reply), [Beeper drafts](cli-reference.md#beeper-chat-drafts), and [local chat drafts](cli-reference.md#local-chat-drafts) |
 | Keep a recoverable copy | [Backup and restore](usage/backup.md) |
 | Take data elsewhere | [Exporting](usage/exporting.md) |
