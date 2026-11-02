@@ -16,7 +16,7 @@ import (
 const (
 	documentDisclosureName   = "document-derivatives"
 	documentDisclosureFormat = "application/vnd.msgvault.document-derivatives+json; contains-normalized-plaintext=true"
-	documentDisclosureSchema = 2
+	documentDisclosureSchema = 3
 )
 
 // DocumentDisclosure is a bounded, content-free declaration that a snapshot's
@@ -24,6 +24,8 @@ const (
 // records counts only; excerpts, filenames, paths, hashes, and provider output
 // never leave the database through this artifact.
 type DocumentDisclosure struct {
+	StagedRanges                int64 `json:"staged_ranges"`
+	StagedCharacters            int64 `json:"staged_characters"`
 	SchemaVersion               int   `json:"schema_version"`
 	ContainsNormalizedPlaintext bool  `json:"contains_normalized_attachment_plaintext"`
 	Chunks                      int64 `json:"chunks"`
@@ -50,7 +52,16 @@ func (v *frozenView) AuxiliaryArtifacts(ctx context.Context) ([]backup.Auxiliary
 		FROM document_chunks`).Scan(&disclosure.Chunks, &disclosure.Characters); err != nil {
 		return nil, fmt.Errorf("backupapp: count document derivatives: %w", err)
 	}
-	if disclosure.Chunks == 0 {
+	rangesExist, err := documentDisclosureTableExists(ctx, v.tx, "document_extraction_ranges", postgres)
+	if err != nil {
+		return nil, err
+	}
+	if rangesExist {
+		if err := v.tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(char_count),0) FROM document_extraction_ranges`).Scan(&disclosure.StagedRanges, &disclosure.StagedCharacters); err != nil {
+			return nil, fmt.Errorf("backupapp: count staged document ranges: %w", err)
+		}
+	}
+	if disclosure.Chunks == 0 && disclosure.StagedRanges == 0 {
 		return nil, nil
 	}
 	profilesExist, err := documentDisclosureTableExists(ctx, v.tx, "document_extraction_profiles", postgres)
@@ -187,11 +198,12 @@ func (t *DocumentAuxiliaryTarget) StageAuxiliary(
 	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		return nil, errors.New("backupapp: document derivative disclosure has trailing data")
 	}
-	if (disclosure.SchemaVersion != 1 && disclosure.SchemaVersion != documentDisclosureSchema) ||
-		!disclosure.ContainsNormalizedPlaintext || disclosure.Chunks <= 0 || disclosure.Characters < 0 {
+	if (disclosure.SchemaVersion < 1 || disclosure.SchemaVersion > documentDisclosureSchema) ||
+		!disclosure.ContainsNormalizedPlaintext || disclosure.Chunks < 0 || disclosure.Characters < 0 || disclosure.StagedRanges < 0 || disclosure.StagedCharacters < 0 ||
+		(disclosure.Chunks == 0 && (disclosure.SchemaVersion < 3 || disclosure.StagedRanges == 0)) {
 		return nil, errors.New("backupapp: document derivative disclosure is invalid")
 	}
-	if disclosure.SchemaVersion == documentDisclosureSchema &&
+	if disclosure.SchemaVersion >= 2 &&
 		(disclosure.Profiles < 0 || disclosure.EnabledProfiles < 0 ||
 			disclosure.ConsentedProfiles < 0 || disclosure.Extractions < 0 ||
 			disclosure.CurrentHeads < 0 || disclosure.EnabledProfiles > disclosure.Profiles ||
