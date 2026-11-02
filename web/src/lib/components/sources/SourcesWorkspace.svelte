@@ -144,7 +144,7 @@
           controller.status = connection.status;
           contactControllers.set(connection.connection, controller);
         }
-        if (connection.status.active) {
+        if (connection.status.active || connection.status.scheduled || connection.status.queued_at || connection.status.scheduler_running) {
           void controller.retryStatus();
         } else {
           controller.status = connection.status;
