@@ -159,8 +159,8 @@ func TestGetPersonNetworkContextBoundsHighDegreeEmploymentLayerInPublicOrder(t *
 	require.Len(people, 1000)
 	slices.Sort(people)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
-		`INSERT INTO employments (person_id, organization_id, is_current, source)
-		SELECT id, ?, true, 'user' FROM persons WHERE vcard_uid LIKE 'network-zed-%' ORDER BY id`), organization.ID)
+		`INSERT INTO employments (person_id, organization_id, is_current, is_primary, source)
+		SELECT id, ?, true, true, 'user' FROM persons WHERE vcard_uid LIKE 'network-zed-%' ORDER BY id`), organization.ID)
 	require.NoError(err)
 	earlier := createNetworkPerson(t, f.Store, "AAA Beyond Employment Page")
 	createNetworkEmployment(t, f.Store, earlier.ID, organization.ID, true)
