@@ -1058,6 +1058,66 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
 }
 
+func TestAttachmentMirrorBackfillBeforeProcessingFailureSave(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		state   [3]string
+		running bool
+		retry   bool
+	}{
+		{name: "recoverable failure", state: [3]string{"failed", "rendition", "consent"}, retry: true},
+		{name: "still running", state: [3]string{"running", "rendition", ""}, running: true, retry: true},
+		{name: "completed", state: [3]string{"completed", "rendition", ""}},
+		{name: "other failure", state: [3]string{"failed", "rendition", "provider_timeout"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			r.delivered("a")
+			require.NoError(r.runBatch(t.Context()))
+			id := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
+			r.processing.States[id] = tc.state
+			r.processingDue()
+			backfilled := false
+			r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+				if !backfilled && len(r.processing.Polls) == 1 {
+					backfilled = true
+					require.NoError(r.f.Store.RetryDocbankAttachments(t.Context(), "dest"))
+				}
+				return func() {}, true
+			})
+			require.NoError(r.runBatch(t.Context()))
+			require.True(backfilled)
+			if tc.running {
+				assert.Equal([]string{"a"}, r.processing.Jobs, "backfill preserves the running job")
+				assert.Equal(int64(1), r.processingCounts().Requested)
+				r.processing.States[id] = [3]string{"failed", "rendition", "consent"}
+				r.processingDue()
+				require.NoError(r.runBatch(t.Context()))
+			}
+			counts := r.processingCounts()
+			if tc.retry {
+				assert.Equal([]string{"a", "a"}, r.processing.Jobs, "one backfill retries the recoverable failure")
+				assert.Equal(int64(1), counts.Requested)
+				assert.Empty(counts.Outcomes)
+				r.processing.States[id] = [3]string{"failed", "rendition", "consent"}
+				r.processingDue()
+				require.NoError(r.runBatch(t.Context()))
+				assert.Equal([]string{"a", "a"}, r.processing.Jobs, "one backfill permits one retry")
+				assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
+			} else {
+				assert.Equal([]string{"a"}, r.processing.Jobs)
+				if tc.state[0] == "completed" {
+					assert.Equal(int64(1), counts.Extracted)
+				} else {
+					assert.Equal(map[string]int64{"provider_timeout": 1}, counts.Outcomes)
+				}
+			}
+		})
+	}
+}
+
 func TestAttachmentMirrorProcessingStartSavesConflictReason(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
