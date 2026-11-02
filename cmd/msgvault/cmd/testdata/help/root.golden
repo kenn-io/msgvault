@@ -29,6 +29,7 @@ Search and read:
   meetings      Read archived meeting context, actions, and metrics
   query         Run a SQL query against the analytics cache
   search        Search messages using Gmail-like query syntax
+  sender-auth   Inspect sender receipt authentication without reading message content
   show-message  Show full message details
   show-thread   Show a message's thread in chronological order
   stats         Show archive message, thread, attachment and account totals

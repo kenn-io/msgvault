@@ -1526,6 +1526,21 @@ type FindSimilarMessagesQuery struct {
 	HasAttachment *bool `json:"has_attachment,omitempty"`
 }
 
+type GetSenderAuthDiagnosticsQuery struct {
+	// SourceID Archive-local source ID to sample.
+	SourceID int64 `json:"source_id" validate:"gte=1"`
+
+	// Limit Maximum newest messages to inspect; counts describe this sample only.
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=1000"`
+
+	// Suggest Include untrusted observed receiver hostnames for manual review.
+	Suggest *bool `json:"suggest,omitempty"`
+}
+
+func (g GetSenderAuthDiagnosticsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListSourceStatusQuery struct {
 	// SourceType Restrict to one source type
 	SourceType *string `json:"source_type,omitempty"`

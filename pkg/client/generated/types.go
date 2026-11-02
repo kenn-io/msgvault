@@ -705,6 +705,16 @@ func (a AttributeValue) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AuthservObservation struct {
+	AuthservID   string `json:"authserv_id" validate:"required"`
+	ContentTrust string `json:"content_trust" validate:"required"`
+	Count        int64  `json:"count"`
+}
+
+func (a AuthservObservation) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type BackupFreezeBeginResponse struct {
 	Token string `json:"token" validate:"required"`
 }
@@ -14874,6 +14884,34 @@ func (s Selector) Validate() error {
 	if s.Quote != nil {
 		if err := typesValidator.Var(s.Quote, "omitempty,max=1000"); err != nil {
 			errors = errors.Append("Quote", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SenderAuthDiagnostics struct {
+	BasisCounts  map[string]int64      `json:"basis_counts"`
+	HasMore      bool                  `json:"has_more"`
+	Observations []AuthservObservation `json:"observations" validate:"required"`
+	SampleLimit  int64                 `json:"sample_limit"`
+	Scanned      int64                 `json:"scanned"`
+	SourceID     int64                 `json:"source_id"`
+	Verified     int64                 `json:"verified"`
+}
+
+func (s SenderAuthDiagnostics) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Observations, "required"); err != nil {
+		errors = errors.Append("Observations", err)
+	}
+	for i, item := range s.Observations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Observations[%d]", i), err)
+			}
 		}
 	}
 	if len(errors) == 0 {

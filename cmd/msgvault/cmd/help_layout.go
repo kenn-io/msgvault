@@ -146,6 +146,7 @@ var topLevelCommandGroups = map[string]string{
 	"repair-senders":         helpGroupMaintenance,
 	"schema-version":         helpGroupMaintenance,
 	"search":                 helpGroupRead,
+	"sender-auth":            helpGroupRead,
 	"serve":                  helpGroupOperations,
 	"setup":                  helpGroupOperations,
 	"show-deletion":          helpGroupDelete,

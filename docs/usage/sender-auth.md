@@ -26,6 +26,22 @@ by default. A matching hostname is a policy decision, not proof that the
 header came from that provider: an edited import can contain forged headers.
 Never pin an identity solely because it appears in an archived message.
 
+## Inspect a source without reading its messages
+
+```bash
+msgvault sender-auth status --source-id 1 --limit 100 --json
+msgvault sender-auth suggest --source-id 1 --limit 100
+```
+
+These owner-only commands sample the newest messages in one source through the
+daemon. They return counts and, for `suggest`, receiver hostnames explicitly
+marked as untrusted observations. The default sample is 100 and the maximum is
+1,000; `scanned` and `has_more` describe the sample, not whole-archive totals.
+The sample orders messages by time, newest first, with undated messages last.
+No subjects, bodies, sender addresses, or raw header blocks cross this route.
+The commands never contact mail providers or edit pins. ARC-only receipts and
+invalid receiver hostnames do not produce suggestions.
+
 The parser merges the contiguous trusted block of Authentication-Results
 headers, stopping at the first untrusted one. Domain comparison is exact;
 relaxed DMARC alignment can therefore produce conservative false negatives.

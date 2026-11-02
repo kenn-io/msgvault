@@ -3679,6 +3679,18 @@ type FindSimilarMessagesResponse = SimilarSearchResponse
 
 type FindSimilarMessagesErrorResponse = ErrorResponse
 
+type GetSenderAuthDiagnosticsResponse = SenderAuthDiagnostics
+
+type GetSenderAuthDiagnosticsErrorResponse = APIHTTPError
+
+type GetSenderAuthDiagnosticsErrorResponseJSON = APIHTTPError
+
+type GetSenderAuthDiagnosticsErrorResponseJSON422 = APIHTTPError
+
+type GetSenderAuthDiagnosticsErrorResponseJSON500 = APIHTTPError
+
+type GetSenderAuthDiagnosticsErrorResponseJSON503 = APIHTTPError
+
 type GetSettingsResponse = SettingsResponse
 
 type GetSettingsErrorResponse = ErrorResponse
@@ -7279,6 +7291,18 @@ type FindSimilarMessagesResp struct {
 	StatusCode   int
 	JSON200      *FindSimilarMessagesResponse
 	JSONDefault  *FindSimilarMessagesErrorResponse
+}
+
+type GetSenderAuthDiagnosticsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSenderAuthDiagnosticsResponse
+	JSON400      *GetSenderAuthDiagnosticsErrorResponse
+	JSON404      *GetSenderAuthDiagnosticsErrorResponseJSON
+	JSON422      *GetSenderAuthDiagnosticsErrorResponseJSON422
+	JSON500      *GetSenderAuthDiagnosticsErrorResponseJSON500
+	JSON503      *GetSenderAuthDiagnosticsErrorResponseJSON503
 }
 
 type GetSettingsResp200Headers struct {

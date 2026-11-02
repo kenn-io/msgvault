@@ -53,7 +53,15 @@ func TestSenderAuthHeaders(t *testing.T) {
 	v := senderAuthFromRaw(compressed.Bytes()[:senderAuthPrefixBytes], "zlib", "sender@example.test", 1, senderauth.TrustSet{"mx.test"})
 	checks.True(v.Verified)
 	oversized := []byte("From: sender@example.test\r\nX-Large: " + string(bytes.Repeat([]byte("x"), senderAuthHeaderBytes)) + "\r\n\r\n")
-	checks.Equal(senderauth.HeaderTruncated, senderAuthFromRaw(oversized, "none", "sender@example.test", 1, nil).Basis)
+	// The stored prefix is capped before decoding, so exercise the decoded
+	// header limit with a compressed receipt that fits in that prefix.
+	compressed.Reset()
+	zw.Reset(&compressed)
+	_, err = zw.Write(oversized)
+	must.NoError(err)
+	must.NoError(zw.Close())
+	must.LessOrEqual(compressed.Len(), senderAuthPrefixBytes)
+	checks.Equal(senderauth.HeaderTruncated, senderAuthFromRaw(compressed.Bytes(), "zlib", "sender@example.test", 1, nil).Basis)
 }
 
 func FuzzSenderAuthHeaders(f *testing.F) {

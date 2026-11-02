@@ -258,6 +258,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 }
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
+	s.registerSenderAuthDiagnostics(apiV1)
 	s.registerMCPCapabilitiesRoute(api, apiV1)
 	s.registerSessionRoutes(api)
 	s.registerDocbankAttachmentRoutes(apiV1)

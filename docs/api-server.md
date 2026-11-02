@@ -3210,3 +3210,13 @@ It never sends message content to a provider.
 See the [CLI field semantics](cli-reference.md#embeddings-status) and the
 [published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
 MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or newer when vector search is enabled.
+
+## Sender receipt diagnostics
+
+Owner credentials can call `GET /api/v1/sender-auth/diagnostics` with a positive
+`source_id`, optional `limit` (default 100, maximum 1,000), and optional
+`suggest=true`. The response contains sample counts, verification/basis counts,
+and untrusted receiver-hostname observations when requested. `scanned` and
+`has_more` describe a sample rather than archive totals. Delegated tokens and
+remote client keys cannot access this operation. The route returns no message
+content and makes no configuration changes or provider requests.
