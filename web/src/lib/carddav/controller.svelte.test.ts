@@ -303,6 +303,55 @@ describe('CardDAVController', () => {
     controller.destroy();
   });
 
+  it('discovers a scheduled sync queued after load and follows it to completion', async () => {
+    vi.useFakeTimers();
+    let stage: 'idle' | 'queued' | 'running' | 'done' = 'idle';
+    let statusReads = 0;
+    let bookReads = 0;
+    let runReads = 0;
+    const scheduledStatus = { ...idleStatus, enabled: true, scheduled: true, schedule: '0 * * * *' };
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path === '/api/v1/carddav/books') {
+        bookReads += 1;
+        return Response.json({ books: [book(1)] });
+      }
+      if (path === '/api/v1/carddav/runs') {
+        runReads += 1;
+        return Response.json({ runs: [] });
+      }
+      statusReads += 1;
+      if (stage === 'queued') return Response.json({ ...scheduledStatus, queued_at: '2026-10-01T15:04:00Z' });
+      if (stage === 'running') return Response.json({ ...scheduledStatus, scheduler_running: true });
+      if (stage === 'done') return Response.json({ ...scheduledStatus, latest: run(9, 'succeeded') });
+      return Response.json(scheduledStatus);
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn));
+    await controller.load();
+    expect(controller.canSync).toBe(true);
+
+    stage = 'queued';
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(statusReads).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(controller.status?.queued_at).toBe('2026-10-01T15:04:00Z');
+
+    stage = 'running';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.queued_at).toBeUndefined();
+    expect(controller.canSync).toBe(false);
+
+    stage = 'done';
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.waitFor(() => expect([bookReads, runReads]).toEqual([2, 2]));
+    expect(controller.canSync).toBe(true);
+    const doneReads = statusReads;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(statusReads).toBe(doneReads + 1);
+    expect([bookReads, runReads]).toEqual([2, 2]);
+    controller.destroy();
+  });
+
   it('does not let an older idle poll overwrite a newer active status read', async () => {
     vi.useFakeTimers();
     const olderPoll = deferredResponse();

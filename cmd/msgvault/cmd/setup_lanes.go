@@ -341,6 +341,13 @@ func embeddingProviderName(endpoint string) string {
 	return "custom"
 }
 
+func textEmbeddingProviderName(embeddings vector.EmbeddingsConfig) string {
+	if embeddings.LocalOnly {
+		return "local"
+	}
+	return embeddingProviderName(embeddings.Endpoint)
+}
+
 func embedScheduleSummary(schedule vector.EmbedScheduleConfig) string {
 	parts := []string{}
 	if schedule.Cron != "" {
@@ -378,7 +385,7 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	embeddings := cfg.Vector.Embeddings
 	if cfg.Vector.Enabled {
 		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(embeddings.Endpoint)
+		lane.Provider = textEmbeddingProviderName(embeddings)
 		lane.Model = embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		if embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
@@ -390,7 +397,9 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			lane.State = laneStatePending
 			lane.Reason += "; " + unavailable
 		}
-		env.reportVectorCredential(&lane, providercredentials.VectorEmbeddingsID, embeddings.Endpoint, embeddings.APIKeyEnv)
+		if !embeddings.LocalOnly {
+			env.reportVectorCredential(&lane, providercredentials.VectorEmbeddingsID, embeddings.Endpoint, embeddings.APIKeyEnv)
+		}
 		return lane
 	}
 	lane.State = laneStateOff
@@ -402,8 +411,7 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Reason = "an embedding key is present but the lane is not configured"
 		lane.Next = []string{"msgvault setup providers"}
 	default:
-		lane.Reason = "no embedding provider; set " + setupVoyageKeyEnv + " (recommended) or " +
-			setupOpenAIKeyEnv + ", or run Ollama with " + setupOllamaTextModel + ", then run `msgvault setup providers`"
+		lane.Reason = "run `msgvault setup providers` to enable text search"
 	}
 	return lane
 }
@@ -413,7 +421,7 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	switch {
 	case cfg.Vector.Enabled && cfg.Vector.People.Enabled:
 		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
+		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
 		lane.Reason = "one curated document per person rides the text-search generation"
@@ -564,7 +572,7 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	switch {
 	case documents.Enabled && documents.Index.Embeddings.Enabled:
 		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
+		lane.Provider = textEmbeddingProviderName(cfg.Vector.Embeddings)
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"

@@ -2284,7 +2284,7 @@ func printPersonSemanticProviderDisclosure(
 	_, _ = fmt.Fprintln(w, "Semantic person embedding provider disclosure:")
 	_, _ = fmt.Fprintf(w, "Purpose: %s\n", profile.Purpose)
 	_, _ = fmt.Fprintf(w, "Fingerprint: %s\n", profile.Fingerprint)
-	_, _ = fmt.Fprintf(w, "Destination: %s\n", profile.Destination)
+	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(profile.Destination, profile.LocalOnly))
 	_, _ = fmt.Fprintf(w, "API format: %s\n", profile.APIFormat)
 	_, _ = fmt.Fprintf(w, "Model: %s\n", profile.Model)
 	_, _ = fmt.Fprintf(w, "Authentication: %s\n", authentication)

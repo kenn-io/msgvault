@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-21"
+last_edited: "2026-11-01"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
@@ -16,7 +17,7 @@ All notable changes to msgvault, grouped by release.
   explicit unfiltered, unlimited `sync-full` to discover older messages omitted
   by earlier full syncs; that backfill can increase Gmail API use, transfer, and
   local storage. Incremental sync does not backfill old omissions by itself.
-- CLI search JSON, MCP `search_message_bodies`, message details, MCP `get_message` and `search_in_message`, and CLI `show-message --json` and `show-thread --json` report the best-effort flag `hidden_text_present`. True means the stored HTML likely hides readable text. False does not guarantee that text is visible. The check uses inline-style heuristics, `hidden`, and legacy color attributes. Non-blank HTML that fails to parse also sets the flag. Text output from `show-message` and `show-thread` warns on stderr, once per thread page. Archive schema 16 flags older mail during a one-time backfill; new HTML writes refresh the stored flag. API schema 3.29.0 includes the flag in message details and search rows. Daemons older than API schema 3.29.0 report false. Message bodies stay unchanged. The check excludes stylesheets and browser layout.
+- CLI search JSON, MCP `search_message_bodies`, message details, MCP `get_message` and `search_in_message`, and CLI `show-message --json` and `show-thread --json` report the best-effort flag `hidden_text_present`. True means the stored HTML likely hides readable text. False does not guarantee that text is visible. The check uses inline-style heuristics, `hidden`, and legacy color attributes. Non-blank HTML that fails to parse also sets the flag. Text output from `show-message` and `show-thread` warns on stderr, once per thread page. Archive schema 16 flags older mail during a one-time backfill; new HTML writes refresh the stored flag. API schema 3.30.0 includes the flag in message details and search rows. Daemons older than API schema 3.30.0 report false. Message bodies stay unchanged. The check excludes stylesheets and browser layout.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Drafts and unsent messages no longer count as contact in relationship temperature, the relationship calendar, the relationships list, person and domain timelines, or chat inbox summaries. Full cache checks at startup, after syncs, and during explicit cache builds detect sent-state changes; automatic refreshes respect the configured minimum rebuild interval. Analytics cache schema 33 triggers a one-time rebuild on upgrade without re-importing messages.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
@@ -45,6 +46,12 @@ All notable changes to msgvault, grouped by release.
   while other media keeps its 250 MiB default. WAV and MP3 recordings retain
   their detected audio MIME type and use shared Docbank audio delivery under
   `all_sources_upload_consent`; the audio path currently accepts up to 1 GiB.
+
+- Automatic message, person, and document indexing yields to queued syncs after
+  one minute and ends each pass after five minutes. It saves completed provider
+  requests before resuming behind waiting work.
+- Sources and CardDAV show when a waiting sync entered the queue, including
+  waits that begin after the page opens.
 
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.

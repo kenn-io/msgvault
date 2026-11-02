@@ -125,7 +125,7 @@ func semanticPersonEmbeddingRuntimeIdentityForConfig(
 	config Config,
 ) semanticPersonEmbeddingRuntimeIdentity {
 	return semanticPersonEmbeddingRuntimeIdentity{
-		endpoint:  config.Embeddings.Endpoint,
+		endpoint:  config.Embeddings.IdentityDestination(),
 		apiFormat: config.Embeddings.EffectiveAPIFormat(),
 		model:     config.Embeddings.Model,
 		apiKeyEnv: config.Embeddings.APIKeyEnv,
