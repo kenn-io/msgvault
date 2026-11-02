@@ -171,6 +171,16 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			o := linkOccurrence{Start: event.Start, End: event.End, Row: CalendarEventRow{Subject: event.Subject, Event: calevent.Event{Status: event.Status, Attendees: event.Attendees}}}
 			if suggestion, ok := rankMeetingSuggestion(member, o); ok {
 				suggestion.Ref = event.Ref
+				// The calendar API addresses an exception by its message. Keep
+				// meeting suggestions on the resolver's series identity, in both
+				// directions, so existing link and unlink targets remain stable.
+				if event.SeriesMessageID != 0 && !strings.Contains(event.Ref, "@") {
+					target, err := resolveMeetingOccurrence(ctx, s.meetingReader(ctx), OccurrenceRef{MessageID: event.MessageID}, &budget)
+					if err != nil {
+						return pageResult, err
+					}
+					suggestion.Ref = formatMeetingOccurrence(target.Ref)
+				}
 				pageResult.Suggestions = append(pageResult.Suggestions, suggestion)
 			}
 		}

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -16,8 +16,8 @@ import (
 func TestConfiguredIMAPDisplayNamePreservesFreshness(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		t.Run(map[bool]string{true: "enabled", false: "disabled"}[enabled], func(t *testing.T) {
-			assertions := assertpkg.New(t)
-			requirements := requirepkg.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			const identifier = "imaps://owner@example.test@imap.example.test:993"
 			source, err := st.GetOrCreateSource("imap", identifier)
@@ -62,8 +62,8 @@ func TestConfiguredAccountUsesDaemonSelectors(t *testing.T) {
 		{name: "unsupported account type", kind: "o365", identifier: "owner@example.test", configured: "owner@example.test", matched: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions := assertpkg.New(t)
-			requirements := requirepkg.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource(tc.kind, tc.identifier)
 			requirements.NoError(err)
@@ -99,8 +99,8 @@ func TestConfiguredAccountUsesDaemonSelectors(t *testing.T) {
 }
 
 func TestConfiguredAccountSelectsFirstSourcePerSupportedType(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	for _, identifier := range []string{"imaps://first.example.test:993", "imaps://second.example.test:993"} {
 		source, err := st.GetOrCreateSource("imap", identifier)
@@ -127,8 +127,8 @@ func TestConfiguredAccountSelectsFirstSourcePerSupportedType(t *testing.T) {
 }
 
 func TestConfiguredAccountWithoutArchiveRow(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Accounts = []config.AccountSchedule{{Email: "owner@example.test", Enabled: true, Schedule: "0 * * * *"}}
@@ -143,8 +143,8 @@ func TestConfiguredAccountWithoutArchiveRow(t *testing.T) {
 }
 
 func TestRestrictedSourceScopeOmitsConfiguredSourcePlaceholders(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	visible, err := st.GetOrCreateSource("gmail", "visible@example.test")
 	requirements.NoError(err)
@@ -172,8 +172,8 @@ func TestRestrictedSourceScopeOmitsConfiguredSourcePlaceholders(t *testing.T) {
 }
 
 func TestConfiguredRetiredAccountDoesNotScheduleSurvivor(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	retired, err := st.GetOrCreateSource("gmail", "former@example.test")
 	requirements.NoError(err)
@@ -194,8 +194,8 @@ func TestConfiguredRetiredAccountDoesNotScheduleSurvivor(t *testing.T) {
 }
 
 func TestRetiredConfiguredProviderDoesNotCreatePlaceholder(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	retired, err := st.GetOrCreateSource("slack", "retired-workspace")
 	requirements.NoError(err)
@@ -214,8 +214,8 @@ func TestRetiredConfiguredProviderDoesNotCreatePlaceholder(t *testing.T) {
 }
 
 func TestConfiguredCalendarEmailMatchesNormalizedArchive(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "OWNER@EXAMPLE.TEST/primary")
 	requirements.NoError(err)
@@ -232,8 +232,8 @@ func TestConfiguredCalendarEmailMatchesNormalizedArchive(t *testing.T) {
 }
 
 func TestHistoryOnlyBeeperSourceIsStatic(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "history-example")
 	requirements.NoError(err)
@@ -263,8 +263,8 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 		{name: "denylist keeps other accounts", identifier: "included", excludeAccounts: []string{"excluded"}, wantScheduling: "scheduled", wantStale: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions := assertpkg.New(t)
-			requirements := requirepkg.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			_, err := st.GetOrCreateSource("beeper", tc.identifier)
 			requirements.NoError(err)
@@ -291,8 +291,8 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 func TestImportOnlySourcesAreStatic(t *testing.T) {
 	for _, sourceType := range []string{"whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import"} {
 		t.Run(sourceType, func(t *testing.T) {
-			assertions := assertpkg.New(t)
-			requirements := requirepkg.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			_, err := st.GetOrCreateSource(sourceType, "archive-example")
 			requirements.NoError(err)
@@ -316,8 +316,8 @@ func TestImportOnlySourcesAreStatic(t *testing.T) {
 }
 
 func TestArchiveAndConfigurationUnion(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	imap, err := st.GetOrCreateSource("imap", "owner@example.test")
 	requirements.NoError(err)
@@ -349,8 +349,8 @@ func TestArchiveAndConfigurationUnion(t *testing.T) {
 }
 
 func TestConfiguredProvidersWithoutArchiveRows(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Beeper.Enabled = true
@@ -368,8 +368,8 @@ func TestConfiguredProvidersWithoutArchiveRows(t *testing.T) {
 }
 
 func TestSyncOutcomeIncludesPartialCompletedRun(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	requirements.NoError(err)
@@ -396,8 +396,8 @@ func TestAttachmentSyncRunsDoNotReplaceSourceFreshness(t *testing.T) {
 		{name: "Inline media success", sourceType: "inline", mediaSyncType: "inline_media", completeMedia: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions := assertpkg.New(t)
-			requirements := requirepkg.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource(tc.sourceType, "archive-example")
 			requirements.NoError(err)
@@ -416,12 +416,13 @@ func TestAttachmentSyncRunsDoNotReplaceSourceFreshness(t *testing.T) {
 			}
 
 			cfg := config.NewDefaultConfig()
-			if tc.sourceType == "inline" {
+			switch tc.sourceType {
+			case "inline":
 				cfg.Inline = config.InlineConfig{Enabled: true, Schedule: "0 * * * *", Accounts: []config.InlineAccount{{Identifier: "archive-example"}}}
-			} else if tc.sourceType == "beeper" {
+			case "beeper":
 				cfg.Beeper.Enabled = true
 				cfg.Beeper.Schedule = "0 * * * *"
-			} else {
+			default:
 				cfg.Slack.Enabled = true
 				cfg.Slack.Schedule = "0 * * * *"
 			}
@@ -445,8 +446,8 @@ func TestAttachmentSyncRunsDoNotReplaceSourceFreshness(t *testing.T) {
 }
 
 func TestChatwootInventoryMatchesAccountScope(t *testing.T) {
-	assertions := assertpkg.New(t)
-	requirements := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource("chatwoot", "https://support.example.test/accounts/7/inboxes/2")
 	requirements.NoError(err)

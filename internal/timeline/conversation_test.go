@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestAnchorConversationModeUsesMessageEntries(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	ids := []int64{}
 	for i := range 30 {
@@ -30,22 +30,22 @@ func TestAnchorConversationModeUsesMessageEntries(t *testing.T) {
 	seen := map[string]bool{}
 	for page := range 40 {
 		got, err := Build(t.Context(), f.src, req)
-		require.NoError(err)
+		requirements.NoError(err)
 		for _, e := range got.History {
-			assert.Equal("message", e.Kind)
-			assert.True(strings.HasPrefix(e.Key, "msg:"))
-			assert.False(seen[e.Key], "duplicate %s", e.Key)
+			assertions.Equal("message", e.Kind)
+			assertions.True(strings.HasPrefix(e.Key, "msg:"))
+			assertions.False(seen[e.Key], "duplicate %s", e.Key)
 			seen[e.Key] = true
 		}
 		if got.Cursor == "" {
 			break
 		}
 		req.Cursor = got.Cursor
-		require.Less(page, 39)
+		requirements.Less(page, 39)
 	}
 	want := map[string]bool{}
 	for _, id := range ids {
 		want[fmt.Sprintf("msg:%d", id)] = true
 	}
-	assert.Equal(want, seen)
+	assertions.Equal(want, seen)
 }

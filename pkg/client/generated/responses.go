@@ -197,6 +197,14 @@ type GetCalendarEventErrorResponseJSON503 = ErrorResponse
 
 type GetCalendarEventErrorResponseJSONDefault = ErrorResponse
 
+type ListCallObservationsResponse = CallEvidenceResponse
+
+type ListCallObservationsErrorResponse = ErrorResponse
+
+type SummarizeCallsResponse = CallSummaryResponse
+
+type SummarizeCallsErrorResponse = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -1722,6 +1730,10 @@ type GetPersonMatchScoringStatusErrorResponseJSON = ErrorResponse
 type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
+
+type ImportCallObservationResponse = CallImportResponse
+
+type ImportCallObservationErrorResponse = ErrorResponse
 
 type ImportMeetingResponse = MeetingImportResponse
 
@@ -4183,22 +4195,6 @@ type GetTextStatsResponse = TotalStatsResponse
 
 type GetTextStatsErrorResponse = ErrorResponse
 
-type HealthResponseJSON = HealthResponse
-
-type HealthErrorResponse = ErrorResponse
-
-type ListCallObservationsResponse = CallEvidenceResponse
-
-type ListCallObservationsErrorResponse = ErrorResponse
-
-type SummarizeCallsResponse = CallSummaryResponse
-
-type SummarizeCallsErrorResponse = ErrorResponse
-
-type ImportCallObservationResponse = CallImportResponse
-
-type ImportCallObservationErrorResponse = ErrorResponse
-
 type GetTimelineResponse = TimelineResult
 
 type GetTimelineErrorResponse = ErrorResponse
@@ -4214,6 +4210,10 @@ type GetTimelineErrorResponseJSON500 = ErrorResponse
 type GetTimelineErrorResponseJSON503 = ErrorResponse
 
 type GetTimelineErrorResponseJSONDefault = ErrorResponse
+
+type HealthResponseJSON = HealthResponse
+
+type HealthErrorResponse = ErrorResponse
 
 type DaemonIdentityResp struct {
 	HTTPResponse *http.Response
@@ -4488,6 +4488,22 @@ type GetCalendarEventResp struct {
 	JSON500      *GetCalendarEventErrorResponseJSON500
 	JSON503      *GetCalendarEventErrorResponseJSON503
 	JSONDefault  *GetCalendarEventErrorResponseJSONDefault
+}
+
+type ListCallObservationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCallObservationsResponse
+	JSONDefault  *ListCallObservationsErrorResponse
+}
+
+type SummarizeCallsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SummarizeCallsResponse
+	JSONDefault  *SummarizeCallsErrorResponse
 }
 
 type SaveCardDAVAccountResp503Headers struct {
@@ -5735,6 +5751,14 @@ type UnlinkIdentityParticipantsResp struct {
 	StatusCode   int
 	JSON200      *UnlinkIdentityParticipantsResponse
 	JSONDefault  *UnlinkIdentityParticipantsErrorResponse
+}
+
+type ImportCallObservationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportCallObservationResponse
+	JSONDefault  *ImportCallObservationErrorResponse
 }
 
 type ImportMeetingResp struct {
@@ -8051,44 +8075,6 @@ type GetTextStatsResp struct {
 	JSONDefault  *GetTextStatsErrorResponse
 }
 
-type HealthResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *HealthResponseJSON
-	JSONDefault  *HealthErrorResponse
-}
-
-type HeadHealthResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-}
-
-type ListCallObservationsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListCallObservationsResponse
-	JSONDefault  *ListCallObservationsErrorResponse
-}
-
-type SummarizeCallsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SummarizeCallsResponse
-	JSONDefault  *SummarizeCallsErrorResponse
-}
-
-type ImportCallObservationResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ImportCallObservationResponse
-	JSONDefault  *ImportCallObservationErrorResponse
-}
-
 type GetTimelineResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -8101,4 +8087,18 @@ type GetTimelineResp struct {
 	JSON500      *GetTimelineErrorResponseJSON500
 	JSON503      *GetTimelineErrorResponseJSON503
 	JSONDefault  *GetTimelineErrorResponseJSONDefault
+}
+
+type HealthResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *HealthResponseJSON
+	JSONDefault  *HealthErrorResponse
+}
+
+type HeadHealthResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
 }

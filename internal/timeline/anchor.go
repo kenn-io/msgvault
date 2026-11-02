@@ -74,7 +74,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		})
 		if r.err != nil {
 			c.gap("anchor", r.err, false)
-			return target, nil
+			return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
 		}
 		target.messageID = r.value
 		target.conversationID = ref.ID
@@ -118,7 +118,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	display := c.readDisplays([]int64{target.messageID})
 	if display.err != nil {
 		c.gap("anchor", display.err, false)
-		return target, nil
+		return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
 	}
 	d, ok := display.value[target.messageID]
 	if !ok {

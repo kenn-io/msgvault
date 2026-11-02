@@ -180,8 +180,7 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 					ref = fmt.Sprintf("person:%d", subject.PersonID)
 				}
 				// An unsent observation makes the subject resolvable in the source-scoped control without adding contact.
-				draft := f.add(f.now, false)
-				requirements.NoError(f.Store.SetMessageSentState(draft, false))
+				f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
 				raw := singleDayEvent
 				if envelope == "none" {
 					// Organizer-only calendar identity also supplies attendance.
@@ -299,8 +298,7 @@ func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	person := f.savePerson()
-	draft := f.add(f.now, false)
-	requirements.NoError(f.Store.SetMessageSentState(draft, false))
+	f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
 	unobserved := f.EnsureParticipant("unobserved@example.com", "Unobserved", "example.com")
 	event := f.calendar("only-unobserved", strings.ReplaceAll(singleDayEvent, "alice@example.com", "unobserved@example.com"))
 	note := f.transcript("recording", "planning@example.com", f.now.Add(-time.Hour))

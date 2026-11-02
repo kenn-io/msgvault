@@ -34,7 +34,9 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 			requirements.NoError(err)
 		}
 	}
-	f.add(t, room, f.Source.ID, at, false, "<cold-copy@example.com>")
+	copyID := f.add(t, room, f.Source.ID, at, false, "<cold-copy@example.com>")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.com' WHERE id=?`), copyID)
+	requirements.NoError(err)
 	for i := range 2 {
 		id := f.add(t, room, f.Source.ID, at.Add(24*time.Hour+time.Duration(i)*time.Second), false, "")
 		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.com' WHERE id=?`), id)

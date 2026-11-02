@@ -746,7 +746,7 @@ func TestCalendarArchiveMCPVersionGates(t *testing.T) {
 }
 
 func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
-	for _, version := range []string{"3.32.0", "3.33.0"} {
+	for _, version := range []string{"3.43.0", "3.44.0"} {
 		t.Run(version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -760,10 +760,10 @@ func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
 				assert.NoError(t, json.NewEncoder(w).Encode(body))
 			})
 			owner := daemonMCPServeOptions(t.Context(), client, nil)
-			assert.Equal(t, version == "3.33.0", owner.Timeline != nil)
+			assert.Equal(t, version == "3.44.0", owner.Timeline != nil)
 			delegated, err := delegatedMCPServeOptions(t.Context(), client)
 			require.NoError(t, err)
-			assert.Equal(t, version == "3.33.0", delegated.Timeline != nil)
+			assert.Equal(t, version == "3.44.0", delegated.Timeline != nil)
 		})
 	}
 }

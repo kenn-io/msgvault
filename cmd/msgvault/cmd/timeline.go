@@ -89,7 +89,15 @@ func newTimelineCommand() *cobra.Command {
 		if err != nil {
 			if ambiguous, ok := errors.AsType[*timeline.ErrAmbiguousReference](err); ok {
 				for _, candidate := range ambiguous.Candidates {
-					if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "person:%d\t%s\t%s\n", candidate.PersonID, textutil.SanitizeTerminal(candidate.DisplayName), textutil.SanitizeTerminal(candidate.Address)); writeErr != nil {
+					var ref string
+					if candidate.PersonID > 0 {
+						ref = fmt.Sprintf("person:%d", candidate.PersonID)
+					} else if len(candidate.ParticipantIDs) > 0 {
+						ref = fmt.Sprintf("participant:%d", candidate.ParticipantIDs[0])
+					} else {
+						continue
+					}
+					if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "%s\t%s\t%s\n", ref, textutil.SanitizeTerminal(candidate.DisplayName), textutil.SanitizeTerminal(candidate.Address)); writeErr != nil {
 						return fmt.Errorf("write timeline candidates: %w", writeErr)
 					}
 				}

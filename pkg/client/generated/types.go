@@ -13,6 +13,15 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type AccessPoint struct {
+	Kind  string `json:"kind" validate:"required"`
+	Value string `json:"value" validate:"required"`
+}
+
+func (a AccessPoint) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AccountInfo struct {
 	DisplayName *string `json:"display_name,omitzero"`
 	Email       string  `json:"email" validate:"required"`
@@ -1595,26 +1604,11 @@ type CallImportRequest struct {
 	Account  string           `json:"account" validate:"required"`
 	Bindings map[string]int64 `json:"bindings,omitempty"`
 	Format   string           `json:"format" validate:"required"`
-	Record   jsontext.Value   `json:"record"`
+	Record   map[string]any   `json:"record"`
 }
 
 func (c CallImportRequest) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(c.Account, "required"); err != nil {
-		errors = errors.Append("Account", err)
-	}
-	if err := typesValidator.Var(c.Format, "required"); err != nil {
-		errors = errors.Append("Format", err)
-	}
-	if v, ok := any(c.Record).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Record", err)
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type CallImportResponse struct {
@@ -16982,437 +16976,6 @@ func (t ThreadPage) Validate() error {
 	return errors
 }
 
-type TimelineRow struct {
-	AnchorMessageID *int64     `json:"anchor_message_id,omitempty"`
-	ConversationID  *int64     `json:"conversation_id,omitempty"`
-	FirstAt         *time.Time `json:"first_at,omitempty"`
-	HasAttachments  bool       `json:"has_attachments"`
-	Key             string     `json:"key" validate:"required"`
-	Kind            string     `json:"kind" validate:"required"`
-	MessageCount    int64      `json:"message_count"`
-	OccurredAt      time.Time  `json:"occurred_at" validate:"required"`
-	Preview         string     `json:"preview" validate:"required"`
-	SourceID        int64      `json:"source_id"`
-	Title           string     `json:"title" validate:"required"`
-}
-
-func (t TimelineRow) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(t))
-}
-
-type TokenUploadRequest struct {
-	AccessToken  *string    `json:"access_token,omitzero"`
-	ClientID     *string    `json:"client_id,omitzero"`
-	Expiry       *time.Time `json:"expiry,omitempty"`
-	RefreshToken string     `json:"refresh_token" validate:"required"`
-	Scopes       []string   `json:"scopes,omitempty"`
-	TenantID     *string    `json:"tenant_id,omitzero"`
-	TokenType    *string    `json:"token_type,omitzero"`
-}
-
-func (t TokenUploadRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(t))
-}
-
-type TokenUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-}
-
-type TotalStatsResponse struct {
-	AccountCount          int64   `json:"account_count"`
-	ActiveMessages        int64   `json:"active_messages"`
-	AppliedSearchScope    *bool   `json:"applied_search_scope,omitempty"`
-	AppliedSourceIds      []int64 `json:"applied_source_ids,omitempty"`
-	AttachmentCount       int64   `json:"attachment_count"`
-	AttachmentSize        int64   `json:"attachment_size"`
-	IndexState            *string `json:"index_state,omitzero"`
-	LabelCount            int64   `json:"label_count"`
-	MessageCount          int64   `json:"message_count"`
-	SourceDeletedMessages int64   `json:"source_deleted_messages"`
-	TotalSize             int64   `json:"total_size"`
-}
-
-type TranscriptSegment struct {
-	OffsetSeconds *float64 `json:"offset_seconds,omitempty" validate:"omitempty,gte=0"`
-	Speaker       string   `json:"speaker" validate:"required"`
-	Text          string   `json:"text" validate:"required"`
-}
-
-func (t TranscriptSegment) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(t))
-}
-
-type TriggerSyncResponse struct {
-	Disposition *string `json:"disposition,omitzero"`
-	Message     string  `json:"message" validate:"required"`
-	Status      string  `json:"status" validate:"required"`
-}
-
-func (t TriggerSyncResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(t))
-}
-
-type UpdateRequest struct {
-	AcceptReanchor *bool   `json:"accept_reanchor,omitempty"`
-	Account        *string `json:"account,omitzero"`
-	Alias          *string `json:"alias,omitzero"`
-	DisplayName    *string `json:"display_name,omitzero"`
-	Email          *string `json:"email,omitzero"`
-	HistoryOnly    *bool   `json:"history_only,omitempty"`
-	SourceID       *int64  `json:"source_id,omitempty"`
-}
-
-type UpdateResult struct {
-	Alias            string `json:"alias" validate:"required"`
-	DisplayName      string `json:"display_name" validate:"required"`
-	Email            string `json:"email" validate:"required"`
-	HistoryOnly      bool   `json:"history_only"`
-	Identifier       string `json:"identifier" validate:"required"`
-	ReanchorRequired bool   `json:"reanchor_required"`
-}
-
-func (u UpdateResult) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(u))
-}
-
-type Usage struct {
-	Available   bool  `json:"available"`
-	TotalTokens int64 `json:"total_tokens"`
-}
-
-type VCardIdentity struct {
-	Altid    *string  `json:"altid,omitzero"`
-	Group    *string  `json:"group,omitzero"`
-	Pid      []string `json:"pid,omitempty"`
-	PropID   *string  `json:"prop_id,omitzero"`
-	Property *string  `json:"property,omitzero"`
-}
-
-type ValueEnvelope struct {
-	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
-	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
-	Confidence        *float64      `json:"confidence,omitempty"`
-	CreatedAt         time.Time     `json:"created_at" validate:"required"`
-	ID                int64         `json:"id"`
-	Ordinal           int64         `json:"ordinal"`
-	Pref              *int64        `json:"pref,omitempty"`
-	Source            string        `json:"source" validate:"required"`
-	SourceRef         *string       `json:"source_ref,omitzero"`
-	SourceResourceUID *string       `json:"source_resource_uid,omitzero"`
-	SupersededAt      *time.Time    `json:"superseded_at,omitempty"`
-	TypeLabel         *string       `json:"type_label,omitzero"`
-	TypeTokens        []string      `json:"type_tokens,omitempty"`
-	UpdatedAt         time.Time     `json:"updated_at" validate:"required"`
-	Vcard             VCardIdentity `json:"vcard"`
-}
-
-func (v ValueEnvelope) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(v.CreatedAt, "required"); err != nil {
-		errors = errors.Append("CreatedAt", err)
-	}
-	if err := typesValidator.Var(v.Source, "required"); err != nil {
-		errors = errors.Append("Source", err)
-	}
-	if err := typesValidator.Var(v.UpdatedAt, "required"); err != nil {
-		errors = errors.Append("UpdatedAt", err)
-	}
-	if v, ok := any(v.Vcard).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Vcard", err)
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type ValueEnvelopeInput struct {
-	ActiveFrom        *time.Time     `json:"active_from,omitempty"`
-	ActiveUntil       *time.Time     `json:"active_until,omitempty"`
-	Confidence        *float64       `json:"confidence,omitempty"`
-	Ordinal           *int64         `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
-	Pref              *int64         `json:"pref,omitempty"`
-	Source            string         `json:"source" validate:"required"`
-	SourceRef         *string        `json:"source_ref,omitzero"`
-	SourceResourceUID *string        `json:"source_resource_uid,omitzero"`
-	TypeLabel         *string        `json:"type_label,omitzero"`
-	TypeTokens        []string       `json:"type_tokens,omitempty"`
-	Vcard             *VCardIdentity `json:"vcard,omitempty"`
-}
-
-func (v ValueEnvelopeInput) Validate() error {
-	var errors runtime.ValidationErrors
-	if v.Ordinal != nil {
-		if err := typesValidator.Var(v.Ordinal, "omitempty,gte=0"); err != nil {
-			errors = errors.Append("Ordinal", err)
-		}
-	}
-	if err := typesValidator.Var(v.Source, "required"); err != nil {
-		errors = errors.Append("Source", err)
-	}
-	if v.Vcard != nil {
-		if v, ok := any(v.Vcard).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("Vcard", err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type VectorHealth struct {
-	ErrorData     *string `json:"error,omitzero"`
-	Status        string  `json:"status" validate:"required"`
-	TextEnabled   *bool   `json:"text_enabled,omitempty"`
-	VisualEnabled *bool   `json:"visual_enabled,omitempty"`
-}
-
-func (v VectorHealth) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(v))
-}
-
-type VirtualAccount struct {
-	AccountAddress     *string `json:"account_address,omitzero"`
-	Key                string  `json:"key" validate:"required"`
-	MessageCount       int64   `json:"message_count"`
-	PendingCount       *int64  `json:"pending_count,omitempty"`
-	SourceDeletedCount int64   `json:"source_deleted_count"`
-	SourceID           int64   `json:"source_id"`
-	Unattributed       *bool   `json:"unattributed,omitempty"`
-}
-
-func (v VirtualAccount) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(v))
-}
-
-type VisualBuildRequest struct {
-	Consent bool `json:"consent"`
-}
-
-type VisualGeneration struct {
-	ConsentPolicyFingerprint *string `json:"consent_policy_fingerprint,omitzero"`
-	Consented                bool    `json:"consented"`
-	Dimension                int64   `json:"dimension"`
-	Fingerprint              string  `json:"fingerprint" validate:"required"`
-	ID                       int64   `json:"id"`
-	Model                    string  `json:"model" validate:"required"`
-	SourceFence              int64   `json:"source_fence"`
-	State                    string  `json:"state" validate:"required"`
-}
-
-func (v VisualGeneration) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(v))
-}
-
-type VisualRetireRequest struct {
-	GenerationID int64 `json:"generation_id"`
-}
-
-type VisualRetryRequest struct {
-	BlobHash  string `json:"blob_hash" validate:"required"`
-	MessageID int64  `json:"message_id"`
-}
-
-func (v VisualRetryRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(v))
-}
-
-type VisualTextSearchRequest struct {
-	After          *string  `json:"after,omitzero"`
-	Before         *string  `json:"before,omitzero"`
-	Cursor         *string  `json:"cursor,omitzero"`
-	Directions     []string `json:"directions,omitempty"`
-	Filename       *string  `json:"filename,omitzero"`
-	Limit          *int64   `json:"limit,omitempty"`
-	MessageID      *int64   `json:"message_id,omitempty"`
-	MimePrefix     *string  `json:"mime_prefix,omitzero"`
-	ParticipantID  *int64   `json:"participant_id,omitempty"`
-	PersonID       *int64   `json:"person_id,omitempty"`
-	SenderPersonID *int64   `json:"sender_person_id,omitempty"`
-	SourceID       *int64   `json:"source_id,omitempty"`
-	Text           string   `json:"text" validate:"required"`
-}
-
-func (v VisualTextSearchRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(v))
-}
-
-type AccessPoint struct {
-	Kind  string `json:"kind" validate:"required"`
-	Value string `json:"value" validate:"required"`
-}
-
-func (a AccessPoint) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
-}
-
-type CallEvidenceResponse struct {
-	Items []CallObservationView `json:"items" validate:"required"`
-}
-
-func (c CallEvidenceResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(c.Items, "required"); err != nil {
-		errors = errors.Append("Items", err)
-	}
-	for i, item := range c.Items {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type CallImportRequest struct {
-	Account  string           `json:"account" validate:"required"`
-	Bindings map[string]int64 `json:"bindings,omitempty"`
-	Format   string           `json:"format" validate:"required"`
-	Record   map[string]any   `json:"record"`
-}
-
-func (c CallImportRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
-}
-
-type CallImportResponse struct {
-	MessageID int64 `json:"message_id"`
-	SourceID  int64 `json:"source_id"`
-}
-
-type CallObservationView struct {
-	AccessPoints       []AccessPoint     `json:"access_points,omitempty"`
-	Account            string            `json:"account" validate:"required"`
-	Direction          string            `json:"direction" validate:"required"`
-	DurationSeconds    *float64          `json:"duration_seconds" validate:"omitempty"`
-	EndedAt            *time.Time        `json:"ended_at,omitempty"`
-	Kind               string            `json:"kind" validate:"required"`
-	MessageID          int64             `json:"message_id"`
-	NativeCallID       *string           `json:"native_call_id,omitzero"`
-	OccurredAt         time.Time         `json:"occurred_at" validate:"required"`
-	Outcome            string            `json:"outcome" validate:"required"`
-	OwnerParticipation string            `json:"owner_participation" validate:"required"`
-	Participants       []CallParticipant `json:"participants" validate:"required"`
-	Precision          string            `json:"precision" validate:"required"`
-	Provider           string            `json:"provider" validate:"required"`
-	RecordID           string            `json:"record_id" validate:"required"`
-	SourceID           int64             `json:"source_id"`
-	Timezone           *string           `json:"timezone,omitzero"`
-	Version            int64             `json:"version"`
-	Withdrawn          *bool             `json:"withdrawn,omitempty"`
-}
-
-func (c CallObservationView) Validate() error {
-	var errors runtime.ValidationErrors
-	for i, item := range c.AccessPoints {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("AccessPoints[%d]", i), err)
-			}
-		}
-	}
-	if err := typesValidator.Var(c.Account, "required"); err != nil {
-		errors = errors.Append("Account", err)
-	}
-	if err := typesValidator.Var(c.Direction, "required"); err != nil {
-		errors = errors.Append("Direction", err)
-	}
-	if v, ok := any(c.DurationSeconds).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("DurationSeconds", err)
-		}
-	}
-	if err := typesValidator.Var(c.Kind, "required"); err != nil {
-		errors = errors.Append("Kind", err)
-	}
-	if err := typesValidator.Var(c.OccurredAt, "required"); err != nil {
-		errors = errors.Append("OccurredAt", err)
-	}
-	if err := typesValidator.Var(c.Outcome, "required"); err != nil {
-		errors = errors.Append("Outcome", err)
-	}
-	if err := typesValidator.Var(c.OwnerParticipation, "required"); err != nil {
-		errors = errors.Append("OwnerParticipation", err)
-	}
-	if err := typesValidator.Var(c.Participants, "required"); err != nil {
-		errors = errors.Append("Participants", err)
-	}
-	for i, item := range c.Participants {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
-			}
-		}
-	}
-	if err := typesValidator.Var(c.Precision, "required"); err != nil {
-		errors = errors.Append("Precision", err)
-	}
-	if err := typesValidator.Var(c.Provider, "required"); err != nil {
-		errors = errors.Append("Provider", err)
-	}
-	if err := typesValidator.Var(c.RecordID, "required"); err != nil {
-		errors = errors.Append("RecordID", err)
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type CallParticipant struct {
-	ParticipantID int64  `json:"participant_id"`
-	Participation string `json:"participation" validate:"required"`
-}
-
-func (c CallParticipant) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
-}
-
-type CallSummaryResponse struct {
-	Items []PersonCallSummary `json:"items" validate:"required"`
-}
-
-func (c CallSummaryResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(c.Items, "required"); err != nil {
-		errors = errors.Append("Items", err)
-	}
-	for i, item := range c.Items {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type PersonCallSummary struct {
-	Answered           int64 `json:"answered"`
-	Cancelled          int64 `json:"cancelled"`
-	Conflicting        int64 `json:"conflicting"`
-	Declined           int64 `json:"declined"`
-	ExampleMessageID   int64 `json:"example_message_id"`
-	Missed             int64 `json:"missed"`
-	PersonID           int64 `json:"person_id"`
-	Scheduled          int64 `json:"scheduled"`
-	ScheduledCancelled int64 `json:"scheduled_cancelled"`
-	Unknown            int64 `json:"unknown"`
-}
-
 type TimelineAmbiguityResponse struct {
 	Candidates []TimelineCandidate `json:"candidates" validate:"required"`
 	ErrorData  string              `json:"error" validate:"required"`
@@ -18155,6 +17718,24 @@ func (t TimelineResult) Validate() error {
 	return errors
 }
 
+type TimelineRow struct {
+	AnchorMessageID *int64     `json:"anchor_message_id,omitempty"`
+	ConversationID  *int64     `json:"conversation_id,omitempty"`
+	FirstAt         *time.Time `json:"first_at,omitempty"`
+	HasAttachments  bool       `json:"has_attachments"`
+	Key             string     `json:"key" validate:"required"`
+	Kind            string     `json:"kind" validate:"required"`
+	MessageCount    int64      `json:"message_count"`
+	OccurredAt      time.Time  `json:"occurred_at" validate:"required"`
+	Preview         string     `json:"preview" validate:"required"`
+	SourceID        int64      `json:"source_id"`
+	Title           string     `json:"title" validate:"required"`
+}
+
+func (t TimelineRow) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
 type TimelineSourceFreshness struct {
 	LastRun     string   `json:"last_run" validate:"required"`
 	Scheduling  string   `json:"scheduling" validate:"required"`
@@ -18185,4 +17766,247 @@ type TimelineWindow struct {
 
 func (t TimelineWindow) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TokenUploadRequest struct {
+	AccessToken  *string    `json:"access_token,omitzero"`
+	ClientID     *string    `json:"client_id,omitzero"`
+	Expiry       *time.Time `json:"expiry,omitempty"`
+	RefreshToken string     `json:"refresh_token" validate:"required"`
+	Scopes       []string   `json:"scopes,omitempty"`
+	TenantID     *string    `json:"tenant_id,omitzero"`
+	TokenType    *string    `json:"token_type,omitzero"`
+}
+
+func (t TokenUploadRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TokenUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+type TotalStatsResponse struct {
+	AccountCount          int64   `json:"account_count"`
+	ActiveMessages        int64   `json:"active_messages"`
+	AppliedSearchScope    *bool   `json:"applied_search_scope,omitempty"`
+	AppliedSourceIds      []int64 `json:"applied_source_ids,omitempty"`
+	AttachmentCount       int64   `json:"attachment_count"`
+	AttachmentSize        int64   `json:"attachment_size"`
+	IndexState            *string `json:"index_state,omitzero"`
+	LabelCount            int64   `json:"label_count"`
+	MessageCount          int64   `json:"message_count"`
+	SourceDeletedMessages int64   `json:"source_deleted_messages"`
+	TotalSize             int64   `json:"total_size"`
+}
+
+type TranscriptSegment struct {
+	OffsetSeconds *float64 `json:"offset_seconds,omitempty" validate:"omitempty,gte=0"`
+	Speaker       string   `json:"speaker" validate:"required"`
+	Text          string   `json:"text" validate:"required"`
+}
+
+func (t TranscriptSegment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TriggerSyncResponse struct {
+	Disposition *string `json:"disposition,omitzero"`
+	Message     string  `json:"message" validate:"required"`
+	Status      string  `json:"status" validate:"required"`
+}
+
+func (t TriggerSyncResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type UpdateRequest struct {
+	AcceptReanchor *bool   `json:"accept_reanchor,omitempty"`
+	Account        *string `json:"account,omitzero"`
+	Alias          *string `json:"alias,omitzero"`
+	DisplayName    *string `json:"display_name,omitzero"`
+	Email          *string `json:"email,omitzero"`
+	HistoryOnly    *bool   `json:"history_only,omitempty"`
+	SourceID       *int64  `json:"source_id,omitempty"`
+}
+
+type UpdateResult struct {
+	Alias            string `json:"alias" validate:"required"`
+	DisplayName      string `json:"display_name" validate:"required"`
+	Email            string `json:"email" validate:"required"`
+	HistoryOnly      bool   `json:"history_only"`
+	Identifier       string `json:"identifier" validate:"required"`
+	ReanchorRequired bool   `json:"reanchor_required"`
+}
+
+func (u UpdateResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type Usage struct {
+	Available   bool  `json:"available"`
+	TotalTokens int64 `json:"total_tokens"`
+}
+
+type VCardIdentity struct {
+	Altid    *string  `json:"altid,omitzero"`
+	Group    *string  `json:"group,omitzero"`
+	Pid      []string `json:"pid,omitempty"`
+	PropID   *string  `json:"prop_id,omitzero"`
+	Property *string  `json:"property,omitzero"`
+}
+
+type ValueEnvelope struct {
+	ActiveFrom        *time.Time    `json:"active_from,omitempty"`
+	ActiveUntil       *time.Time    `json:"active_until,omitempty"`
+	Confidence        *float64      `json:"confidence,omitempty"`
+	CreatedAt         time.Time     `json:"created_at" validate:"required"`
+	ID                int64         `json:"id"`
+	Ordinal           int64         `json:"ordinal"`
+	Pref              *int64        `json:"pref,omitempty"`
+	Source            string        `json:"source" validate:"required"`
+	SourceRef         *string       `json:"source_ref,omitzero"`
+	SourceResourceUID *string       `json:"source_resource_uid,omitzero"`
+	SupersededAt      *time.Time    `json:"superseded_at,omitempty"`
+	TypeLabel         *string       `json:"type_label,omitzero"`
+	TypeTokens        []string      `json:"type_tokens,omitempty"`
+	UpdatedAt         time.Time     `json:"updated_at" validate:"required"`
+	Vcard             VCardIdentity `json:"vcard"`
+}
+
+func (v ValueEnvelope) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(v.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(v.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if err := typesValidator.Var(v.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if v, ok := any(v.Vcard).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Vcard", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ValueEnvelopeInput struct {
+	ActiveFrom        *time.Time     `json:"active_from,omitempty"`
+	ActiveUntil       *time.Time     `json:"active_until,omitempty"`
+	Confidence        *float64       `json:"confidence,omitempty"`
+	Ordinal           *int64         `json:"ordinal,omitempty" validate:"omitempty,gte=0"`
+	Pref              *int64         `json:"pref,omitempty"`
+	Source            string         `json:"source" validate:"required"`
+	SourceRef         *string        `json:"source_ref,omitzero"`
+	SourceResourceUID *string        `json:"source_resource_uid,omitzero"`
+	TypeLabel         *string        `json:"type_label,omitzero"`
+	TypeTokens        []string       `json:"type_tokens,omitempty"`
+	Vcard             *VCardIdentity `json:"vcard,omitempty"`
+}
+
+func (v ValueEnvelopeInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v.Ordinal != nil {
+		if err := typesValidator.Var(v.Ordinal, "omitempty,gte=0"); err != nil {
+			errors = errors.Append("Ordinal", err)
+		}
+	}
+	if err := typesValidator.Var(v.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if v.Vcard != nil {
+		if v, ok := any(v.Vcard).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Vcard", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type VectorHealth struct {
+	ErrorData     *string `json:"error,omitzero"`
+	Status        string  `json:"status" validate:"required"`
+	TextEnabled   *bool   `json:"text_enabled,omitempty"`
+	VisualEnabled *bool   `json:"visual_enabled,omitempty"`
+}
+
+func (v VectorHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VirtualAccount struct {
+	AccountAddress     *string `json:"account_address,omitzero"`
+	Key                string  `json:"key" validate:"required"`
+	MessageCount       int64   `json:"message_count"`
+	PendingCount       *int64  `json:"pending_count,omitempty"`
+	SourceDeletedCount int64   `json:"source_deleted_count"`
+	SourceID           int64   `json:"source_id"`
+	Unattributed       *bool   `json:"unattributed,omitempty"`
+}
+
+func (v VirtualAccount) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualBuildRequest struct {
+	Consent bool `json:"consent"`
+}
+
+type VisualGeneration struct {
+	ConsentPolicyFingerprint *string `json:"consent_policy_fingerprint,omitzero"`
+	Consented                bool    `json:"consented"`
+	Dimension                int64   `json:"dimension"`
+	Fingerprint              string  `json:"fingerprint" validate:"required"`
+	ID                       int64   `json:"id"`
+	Model                    string  `json:"model" validate:"required"`
+	SourceFence              int64   `json:"source_fence"`
+	State                    string  `json:"state" validate:"required"`
+}
+
+func (v VisualGeneration) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualRetireRequest struct {
+	GenerationID int64 `json:"generation_id"`
+}
+
+type VisualRetryRequest struct {
+	BlobHash  string `json:"blob_hash" validate:"required"`
+	MessageID int64  `json:"message_id"`
+}
+
+func (v VisualRetryRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualTextSearchRequest struct {
+	After          *string  `json:"after,omitzero"`
+	Before         *string  `json:"before,omitzero"`
+	Cursor         *string  `json:"cursor,omitzero"`
+	Directions     []string `json:"directions,omitempty"`
+	Filename       *string  `json:"filename,omitzero"`
+	Limit          *int64   `json:"limit,omitempty"`
+	MessageID      *int64   `json:"message_id,omitempty"`
+	MimePrefix     *string  `json:"mime_prefix,omitzero"`
+	ParticipantID  *int64   `json:"participant_id,omitempty"`
+	PersonID       *int64   `json:"person_id,omitempty"`
+	SenderPersonID *int64   `json:"sender_person_id,omitempty"`
+	SourceID       *int64   `json:"source_id,omitempty"`
+	Text           string   `json:"text" validate:"required"`
+}
+
+func (v VisualTextSearchRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }

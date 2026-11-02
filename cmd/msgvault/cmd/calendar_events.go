@@ -207,7 +207,7 @@ func printCalendarOccurrences(cmd *cobra.Command, occurrences []store.CalendarOc
 		if o.AllDay {
 			start, end = o.StartDate, o.EndDate
 		}
-		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n", start, end, normalizeSearchTableText(calendarOccurrenceStatus(o)), o.MessageID, o.Ref, normalizeSearchTableText(o.Subject)); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n", start, end, normalizeSearchTableText(calendarOccurrenceStatus(o)), o.MessageID, normalizeSearchTableText(o.Ref), normalizeSearchTableText(o.Subject)); err != nil {
 			return fmt.Errorf("write calendar occurrence: %w", err)
 		}
 	}

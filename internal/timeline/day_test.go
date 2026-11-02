@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
-	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -22,108 +21,108 @@ import (
 const singleDayEvent = `{"id":"planning","iCalUID":"planning@example.com","summary":"Planning","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":[{"email":"alice@example.com","displayName":"Alice"}]}`
 
 func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	event := f.calendar("planning", singleDayEvent)
 	note := f.transcript("notes", "planning@example.com", f.now.Add(-2*time.Hour))
 	f.project()
 	got, err := Build(t.Context(), f.src, dayRequest())
-	require.NoError(err)
+	requirements.NoError(err)
 	entries := allDayEntries(got)
-	require.Len(entries, 1)
-	assert.Equal("meeting", entries[0].Kind)
-	assert.Equal(fmt.Sprintf("evt:%d", event), entries[0].AnchorRef)
-	assert.True(entries[0].Meeting.Attended)
-	assert.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)
-	assert.Equal("Planning", entries[0].Meeting.Title.Text)
-	require.NoError(entries[0].Validate())
+	requirements.Len(entries, 1)
+	assertions.Equal("meeting", entries[0].Kind)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), entries[0].AnchorRef)
+	assertions.True(entries[0].Meeting.Attended)
+	assertions.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)
+	assertions.Equal("Planning", entries[0].Meeting.Title.Text)
+	requirements.NoError(entries[0].Validate())
 }
 func TestBuildDayOverlappingCallDoesNotSetAttended(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	f.calendar("planning", singleDayEvent)
 	f.project()
 	f.call(f.now.Add(-2 * time.Hour))
 	got, err := Build(t.Context(), f.src, dayRequest())
-	require.NoError(err)
+	requirements.NoError(err)
 	entries := allDayEntries(got)
-	require.Len(entries, 2)
-	assert.False(entries[0].Meeting.Attended)
-	assert.Equal("call", entries[1].Kind)
+	requirements.Len(entries, 2)
+	assertions.False(entries[0].Meeting.Attended)
+	assertions.Equal("call", entries[1].Kind)
 }
 func TestBuildDayRecurringSeriesMovedOccurrence(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	f.calendar("weekly", `{"id":"weekly","start":{"dateTime":"2026-10-15T10:00:00Z"},"end":{"dateTime":"2026-10-15T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	moved := f.calendar("moved", `{"id":"moved","recurringEventId":"weekly","originalStartTime":{"dateTime":"2026-10-22T10:00:00Z"},"start":{"dateTime":"2026-10-22T15:00:00Z"},"end":{"dateTime":"2026-10-22T16:00:00Z"}}`)
 	got, err := Build(t.Context(), f.src, dayRequest())
-	require.NoError(err)
-	require.Len(allDayEntries(got), 1)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(got), 1)
 	e := allDayEntries(got)[0]
-	assert.Equal(fmt.Sprintf("evt:%d", moved), e.Ref)
-	assert.Equal(15, e.Time.Hour())
+	assertions.Equal(fmt.Sprintf("evt:%d", moved), e.Ref)
+	assertions.Equal(15, e.Time.Hour())
 }
 func TestBuildDayDraftReplyNotOutbound(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	f.add(f.now.Add(-time.Hour), false)
 	draft := f.add(f.now, true)
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), draft)
-	require.NoError(err)
+	requirements.NoError(err)
 	f.project()
 	got, err := Build(t.Context(), f.src, dayRequest())
-	require.NoError(err)
-	require.Len(allDayEntries(got), 1)
-	assert.Equal(1, allDayEntries(got)[0].Burst.Inbound)
-	assert.Zero(allDayEntries(got)[0].Burst.Outbound)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(got), 1)
+	assertions.Equal(1, allDayEntries(got)[0].Burst.Inbound)
+	assertions.Zero(allDayEntries(got)[0].Burst.Outbound)
 }
 func TestBuildDayImportedOldMessageLandsOnSentDate(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	f.add(time.Date(2019, 10, 22, 12, 0, 0, 0, time.UTC), false)
 	f.project()
 	got, err := Build(t.Context(), f.src, dayRequest())
-	require.NoError(err)
-	assert.Empty(allDayEntries(got))
+	requirements.NoError(err)
+	assertions.Empty(allDayEntries(got))
 	req := dayRequest()
 	req.Date = "2019-10-22"
 	old, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(allDayEntries(old), 1)
-	assert.Equal("2019-10-22", old.Days[0].Date)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(old), 1)
+	assertions.Equal("2019-10-22", old.Days[0].Date)
 }
 func TestBuildDayRanksTiersThenExchanges(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	person := f.savePerson()
 	f.tier(person, 1)
 	first := f.add(f.now.Add(-3*time.Hour), false)
 	exchange, err := f.Store.EnsureConversation(f.Source.ID, "exchange", "Exchange")
-	require.NoError(err)
+	requirements.NoError(err)
 	f.add(f.now.Add(-2*time.Hour), false, func(m *store.Message) { m.ConversationID = exchange })
 	f.add(f.now.Add(-time.Hour), true, func(m *store.Message) { m.ConversationID = exchange })
 	newer, err := f.Store.EnsureConversation(f.Source.ID, "unsaved", "Unsaved")
-	require.NoError(err)
+	requirements.NoError(err)
 	other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
 	id := f.add(f.now, false, func(m *store.Message) {
 		m.ConversationID = newer
 		m.SenderID = sql.NullInt64{Int64: other, Valid: true}
 	})
-	require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{other}, nil))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{other}, nil))
 	f.project()
 	got, err := Build(t.Context(), f.src, dayRequest())
-	require.NoError(err)
+	requirements.NoError(err)
 	entries := allDayEntries(got)
-	require.Len(entries, 3)
-	assert.Equal(fmt.Sprintf("conv:%d", exchange), entries[0].Ref)
-	assert.Equal([]int64{first}, entries[1].Burst.LatestMessageIDs)
-	assert.Equal(fmt.Sprintf("conv:%d", newer), entries[2].Ref)
+	requirements.Len(entries, 3)
+	assertions.Equal(fmt.Sprintf("conv:%d", exchange), entries[0].Ref)
+	assertions.Equal([]int64{first}, entries[1].Burst.LatestMessageIDs)
+	assertions.Equal(fmt.Sprintf("conv:%d", newer), entries[2].Ref)
 }
 func TestBuildDayTierFilterDropsUnsaved(t *testing.T) {
 	f := newTimelineFixture(t)
@@ -132,12 +131,12 @@ func TestBuildDayTierFilterDropsUnsaved(t *testing.T) {
 	req := dayRequest()
 	req.Tiers = []int{1, 2}
 	got, err := Build(t.Context(), f.src, req)
-	requirepkg.NoError(t, err)
-	assertpkg.Empty(t, allDayEntries(got))
+	require.NoError(t, err)
+	assert.Empty(t, allDayEntries(got))
 }
 func TestBuildDayOlderDaysSummarized(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	f.add(f.now.AddDate(0, 0, -2), false)
 	f.project()
@@ -145,11 +144,11 @@ func TestBuildDayOlderDaysSummarized(t *testing.T) {
 	req.Date = ""
 	req.Days = 3
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(got.Days, 1)
-	require.NotNil(got.Days[0].Summary)
-	assert.Equal("2026-10-20", got.Days[0].Date)
-	assert.Equal(1, got.Days[0].Summary.PeopleCount)
+	requirements.NoError(err)
+	requirements.Len(got.Days, 1)
+	requirements.NotNil(got.Days[0].Summary)
+	assertions.Equal("2026-10-20", got.Days[0].Date)
+	assertions.Equal(1, got.Days[0].Summary.PeopleCount)
 }
 
 type blockingLoops struct{}
@@ -164,35 +163,35 @@ func TestBuildDayLoopsTimeoutIsRetryableGap(t *testing.T) {
 	f.project()
 	f.src.Loops = blockingLoops{}
 	got, err := Build(t.Context(), f.src, dayRequest())
-	requirepkg.NoError(t, err)
-	assertpkg.Contains(t, got.Gaps, Gap{Section: "loops", Code: "timeout", Retryable: true})
-	assertpkg.Len(t, allDayEntries(got), 1)
+	require.NoError(t, err)
+	assert.Contains(t, got.Gaps, Gap{Section: "loops", Code: "timeout", Retryable: true})
+	assert.Len(t, allDayEntries(got), 1)
 }
 func TestBuildDayIncludeColdMergesByMessageID(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	src, err := f.Store.GetOrCreateSource("beeper", "example-account")
-	require.NoError(err)
+	requirements.NoError(err)
 	conv, err := f.Store.EnsureConversation(src.ID, "quiet", "Quiet")
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='direct_chat' WHERE id=?`), conv)
-	require.NoError(err)
-	require.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
 	id := f.add(f.now, false, func(m *store.Message) { m.SourceID = src.ID; m.ConversationID = conv; m.MessageType = "chat" })
-	require.NoError(f.seedConversationPolicy(t.Context(), src.ID, "quiet", conversationpolicy.Cold))
+	requirements.NoError(f.seedConversationPolicy(t.Context(), src.ID, "quiet"))
 	f.project()
 	req := dayRequest()
 	req.IncludeCold = true
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(allDayEntries(got), 1)
-	assert.Equal([]int64{id}, allDayEntries(got)[0].Burst.LatestMessageIDs)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(got), 1)
+	assertions.Equal([]int64{id}, allDayEntries(got)[0].Burst.LatestMessageIDs)
 	req.IncludeCold = false
 	hidden, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	assert.Empty(allDayEntries(hidden))
-	assert.Equal(1, hidden.Omitted.Cold)
+	requirements.NoError(err)
+	assertions.Empty(allDayEntries(hidden))
+	assertions.Equal(1, hidden.Omitted.Cold)
 }
 func TestBuildDayUpcomingNext48h(t *testing.T) {
 	f := newTimelineFixture(t)
@@ -200,39 +199,39 @@ func TestBuildDayUpcomingNext48h(t *testing.T) {
 		f.calendar(strconv.Itoa(i), fmt.Sprintf(`{"id":%q,"start":{"dateTime":%q},"end":{"dateTime":%q}}`, strconv.Itoa(i), at, at))
 	}
 	got, err := Build(t.Context(), f.src, dayRequest())
-	requirepkg.NoError(t, err)
-	assertpkg.Len(t, got.Upcoming, 2)
+	require.NoError(t, err)
+	assert.Len(t, got.Upcoming, 2)
 }
 func TestBuildDayReportsUnexpandableSeries(t *testing.T) {
 	f := newTimelineFixture(t)
 	event := f.calendar("bad", `{"id":"bad","start":{"date":"2026-10-22"},"end":{"date":"2026-10-23"},"recurrence":["RRULE:FREQ=INVALID"]}`)
 	got, err := Build(t.Context(), f.src, dayRequest())
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	var found bool
 	for _, gap := range got.Gaps {
 		if gap.Section == "meetings" && gap.Code == "partial" {
 			found = true
-			assertpkg.Contains(t, gap.Items, fmt.Sprintf("evt:%d", event))
+			assert.Contains(t, gap.Items, fmt.Sprintf("evt:%d", event))
 		}
 	}
-	assertpkg.True(t, found)
+	assert.True(t, found)
 }
 func TestBuildEmptyWindowRendersExplicitNothingLine(t *testing.T) {
-	assert := assertpkg.New(t)
+	assertions := assert.New(t)
 	f := newTimelineFixture(t)
 	got, err := Build(t.Context(), f.src, dayRequest())
-	requirepkg.NoError(t, err)
-	assert.Contains(Markdown(got), "nothing archived")
-	assert.Contains(Markdown(got), "UTC (set [activity].timezone)")
-	assert.False(got.Now.IsZero())
-	assert.Equal(f.now, got.Now)
+	require.NoError(t, err)
+	assertions.Contains(Markdown(got), "nothing archived")
+	assertions.Contains(Markdown(got), "UTC (set [activity].timezone)")
+	assertions.False(got.Now.IsZero())
+	assertions.Equal(f.now, got.Now)
 }
 func TestBuildDSTDayGroupsOccurrencesByLocalStart(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	loc, err := time.LoadLocation("America/New_York")
-	require.NoError(err)
+	requirements.NoError(err)
 	f.src.Location = loc
 	f.add(time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), false)
 	f.add(time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), false)
@@ -241,61 +240,61 @@ func TestBuildDSTDayGroupsOccurrencesByLocalStart(t *testing.T) {
 	req := dayRequest()
 	req.Date = "2026-11-01"
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(got.Days, 1)
-	assert.Equal("2026-11-01", got.Days[0].Date)
-	assert.Len(got.Days[0].Meetings, 1)
-	require.Len(got.Days[0].Bursts, 1)
-	assert.Equal(2, got.Days[0].Bursts[0].Burst.Inbound)
+	requirements.NoError(err)
+	requirements.Len(got.Days, 1)
+	assertions.Equal("2026-11-01", got.Days[0].Date)
+	assertions.Len(got.Days[0].Meetings, 1)
+	requirements.Len(got.Days[0].Bursts, 1)
+	assertions.Equal(2, got.Days[0].Bursts[0].Burst.Inbound)
 }
 func TestBuildHiddenTextReachesLoopsTranscriptsAndUnsavedEmail(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	email := f.PersistEmail(storetest.EmailSpec{Thread: "hidden-loop", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Synthetic message", Body: "Can you send the contract?", SentAt: f.now.Add(-48 * time.Hour)})
 	note := f.transcript("notes", "", f.now.Add(-time.Hour))
 	for _, id := range []int64{email, note} {
 		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id=?`), id)
-		require.NoError(err)
+		requirements.NoError(err)
 	}
 	f.project()
 	req := dayRequest()
 	req.Date = ""
 	req.Days = 3
 	got, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
+	requirements.NoError(err)
 	for _, e := range allDayEntries(got) {
 		if e.Kind == "transcript" {
-			assert.True(e.HiddenText)
-			assert.Empty(e.Meeting.Title.Text)
+			assertions.True(e.HiddenText)
+			assertions.Empty(e.Meeting.Title.Text)
 		}
 	}
 	req.Date = "2026-10-20"
 	req.Days = 0
 	old, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Len(allDayEntries(old), 1)
-	assert.True(allDayEntries(old)[0].HiddenText)
-	assert.Empty(allDayEntries(old)[0].Burst.Snippet.Text)
-	require.NotNil(got.OpenLoops)
-	require.NotEmpty(got.OpenLoops.Items)
+	requirements.NoError(err)
+	requirements.Len(allDayEntries(old), 1)
+	assertions.True(allDayEntries(old)[0].HiddenText)
+	assertions.Empty(allDayEntries(old)[0].Burst.Snippet.Text)
+	requirements.NotNil(got.OpenLoops)
+	requirements.NotEmpty(got.OpenLoops.Items)
 	for _, e := range got.OpenLoops.Items {
 		if e.Ref == fmt.Sprintf("msg:%d", email) {
-			assert.True(e.HiddenText)
+			assertions.True(e.HiddenText)
 		}
 	}
 	encoded, err := json.Marshal(got)
-	require.NoError(err)
-	assert.NotContains(string(encoded), "Synthetic meeting")
-	assert.NotContains(string(encoded), "Synthetic message")
+	requirements.NoError(err)
+	assertions.NotContains(string(encoded), "Synthetic meeting")
+	assertions.NotContains(string(encoded), "Synthetic message")
 }
 func TestBuildPinsClockAndWindowAcrossMidnight(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	for i := range 12 {
 		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("pin%d", i), "Pinned")
-		require.NoError(err)
+		requirements.NoError(err)
 		f.add(f.now.Add(time.Duration(i)*time.Millisecond), false, func(m *store.Message) { m.ConversationID = conv })
 	}
 	f.project()
@@ -306,23 +305,23 @@ func TestBuildPinsClockAndWindowAcrossMidnight(t *testing.T) {
 	req.Budget = 2048
 	req.Format = "json"
 	first, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.NotEmpty(first.Cursor)
-	assert.Equal(1, clockCalls)
+	requirements.NoError(err)
+	requirements.NotEmpty(first.Cursor)
+	assertions.Equal(1, clockCalls)
 	f.src.Clock = func() time.Time { return f.now.AddDate(0, 0, 1) }
 	req.Cursor = first.Cursor
 	next, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	assert.Equal(first.Now, next.Now)
-	assert.Equal(first.Window, next.Window)
-	assert.NotEqual(allDayEntries(first)[0].Key, allDayEntries(next)[0].Key)
+	requirements.NoError(err)
+	assertions.Equal(first.Now, next.Now)
+	assertions.Equal(first.Window, next.Window)
+	assertions.NotEqual(allDayEntries(first)[0].Key, allDayEntries(next)[0].Key)
 }
 func TestBuildRejectsInvalidRequests(t *testing.T) {
 	f := newTimelineFixture(t)
 	for _, req := range []Request{{Days: 32}, {Before: 51}, {After: -1}, {Budget: 2000}, {Mode: "invalid"}, {Date: "bad"}, {Tiers: []int{4}}, {Date: "2026-10-22", Days: 4}, {From: "2026-10-22"}} {
 		req.Scope.Owner = true
 		_, err := Build(t.Context(), f.src, req)
-		assertpkg.Error(t, err)
+		assert.Error(t, err)
 	}
 }
 
@@ -345,33 +344,33 @@ func (s fixtureBursts) ListActivityBurstsContext(context.Context, store.BurstQue
 // Unequal entry sizes and tied ranks must never cause an entry to repeat or
 // disappear when fitting actual pages. One logical burst contains 6,000 messages.
 func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
-	assert := assertpkg.New(t)
-	require :=
+	assertions := assert.New(t)
+	requirements :=
 
 		// Keep pagination independent of loop detection throughput on the bulk
 		// message fixture. The real adapter and its deadline have separate tests.
-		requirepkg.New(t)
+		require.New(t)
 	f := newTimelineFixture(t)
 
 	f.PersistEmail(storetest.EmailSpec{Thread: "pending", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Pending question", Body: "Can you send the contract?", SentAt: f.now.Add(-48 * time.Hour)})
 	loopResult, err := f.src.Loops.List(t.Context(), loops.Options{Limit: 10}, f.now)
-	require.NoError(err)
-	require.NotEmpty(loopResult.Loops)
+	requirements.NoError(err)
+	requirements.NotEmpty(loopResult.Loops)
 	f.src.Loops = fixtureLoops{loopResult}
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
+	requirements.NoError(err)
 	defer func() { _ = tx.Rollback() }()
 	for i := range 6000 {
 		var id int64
 		err = tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sent_at,sender_id,is_sent) VALUES(?,?,?,'email',?,?,TRUE) RETURNING id`), f.Source.ID, f.ConvID, fmt.Sprintf("bulk%d", i), f.now.Add(time.Duration(i)*time.Millisecond), f.peer).Scan(&id)
-		require.NoError(err)
+		requirements.NoError(err)
 		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')`), id, f.owner)
-		require.NoError(err)
+		requirements.NoError(err)
 	}
-	require.NoError(tx.Commit())
+	requirements.NoError(tx.Commit())
 	for i := range 22 {
 		conv, e := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("page%d", i), "Paging")
-		require.NoError(e)
+		requirements.NoError(e)
 		f.add(f.now.Add(time.Duration(i)*time.Second), i%2 == 0, func(m *store.Message) {
 			m.ConversationID = conv
 			m.Snippet = sql.NullString{String: strings.Repeat("界", i*4+1), Valid: true}
@@ -382,12 +381,12 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	// This future occurrence appears in both pageable sections with one identity.
 	f.calendar("future", `{"id":"future","summary":"Later today","start":{"dateTime":"2026-10-22T15:00:00Z"},"end":{"dateTime":"2026-10-22T16:00:00Z"}}`)
 	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-10-22", Body: "Authored note", Author: "owner"})
-	require.NoError(err)
+	requirements.NoError(err)
 	copySource, e := f.Store.GetOrCreateSource("gmail", "second@example.com")
-	require.NoError(e)
-	require.NoError(f.Store.AddAccountIdentity(copySource.ID, "owner@example.com", "manual"))
+	requirements.NoError(e)
+	requirements.NoError(f.Store.AddAccountIdentity(copySource.ID, "owner@example.com", "manual"))
 	copyConv, e := f.Store.EnsureConversation(copySource.ID, "copy-thread", "Copy")
-	require.NoError(e)
+	requirements.NoError(e)
 	for _, source := range []int64{f.Source.ID, copySource.ID} {
 		f.add(f.now, false, func(m *store.Message) {
 			m.SourceID = source
@@ -405,26 +404,26 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	realActivity := f.src.Activity
 	burstQuery := store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts}
 	burstPage, err := realActivity.ListActivityBurstsContext(t.Context(), burstQuery)
-	require.NoError(err)
-	require.Nil(burstPage.NextKey)
+	requirements.NoError(err)
+	requirements.Nil(burstPage.NextKey)
 	var bulkGroups int
 	for _, burst := range burstPage.Bursts {
 		if burst.SourceID == f.Source.ID && burst.ConversationID == f.ConvID {
 			bulkGroups++
-			assert.Equal(6001, burst.Inbound)
-			assert.Zero(burst.Outbound)
+			assertions.Equal(6001, burst.Inbound)
+			assertions.Zero(burst.Outbound)
 		}
 	}
-	require.Equal(1, bulkGroups)
+	requirements.Equal(1, bulkGroups)
 	f.src.Activity = fixtureBursts{ActivitySource: realActivity, page: burstPage}
 	req := dayRequest()
 	req.Format = "markdown"
 	full, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.Empty(full.Cursor)
-	require.NotEmpty(full.Upcoming)
-	require.NotNil(full.OpenLoops)
-	require.NotEmpty(full.OpenLoops.Items)
+	requirements.NoError(err)
+	requirements.Empty(full.Cursor)
+	requirements.NotEmpty(full.Upcoming)
+	requirements.NotNil(full.OpenLoops)
+	requirements.NotEmpty(full.OpenLoops.Items)
 	var noteFound, copiesFound bool
 	for _, entry := range allDayEntries(full) {
 		if entry.Note != nil {
@@ -438,13 +437,13 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 			}
 		}
 	}
-	assert.True(noteFound)
-	assert.True(copiesFound)
+	assertions.True(noteFound)
+	assertions.True(copiesFound)
 	expected := map[string]bool{}
 	for _, e := range allDayEntries(full) {
 		expected[e.Key] = true
 		if e.Kind == "burst" && e.Ref == fmt.Sprintf("conv:%d", f.ConvID) {
-			assert.Equal(6001, e.Burst.Inbound)
+			assertions.Equal(6001, e.Burst.Inbound)
 		}
 	}
 	req.Budget = 2048
@@ -452,46 +451,46 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	seen := map[string]bool{}
 	for range 80 {
 		got, e := Build(t.Context(), f.src, req)
-		require.NoError(e)
-		assert.LessOrEqual(len(Markdown(got)), 2048)
+		requirements.NoError(e)
+		assertions.LessOrEqual(len(Markdown(got)), 2048)
 		entries := allDayEntries(got)
 		for _, entry := range got.Upcoming {
-			assert.False(seenUpcoming[entry.Key])
+			assertions.False(seenUpcoming[entry.Key])
 			seenUpcoming[entry.Key] = true
 		}
 		for _, entry := range entries {
-			assert.False(seen[entry.Key], "duplicate %s", entry.Key)
+			assertions.False(seen[entry.Key], "duplicate %s", entry.Key)
 			seen[entry.Key] = true
 		}
 		if got.Cursor == "" {
 			break
 		}
-		require.Positive(len(entries) + len(got.Upcoming))
+		requirements.Positive(len(entries) + len(got.Upcoming))
 		req.Cursor = got.Cursor
 	}
-	assert.Equal(expected, seen)
-	assert.Len(seenUpcoming, len(full.Upcoming))
+	assertions.Equal(expected, seen)
+	assertions.Len(seenUpcoming, len(full.Upcoming))
 	// Refresh the actual reader input after a later sync. Its new entry may appear
 	// on the remaining side of the cursor; emitted keys must never repeat.
 	req.Cursor = ""
 	first, e := Build(t.Context(), f.src, req)
-	require.NoError(e)
-	require.NotEmpty(first.Cursor)
+	requirements.NoError(e)
+	requirements.NotEmpty(first.Cursor)
 	insertedConv, e := f.Store.EnsureConversation(f.Source.ID, "inserted", "Inserted")
-	require.NoError(e)
+	requirements.NoError(e)
 	insertedID := f.add(f.now.Add(-3*time.Hour), false, func(m *store.Message) { m.ConversationID = insertedConv })
 	p, e := activity.NewProjector(f.Store, activity.Options{Timezone: f.src.Location.String()})
-	require.NoError(e)
+	requirements.NoError(e)
 	_, e = p.ProjectMessages(t.Context(), []int64{insertedID})
-	require.NoError(e)
+	requirements.NoError(e)
 	updatedPage, e := realActivity.ListActivityBurstsContext(t.Context(), burstQuery)
-	require.NoError(e)
-	require.Nil(updatedPage.NextKey)
+	requirements.NoError(e)
+	requirements.Nil(updatedPage.NextKey)
 	var insertedFound bool
 	for _, burst := range updatedPage.Bursts {
 		insertedFound = insertedFound || burst.ConversationID == insertedConv
 	}
-	require.True(insertedFound, "later source input must include the concurrent insert")
+	requirements.True(insertedFound, "later source input must include the concurrent insert")
 	f.src.Activity = fixtureBursts{ActivitySource: realActivity, page: updatedPage}
 	seen = map[string]bool{}
 	for _, entry := range allDayEntries(first) {
@@ -500,9 +499,9 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 	req.Cursor = first.Cursor
 	for range 80 {
 		got, e := Build(t.Context(), f.src, req)
-		require.NoError(e)
+		requirements.NoError(e)
 		for _, entry := range allDayEntries(got) {
-			assert.False(seen[entry.Key])
+			assertions.False(seen[entry.Key])
 			seen[entry.Key] = true
 		}
 		if got.Cursor == "" {
@@ -511,34 +510,34 @@ func TestBuildTraversesAllCursorsWithoutLossOrDuplicates(t *testing.T) {
 		req.Cursor = got.Cursor
 	}
 	for key := range expected {
-		assert.True(seen[key], "lost %s", key)
+		assertions.True(seen[key], "lost %s", key)
 	}
 }
 
 func TestBuildLoopsRetainsSettlementFromSourceDeletedReply(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newTimelineFixture(t)
 	question := f.PersistEmail(storetest.EmailSpec{Thread: "source-deleted-reply", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Schedule", Body: "Can you send the schedule?", SentAt: f.now.Add(-48 * time.Hour)})
 	f.project()
 	req := dayRequest()
 	before, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.NotNil(before.OpenLoops)
-	require.Len(before.OpenLoops.Items, 1)
-	assert.Equal(messageRef(question), before.OpenLoops.Items[0].Ref)
+	requirements.NoError(err)
+	requirements.NotNil(before.OpenLoops)
+	requirements.Len(before.OpenLoops.Items, 1)
+	assertions.Equal(messageRef(question), before.OpenLoops.Items[0].Ref)
 	reply := f.PersistEmail(storetest.EmailSpec{Thread: "source-deleted-reply", From: storetest.OwnerAddress, To: []string{"alice@example.com"}, Subject: "Schedule", Body: "The schedule is attached to the project page. We meet at noon.", SentAt: f.now.Add(-time.Hour)})
 	message, err := f.Store.GetMessage(reply)
-	require.NoError(err)
-	require.NoError(f.Store.MarkMessageDeleted(message.SourceID, message.SourceMessageID))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.MarkMessageDeleted(message.SourceID, message.SourceMessageID))
 	f.project()
 	after, err := Build(t.Context(), f.src, req)
-	require.NoError(err)
-	require.NotNil(after.OpenLoops)
-	assert.Empty(after.OpenLoops.Items)
+	requirements.NoError(err)
+	requirements.NotNil(after.OpenLoops)
+	assertions.Empty(after.OpenLoops.Items)
 	for _, entry := range allDayEntries(after) {
 		if entry.Burst != nil {
-			assert.NotContains(entry.Burst.LatestMessageIDs, reply)
+			assertions.NotContains(entry.Burst.LatestMessageIDs, reply)
 		}
 	}
 }

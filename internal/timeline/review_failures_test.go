@@ -17,6 +17,7 @@ import (
 // rendering still determine the observable partial response.
 type anchorReadFailure struct {
 	ActivitySource
+
 	latest, bursts, display error
 }
 
@@ -41,6 +42,7 @@ func (s anchorReadFailure) MessageDisplayContext(ctx context.Context, ids []int6
 
 type anchorCalendarFailure struct {
 	CalendarSource
+
 	err error
 }
 
@@ -65,10 +67,11 @@ func TestAnchorReadFailuresPreservePartialEnvelope(t *testing.T) {
 				ref = fmt.Sprintf("evt:%d", event)
 				_, err := f.src.Calendar.GetCalendarOccurrenceContext(t.Context(), ref)
 				requirements.NoError(err)
-				if kind == "calendar timeout" {
+				switch kind {
+				case "calendar timeout":
 					failure = context.DeadlineExceeded
 					gap.Code, gap.Retryable = "timeout", true
-				} else if kind == "calendar canceled" {
+				case "calendar canceled":
 					failure = context.Canceled
 					gap.Code, gap.Retryable = "timeout", true
 				}
@@ -98,7 +101,7 @@ func TestAnchorSuccessfulMissingReferenceRemainsInputError(t *testing.T) {
 		t.Run(ref, func(t *testing.T) {
 			f := newTimelineFixture(t)
 			got, err := Build(t.Context(), f.src, anchorRequest(ref))
-			assert.ErrorIs(t, err, ErrUnknownReference)
+			require.ErrorIs(t, err, ErrUnknownReference)
 			assert.Nil(t, got)
 		})
 	}

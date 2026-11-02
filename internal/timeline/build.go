@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -327,9 +328,7 @@ func (c *composer) loadTiers(ids []int64) {
 		return c.src.People.PersonTiersContext(ctx, missing, store.PersonTierOptions{Config: c.src.Filters.Exclusions, AsOf: c.t.Now})
 	})
 	c.gap("people", r.err, false)
-	for id, tier := range r.value {
-		c.tiers[id] = tier
-	}
+	maps.Copy(c.tiers, r.value)
 }
 func (c *composer) tierPeople(people []Person) []Person {
 	ids := make([]int64, 0, len(people))

@@ -89,7 +89,7 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	data, _ := calendarFixture(t, st, "cap-master", calendarRaw)
 	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
-	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_json = '["RRULE:FREQ=DAILY"]' WHERE kind = 'series'`)
+	_, err := st.db.Exec(`UPDATE calendar_events SET status = 'confirmed', start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_json = '["RRULE:FREQ=DAILY"]' WHERE kind = 'series'`)
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 	for _, width := range []time.Duration{24 * time.Hour, time.Hour} {
