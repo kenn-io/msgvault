@@ -133,7 +133,7 @@
         </section>
       {/each}
     {/if}
-    {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
+    {#if error}<Button label="Retry history" onclick={() => { loading = true; void load(); }} />{/if}
     {#if controller?.attributesError ?? controller?.definitionsError}
       <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
       <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />

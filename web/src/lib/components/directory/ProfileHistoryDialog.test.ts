@@ -127,7 +127,7 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
-  it('loads history before offering splits and refreshes after reconciliation', async () => {
+  it.each([false, true])('loads history before offering splits and refreshes after reconciliation (initial read fails=%s)', async initialFailure => {
     let reconciled = false;
     let historyReads = 0;
     let initialResponse: Response | undefined;
@@ -141,6 +141,8 @@ describe('ProfileHistoryDialog', () => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/profile/history')) {
+        historyReads += 1;
+        if (initialFailure && historyReads === 1) return Response.json({ error: 'unavailable', message: 'history unavailable' }, { status: 503 });
         const response = Response.json({
           person: reconciled ? remaining : source,
           names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, ...(reconciled ? [] : [{ person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }])],
@@ -148,7 +150,7 @@ describe('ProfileHistoryDialog', () => {
           observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
           addresses: [], dates: [], categories: [], media: [],
         });
-        if (++historyReads === 1) {
+        if (historyReads === (initialFailure ? 2 : 1)) {
           initialResponse = response;
           return pendingInitial;
         }
@@ -163,9 +165,14 @@ describe('ProfileHistoryDialog', () => {
     const onSplitCommitted = vi.fn(async () => { reconciled = true; });
     const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
     try {
+      if (initialFailure) {
+        expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
+        await screen.findByRole('button', { name: 'Inspect merge 41' });
+        await fireEvent.click(screen.getByRole('button', { name: 'Retry history' }));
+      }
       await act(async () => { await vi.waitFor(() => expect(initialResponse).toBeDefined()); });
-      expect(screen.getByText('Loading profile history…')).toBeDefined();
       expect(screen.queryByRole('button', { name: 'Inspect merge 41' })).toBeNull();
+      expect(screen.getByText('Loading profile history…')).toBeDefined();
       await act(async () => { releaseInitial(initialResponse!); });
       for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
       await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
