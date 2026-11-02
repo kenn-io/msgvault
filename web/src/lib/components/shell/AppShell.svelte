@@ -442,7 +442,11 @@
   // Below NARROW_WIDTH the sidebar is not rendered, so the drawer opener
   // stands in for the current navigation item.
   function navigationFocusTarget(): HTMLElement | null {
-    return document.querySelector<HTMLElement>('button[aria-current="page"]') ?? drawerOpener();
+    const navigation = document.querySelector<HTMLElement>('button[aria-current="page"]') ?? drawerOpener();
+    if (navigation) return navigation;
+    const heading = shellRoot?.querySelector<HTMLElement>('.app-main h1') ?? null;
+    heading?.setAttribute('tabindex', '-1');
+    return heading;
   }
 
   // trapFocus restores focus while the page column may still be inert, so
