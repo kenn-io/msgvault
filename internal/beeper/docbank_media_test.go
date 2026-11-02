@@ -1725,8 +1725,70 @@ func newFakeDocbank(t *testing.T) *fakeDocbank {
 	return f
 }
 
+func TestFakeDocbankUploadCancellation(t *testing.T) {
+	for _, path := range []string{"/api/v1/media/sources", "/api/v1/media/sources/source-1/artifacts"} {
+		for _, cancelled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/cancelled=%t", path, cancelled), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				docbank := &fakeDocbank{t: t}
+				started, finished := make(chan struct{}), make(chan struct{})
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(finished)
+					close(started)
+					docbank.ServeHTTP(w, r)
+				}))
+				defer server.Close()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				reader, writer := io.Pipe()
+				defer func() {
+					_ = reader.Close()
+					_ = writer.Close()
+				}()
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+path, reader)
+				require.NoError(err)
+				req.Header.Set("X-Api-Key", docbankTestKey)
+				req.Header.Set("Content-Type", "multipart/form-data; boundary=upload")
+				result := make(chan error, 1)
+				go func() {
+					response, err := server.Client().Do(req)
+					if response != nil {
+						assert.Equal(http.StatusUnprocessableEntity, response.StatusCode)
+						_ = response.Body.Close()
+					}
+					result <- err
+				}()
+				_, err = io.WriteString(writer, "--upload\r\n")
+				require.NoError(err)
+				<-started
+				if cancelled {
+					cancel()
+					require.NoError(writer.CloseWithError(context.Canceled))
+				} else {
+					require.NoError(writer.Close())
+				}
+				err = <-result
+				<-finished
+				if cancelled {
+					require.ErrorIs(err, context.Canceled)
+					assert.Empty(docbank.rejected, "an interrupted upload is a transport failure")
+				} else {
+					require.NoError(err)
+					assert.NotEmpty(docbank.rejected, "a complete malformed request violates the contract")
+				}
+			})
+		}
+	}
+}
+
 // reject records a contract violation and answers as Docbank's validator does.
-func (f *fakeDocbank) reject(w http.ResponseWriter, err error) {
+func (f *fakeDocbank) reject(w http.ResponseWriter, r *http.Request, err error) {
+	// A client deadline can interrupt the body between any two multipart bytes.
+	// A disconnected request says nothing about the complete wire contract.
+	if r.Context().Err() != nil {
+		return
+	}
 	f.mu.Lock()
 	f.rejected = append(f.rejected, err.Error())
 	f.mu.Unlock()
@@ -1798,7 +1860,7 @@ func (f *fakeDocbank) submit(w http.ResponseWriter, r *http.Request) {
 		err = validMediaIdentity(metadata.Filename, metadata.MediaType)
 	}
 	if err != nil {
-		f.reject(w, err)
+		f.reject(w, r, err)
 		return
 	}
 	f.mu.Lock()
@@ -1855,7 +1917,7 @@ func (f *fakeDocbank) artifact(w http.ResponseWriter, r *http.Request, source st
 		err = validContractUpload(metadata.OperationID, metadata.SHA256, metadata.ByteLength, content)
 	}
 	if err != nil {
-		f.reject(w, err)
+		f.reject(w, r, err)
 		return
 	}
 	assert.Equal(f.t, "transcript", metadata.Kind)
@@ -1889,7 +1951,7 @@ func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source strin
 		err = json.Unmarshal(data, &body, json.RejectUnknownMembers(true))
 	}
 	if err != nil {
-		f.reject(w, err)
+		f.reject(w, r, err)
 		return
 	}
 	if body.Processing.Profile == "supplied-transcript" {
