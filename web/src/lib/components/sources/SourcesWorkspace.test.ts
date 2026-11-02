@@ -1,6 +1,7 @@
 import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CardDAVConnectionResponse, CardDAVRunResponse, CardDAVStatusResponse } from '../../api/generated/models';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
@@ -22,7 +23,7 @@ function run(status: string, processed: number, overrides: Record<string, unknow
 const contact = {
   connection: 'default', orphaned: false,
   status: {
-    configured: true, available: true, credential_configured: true, enabled: false, scheduled: false, schedule: '',
+    configured: true, available: true, credential_configured: true, enabled: false, scheduled: false, schedule: '', scheduler_running: false,
     account: { base_url: 'https://contacts.example.com/', username: 'user-a' },
     latest: { id: 1, state: 'succeeded', started_at: '2026-07-19T10:00:00Z', finished_at: '2026-07-19T10:00:05Z',
       books: 1, created: 4, updated: 0, removed: 0, trigger: 'manual', full: false, account_id: 1 },
@@ -30,7 +31,7 @@ const contact = {
       finished_at: '2026-07-19T10:00:05Z', books: 1, created: 4, updated: 0, removed: 0, trigger: 'manual',
       full: false, account_id: 1 }
   }
-};
+} satisfies CardDAVConnectionResponse;
 
 type Handler = (url: URL, request: Request) => Response | Promise<Response> | undefined;
 
@@ -325,6 +326,33 @@ describe('SourcesWorkspace', () => {
     expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
     expect(fetch.mock.calls.map(([input]) => new URL((input as Request).url).pathname).sort()).toEqual(['/api/v1/carddav/connections', '/api/v1/sources/status']);
     view.unmount();
+  });
+
+  it('observes an initially idle scheduled contacts sync through completion while Sources stays open', async () => {
+    vi.useFakeTimers();
+    const scheduled = { ...contact, status: { ...contact.status, enabled: true, scheduled: true, schedule: '0 * * * *' } };
+    let status: CardDAVStatusResponse = { ...scheduled.status };
+    const fetch = api([], url => {
+      if (url.pathname.endsWith('/carddav/status') && url.searchParams.get('connection') === 'default') return Response.json(status);
+    }, [scheduled]);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const row = screen.getByRole('row', { name: /user-a/ });
+      expect(within(row).getByText('Succeeded')).toBeDefined();
+
+      const active: CardDAVRunResponse = { ...contact.status.latest, id: 2, state: 'running', trigger: 'scheduled',
+        started_at: '2026-07-20T10:00:00Z', finished_at: undefined };
+      status = { ...scheduled.status, active, scheduler_running: true };
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(within(row).getByText('Running')).toBeDefined();
+
+      const latest: CardDAVRunResponse = { ...active, state: 'succeeded', finished_at: '2026-07-20T10:00:05Z', created: 7 };
+      status = { ...scheduled.status, latest, latest_successful: latest };
+      await vi.advanceTimersByTimeAsync(500);
+      expect(within(row).getByText('Succeeded')).toBeDefined();
+      expect(row.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T10:00:05Z');
+    } finally { view.unmount(); }
   });
 
   it.each(['before', 'during'])('keeps the newer contacts sync result in the row and panel after an older connections refresh resolves: refresh started %s sync', async refreshStarted => {
