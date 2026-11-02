@@ -720,7 +720,7 @@ func (s *Store) decideIdentityMatchCandidateContext(
 			state != IdentityMatchStateRejected &&
 			current.LeftKind == IdentityMatchParticipant &&
 			current.RightKind == IdentityMatchParticipant {
-			edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+			edges, err := s.loadComponentEdgesTxContext(ctx, tx, current.LeftID, current.RightID)
 			if err != nil {
 				return err
 			}
@@ -788,7 +788,7 @@ func (s *Store) decideIdentityMatchCandidateContext(
 func (s *Store) rejectSystemAcceptedIdentityMatchTxContext(
 	ctx context.Context, tx *loggedTx, leftID, rightID, candidateID int64,
 ) error {
-	originalEdges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	originalEdges, err := s.loadComponentEdgesTxContext(ctx, tx, leftID, rightID)
 	if err != nil {
 		return err
 	}
@@ -836,7 +836,7 @@ func (s *Store) rejectSystemAcceptedIdentityMatchTxContext(
 		return nil
 	}
 	if err := s.reapplyAcceptedIdentityMatchAfterRejectionTxContext(
-		ctx, tx, candidateID, originalEdges,
+		ctx, tx, candidateID, leftID, rightID, originalEdges,
 	); err != nil {
 		return err
 	}
@@ -854,9 +854,10 @@ func (s *Store) reapplyAcceptedIdentityMatchAfterRejectionTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 	rejectedCandidateID int64,
+	leftID, rightID int64,
 	originalEdges []linkEdge,
 ) error {
-	currentEdges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	currentEdges, err := s.loadComponentEdgesTxContext(ctx, tx, leftID, rightID)
 	if err != nil {
 		return err
 	}

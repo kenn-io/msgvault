@@ -8,35 +8,78 @@ import (
 )
 
 func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
-	require := require.New(t)
-	st := openTestStore(t)
-	_, err := st.DB().Exec(`WITH RECURSIVE ids(id) AS (
+	tests := []string{"link", "merge", "reject"}
+	for _, operation := range tests {
+		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			st := openTestStore(t)
+			_, err := st.DB().Exec(`WITH RECURSIVE ids(id) AS (
 		SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < 2004
 	) INSERT INTO participants (id, email_address)
 	SELECT id, 'participant-' || id || '@example.com' FROM ids`)
-	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b)
+			require.NoError(err)
+			_, err = st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b)
 		SELECT id, id + 1 FROM participants WHERE id >= 5 AND id % 2 = 1`)
-	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
-	require.NoError(err)
+			require.NoError(err)
+			_, err = st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
+			require.NoError(err)
+			var rejectedID int64
+			if operation == "reject" {
+				_, err = st.DB().Exec(`DELETE FROM participant_links WHERE participant_a = 1 AND participant_b = 4`)
+				require.NoError(err)
+				for _, pair := range [][2]int64{{1, 4}, {1, 2}} {
+					candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+						LeftKind: IdentityMatchParticipant, LeftID: pair[0], RightKind: IdentityMatchParticipant, RightID: pair[1],
+						Basis: IdentityMatchStableProviderID, NormalizedValue: new("example-stable-id"),
+						State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation,
+					})
+					require.NoError(err)
+					_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
+					require.NoError(err)
+					if pair[1] == 4 {
+						rejectedID = candidate.ID
+					}
+				}
+			}
 
-	orig := buildAdjacency
-	t.Cleanup(func() { buildAdjacency = orig })
-	var sizes []int
-	buildAdjacency = func(edges []linkEdge) map[int64][]int64 {
-		sizes = append(sizes, len(edges))
-		return orig(edges)
+			orig := buildAdjacency
+			t.Cleanup(func() { buildAdjacency = orig })
+			var sizes []int
+			buildAdjacency = func(edges []linkEdge) map[int64][]int64 {
+				sizes = append(sizes, len(edges))
+				return orig(edges)
+			}
+			switch operation {
+			case "link":
+				_, err = st.LinkParticipants(2, 3)
+			case "merge":
+				err = st.MergeParticipants(2, 3)
+			case "reject":
+				_, err = st.DecideIdentityMatchCandidateContext(t.Context(), rejectedID, IdentityMatchStateRejected, "user", nil)
+			}
+			require.NoError(err)
+			require.NotEmpty(sizes)
+			limit := 2
+			if operation == "merge" {
+				limit = 3 // The spanning tree rebuild temporarily adds a remapped edge.
+			}
+			for _, size := range sizes {
+				assert.LessOrEqual(t, size, limit, "operation must read only the endpoint components")
+			}
+			member := int64(3)
+			want := []int64{1, 2, 3, 4}
+			switch operation {
+			case "merge":
+				want = []int64{1, 3, 4}
+			case "reject":
+				member = 1
+				want = []int64{1, 2, 4}
+			}
+			members, err := st.ClusterMembers(member)
+			require.NoError(err)
+			assert.Equal(t, want, members)
+		})
 	}
-	_, err = st.LinkParticipants(2, 3)
-	require.NoError(err)
-	require.NotEmpty(sizes)
-	for _, size := range sizes {
-		assert.LessOrEqual(t, size, 2, "link must read only the endpoint components")
-	}
-	members, err := st.ClusterMembers(3)
-	require.NoError(err)
-	assert.Equal(t, []int64{1, 2, 3, 4}, members)
 }
 
 // setKeys returns the sorted-independent key set of a component result as a
