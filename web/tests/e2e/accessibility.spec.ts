@@ -281,6 +281,7 @@ test('Directory network graph has no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
   const graph = page.getByRole('region', { name: 'Network graph' });
   await expect(graph).toBeVisible();
   await assertNoViolations(page, 'Directory network');
