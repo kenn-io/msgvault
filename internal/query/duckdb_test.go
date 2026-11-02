@@ -2606,7 +2606,6 @@ func TestDuckDBEngine_GetDeletionTargetsByAggregateSearch(t *testing.T) {
 	builder.messages[1].ListID = &listID
 	analyticsDir, cleanup := builder.Build()
 	t.Cleanup(cleanup)
-	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	tdb.SeedStandardDataSet()
 	_, err := tdb.DB.Exec(`UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, listID)
@@ -2643,7 +2642,6 @@ func TestDuckDBEngine_AggregateSearchAndDeletionShareBodyScope(t *testing.T) {
 	builder := buildStandardTestData(t)
 	analyticsDir, cleanup := builder.Build()
 	t.Cleanup(cleanup)
-	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	tdb.SeedStandardDataSet()
 	_, err := tdb.DB.Exec(`UPDATE message_bodies SET body_text = 'aggregatebodyneedle' WHERE message_id = 1`)
@@ -2679,7 +2677,6 @@ func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T
 	builder.messages[1].DeletedFromSourceAt = &sourceDeletedAt
 	analyticsDir, cleanup := builder.Build()
 	t.Cleanup(cleanup)
-	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	tdb.SeedStandardDataSet()
 	engine, err := NewDuckDBEngine(analyticsDir, "", tdb.DB)

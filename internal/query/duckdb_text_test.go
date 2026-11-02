@@ -74,7 +74,6 @@ func TestDuckDBTextSnapshotRevisionTracksHybridSQLiteTimeline(t *testing.T) {
 	analyticsDir, cleanup := b.Build()
 	t.Cleanup(cleanup)
 
-	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
