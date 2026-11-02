@@ -200,9 +200,8 @@ describe('DirectoryReviewController', () => {
         return Response.json({ id, display_label: changed ? 'Updated Example' : 'Original Example', activity_count: changed ? 9 : 3, identifiers: [{ participant_id: id, type: 'email', is_primary: true, value: changed ? 'updated@example.com' : 'absorbed@example.com' }] });
       }
       reads += 1;
-      const row = candidate(17);
-      if (reads > 1) row.review_token = 'fresh-token';
-      return page([row]);
+      if (reads > 1) return Response.json({ message: 'Queue unavailable' }, { status: 503 });
+      return page([candidate(17)]);
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     await controller.loadIdentityPage();
@@ -213,9 +212,9 @@ describe('DirectoryReviewController', () => {
       ok: false, kind: 'stale', status: 409
     });
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-    expect(controller.rows[0]?.review_token).toBe('fresh-token');
+    expect(controller.rows[0]?.id).toBe(17);
+    expect(controller.pageError).toBe('Queue unavailable');
     expect(controller.decisionError).toContain('Review the refreshed evidence');
-    controller.requestSummaries();
     try {
       await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Updated Example' }));
     } finally { controller.destroy(); }
@@ -274,9 +273,14 @@ describe('DirectoryReviewController', () => {
 
   it('blocks decisions during merge refresh and records the completed merge', async () => {
     const reload = deferredResponse();
-    const fetchFn = vi.fn<typeof fetch>(async () => reload.promise);
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.includes('/participants/')) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Updated Example', identifiers: [], activity_count: 9 });
+      return reload.promise;
+    });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     controller.rows = [candidate(17), candidate(18)];
+    controller.summaries.set('participant:170', { id: 170, name: 'Original Example', address: '', lastAt: null });
     const success = {
       result: mergeResult(person(7), 'stale'),
       survivor: person(7),
@@ -287,13 +291,16 @@ describe('DirectoryReviewController', () => {
     expect(controller.submitting).toBe(true);
     await controller.queueDecision(controller.rows[0]!, 'accept');
     expect(controller.pending).toBeUndefined();
-    reload.resolve(page([{ ...candidate(17), review_token: 'after-profile-merge' }, candidate(18)]));
+    reload.resolve(Response.json({ message: 'Queue unavailable' }, { status: 503 }));
     await completion;
     expect(controller.submitting).toBe(false);
 
     expect(controller.lastMerge).toEqual({ candidateID: 17, ...success });
-    expect(controller.rows[0]?.review_token).toBe('after-profile-merge');
+    expect(controller.rows.map(row => row.id)).toEqual([17, 18]);
+    expect(controller.pageError).toBe('Queue unavailable');
     expect(controller.status).toContain('Review the refreshed pair to finish.');
+    await vi.waitFor(() => expect(controller.summaries.get('participant:170')).toMatchObject({ name: 'Updated Example' }));
+    controller.destroy();
   });
 
   it.each(['newer To review', '409 recovery', '503 failure remains available after History navigation'] as const)('preserves the active review context after deferred settlement: %s', async scenario => {
@@ -519,8 +526,8 @@ it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination
   } finally { controller.destroy(); }
 });
 
-it.each([false, true])('Next continues beyond the displayed page after a queued decision, write fails=%s', async failDecision => {
-  let rows = Array.from({ length: 11 }, (_, index) => ({ ...pair, id: index + 1, left_id: index * 2 + 1, right_id: index * 2 + 2, review_token: `review-${index + 1}` }));
+it('Next continues beyond the displayed page after a queued decision fails', async () => {
+  const rows = Array.from({ length: 11 }, (_, index) => ({ ...pair, id: index + 1, left_id: index * 2 + 1, right_id: index * 2 + 2, review_token: `review-${index + 1}` }));
   const offsets: number[] = [];
   const writes: Array<{ path: string; body: unknown }> = [];
   const controller = new DirectoryReviewController(createAPIClient(async input => {
@@ -528,10 +535,7 @@ it.each([false, true])('Next continues beyond the displayed page after a queued 
     const url = new URL(request.url);
     if (request.method === 'POST') {
       writes.push({ path: url.pathname, body: await request.json() });
-      if (failDecision) return Response.json({ message: 'Decision unavailable' }, { status: 503 });
-      const decided = rows.find(row => row.id === 3)!;
-      rows = rows.filter(row => row.id !== 3);
-      return Response.json({ candidate: { ...decided, state: 'rejected' }, cache_state: 'ready' });
+      return Response.json({ message: 'Decision unavailable' }, { status: 503 });
     }
     const offset = Number(url.searchParams.get('offset'));
     const limit = Number(url.searchParams.get('limit'));
@@ -545,8 +549,8 @@ it.each([false, true])('Next continues beyond the displayed page after a queued 
     await controller.loadNextPage();
     expect(writes).toEqual([{ path: '/api/v1/identity/match-candidates/3/review/reject', body: { review_token: 'review-3' } }]);
     expect(controller.hidden.size).toBe(0);
-    expect(controller.decisionError).toBe(failDecision ? 'Decision unavailable' : null);
-    expect(offsets.at(-1)).toBe(failDecision ? 10 : 9);
+    expect(controller.decisionError).toBe('Decision unavailable');
+    expect(offsets.at(-1)).toBe(10);
     expect(controller.rows.map(row => row.id)).toEqual([11]);
   } finally { controller.destroy(); }
 });

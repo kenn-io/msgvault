@@ -462,9 +462,9 @@ describe('PersonBindingConflictModal', () => {
     renderModal(fetchFn, { onOpenProfile });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic One profile' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Two profile' }));
 
-    expect(onOpenProfile).toHaveBeenCalledOnce();
-    expect(onOpenProfile).toHaveBeenCalledWith(7);
+    expect(onOpenProfile.mock.calls).toEqual([[7], [9]]);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,4 @@
-import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
@@ -67,36 +66,4 @@ it.each([
     expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull();
     expect(screen.getByText(label)).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
-});
-
-it.each(['stale decision', 'profile merge'])('refreshes retained summaries when the queue read after a %s fails', async trigger => {
-  let queueReads = 0;
-  const summaryReads: number[] = [];
-  const controller = new DirectoryReviewController(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/17/review/accept')) return Response.json({ error: 'identity_match_review_stale', message: 'Review changed' }, { status: 409 });
-    if (path.endsWith('/identity/match-candidates')) {
-      if (++queueReads > 1) return Response.json({ message: 'Queue unavailable' }, { status: 503 });
-      return Response.json({ candidates: [pair], limit: 11, offset: 0 });
-    }
-    if (/\/participants\/(1|2)$/.test(path)) {
-      const id = Number(path.split('/').at(-1)); summaryReads.push(id);
-      return Response.json({ id, display_label: `Refreshed ${id}`, identifiers: [], activity_count: 1 });
-    }
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  }));
-  await controller.loadIdentityPage();
-  for (const id of [1, 2]) controller.summaries.set(`participant:${id}`, { id, name: `Cached ${id}`, address: '', lastAt: null });
-  const rendered = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
-  try {
-    await screen.findByText('Cached 1');
-    if (trigger === 'stale decision') await expect(controller.acceptIdentity(17)).resolves.toMatchObject({ ok: false, kind: 'stale' });
-    else { const survivor = person(7, 5, [1, 2]); await controller.completePersonMerge(17, { survivor, result: mergeResult(survivor), responseETag: '"person-7-r5"' }); }
-    expect(controller.rows).toHaveLength(1);
-    expect(controller.pageError).toBe('Queue unavailable');
-    await waitFor(() => expect(summaryReads).toEqual([1, 2]));
-    expect(await screen.findByText('Refreshed 1')).toBeDefined();
-    expect(await screen.findByText('Refreshed 2')).toBeDefined();
-  } finally { rendered.unmount(); controller.destroy(); }
 });

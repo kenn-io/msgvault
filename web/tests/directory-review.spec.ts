@@ -101,22 +101,21 @@ for (const bulk of [false, true]) {
   });
 }
 
-for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthetic Two' }]) {
-  test(`merge handoff inspects ${profile.name} separately without mutating`, async ({ page }) => {
-    const fixture = await installDirectoryReviewArchive(page);
-    await page.goto(duplicatesURL);
-    await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
-    await page.getByRole('button', { name: 'Back to People' }).click();
-    const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
-    await expect(merge).toBeVisible();
+test('merge handoff inspects Synthetic Two separately without mutating', async ({ page }) => {
+  const profile = { id: 9, name: 'Synthetic Two' };
+  const fixture = await installDirectoryReviewArchive(page);
+  await page.goto(duplicatesURL);
+  await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to People' }).click();
+  const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
+  await expect(merge).toBeVisible();
 
-    await merge.getByRole('button', { name: `Open ${profile.name} profile` }).focus();
-    await page.keyboard.press('Enter');
+  await merge.getByRole('button', { name: `Open ${profile.name} profile` }).focus();
+  await page.keyboard.press('Enter');
 
-    await expect(page).toHaveURL(new RegExp(`directoryPersonID%22%3A${profile.id}`));
-    expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
-  });
-}
+  await expect(page).toHaveURL(new RegExp(`directoryPersonID%22%3A${profile.id}`));
+  expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
+});
 
 test('History wraps long provenance at phone width', async ({ page }) => {
   await installDirectoryReviewArchive(page);
