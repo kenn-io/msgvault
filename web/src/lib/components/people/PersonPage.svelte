@@ -46,10 +46,10 @@
     void savedProfile;
     // Stop following loading state once this profile's unfiltered metadata is available.
     if (untrack(() => !directory.detail)) void directory.detailLoading;
-    if (untrack(() => controller.target !== target || controller.timelineLoading)) void controller.timelineLoading;
+    if (untrack(() => target === null || controller.target !== target || controller.timelineLoading)) void controller.timelineLoading;
     untrack(() => {
       if (directory.detailLoading || directory.selectedPersonID !== profileID || !directory.detail) return;
-      if (target !== null && (controller.target !== target || controller.timelineLoading)) return;
+      if (target === null ? directory.detail.person?.participant_ids.length : controller.target !== target || controller.timelineLoading) return;
       details ||= !filesOpen &&
         !(controller.target === target && target !== null && controller.firstContactAt);
     });
