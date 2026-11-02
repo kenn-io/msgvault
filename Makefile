@@ -653,6 +653,9 @@ lint-workflow-retries:
 # Workflow actions run at the commits in .github/workflows/actions.lock,
 # including actions that other actions call. The organization requires
 # SHA-pinned actions, and the lockfile is what satisfies that for nested refs.
+# The local composite actions in .github/actions are the exception: GitHub
+# does not apply the lockfile to the actions they call, so those keep commit
+# SHAs.
 # The version comes from constraints.ghActionsLock in renovate.json.
 # Renovate uses the same version when it regenerates the lockfile after
 # bumping an action.
