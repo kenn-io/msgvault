@@ -44,40 +44,8 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 }
 
 func (c *Client) objects(ctx context.Context, path, after string, q url.Values) (ObjectPage, error) {
-	if !c.safeCursor(after) {
-		return ObjectPage{}, errors.New("invalid Graph cursor")
-	}
-	if after != "" {
-		q.Set("after", after)
-	}
-	var wire struct {
-		Data   []Object `json:"data"`
-		Paging struct {
-			Cursors struct {
-				After string `json:"after"`
-			} `json:"cursors"`
-			Next string `json:"next"`
-		} `json:"paging"`
-	}
-	if err := c.get(ctx, path, q, &wire); err != nil {
-		return ObjectPage{}, err
-	}
-	if wire.Data == nil || len(wire.Data) > pageLimit {
-		return ObjectPage{}, errors.New("graph response missing or oversized data page")
-	}
-	next := ""
-	if wire.Paging.Next != "" {
-		next = wire.Paging.Cursors.After
-		if next == "" || next == after || !c.safeCursor(next) {
-			return ObjectPage{}, errors.New("invalid Graph pagination progress")
-		}
-	}
-	for _, object := range wire.Data {
-		if !safeObjectID(object.ID) {
-			return ObjectPage{}, errors.New("invalid Graph object identity")
-		}
-	}
-	return ObjectPage{Data: wire.Data, After: next}, nil
+	page, err := readObjectPage(ctx, c, path, after, q, func(object Object) string { return object.ID })
+	return ObjectPage(page), err
 }
 
 // Cursors are opaque request parameters. The finite bound protects checkpoint

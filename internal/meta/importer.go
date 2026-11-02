@@ -29,8 +29,10 @@ type ImportSummary struct {
 }
 
 type Importer struct {
-	store *store.Store
-	api   API
+	store     *store.Store
+	api       API
+	instagram string
+	igAPI     instagramAPI
 }
 
 func NewImporter(st *store.Store, api API) *Importer { return &Importer{store: st, api: api} }
@@ -55,7 +57,14 @@ func (imp *Importer) Register(ctx context.Context, app, page string) (*store.Sou
 	if err != nil {
 		return nil, err
 	}
-	source, err := imp.store.GetOrCreateSourceContext(ctx, SourceType, SourceIdentifier(app, page))
+	if imp.instagram != "" {
+		account, err := imp.igAPI.LinkedInstagramAccount(ctx, page, imp.instagram)
+		if err != nil {
+			return nil, err
+		}
+		identity.Name = account.Username
+	}
+	source, err := imp.store.GetOrCreateSourceContext(ctx, imp.sourceType(), imp.sourceIdentifier(app, page))
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +80,11 @@ func (imp *Importer) Register(ctx context.Context, app, page string) (*store.Sou
 	if current.HistoryOnly || current.MergedIntoSourceID != 0 {
 		return nil, store.ErrSourceRetired
 	}
-	if err = imp.store.AddAccountIdentityContext(ctx, source.ID, ActorIdentifier(app, page, page), "facebook_page_token"); err != nil {
+	anchor, provenance := ActorIdentifier(app, page, page), "facebook_page_token"
+	if imp.instagram != "" {
+		anchor, provenance = instagramActorIdentifier(app, page, imp.instagram, "ig_user", imp.instagram), "instagram_page_token"
+	}
+	if err = imp.store.AddAccountIdentityContext(ctx, source.ID, anchor, provenance); err != nil {
 		return nil, err
 	}
 	if err = imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, identity.Name); err != nil {
@@ -94,7 +107,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if !ValidAccountID(app) || !ValidAccountID(page) || opts.MaxRequests < 0 {
 		return nil, errors.New("invalid Facebook import options")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, SourceIdentifier(app, page))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(imp.sourceType(), imp.sourceIdentifier(app, page))
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +127,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if err != nil {
 		return nil, err
 	}
-	syncID, err := execution.StartSyncContext(ctx, SourceType, "")
+	syncID, err := execution.StartSyncContext(ctx, imp.sourceType(), "")
 	if err != nil {
 		return nil, err
 	}
@@ -149,20 +162,22 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if err = run.save(ctx); err != nil {
 		return sum, err
 	}
-	sum.Requests++
-	if _, err = imp.api.VerifyPage(ctx, page); err != nil {
+	if err = run.verify(ctx); errors.Is(err, errRequestBudget) {
+		return sum, nil
+	} else if err != nil {
 		return sum, err
 	}
 	var errs []error
 	// Collection attempts update continuation for the next run, not this order.
-	start := slices.Index(postEdges[:], state.NextSurface)
-	for offset := range postEdges {
-		edge := postEdges[(start+offset)%len(postEdges)]
+	edges := state.edges()
+	start := slices.Index(edges, state.NextSurface)
+	for offset := range edges {
+		edge := edges[(start+offset)%len(edges)]
 		if err = run.phase(ctx, edge); err != nil {
 			if errors.Is(err, errRequestBudget) {
 				break
 			}
-			errs = append(errs, fmt.Errorf("facebook %s: %w", edge, err))
+			errs = append(errs, fmt.Errorf("%s %s: %w", run.providerName(), edge, err))
 			if ctx.Err() != nil {
 				break
 			}
@@ -170,13 +185,39 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	}
 	phaseErr := errors.Join(errs...)
 	if jobctx.ErrorAfterYield(ctx, phaseErr) != nil {
-		for _, edge := range postEdges {
+		for _, edge := range edges {
 			if state.Phases[edge].Done {
 				state.Phases[edge].Rescan = true
 			}
 		}
 	}
 	return sum, phaseErr
+}
+
+func (r *importRun) verify(ctx context.Context) error {
+	reads := []func() error{func() error {
+		_, err := r.imp.api.VerifyPage(ctx, r.page)
+		return err
+	}}
+	if r.imp.instagram != "" {
+		reads = append(reads, func() error {
+			_, err := r.imp.igAPI.LinkedInstagramAccount(ctx, r.page, r.imp.instagram)
+			return err
+		})
+	}
+	for _, read := range reads {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if r.sum.Requests >= r.maxRequests {
+			return errRequestBudget
+		}
+		r.sum.Requests++
+		if err := read(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *importRun) checkpoint() (*store.Checkpoint, error) {
@@ -203,11 +244,12 @@ func (r *importRun) request(ctx context.Context, edge PostEdge, after string, re
 		return ObjectPage{}, errRequestBudget
 	}
 	r.sum.Requests++
-	r.state.NextSurface = postEdges[(slices.Index(postEdges[:], edge)+1)%len(postEdges)]
+	edges := r.state.edges()
+	r.state.NextSurface = edges[(slices.Index(edges, edge)+1)%len(edges)]
 	page, err := read()
 	var apiErr *APIError
 	if after != "" && errors.As(err, &apiErr) && apiErr.Status == 400 {
-		return ObjectPage{}, fmt.Errorf("facebook continuation request failed: %w", err)
+		return ObjectPage{}, fmt.Errorf("%s continuation request failed: %w", r.providerName(), err)
 	}
 	return page, err
 }
@@ -225,14 +267,14 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
-				return fmt.Errorf("facebook post %q: %w", post.ID, err)
+				return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
 			}
 			p.Posts = p.Posts[1:]
 			p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
 		} else if p.Exhausted {
 			p.Done = true
 		} else {
-			page, err := r.request(ctx, edge, p.After, func() (ObjectPage, error) { return r.imp.api.Posts(ctx, r.page, edge, p.After) })
+			page, err := r.request(ctx, edge, p.After, func() (ObjectPage, error) { return r.readPosts(ctx, edge, p.After) })
 			if err != nil {
 				return err
 			}
@@ -251,9 +293,9 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
 	if !f.Loaded {
-		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.imp.api.Comments(ctx, f.Parent, f.After) })
+		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.readComments(ctx, *f) })
 		if err != nil {
-			return fmt.Errorf("facebook comments for %q: %w", f.Parent, err)
+			return fmt.Errorf("%s comments for %q: %w", r.providerName(), f.Parent, err)
 		}
 		f.Pending, f.Next, f.Loaded = page.Data, page.After, true
 		return nil
@@ -262,14 +304,14 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 		child := f.Pending[0]
 		for _, ancestor := range p.Stack {
 			if child.ID == ancestor.Parent {
-				return fmt.Errorf("facebook comment %q: cyclic Facebook reply traversal", child.ID)
+				return fmt.Errorf("%s comment %q: cyclic Facebook reply traversal", r.providerName(), child.ID)
 			}
 		}
 		if len(p.Stack) >= 128 {
-			return fmt.Errorf("facebook comment %q: facebook reply traversal exceeds bounded depth", child.ID)
+			return fmt.Errorf("%s comment %q: facebook reply traversal exceeds bounded depth", r.providerName(), child.ID)
 		}
 		if err := r.persist(ctx, child, f.Root, f.Parent, edge); err != nil {
-			return fmt.Errorf("facebook comment %q: %w", child.ID, err)
+			return fmt.Errorf("%s comment %q: %w", r.providerName(), child.ID, err)
 		}
 		f.Pending = f.Pending[1:]
 		p.Stack = append(p.Stack, commentFrame{Root: f.Root, Parent: child.ID})
