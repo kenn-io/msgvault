@@ -379,6 +379,52 @@ describe('PersonBriefController', () => {
     controller.destroy();
   });
 
+  it.each(['enrollment', 'brief'])('keeps a rejected brief missing when an earlier %s refresh finishes', async (phase) => {
+    const staleRead = deferredResponse();
+    const rejection = deferredResponse();
+    let refreshing = false;
+    let readStarted = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST' && path === '/api/v1/people/7/brief/reject') return rejection.promise;
+      if (request.method === 'GET' && path === '/api/v1/people/7/brief-enrollment') {
+        if (refreshing && phase === 'enrollment') {
+          readStarted = true;
+          return staleRead.promise;
+        }
+        return Response.json(enrollment(true));
+      }
+      if (request.method === 'GET' && path === '/api/v1/people/7/brief') {
+        if (refreshing && phase === 'brief') {
+          readStarted = true;
+          return staleRead.promise;
+        }
+        return Response.json(brief());
+      }
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    refreshing = true;
+    const refresh = controller.refresh();
+    await vi.waitFor(() => expect(readStarted).toBe(true));
+
+    const rejecting = controller.reject('Wrong person');
+    rejection.resolve(Response.json(brief({ status: 'rejected', rejected_at: '2026-08-30T00:00:00Z' })));
+    expect(await rejecting).toEqual({ kind: 'confirmed' });
+    expect(controller.briefMissing).toBe(true);
+
+    staleRead.resolve(Response.json(phase === 'enrollment' ? enrollment(true) : brief()));
+    await refresh;
+
+    expect(controller.brief).toBeUndefined();
+    expect(controller.briefMissing).toBe(true);
+    expect(controller.enrollmentLoading).toBe(false);
+    expect(controller.briefLoading).toBe(false);
+    controller.destroy();
+  });
+
   it('reports a generated version and reloads the brief', async () => {
     let generated = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
