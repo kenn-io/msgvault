@@ -130,15 +130,12 @@ export class DirectoryReviewController {
     );
   }
   applyURLState(state: ReviewURLState, historyRestoration = false): void {
-    if (this.disposed) return;
-    const changed = this.identityState !== state.identityState;
-    this.identityState = state.identityState;
-    if (!this.initialized || changed || historyRestoration) {
-      this.initialized = true;
-      if (historyRestoration) this.invalidateSummaries();
-      this.resetIdentityContext(state.identityState);
-      void this.loadIdentityPage(0, state.identityState);
-    }
+    const unchanged = this.initialized && this.identityState === state.identityState;
+    if (this.disposed || (unchanged && !historyRestoration)) return;
+    this.initialized = true;
+    if (historyRestoration) this.invalidateSummaries();
+    this.resetIdentityContext(state.identityState);
+    void this.loadIdentityPage(0, state.identityState);
   }
   async setIdentityState(identityState: IdentityReviewState): Promise<void> {
     if (this.identityState === identityState && this.initialized) return;
