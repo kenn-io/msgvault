@@ -32,7 +32,7 @@ func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 	defer func() { _ = blocker.Rollback() }()
 	_, err = blocker.ExecContext(ctx, `SET LOCAL deadlock_timeout = '100ms'`)
 	must.NoError(err)
-	_, err = blocker.ExecContext(ctx, `UPDATE line_webhook_events SET raw_json=raw_json WHERE source_id=$1`, source.ID)
+	_, err = blocker.ExecContext(ctx, `UPDATE line_memberships SET joined_at=joined_at WHERE source_id=$1`, source.ID)
 	must.NoError(err)
 	var blockerPID int
 	must.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
@@ -66,7 +66,7 @@ func TestLineFirstGroupMessageLocksClockBeforeConversation(t *testing.T) {
 	blocker, err := st.DB().BeginTx(ctx, nil)
 	must.NoError(err)
 	defer func() { _ = blocker.Rollback() }()
-	_, err = blocker.ExecContext(ctx, `LOCK TABLE line_webhook_events IN ACCESS EXCLUSIVE MODE`)
+	_, err = blocker.ExecContext(ctx, `LOCK TABLE line_memberships IN ACCESS EXCLUSIVE MODE`)
 	must.NoError(err)
 	var blockerPID int
 	must.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))

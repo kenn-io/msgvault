@@ -36,7 +36,6 @@ func (c *Config) validateLineSources() error {
 	seen := make(map[string]bool)
 	for index := range c.Line {
 		source := &c.Line[index]
-		source.ChannelID = strings.TrimSpace(source.ChannelID)
 		if !ValidLineChannelID(source.ChannelID) {
 			return fmt.Errorf("line[%d].channel_id must be a canonical positive decimal uint64", index)
 		}

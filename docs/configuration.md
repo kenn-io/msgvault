@@ -1724,7 +1724,7 @@ enabled = true
 
 | Key | Default | Contract |
 |---|---|---|
-| `channel_id` | required | Unique positive decimal channel ID, stored as a string; after trimming whitespace it must be canonical, without a sign or leading zeros, and fit uint64 |
+| `channel_id` | required | Unique positive decimal channel ID, stored as a string; it must be canonical, without whitespace, a sign, or leading zeros, and fit uint64 |
 | `secret_env` | required | Explicit environment-variable name containing the channel secret on the daemon host; surrounding whitespace is trimmed; the name must match `[A-Za-z_][A-Za-z0-9_]*` |
 | `enabled` | `false` | Mount this channel's receiver when the daemon starts |
 | `media` | `true` | Download incoming media; `false` keeps message metadata only |

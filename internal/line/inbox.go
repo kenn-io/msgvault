@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -68,20 +69,9 @@ func WithProcessorClock(now func() time.Time) ProcessorOption {
 		}
 	}
 }
-func WithProcessorMediaLimit(maxBytes int64) ProcessorOption {
-	return func(p *Processor) {
-		if maxBytes > 0 {
-			p.maxBytes = maxBytes
-		}
-	}
-}
-
 func WithProcessorMediaPolicy(policy attachmentpolicy.Policy) ProcessorOption {
 	return func(p *Processor) {
 		p.mediaPolicy = policy
-		if policy.MaxBytes > 0 {
-			p.maxBytes = policy.MaxBytes
-		}
 	}
 }
 
@@ -93,7 +83,7 @@ type Processor struct {
 	sourceID                  int64
 	channelID, attachmentsDir string
 	now                       func() time.Time
-	maxBytes                  int64
+	lastPruned                time.Time
 	mediaPolicy               attachmentpolicy.Policy
 	groupNames                map[string]string
 	botID                     string
@@ -102,7 +92,7 @@ type Processor struct {
 }
 
 func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, attachmentsDir string, options ...ProcessorOption) *Processor {
-	p := &Processor{store: st, client: client, sourceID: sourceID, channelID: channelID, attachmentsDir: attachmentsDir, now: time.Now, maxBytes: attachmentpolicy.DefaultChatMaxBytes}
+	p := &Processor{store: st, client: client, sourceID: sourceID, channelID: channelID, attachmentsDir: attachmentsDir, now: time.Now, mediaPolicy: attachmentpolicy.Policy{MaxBytes: attachmentpolicy.DefaultChatMaxBytes}}
 	for _, option := range options {
 		option(p)
 	}
@@ -142,12 +132,12 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if p == nil || p.store == nil || p.client == nil {
 		return errors.New("LINE processor unavailable")
 	}
-	if _, err := p.store.ValidateLineSourceBindingContext(ctx, p.sourceID, p.channelID); err != nil {
-		return err
-	}
-	// Retention runs on idle passes too, so a quiet channel still clears old payloads.
-	if err := p.store.PruneLineEventsContext(ctx, p.sourceID, p.now().Add(-30*24*time.Hour)); err != nil {
-		return err
+	// A quiet receiver still expires terminal deliveries without a write per tick.
+	if now := p.now(); p.lastPruned.IsZero() || now.Sub(p.lastPruned) >= time.Hour {
+		if err := p.store.PruneLineEventsContext(ctx, p.sourceID, now.Add(-30*24*time.Hour)); err != nil {
+			return err
+		}
+		p.lastPruned = now
 	}
 	due, err := p.store.DueLineEventsThroughContext(ctx, p.sourceID, dueAt, throughID, 1)
 	if err != nil {
@@ -330,11 +320,8 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 }
 
 func (p *Processor) retryAt(row store.LineWebhookEvent, eventErr error) time.Time {
-	delay := 30 * time.Second
-	for i := 0; i < row.Attempts && delay < time.Hour; i++ {
-		delay = min(2*delay, time.Hour)
-	}
-	next := p.now().Add(delay)
+	now := p.now()
+	next := now.Add(httpretry.RetryAfterAtWithBase("", row.Attempts, 30*time.Second, time.Hour, now))
 	if deadline := providerRetryDeadline(eventErr); deadline.After(next) {
 		next = deadline
 	}

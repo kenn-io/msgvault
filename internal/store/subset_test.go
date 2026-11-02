@@ -5833,6 +5833,7 @@ func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
 }
 
 func TestCopySubsetPreservesLineInboxAndMembership(t *testing.T) {
+func TestCopySubsetExcludesLineOperationalInbox(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
@@ -5842,43 +5843,27 @@ func TestCopySubsetPreservesLineInboxAndMembership(t *testing.T) {
 	_, err = source.DB().Exec("UPDATE sources SET source_type='line',identifier='2000000001' WHERE id=1")
 	must.NoError(err)
 	const bot = "U00000000000000000000000000000001"
-	const member = "channel:2000000001:user:U00000000000000000000000000000002"
 	must.NoError(source.SetLineBotContext(t.Context(), 1, bot))
 	_, err = source.DB().Exec("UPDATE conversations SET source_conversation_id='group:example',conversation_type='group_chat' WHERE id=1")
 	must.NoError(err)
 	at := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	must.NoError(source.SetLineMembershipContext(t.Context(), 1, 1, member, false, at))
-	event := LineWebhookEvent{WebhookEventID: "pending-example", EventType: "future", EventTimestamp: 123, RawJSON: `{"type":"future"}`}
-	must.NoError(source.EnqueueLineEventsContext(t.Context(), 1, "2000000001", bot, []LineWebhookEvent{event}))
 	must.NoError(source.CacheLineProfileContext(t.Context(), 1, "example-user", `{"displayName":"Example"}`, at))
-	other, err := source.GetOrCreateSource("line", "2000000002")
-	must.NoError(err)
-	must.NoError(source.SetLineBotContext(t.Context(), other.ID, bot))
-	must.NoError(source.EnqueueLineEventsContext(t.Context(), other.ID, "2000000002", bot, []LineWebhookEvent{event}))
+	must.NoError(source.SetLineMembershipContext(t.Context(), 1, 1, "channel:2000000001:user:U00000000000000000000000000000002", false, at))
+	must.NoError(source.EnqueueLineEventsContext(t.Context(), 1, "2000000001", bot, []LineWebhookEvent{{WebhookEventID: "excluded-chat", EventType: "message", EventTimestamp: 123, RawJSON: `{"message":{"text":"unselected private conversation"}}`}}))
 	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err = CopySubset(sourcePath, destinationDir, 5, false)
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
 	must.NoError(err)
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
 	must.NoError(err)
 	t.Cleanup(func() { must.NoError(destination.Close()) })
-	due, err := destination.DueLineEventsContext(t.Context(), 1, at, 10)
-	must.NoError(err)
-	must.Len(due, 1)
-	checks.Equal("pending-example", due[0].WebhookEventID)
-	must.NoError(destination.EnqueueLineEventsContext(t.Context(), 1, "2000000001", bot, []LineWebhookEvent{event}))
-	due, err = destination.DueLineEventsContext(t.Context(), 1, at, 10)
-	must.NoError(err)
-	checks.Len(due, 1)
-	raw, _, err := destination.LineProfileContext(t.Context(), 1, "example-user")
-	must.NoError(err)
-	checks.JSONEq(`{"displayName":"Example"}`, raw)
-	// An older join must not reactivate a member who left before the export.
-	must.NoError(destination.SetLineMembershipContext(t.Context(), 1, 1, member, true, at.Add(-time.Hour)))
-	var left sql.NullTime
-	must.NoError(destination.DB().QueryRow("SELECT left_at FROM conversation_participants WHERE conversation_id=1 AND participant_id=1").Scan(&left))
-	must.True(left.Valid)
-	checks.True(at.Equal(left.Time))
-	var otherEvents int
-	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events WHERE source_id=?", other.ID).Scan(&otherEvents))
-	checks.Zero(otherEvents)
+	var messages, inbox int
+	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
+	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events").Scan(&inbox))
+	checks.Equal(1, messages)
+	checks.Zero(inbox, "unselected conversations must stay outside the exported archive")
+	var profiles, clocks int
+	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_profiles").Scan(&profiles))
+	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_memberships").Scan(&clocks))
+	checks.Zero(profiles)
+	checks.Zero(clocks)
 }

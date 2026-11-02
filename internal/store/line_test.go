@@ -269,3 +269,25 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 		})
 	}
 }
+
+func TestLineLastReceiptSurvivesRetention(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000001")
+	must.NoError(err)
+	const bot = "U00000000000000000000000000000001"
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, bot))
+	received := time.Now().UTC().Add(-31 * 24 * time.Hour).Truncate(time.Second)
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, bot, []store.LineWebhookEvent{{WebhookEventID: "old-receipt", EventType: "future", EventTimestamp: 123, RawJSON: `{"type":"future"}`, ReceivedAt: received}}))
+	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
+	must.NoError(err)
+	must.Len(rows, 1)
+	must.NoError(st.FinishLineEventContext(t.Context(), rows[0].ID, "ignored", "", time.Time{}))
+	must.NoError(st.PruneLineEventsContext(t.Context(), source.ID, time.Now().Add(-30*24*time.Hour)))
+	status, err := st.LineInboxStatusContext(t.Context(), source.ID)
+	must.NoError(err)
+	must.NotNil(status.LastReceivedAt)
+	checks.True(received.Equal(*status.LastReceivedAt))
+	checks.Zero(status.Pending)
+}

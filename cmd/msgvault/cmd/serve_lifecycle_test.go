@@ -1929,3 +1929,20 @@ func TestWaitForDaemonExitWithProgressQuietOnFastExit(t *testing.T) {
 	require.True(t, exited, "wait must observe daemon exit")
 	assert.Empty(t, out.String(), "fast exits must stay quiet")
 }
+
+func TestLineReceiverKeepsBackgroundDaemonAlive(t *testing.T) {
+	t.Setenv(serveBackgroundChildEnv, "1")
+	t.Setenv(daemonIdleTimeoutEnv, "")
+	synctest.Test(t, func(t *testing.T) {
+		cfg := lifecycleTestConfig(t.TempDir())
+		cfg.Server.DaemonIdleTimeout = time.Second
+		cfg.Line = []config.LineSource{{ChannelID: "2000000001", Enabled: true}}
+		var stopped atomic.Bool
+		tracker := newDaemonIdleTracker(cfg, func() { stopped.Store(true) }, testDiscardLogger())
+		if tracker != nil {
+			go tracker.Run(t.Context())
+		}
+		time.Sleep(2 * time.Second)
+		assert.False(t, stopped.Load(), "a quiet webhook receiver must remain reachable")
+	})
+}

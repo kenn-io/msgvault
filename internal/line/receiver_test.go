@@ -22,7 +22,7 @@ import (
 const receiverBot = "U00000000000000000000000000000001"
 
 func receiverChannel(sourceID int64) line.ReceiverChannel {
-	return line.ReceiverChannel{ChannelID: "2000000000", SourceID: sourceID, BotUserID: receiverBot, SecretEnv: "EXAMPLE_LINE_SECRET", Secret: "synthetic-secret"}
+	return line.ReceiverChannel{ChannelID: "2000000000", SourceID: sourceID, BotUserID: receiverBot, Secret: "synthetic-secret"}
 }
 
 func TestReceiverConfigurationAndHandles(t *testing.T) {
@@ -45,7 +45,6 @@ func TestReceiverConfigurationAndHandles(t *testing.T) {
 	must.NoError(err)
 	checks.False(empty.Handles(httptest.NewRequest(http.MethodPost, "/webhooks/line/unknown", nil)))
 	for _, mutate := range []func(*line.ReceiverChannel){
-		func(c *line.ReceiverChannel) { c.ChannelID = "0" }, func(c *line.ReceiverChannel) { c.ChannelID = "01" }, func(c *line.ReceiverChannel) { c.ChannelID = " 1 " }, func(c *line.ReceiverChannel) { c.ChannelID = "18446744073709551616" },
 		func(c *line.ReceiverChannel) { c.SourceID = 0 }, func(c *line.ReceiverChannel) { c.BotUserID = "" }, func(c *line.ReceiverChannel) { c.Secret = "" },
 	} {
 		invalid := channel
@@ -54,8 +53,6 @@ func TestReceiverConfigurationAndHandles(t *testing.T) {
 		must.Error(err)
 		checks.NotContains(err.Error(), "synthetic-secret")
 	}
-	_, err = line.NewReceiver(st, []line.ReceiverChannel{channel, channel}, nil)
-	must.Error(err)
 }
 
 func TestReceiverWakeAfterCommit(t *testing.T) {
@@ -126,7 +123,6 @@ func TestReceiverEnvelopeValidation(t *testing.T) {
 		{"bad JSON", `{`, http.StatusBadRequest},
 		{"trailing JSON", receiverEnvelope("[]") + `{}`, http.StatusBadRequest},
 		{"missing id", receiverEnvelope(`[{"type":"future","timestamp":123}]`), http.StatusBadRequest},
-		{"reserved id", receiverEnvelope(`[{"type":"future","timestamp":123,"webhookEventId":"_internal"}]`), http.StatusBadRequest},
 		{"long id", receiverEnvelope(fmt.Sprintf(`[{"type":"future","timestamp":123,"webhookEventId":%q}]`, strings.Repeat("a", 201))), http.StatusBadRequest},
 		{"zero time", receiverEnvelope(`[{"type":"future","timestamp":0,"webhookEventId":"event"}]`), http.StatusBadRequest},
 		{"missing type", receiverEnvelope(`[{"timestamp":123,"webhookEventId":"event"}]`), http.StatusBadRequest},

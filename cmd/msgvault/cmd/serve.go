@@ -35,7 +35,6 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
-	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
@@ -952,7 +951,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
-		lineWebhook:            lineRuntime.receiver,
 		store:                  s,
 		operationGate:          operationGate,
 		config:                 cfg,
@@ -1826,6 +1824,12 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
 		return nil
 	}
+	// Push sources need a reachable daemon even between deliveries.
+	for _, channel := range c.Line {
+		if channel.Enabled {
+			return nil
+		}
+	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
 	if raw := os.Getenv(daemonIdleTimeoutEnv); raw != "" {
@@ -1852,7 +1856,6 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	lineWebhook               *line.Receiver
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
 	store                     *store.Store

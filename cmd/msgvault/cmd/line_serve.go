@@ -83,7 +83,7 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 			return nil, fmt.Errorf("schedule LINE inbox: %w", err)
 		}
 		runtime.jobs = append(runtime.jobs, name)
-		channels = append(channels, line.ReceiverChannel{ChannelID: channelID, SourceID: source.ID, BotUserID: botID, SecretEnv: profile.SecretEnv, Secret: os.Getenv(profile.SecretEnv)})
+		channels = append(channels, line.ReceiverChannel{ChannelID: channelID, SourceID: source.ID, BotUserID: botID, Secret: os.Getenv(profile.SecretEnv)})
 	}
 	receiver, err := line.NewReceiver(st, channels, runtime.wake)
 	if err != nil {

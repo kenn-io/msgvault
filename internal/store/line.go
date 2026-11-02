@@ -70,16 +70,48 @@ func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, ch
 		if registeredBotID == "" || registeredBotID != botUserID {
 			return errors.New("LINE inbox bot binding changed")
 		}
+		var lastReceived time.Time
 		for _, e := range events {
 			received := e.ReceivedAt
 			if received.IsZero() {
 				received = time.Now().UTC()
+			}
+			if received.After(lastReceived) {
+				lastReceived = received
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO line_webhook_events
     (source_id,webhook_event_id,event_type,target_message_id,event_timestamp,raw_json,state,received_at)
     VALUES (?,?,?,?,?,?,'pending',?) ON CONFLICT(source_id,webhook_event_id) DO NOTHING`, sourceID, e.WebhookEventID, e.EventType, e.TargetMessageID, e.EventTimestamp, e.RawJSON, received)
 			if err != nil {
 				return fmt.Errorf("enqueue LINE event: %w", err)
+			}
+		}
+		if !lastReceived.IsZero() {
+			values := map[string]jsontext.Value{}
+			if raw.Valid && raw.String != "" {
+				if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
+					return fmt.Errorf("decode LINE source state: %w", err)
+				}
+			}
+			var previous time.Time
+			if value := values["line_last_received_at"]; len(value) > 0 {
+				if err := json.Unmarshal(value, &previous); err != nil {
+					return fmt.Errorf("decode last LINE receipt: %w", err)
+				}
+			}
+			if lastReceived.After(previous) {
+				value, err := json.Marshal(lastReceived.UTC())
+				if err != nil {
+					return fmt.Errorf("encode last LINE receipt: %w", err)
+				}
+				values["line_last_received_at"] = value
+				encoded, err := json.Marshal(values)
+				if err != nil {
+					return fmt.Errorf("encode LINE source state: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE sources SET sync_config=`+s.dialect.JSONBindExpr()+` WHERE id=?`, string(encoded), sourceID); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -143,7 +175,7 @@ func (s *Store) LineEventStateContext(ctx context.Context, id int64) (string, er
 func (s *Store) LineMutationsContext(ctx context.Context, sourceID int64, messageID string) ([]LineWebhookEvent, error) {
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+lineEventColumns+` FROM line_webhook_events
  WHERE source_id=? AND target_message_id=? AND event_type IN ('messageEdited','unsend')
- AND raw_json<>'{}' ORDER BY event_timestamp,webhook_event_id`), sourceID, messageID)
+ ORDER BY event_timestamp,webhook_event_id`), sourceID, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("load LINE lifecycle evidence: %w", err)
 	}
@@ -183,7 +215,6 @@ func (s *Store) PruneLineEventsContext(ctx context.Context, sourceID int64, befo
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM line_webhook_events
    WHERE source_id=? AND state IN ('processed','ignored','failed')
-   AND event_type NOT IN ('_profile','_membership')
    AND NOT (state='failed' AND event_type IN ('messageEdited','unsend'))
    AND received_at<?`, sourceID, before)
 		return err
@@ -193,19 +224,23 @@ func (s *Store) PruneLineEventsContext(ctx context.Context, sourceID int64, befo
 func (s *Store) LineInboxStatusContext(ctx context.Context, sourceID int64) (LineInboxStatus, error) {
 	var out LineInboxStatus
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(SUM(CASE WHEN state IN ('pending','retry') THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END),0) FROM line_webhook_events WHERE source_id=? AND state IN ('pending','retry','failed') AND event_type NOT IN ('_profile','_membership')`), sourceID).Scan(&out.Pending, &out.Failed)
+ COALESCE(SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END),0) FROM line_webhook_events WHERE source_id=? AND state IN ('pending','retry','failed')`), sourceID).Scan(&out.Pending, &out.Failed)
 	if err != nil {
 		return out, fmt.Errorf("count LINE inbox: %w", err)
 	}
-	var received time.Time
-	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT received_at FROM line_webhook_events WHERE source_id=? AND event_type NOT IN ('_profile','_membership') ORDER BY received_at DESC LIMIT 1`), sourceID).Scan(&received)
-	if errors.Is(err, sql.ErrNoRows) {
-		return out, nil
-	}
-	if err != nil {
+	var raw sql.NullString
+	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT sync_config FROM sources WHERE id=?`), sourceID).Scan(&raw); err != nil {
 		return out, fmt.Errorf("last LINE receipt: %w", err)
 	}
-	out.LastReceivedAt = &received
+	if raw.Valid && raw.String != "" {
+		var state struct {
+			LastReceivedAt *time.Time `json:"line_last_received_at"`
+		}
+		if err := json.Unmarshal([]byte(raw.String), &state); err != nil {
+			return out, fmt.Errorf("decode LINE receipt status: %w", err)
+		}
+		out.LastReceivedAt = state.LastReceivedAt
+	}
 	return out, nil
 }
 
@@ -280,8 +315,8 @@ func (s *Store) SetLineBotContext(ctx context.Context, sourceID int64, botID str
 	})
 }
 
-// SetLineMembershipContext preserves both transition clocks in a compact inbox
-// record, while projecting the existing left_at=NULL convention for active users.
+// SetLineMembershipContext preserves both transition clocks in operational
+// membership state, while projecting the existing left_at=NULL convention for active users.
 // The record is keyed by the stable provider identifier, which follows the
 // member through participant merges. Native conversation keys also let a first
 // message record its clock before creating the conversation projection.
@@ -349,43 +384,18 @@ func (s *Store) setLineMembershipTx(ctx context.Context, tx *loggedTx, conversat
 	return s.projectLineMembershipTx(ctx, tx, sourceID, conversationID, participantID, memberIdentifier)
 }
 
-// The native conversation key is available before its first projection exists.
-func lineMembershipClockKey(conversationKey, memberIdentifier string) string {
-	return "_membership:" + conversationKey + ":" + memberIdentifier
-}
-
 func (s *Store) setLineMembershipClockTx(ctx context.Context, tx *loggedTx, sourceID int64, conversationKey, memberIdentifier string, joined bool, at time.Time) error {
-	key := lineMembershipClockKey(conversationKey, memberIdentifier)
-	var clocks struct {
-		Joined int64 `json:"joined"`
-		Left   int64 `json:"left"`
-	}
-	var raw string
-	err := tx.QueryRowContext(ctx, `SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`, sourceID, key).Scan(&raw)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if err == nil {
-		if err = json.Unmarshal([]byte(raw), &clocks); err != nil {
-			return err
-		}
-	}
-	timestamp := at.UnixMilli()
+	var join, leave int64
 	if joined {
-		clocks.Joined = max(clocks.Joined, timestamp)
+		join = at.UnixMilli()
 	} else {
-		clocks.Left = max(clocks.Left, timestamp)
+		leave = at.UnixMilli()
 	}
-	encoded, err := json.Marshal(clocks)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO line_webhook_events(source_id,webhook_event_id,event_type,event_timestamp,raw_json,state)
-  VALUES (?,?,'_membership',?,?,'processed') ON CONFLICT(source_id,webhook_event_id) DO UPDATE SET event_timestamp=excluded.event_timestamp,raw_json=excluded.raw_json`, sourceID, key, max(clocks.Joined, clocks.Left), string(encoded))
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err := tx.ExecContext(ctx, `INSERT INTO line_memberships(source_id,conversation_key,member_identifier,joined_at,left_at)
+ VALUES (?,?,?,?,?) ON CONFLICT(source_id,conversation_key,member_identifier) DO UPDATE SET
+ joined_at=CASE WHEN excluded.joined_at>line_memberships.joined_at THEN excluded.joined_at ELSE line_memberships.joined_at END,
+ left_at=CASE WHEN excluded.left_at>line_memberships.left_at THEN excluded.left_at ELSE line_memberships.left_at END`, sourceID, conversationKey, memberIdentifier, join, leave)
+	return err
 }
 
 // projectLineMembershipTx derives one participant's membership from its current
@@ -432,19 +442,15 @@ func (s *Store) projectLineMembershipTx(ctx context.Context, tx *loggedTx, sourc
 	active, found := false, false
 	for _, identifier := range identifiers {
 		var identityClocks struct {
-			Joined int64 `json:"joined"`
-			Left   int64 `json:"left"`
+			Joined int64
+			Left   int64
 		}
-		var identityRaw string
-		err := tx.QueryRowContext(ctx, `SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`, sourceID, lineMembershipClockKey(conversationKey, identifier)).Scan(&identityRaw)
+		err := tx.QueryRowContext(ctx, `SELECT joined_at,left_at FROM line_memberships WHERE source_id=? AND conversation_key=? AND member_identifier=?`, sourceID, conversationKey, identifier).Scan(&identityClocks.Joined, &identityClocks.Left)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("load LINE membership clocks for %q: %w", identifier, err)
-		}
-		if err := json.Unmarshal([]byte(identityRaw), &identityClocks); err != nil {
-			return fmt.Errorf("decode LINE membership clocks for %q: %w", identifier, err)
 		}
 		found = true
 		latestJoin = max(latestJoin, identityClocks.Joined)
@@ -542,12 +548,12 @@ func (s *Store) migrateLineServiceScope(ctx context.Context) error {
 	})
 }
 
-// LineProfileContext returns durable profile presentation, separate from opaque
-// contact identity evidence. Profile rows are excluded from inbox work/status.
+// LineProfileContext returns cached profile presentation, separate from opaque
+// contact identity evidence and webhook deliveries.
 func (s *Store) LineProfileContext(ctx context.Context, sourceID int64, userID string) (string, time.Time, error) {
 	var raw string
 	var at int64
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT raw_json,event_timestamp FROM line_webhook_events WHERE source_id=? AND webhook_event_id=? AND event_type='_profile'`), sourceID, "_profile:"+userID).Scan(&raw, &at)
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT raw_json,updated_at FROM line_profiles WHERE source_id=? AND user_id=?`), sourceID, userID).Scan(&raw, &at)
 	return raw, time.UnixMilli(at).UTC(), err
 }
 
@@ -559,8 +565,8 @@ func (s *Store) CacheLineProfileContext(ctx context.Context, sourceID int64, use
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO line_webhook_events(source_id,webhook_event_id,event_type,event_timestamp,raw_json,state,received_at)
-   VALUES (?,?,'_profile',?,?,'processed',?) ON CONFLICT(source_id,webhook_event_id) DO UPDATE SET raw_json=excluded.raw_json,event_timestamp=excluded.event_timestamp`, sourceID, "_profile:"+userID, at.UnixMilli(), raw, at.UTC())
+		_, err := tx.ExecContext(ctx, `INSERT INTO line_profiles(source_id,user_id,raw_json,updated_at)
+ VALUES (?,?,?,?) ON CONFLICT(source_id,user_id) DO UPDATE SET raw_json=excluded.raw_json,updated_at=excluded.updated_at`, sourceID, userID, raw, at.UnixMilli())
 		return err
 	})
 }

@@ -196,7 +196,7 @@ func TestMediaCapAndEmpty(t *testing.T) {
 			checks := assert.New(t)
 
 			f := newInboxFixture(t)
-			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaLimit(8))
+			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: 8}))
 			f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 200, Body: body})
 			f.enqueue(t, f.fileEvent(), time.Time{})
 			f.run(t)
@@ -331,7 +331,7 @@ func TestMediaStreamingCapRejectsChunkedContent(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaLimit(8))
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: 8}))
 	f.enqueue(t, f.fileEvent(), time.Time{})
 	f.run(t)
 	ref := f.media(t)

@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -25,7 +24,6 @@ type ReceiverChannel struct {
 	ChannelID string
 	SourceID  int64
 	BotUserID string
-	SecretEnv string
 	Secret    string `json:"-"`
 }
 
@@ -57,14 +55,8 @@ func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string))
 		return nil, errors.New("line: receiver requires an archive store")
 	}
 	for _, channel := range channels {
-		if !config.ValidLineChannelID(channel.ChannelID) {
-			return nil, errors.New("line: invalid receiver channel ID")
-		}
 		if channel.SourceID <= 0 || channel.BotUserID == "" || channel.Secret == "" {
 			return nil, errors.New("line: receiver requires source, bot identity and secret")
-		}
-		if _, duplicate := receiver.channels[channel.ChannelID]; duplicate {
-			return nil, errors.New("line: duplicate receiver channel ID")
 		}
 		receiver.channels[channel.ChannelID] = &receiverChannel{config: channel}
 	}
@@ -207,7 +199,7 @@ func receiverEvent(raw jsontext.Value) (store.LineWebhookEvent, error) {
 	if err := json.Unmarshal(clean, &common); err != nil {
 		return store.LineWebhookEvent{}, errors.New("line: invalid webhook fields")
 	}
-	if common.Type == "" || common.WebhookEventID == "" || len(common.WebhookEventID) > 200 || strings.HasPrefix(common.WebhookEventID, "_") || common.Timestamp <= 0 {
+	if common.Type == "" || common.WebhookEventID == "" || len(common.WebhookEventID) > 200 || common.Timestamp <= 0 {
 		return store.LineWebhookEvent{}, errors.New("line: invalid webhook event")
 	}
 	target := ""

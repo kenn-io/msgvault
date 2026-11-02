@@ -409,14 +409,6 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if result.Sources, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("sources rows affected: %w", err)
 	}
-	// Inbox work, profiles, and membership clocks belong to the selected channel.
-	if exists, err := sourceTableExists(tx, "line_webhook_events"); err != nil {
-		return nil, fmt.Errorf("check LINE inbox schema: %w", err)
-	} else if exists {
-		if _, err := copyByName(tx, "line_webhook_events", `source_id IN (SELECT source_id FROM selected_message_sources)`); err != nil {
-			return nil, fmt.Errorf("copy LINE inbox: %w", err)
-		}
-	}
 	hasRouteFailures, err := sourceTableExists(tx, "source_messaging_route_failures")
 	if err != nil {
 		return nil, fmt.Errorf("check source messaging route failure schema: %w", err)

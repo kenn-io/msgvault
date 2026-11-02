@@ -3125,9 +3125,8 @@ account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
 warning before sharing its output.
 
-A subset containing a LINE source also includes that channel's retained inbox,
-cached sender profiles, and membership clocks, including pending deliveries
-beyond the selected messages.
+LINE subsets copy selected archived messages and their conversation participants.
+They omit the operational webhook inbox, cached profiles, and membership clocks.
 
 ---
 

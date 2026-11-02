@@ -41,7 +41,8 @@ currently sends no LINE messages.
     The command checks the credentials and bot identity, registers the archive
     source, and saves configuration.
 4. Restart the daemon or service with the secret variable present. This loads
-   the saved channel and mounts its receiver.
+   the saved channel and mounts its receiver. Enabled LINE channels keep a
+   background daemon running through quiet periods; idle shutdown is disabled.
 5. Make the [public webhook route](#expose-only-the-webhook-route) reachable.
    Set `https://archive.example.com/webhooks/line/2000000001` as the webhook URL
    in LINE Developers Console, using your public hostname and channel ID.
@@ -192,7 +193,8 @@ This integration has no option to purge content automatically on unsend.
 
 Reply and mark-as-read capability tokens are removed recursively before events
 are persisted. Native metadata, including `quoteToken`, may remain in the
-archive. Completed, ignored, and failed inbox events older than 30 days are deleted,
+archive. Completed, ignored, and failed inbox events older than 30 days are deleted
+on an hourly cleanup pass,
 except for failed edits and unsends. Duplicate detection covers this 30-day
 window; a redelivery after retention can be admitted again. This cleanup does not
 remove archived message bodies or their raw evidence. Failed lifecycle evidence

@@ -756,7 +756,7 @@ func TestProcessorDirectMessageDoesNotRecordGroupMembershipClock(t *testing.T) {
 	f.enqueue(t, message, time.Time{})
 	f.run(t)
 	var clocks int
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND event_type='_membership'`), f.source.ID).Scan(&clocks))
+	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
 	assert.Zero(t, clocks, "direct chats do not infer group membership")
 }
 
@@ -767,7 +767,7 @@ func TestProcessorFirstGroupMessageWritesClockBeforeConversation(t *testing.T) {
 	}
 	_, err := f.st.DB().Exec(`CREATE TRIGGER line_conversation_requires_clock BEFORE INSERT ON conversations
  WHEN NEW.conversation_type='group_chat' AND NOT EXISTS (
- SELECT 1 FROM line_webhook_events WHERE source_id=NEW.source_id AND event_type='_membership')
+ SELECT 1 FROM line_memberships WHERE source_id=NEW.source_id)
  BEGIN SELECT RAISE(ABORT,'LINE clock must precede first conversation'); END`)
 	require.NoError(t, err)
 	message := f.message("first-group-message", "clock before conversation", f.now.UnixMilli())
@@ -783,8 +783,8 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 	if f.st.IsPostgreSQL() {
 		t.Skip("SQLite trigger injects membership failure; ordinary membership contracts run on both backends")
 	}
-	_, err := f.st.DB().Exec(`CREATE TRIGGER line_membership_write_fails BEFORE INSERT ON line_webhook_events
- WHEN NEW.event_type='_membership' BEGIN SELECT RAISE(ABORT,'synthetic membership failure'); END`)
+	_, err := f.st.DB().Exec(`CREATE TRIGGER line_membership_write_fails BEFORE INSERT ON line_memberships
+ BEGIN SELECT RAISE(ABORT,'synthetic membership failure'); END`)
 	must.NoError(err)
 	message := f.message("membership-write", "text survives a failed membership write", f.now.UnixMilli())
 	f.enqueue(t, message, time.Time{})
@@ -807,7 +807,7 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 	f.run(t)
 	checks.Equal(message.Message.Text, f.archived(t, message.Message.ID).body)
 	var clocks int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND event_type='_membership'`), f.source.ID).Scan(&clocks))
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
 	checks.Equal(1, clocks, "recovery persists text and its per-identity membership evidence together")
 }
 

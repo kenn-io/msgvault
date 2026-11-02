@@ -2382,9 +2382,9 @@ var exclusiveLockTables = []string{
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
 	"sync_runs",
-	// LINE clocks precede membership projection writes. Fence the inbox before
+	// LINE clocks precede membership projection writes. Fence operational tables before
 	// source/conversation tables so maintenance cannot reverse that order.
-	"line_webhook_events",
+	"line_webhook_events", "line_profiles", "line_memberships",
 	"sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",

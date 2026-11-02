@@ -40,7 +40,7 @@ func newLineAPIServer(t *testing.T, apiKey string, enabled bool) lineAPIServerFi
 	var channels []line.ReceiverChannel
 	if enabled {
 		require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
-		channels = []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, SecretEnv: "EXAMPLE_LINE_SECRET", Secret: lineTestSecret}}
+		channels = []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}
 	}
 	wakes := new(atomic.Int64)
 	receiver, err := line.NewReceiver(st, channels, func(string) { wakes.Add(1) })

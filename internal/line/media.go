@@ -71,7 +71,6 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
 	policy := p.mediaPolicy
-	policy.MaxBytes = p.maxBytes
 	if reason := policy.Evaluate(attachmentpolicy.Conversation{}, m.FileSize); reason != "" {
 		return save(attachmentpolicy.StateSkipped, reason)
 	}
@@ -80,7 +79,7 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 			return err
 		}
 	}
-	response, err := p.client.content(ctx, m.ID, p.maxBytes)
+	response, err := p.client.content(ctx, m.ID, p.mediaPolicy.MaxBytes)
 	if err != nil {
 		if saveErr := save(attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure); saveErr != nil {
 			return saveErr
@@ -97,14 +96,14 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	case http.StatusNotFound, http.StatusGone:
 		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
-	if response.ContentLength > p.maxBytes {
+	if response.ContentLength > p.mediaPolicy.MaxBytes {
 		return save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
 	}
 	if parsed, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type")); parseErr == nil {
 		write.MIMEType = parsed
 	}
 	source := &export.SourceReader{R: response.Body}
-	path, hash, size, err := export.StoreAttachmentStream(ctx, p.attachmentsDir, source, p.maxBytes)
+	path, hash, size, err := export.StoreAttachmentStream(ctx, p.attachmentsDir, source, p.mediaPolicy.MaxBytes)
 	if errors.Is(err, export.ErrAttachmentTooLarge) {
 		return save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
 	}
