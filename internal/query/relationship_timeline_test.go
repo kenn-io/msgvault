@@ -292,17 +292,18 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 	assert.Equal("message:"+strconv.FormatInt(entryWithX, 10), filtered.Rows[0].Key)
 }
 
-// TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents pins the timeline to
+// TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents pins
+// RelationshipTimeline and Explore with PersonInteractionsOnly to
 // the ranking's owner-participation rule for event/meeting rows (see
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality for the ranking
 // side): an event or meeting the archive owner never attended — e.g. a
-// subscribed or shared-calendar entry — must not appear in a counterpart's
-// timeline, and a silent owner on the conversation roster does not count as
+// subscribed or shared-calendar entry — must not appear in either result,
+// and a silent owner on the conversation roster does not count as
 // attending (the ranking derives non-chat owner presence from direct
 // participants only). An event the owner DID attend (here via an alias linked
 // only through participant_clusters, proving owner-cluster expansion) and a
-// plain owner-absent email from the counterpart both remain — the timeline
-// scopes emails/chats by counterpart membership only, not owner involvement.
+// plain owner-absent email from the counterpart both remain — both methods
+// scope emails/chats by counterpart membership only, not owner involvement.
 func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

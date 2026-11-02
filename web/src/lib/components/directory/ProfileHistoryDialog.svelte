@@ -31,7 +31,6 @@
   onMount(() => void load());
   onMount(() => void controller?.reload(false));
   async function load(): Promise<void> {
-    loading = true;
     error = null;
     try {
       const { data, error: responseError, response } = await generatedGetPersonProfileHistory({ id: personID }, client);
@@ -134,12 +133,12 @@
         </section>
       {/each}
     {/if}
-    {#if error}<Button label="Retry history" onclick={() => void load()} />{/if}
+    {#if error}<Button label="Retry history" onclick={() => { loading = true; void load(); }} />{/if}
     {#if controller?.attributesError ?? controller?.definitionsError}
       <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
       <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />
     {:else if controller}<AttributeSection {controller} />{/if}
-    {#if history}
+    {#if !loading}
       <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
     {/if}
   </div>

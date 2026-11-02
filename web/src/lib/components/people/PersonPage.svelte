@@ -131,16 +131,16 @@
   {:else if !detail && durablePersonID === null}
     <EmptyState title={controller.timelineError ?? 'Select a person or domain'} />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-    {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
+    {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} />{/if}
   {:else}
     {#if directory.promotionError}<p role="alert">{directory.promotionError}<Button label="Retry Save" onclick={() => void savePerson()} /></p>{/if}
     {#if controller.timelineError}
-      <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>
+      <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
     {#if !filesOpen && !details}
       <div class="calendar">
         {#if domain}
-          <DomainCalendar bind:year={domainYear} {client} {domain} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
+          <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
         {:else}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}

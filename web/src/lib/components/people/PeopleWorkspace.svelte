@@ -204,10 +204,10 @@
     await continueBulk();
   }
   async function retryLink(): Promise<void> {
-    if (!staleLink) return;
-    const result = await controller.linkParticipants(staleLink.a, staleLink.b);
+    if (!staleLink || bulkPending) return;
+    bulkPending = true; const result = await controller.linkParticipants(staleLink.a, staleLink.b); bulkPending = false;
     if (result.ok) onDuplicatesChanged();
-    if (result.ok && result.cacheState === 'ready') { staleLink = null; bulkMessage = 'Identity cache refreshed.'; }
+    if (result.ok && result.cacheState === 'ready') { staleLink = null; if (bulkCompleted === bulkIDs.length - 1) bulkMessage = 'Identity cache refreshed.'; }
   }
 </script>
 

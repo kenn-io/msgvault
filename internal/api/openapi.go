@@ -383,10 +383,10 @@ import (
 // 3.29.0 adds literal address filtering to the durable people Directory.
 // 3.30.0 adds the stored hidden_text_present flag to message details and search rows.
 // 3.31.0 adds exact sender and To participant identities to conversation windows.
-// 3.32.0 adds the optional account to staged deletion list summaries,
-// timezone-aware daily message grouping, and sent_only group filtering.
+// 3.32.0 adds the optional account to staged deletion list summaries.
+// 3.35.0 adds timezone-aware daily message grouping and sent_only group filtering.
 // It also filters participant timelines to events and meetings attended by the owner.
-const APISchemaVersion = "3.32.0"
+const APISchemaVersion = "3.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

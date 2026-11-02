@@ -289,7 +289,7 @@ fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Selecting a saved profile opens the person's **Details** tab in People. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
+Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
 Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations.
 

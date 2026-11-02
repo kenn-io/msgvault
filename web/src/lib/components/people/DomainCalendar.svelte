@@ -4,8 +4,8 @@
   import type { RelationshipCalendar as Calendar } from '../../relationships/models';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
 
-  let { client, domain, firstAt, lastAt, selectedDate, onDateChange, year = $bindable<number | null>(null) }:
-    { client: APIClient; domain: string; firstAt: string; lastAt: string; selectedDate: string | null; year?: number | null; onDateChange: (date: string | null) => void } = $props();
+  let { client, domain, revision, firstAt, lastAt, selectedDate, onDateChange, year = $bindable<number | null>(null) }:
+    { client: APIClient; domain: string; revision: string; firstAt: string; lastAt: string; selectedDate: string | null; year?: number | null; onDateChange: (date: string | null) => void } = $props();
   const currentYear = new Date().getFullYear();
   let retry = $state(0);
   let calendar = $state<(Pick<Calendar, 'year' | 'days'> & Partial<Calendar>) | null>(null);
@@ -17,7 +17,7 @@
   const since = $derived(firstAt ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }).format(new Date(firstAt)) : undefined);
   $effect(() => { void domain; year ??= initialYear; calendar = null; });
   $effect(() => {
-    void retry;
+    void [retry, revision];
     const abort = new AbortController();
     loading = true;
     error = null;

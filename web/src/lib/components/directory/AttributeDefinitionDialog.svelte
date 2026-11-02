@@ -282,10 +282,6 @@
     }
   }
 
-  function supportsUnit(type: string): boolean {
-    return type === 'integer' || type === 'real';
-  }
-
   function supportsChoices(type: string): boolean {
     return type !== 'json' && type !== 'record_reference';
   }

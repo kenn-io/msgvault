@@ -6,10 +6,8 @@ import {
 } from '../api/generated/api/api';
 import {
   getDomainContextSummary as generatedGetDomainContextSummary,
-  getDomainTimeline as generatedGetDomainTimeline,
   getParticipantContextSummary as generatedGetParticipantContextSummary,
   getRelationshipCalendar as generatedGetRelationshipCalendar,
-  getRelationshipTimeline as generatedGetRelationshipTimeline,
   listRelationships as generatedListRelationships,
   searchDomains as generatedSearchDomains,
   searchParticipants as generatedSearchParticipants,
@@ -18,14 +16,13 @@ import type { APIClient } from '../api/client';
 import type {
   DomainSummary,
   ExploreCacheUnavailable,
-  ExploreFilter,
   ExplorePredicate,
   IdentitySearchSort,
   PersonSummary,
 } from '../explore/models';
 import { canonicalFingerprint, predicateFingerprint } from '../explore/selection';
 import { validatePersonMergeRequired, type ValidatedPersonMergeRequired } from '../directory/person-merge';
-import type { RelationshipCalendar, RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
+import type { RelationshipCalendar, RelationshipFacet, RelationshipRow } from './models';
 export type LinkOutcome =
   | {
       ok: true;
@@ -55,8 +52,7 @@ export interface RelationshipsMergeContext {
 }
 type ListRow = RelationshipRow | PersonSummary | DomainSummary;
 type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
-type TimelineDay = { date: string; start: string; end: string };
-type TargetRestore = { year?: number; restarted?: boolean; day?: TimelineDay | null };
+type TargetRestore = { year?: number; restarted?: boolean };
 /** Snapshot of the query context a list page belongs to, captured by
  * loadList so loadMoreList replays the exact same endpoint and body (plus
  * the cursor) even if `facet`/`query`/`showAll` have since been reassigned. */
@@ -83,11 +79,9 @@ interface ListPageResponse {
 }
 const RANKED_LIST_LIMIT = 200;
 const SEARCH_LIST_LIMIT = 500;
-const TIMELINE_PAGE_LIMIT = 200;
 const MIN_RELATIONSHIP_CALENDAR_YEAR = 1970;
 const DEFAULT_IDENTITY_SORT: IdentitySearchSort = { field: 'activity_count', direction: 'desc' };
 const REPEATED_CURSOR_MESSAGE = 'Pagination stopped because the server repeated a cursor without progress.';
-const TIMELINE_RESTART_MESSAGE = 'Timeline restarted: the archive changed.';
 /**
  * Data controller for the Relationships hub's left list (ranked/searched
  * people or domains), center detail (cluster or domain header + timeline),
@@ -130,15 +124,8 @@ export class RelationshipsController {
   lastPredicateFingerprint = $state<string | null>(null);
   detail = $state<PersonSummary | DomainSummary | null>(null);
   detailMissing = $state(false);
-  timelineRows = $state<RelationshipTimelineRow[]>([]);
-  timelineCursor = $state<string | null>(null);
   timelineLoading = $state(false);
-  timelineLoadingMore = $state(false);
   timelineError = $state<string | null>(null);
-  timelineDay = $state<TimelineDay | null>(null);
-  /** One-line notice set when a cursor_invalidated 409 silently restarted the
-   * timeline from page 1; cleared on the next openTarget navigation. */
-  timelineRestartNotice = $state<string | null>(null);
   firstContactAt = $state('');
   lastContactAt = $state('');
   canonicalID = $state<number | null>(null);
@@ -155,7 +142,6 @@ export class RelationshipsController {
   private listAbort: AbortController | undefined;
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private detailAbort: AbortController | undefined;
-  private timelineAbort = new AbortController();
   private detailCacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private listGeneration = 0;
   private detailGeneration = 0;
@@ -170,9 +156,7 @@ export class RelationshipsController {
    * (clear the stale rows) apart from a same-context reload (keep them). */
   private listContextSignature: string | undefined;
   private listSeenCursors = new Set<string>();
-  private seenCursors = new Set<string>();
   private lastPredicate: ExplorePredicate | undefined;
-  private withTimeline = true;
   private lastListPredicate: ExplorePredicate | undefined;
   constructor(client: APIClient, timezone: () => string) {
     this.client = client;
@@ -202,7 +186,7 @@ export class RelationshipsController {
       this.lastPredicateFingerprint === context.targetPredicateFingerprint
     ) {
       reopened = true;
-      reloads.push(this.openTarget(context.target, context.targetPredicate, this.withTimeline));
+      reloads.push(this.openTarget(context.target, context.targetPredicate));
     }
     if (
       context.listPredicate &&
@@ -374,8 +358,7 @@ export class RelationshipsController {
     }
     this.listError = errorMessage(error, res.status);
   }
-  async openTarget(target: string, predicate: ExplorePredicate, withTimeline = true): Promise<void> {
-    this.withTimeline = withTimeline;
+  async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
     await this.openTargetWithCalendarState(target, predicate, this.target === target ? { year: this.relationshipCalendarYear } : {});
   }
   private async openTargetWithCalendarState(
@@ -394,19 +377,13 @@ export class RelationshipsController {
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     if (!sameTarget) { this.detail = null; this.firstContactAt = ''; this.lastContactAt = ''; }
     this.detailMissing = false;
-    this.timelineRows = [];
-    this.timelineCursor = null;
     this.timelineError = null;
-    this.timelineRestartNotice = null;
-    this.timelineLoadingMore = false;
     if (!sameTarget) {
       this.canonicalID = null;
       this.identityRevision = null;
       this.resetRelationshipCalendar(restore.year, restore.restarted);
     }
     this.relationshipCalendarRestarted = restore.restarted ?? false;
-    this.timelineDay = restore.day ?? null;
-    this.seenCursors = new Set<string>();
     const clusterID = parseClusterID(target);
     const domainName = parseDomainName(target);
     if (clusterID === undefined && domainName === undefined) {
@@ -453,7 +430,7 @@ export class RelationshipsController {
       // members, edges) for the link/unlink UI; when filters are active the
       // contextual /summary carries the header metrics so they agree with the
       // filtered timeline and files below instead of the whole archive.
-      const [personResponse, , summaryResponse] = await Promise.all([
+      const [personResponse, summaryResponse] = await Promise.all([
         generatedGetParticipant(
           { id: id },
           {
@@ -461,8 +438,6 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.withTimeline ? this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
-          AbortSignal.any([signal, this.timelineAbort.signal])) : undefined,
         hasActiveFilters(context)
           ? generatedGetParticipantContextSummary({ id: id }, context, {
               ...this.client,
@@ -475,7 +450,7 @@ export class RelationshipsController {
       if (base) { this.firstContactAt = base.first_at; this.lastContactAt = base.last_at; }
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
-      if (base && !this.withTimeline) this.canonicalID = base.cluster?.canonical_id ?? base.id;
+      if (base) this.canonicalID = base.cluster?.canonical_id ?? base.id;
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
       else if (summary) this.detail = summary;
       this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
@@ -493,7 +468,7 @@ export class RelationshipsController {
   ): Promise<void> {
     const context = contextPredicate(predicate);
     try {
-      const [detailResponse, , summaryResponse] = await Promise.all([
+      const [detailResponse, summaryResponse] = await Promise.all([
         generatedGetDomain(
           { domain: domain },
           {
@@ -501,7 +476,6 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.withTimeline ? this.fetchDomainPage(domain, context, generation, undefined, signal) : undefined,
         hasActiveFilters(context)
           ? generatedGetDomainContextSummary({ domain: domain }, context, {
               ...this.client,
@@ -541,16 +515,11 @@ export class RelationshipsController {
     this.firstContactAt = '';
     this.lastContactAt = '';
     this.detailMissing = false;
-    this.timelineRows = [];
-    this.timelineCursor = null;
     this.timelineLoading = false;
-    this.timelineLoadingMore = false;
     this.timelineError = null;
-    this.timelineRestartNotice = null;
     this.canonicalID = null;
     this.identityRevision = null;
     this.resetRelationshipCalendar();
-    this.seenCursors = new Set<string>();
   }
   async loadRelationshipYear(year: number): Promise<void> {
     const target = this.target;
@@ -655,161 +624,6 @@ export class RelationshipsController {
       if (generation === this.relationshipCalendarGeneration) this.relationshipCalendarLoading = false;
     }
   }
-  async loadMoreTimeline(): Promise<void> {
-    if (this.timelineLoadingMore || !this.timelineCursor || !this.target || !this.lastPredicate || !this.detailAbort) {
-      return;
-    }
-    const clusterID = parseClusterID(this.target);
-    const domainName = parseDomainName(this.target);
-    if (clusterID === undefined && domainName === undefined) return;
-    this.timelineLoadingMore = true;
-    const generation = this.detailGeneration;
-    const signal = AbortSignal.any([this.detailAbort.signal, this.timelineAbort.signal]);
-    const cursor = this.timelineCursor;
-    if (clusterID !== undefined) {
-      await this.fetchClusterPage(clusterID, this.timelineFilters(), generation, cursor, signal);
-    } else if (domainName !== undefined) {
-      await this.fetchDomainPage(domainName, contextPredicate(this.lastPredicate), generation, cursor, signal);
-    }
-  }
-  async selectTimelineDay(day: TimelineDay | null): Promise<void> {
-    const id = this.target ? parseClusterID(this.target) : undefined;
-    if (id === undefined || !this.lastPredicate || !this.detailAbort) return;
-    this.timelineAbort.abort();
-    this.timelineAbort = new AbortController();
-    const signal = AbortSignal.any([this.detailAbort.signal, this.timelineAbort.signal]);
-    this.timelineDay = day;
-    this.timelineRows = [];
-    this.timelineCursor = null;
-    this.seenCursors.clear();
-    this.timelineError = null;
-    this.timelineRestartNotice = null;
-    this.timelineLoadingMore = false;
-    this.timelineLoading = true;
-    try {
-      await this.fetchClusterPage(id, this.timelineFilters(), this.detailGeneration, undefined, signal);
-    } finally {
-      if (!signal.aborted) this.timelineLoading = false;
-    }
-  }
-  private timelineFilters(): ExploreFilter[] | undefined {
-    const filters = this.lastPredicate?.filters ?? undefined;
-    if (!this.timelineDay) return filters;
-    return [
-      ...(filters ?? []).filter((filter) => filter.dimension !== 'after' && filter.dimension !== 'before'),
-      { dimension: 'after', values: [this.timelineDay.start] },
-      { dimension: 'before', values: [this.timelineDay.end] },
-    ];
-  }
-  private async fetchClusterPage(
-    id: number,
-    filters: ExploreFilter[] | undefined,
-    generation: number,
-    cursor: string | undefined,
-    signal: AbortSignal,
-  ): Promise<void> {
-    try {
-      if (cursor && this.seenCursors.has(cursor)) {
-        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE, false);
-        return;
-      }
-      const response = await generatedGetRelationshipTimeline(
-        { id: id },
-        { timezone: this.timezone(), filters, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
-        {
-          ...this.client,
-          signal,
-        },
-      );
-      if (signal.aborted || generation !== this.detailGeneration) return;
-      const { data, error, response: res } = response;
-      if (!data) {
-        if (this.handleDetailCacheBuilding(error, res.status, generation, signal)) return;
-        if (cursor && res.status === 409 && isErrorCode(error, 'cursor_invalidated')) {
-          this.timelineRows = [];
-          this.timelineCursor = null;
-          this.seenCursors = new Set<string>();
-          this.timelineRestartNotice = TIMELINE_RESTART_MESSAGE;
-          await this.fetchClusterPage(id, filters, generation, undefined, signal);
-          return;
-        }
-        this.applyTimelineFailure(
-          generation,
-          errorMessage(error, res.status),
-          retryableCursorFailure(cursor, res.status),
-        );
-        return;
-      }
-      this.timelineError = null;
-      if (cursor) this.seenCursors.add(cursor);
-      this.timelineRows = mergeTimelineRows(this.timelineRows, data.rows ?? []);
-      this.canonicalID = data.canonical_id;
-      this.identityRevision = data.identity_revision;
-      this.timelineCursor = data.next_cursor ?? null;
-    } catch (cause: unknown) {
-      if (!signal.aborted && generation === this.detailGeneration) this.timelineError = errorMessage(cause, 0);
-    } finally {
-      if (!signal.aborted && generation === this.detailGeneration) this.timelineLoadingMore = false;
-    }
-  }
-  private async fetchDomainPage(
-    domain: string,
-    context: ExplorePredicate,
-    generation: number,
-    cursor: string | undefined,
-    signal: AbortSignal,
-  ): Promise<void> {
-    try {
-      if (cursor && this.seenCursors.has(cursor)) {
-        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE, false);
-        return;
-      }
-      const response = await generatedGetDomainTimeline(
-        { domain: domain },
-        { ...context, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
-        {
-          ...this.client,
-          signal,
-        },
-      );
-      if (signal.aborted || generation !== this.detailGeneration) return;
-      const { data, error, response: res } = response;
-      if (!data) {
-        if (this.handleDetailCacheBuilding(error, res.status, generation, signal)) return;
-        // The domain timeline forwards to the explore engine, whose cursor
-        // invalidation surfaces as 409 archive_revision_changed (unlike the
-        // cluster timeline's cursor_invalidated): restart from page 1 the
-        // same way rather than truncating the timeline.
-        if (cursor && res.status === 409 && isErrorCode(error, 'archive_revision_changed')) {
-          this.timelineRows = [];
-          this.timelineCursor = null;
-          this.seenCursors = new Set<string>();
-          this.timelineRestartNotice = TIMELINE_RESTART_MESSAGE;
-          await this.fetchDomainPage(domain, context, generation, undefined, signal);
-          return;
-        }
-        this.applyTimelineFailure(
-          generation,
-          errorMessage(error, res.status),
-          retryableCursorFailure(cursor, res.status),
-        );
-        return;
-      }
-      this.timelineError = null;
-      if (cursor) this.seenCursors.add(cursor);
-      this.timelineRows = mergeTimelineRows(this.timelineRows, data.rows);
-      this.timelineCursor = data.next_cursor ?? null;
-    } catch (cause: unknown) {
-      if (!signal.aborted && generation === this.detailGeneration) this.timelineError = errorMessage(cause, 0);
-    } finally {
-      if (generation === this.detailGeneration) this.timelineLoadingMore = false;
-    }
-  }
-  private applyTimelineFailure(generation: number, message: string, keepCursor: boolean): void {
-    if (generation !== this.detailGeneration) return;
-    this.timelineError = message;
-    if (!keepCursor) this.timelineCursor = null;
-  }
   async linkParticipants(a: number, b: number): Promise<LinkOutcome> {
     try {
       const response = await generatedLinkIdentityParticipants({ participant_a: a, participant_b: b }, this.client);
@@ -836,7 +650,7 @@ export class RelationshipsController {
   }): Promise<LinkOutcome> {
     const { data, error, response: res } = response;
     if (data) {
-      // A null identityRevision means the prior timeline load failed, so
+      // A null identityRevision means no identity revision was loaded, so
       // there is nothing to compare against — treat that as "changed" and
       // refresh anyway rather than silently skipping the reopen. The ranked
       // list reloads unconditionally: a link/unlink can move rows (merge or
@@ -845,7 +659,7 @@ export class RelationshipsController {
       const changed = this.identityRevision === null || this.identityRevision !== data.identity_revision;
       const reloads: Promise<void>[] = [];
       const reopened = changed && this.target !== null && this.lastPredicate !== undefined;
-      if (reopened) reloads.push(this.openTarget(this.target!, this.lastPredicate!, this.withTimeline));
+      if (reopened) reloads.push(this.openTarget(this.target!, this.lastPredicate!));
       if (this.lastListPredicate) reloads.push(this.loadList(this.lastListPredicate));
       await Promise.all(reloads);
       if (reopened) this.activityRevision += 1;
@@ -864,14 +678,10 @@ export class RelationshipsController {
     this.clearDetailCacheBuildRetry();
     this.listAbort?.abort();
     this.detailAbort?.abort();
-    this.timelineAbort.abort();
     ++this.relationshipCalendarGeneration;
     this.relationshipCalendarLoading = false;
   }
   private resetRelationshipCalendar(selectedYear?: number, restarted = false): void {
-    this.timelineAbort.abort();
-    this.timelineAbort = new AbortController();
-    this.timelineDay = null;
     ++this.relationshipCalendarGeneration;
     this.relationshipCalendar = null;
     this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
@@ -918,15 +728,13 @@ export class RelationshipsController {
     if (this.detailCacheBuildRetry === undefined && this.target && this.lastPredicate) {
       const target = this.target;
       const predicate = this.lastPredicate;
-      // Reload the header and timeline together, keeping the calendar year
-      // and selected day. Every path that changes the generation also
+      // Reload the header while keeping the calendar year. Every path that changes the generation also
       // clears this timer, so the timer does not need the request signal.
       this.detailCacheBuildRetry = setTimeout(() => {
         this.detailCacheBuildRetry = undefined;
         if (generation !== this.detailGeneration) return;
         void this.openTargetWithCalendarState(target, predicate, {
           year: this.relationshipCalendarYear,
-          day: this.timelineDay,
         });
       }, 1000);
     }
@@ -1039,15 +847,6 @@ function mergeListRows(existing: ListRow[], incoming: ListRow[]): ListRow[] {
   for (const row of incoming) merged.set(listRowKey(row), row);
   return [...merged.values()];
 }
-function mergeTimelineRows<
-  Row extends {
-    key: string;
-  },
->(existing: Row[], incoming: Row[]): Row[] {
-  const merged = new Map(existing.map((row) => [row.key, row]));
-  for (const row of incoming) merged.set(row.key, row);
-  return [...merged.values()];
-}
 function parseClusterID(target: string | null): number | undefined {
   const match = target ? /^cluster:([1-9][0-9]*)$/.exec(target) : null;
   if (!match?.[1]) return undefined;
@@ -1064,12 +863,6 @@ function parseDomainName(target: string | null): string | undefined {
  * workspaces (e.g. Files) so every listing classifies failures the same way. */
 export function isRetryableStatus(status: number): boolean {
   return status === 0 || status === 429 || status >= 500;
-}
-/** A timeline failure keeps its cursor only when it was a pagination page
- * (not the fresh first page, which has no cursor to keep) that failed with a
- * transient status. */
-function retryableCursorFailure(cursor: string | undefined, status: number): boolean {
-  return cursor !== undefined && isRetryableStatus(status);
 }
 function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
   return typeof value === 'object' && value !== null && 'readiness' in value && 'recovery_action' in value;
