@@ -267,16 +267,16 @@
   </div>
   {#snippet footer()}
     <div class="viewer-footer">
-      {#if metadata}<KataFileIssueAction {client} attachmentID={metadata.id} messageID={metadata.message_id} filename={metadata.filename || 'File'} />{/if}
       <div class="metadata">
         <span>{metadata?.mime_type || file.mime_type || 'Unknown type'}</span>
         <span>{formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0)}</span>
       </div>
       <div class="actions">
-        <Button size="sm" label="Open containing item" disabled={!metadata && !file.entry_key} onclick={openItem} />
+        {#if metadata}<KataFileIssueAction {client} attachmentID={metadata.id} messageID={metadata.message_id} filename={metadata.filename || 'File'} />{/if}
+        <Button size="sm" label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
         <Button
           size="sm"
-          label="Open containing conversation"
+          label="Open conversation"
           disabled={!metadata && !file.entry_key}
           onclick={openConversation}
         />

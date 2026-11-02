@@ -183,21 +183,16 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   const everythingActiveRow = await grid.getAttribute('aria-activedescendant');
   expect(everythingActiveRow).not.toBeNull();
   await page.keyboard.press('d');
-  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Confirm selected deletion' })).toBeVisible();
-  await tabTo(page, 'Cancel');
-  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await tabTo(page, 'Dry run');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('status').filter({ hasText: /Dry run/i })).toBeVisible();
 
-  const deletionsURL = page.url();
-  await page.goBack();
+  await page.keyboard.press('Escape');
   await expect(page).toHaveURL(everythingURL);
   await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await expect(grid).toBeFocused();
   await expect(grid).toHaveAttribute('aria-activedescendant', everythingActiveRow!);
-  await page.goForward();
-  await expect(page).toHaveURL(deletionsURL);
-  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
+  await expect(grid.locator('[aria-selected="true"]')).toHaveCount(1);
 });

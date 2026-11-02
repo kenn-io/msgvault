@@ -410,5 +410,17 @@ func (s *Server) handleCardDAVConnections(w http.ResponseWriter, r *http.Request
 		s.writeCardDAVAccountError(w, err, "CardDAV connection lookup failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, s.scheduledCardDAVConnections(result))
+}
+
+func (s *Server) scheduledCardDAVConnections(result CardDAVConnectionsResponse) CardDAVConnectionsResponse {
+	statuses := map[string]*CardDAVStatusResponse{}
+	for i := range result.Connections {
+		connection := &result.Connections[i]
+		if !connection.Orphaned {
+			statuses[CardDAVJobNameForConnection(connection.Connection)] = &connection.Status
+		}
+	}
+	s.applyCardDAVSchedules(statuses)
+	return result
 }
