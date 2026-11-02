@@ -249,6 +249,61 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	assertions.Equal(int64(7), activityCount)
 }
 
+func TestBuildIncrementalAppendFitsLowMemoryOnLargeArchive(t *testing.T) {
+	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 300_000)
+	require.NoError(t, setRelationshipTestMemoryLimit(db, "128MB"))
+	_, err := db.Exec("SET max_temp_directory_size = '128MB'")
+	require.NoError(t, err)
+
+	_, err = Build(t.Context(), db, BuildOptions{
+		Mode: ModeIncremental, CommittedRoot: committedRoot,
+		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(903_000), relationshipParquetCount(t, db, stagedRoot, DatasetLogicalContributions))
+}
+
+// BenchmarkBuildIncrementalAppend grows the committed archive while keeping
+// the append at 1,000 emails and the builder memory limit at 512MB.
+func BenchmarkBuildIncrementalAppend(b *testing.B) {
+	for _, committed := range []int64{100_000, 400_000} {
+		b.Run(fmt.Sprintf("committed-%dk", committed/1000), func(b *testing.B) {
+			committedRoot, stagedRoot, db := writeIncrementalAppendFixture(b, committed)
+			require.NoError(b, setRelationshipTestMemoryLimit(db, "512MB"))
+			b.ResetTimer()
+			for range b.N {
+				_, err := Build(b.Context(), db, BuildOptions{
+					Mode: ModeIncremental, CommittedRoot: committedRoot,
+					StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
+				})
+				require.NoError(b, err)
+			}
+		})
+	}
+}
+
+func writeIncrementalAppendFixture(tb testing.TB, committed int64) (string, string, *sql.DB) {
+	tb.Helper()
+	committedRoot, db := writeRelationshipBaseFixture(tb, true)
+	opts := syntheticRelationshipFanOutOptions{
+		firstMessageID: 1, messageCount: committed, memberCount: 3,
+		startDate: "2026-01-01", messageType: "email", conversationType: "email_thread",
+	}
+	writeSyntheticRelationshipFanOut(tb, db, committedRoot, opts)
+	_, err := Build(tb.Context(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
+	})
+	require.NoError(tb, err)
+
+	stagedRoot := tb.TempDir()
+	writeRelationshipParquet(tb, db, stagedRoot, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
+	opts.firstMessageID = committed + 1
+	opts.messageCount = 1000
+	opts.startDate = "2026-02-01"
+	writeSyntheticRelationshipFanOut(tb, db, stagedRoot, opts)
+	return committedRoot, stagedRoot, db
+}
+
 func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

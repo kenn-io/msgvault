@@ -103,11 +103,17 @@ GROUP BY canonical_id, event_date`, quoteSQLString(committed), delta)
 }
 
 func mergeLogicalContributionsSQL(committed, delta string) string {
+	// Every reduction groups by entry_key, and committed rows are already
+	// reduced. Only chat conversation keys recur across appends, so untouched
+	// keys can pass through without regrouping.
 	return fmt.Sprintf(`
-WITH old_rows AS (
-	SELECT * FROM read_parquet('%s')
-), new_rows AS (
-	SELECT * FROM (%s)
+WITH new_rows AS (
+	SELECT * FROM (%[2]s)
+), touched AS (
+	SELECT DISTINCT entry_key FROM new_rows
+), old_rows AS (
+	SELECT o.* FROM read_parquet('%[1]s') o
+	WHERE EXISTS (SELECT 1 FROM touched t WHERE t.entry_key = o.entry_key)
 ), combined AS (
 	SELECT * FROM old_rows UNION ALL SELECT * FROM new_rows
 ), unit_parts AS (
@@ -156,5 +162,8 @@ SELECT m.relation_kind, m.entry_key,
        CASE WHEN m.relation_kind = 1 THEN m.is_owner ELSE NULL::BOOLEAN END AS is_owner,
        CASE WHEN m.relation_kind = 1 THEN u.with_owner ELSE NULL::BOOLEAN END AS with_owner,
        m.domain
-FROM merged m LEFT JOIN units u USING (entry_key)`, quoteSQLString(committed), delta)
+FROM merged m LEFT JOIN units u USING (entry_key)
+UNION ALL
+SELECT o.* FROM read_parquet('%[1]s') o
+WHERE NOT EXISTS (SELECT 1 FROM touched t WHERE t.entry_key = o.entry_key)`, quoteSQLString(committed), delta)
 }

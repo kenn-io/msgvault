@@ -388,6 +388,35 @@ func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testi
 	}
 }
 
+func TestBuildIncrementalKeepsUntouchedChatContributions(t *testing.T) {
+	committedRoot, db := writeRelationshipBaseFixture(t, false)
+	setChatRelationshipFixture(t, db, committedRoot, 100, 2026)
+	effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
+	_, err := Build(t.Context(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
+		EffectiveAt: effectiveAt,
+	})
+	require.NoError(t, err)
+
+	stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
+	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 20)
+	_, err = db.Exec(`CREATE TEMP TABLE staged_roster AS
+		SELECT * FROM read_parquet(?) UNION
+		SELECT * FROM read_parquet(?)`,
+		relationshipParquetGlob(committedRoot, "conversation_participants"),
+		relationshipParquetGlob(stagedRoot, "conversation_participants"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, stagedRoot, "conversation_participants", "SELECT * FROM staged_roster")
+	_, err = Build(t.Context(), db, BuildOptions{
+		Mode: ModeIncremental, CommittedRoot: committedRoot,
+		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
+		EffectiveAt: effectiveAt,
+	})
+	require.NoError(t, err)
+	assertIncrementalContributionsMatchFullReduction(t, db, committedRoot, stagedRoot, effectiveAt)
+	assertIncrementalDatasetsMatchFullBuild(t, db, committedRoot, stagedRoot, effectiveAt)
+}
+
 func TestBuildIncrementalRecomputesNewlyEligibleOldTemperatureFacts(t *testing.T) {
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
 	setChatRelationshipFixture(t, db, committedRoot, 100, 2026)
