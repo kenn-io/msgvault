@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -822,11 +822,32 @@ describe('StructuredProfileEditor', () => {
     await expect(requests[0]!.json()).resolves.toEqual({ names: { add: [{ ...expected, name_kind: 'phonetic', is_derived: false, envelope: { source: 'user', ordinal: 2 } }], supersede: [11] } });
   });
 
-  it('defaults another Date to anniversary when a birthday already exists', () => {
-    const { controller } = requestHarness();
-    controller.structuredProfile!.dates = [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, original_value: '--02-14', envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }];
+  it.each([
+    { arrival: 'at mount', expected: 'anniversary' },
+    { arrival: 'after reload', expected: 'birthday' },
+  ])('defaults a new Date to $expected with a birthday arriving $arrival', async ({ arrival, expected }) => {
+    const birthday = { person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, original_value: '--02-14', envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const refreshed = { ...profile(4), dates: [birthday] };
+    const client = createAPIClient(async input => {
+      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+      if (path.endsWith('/profile')) return Response.json(refreshed, { headers: { ETag: '"person-7-r4"' } });
+      if (path === '/api/v1/people/7') return Response.json(person(4), { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+      throw new Error(`unexpected ${path}`);
+    });
+    const initial = bundle();
+    if (arrival === 'at mount') initial.structuredProfile = { ...profile(), dates: [birthday] };
+    const controller = new DirectoryProfileController(client, 7, initial);
     const view = render(StructuredProfileEditor, { controller, section: 'dates' });
-    try { expect(screen.getByLabelText('Date kind')).toHaveProperty('value', 'anniversary'); }
-    finally { view.unmount(); controller.destroy(); }
+    try {
+      if (arrival === 'after reload') {
+        await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value: '1985-04-12' } });
+        await act(async () => { await controller.reload(); });
+        expect(screen.getByRole('textbox', { name: 'Date' })).toHaveProperty('value', '1985-04-12');
+      }
+      expect(screen.getByLabelText('Date kind')).toHaveProperty('value', expected);
+    } finally { view.unmount(); controller.destroy(); }
   });
 });

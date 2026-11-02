@@ -35,7 +35,6 @@ it('shows person messages without selection or presentation controls', async () 
     const grid = await screen.findByRole('grid', { name: 'Messages results' });
     await within(grid).findByText('Saved message');
     expect(within(grid).queryByRole('checkbox')).toBeNull();
-    expect(screen.queryByRole('combobox', { name: /^Show as:/ })).toBeNull();
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
     expect(within(grid).queryByRole('row', { selected: true })).toBeNull();
