@@ -12,7 +12,9 @@ it.each([
   { state: 'conflict', leftKind: 'participant', pending: false, actionable: false, blocker: 'person_merge_required', mergeDisabled: false },
 ])('renders summaries and decisions for $state, pending=$pending, blocker=$blocker', async ({ state, leftKind, pending, actionable, blocker, mergeDisabled }) => {
   const row = { ...pair, state, left_kind: leftKind, actionable, blocker, basis: 'stable_provider_id', review_token: 'displayed-token' };
-  const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
+  const controller = new DirectoryReviewController(createAPIClient(async () => Response.json({ candidates: Array.from({ length: 11 }, (_, index) => ({ ...row, id: 17 + index })), offset: 10, limit: 11 })));
+  await controller.loadIdentityPage(10);
+  controller.pageError = 'Queue refresh failed';
   controller.rows = [row];
   if (pending) {
     controller.rows.push({ ...pair, id: 18 });
@@ -31,6 +33,8 @@ it.each([
     const separate = screen.getByRole('button', { name: 'Keep separate' });
     expect((merge as HTMLButtonElement).disabled).toBe(mergeDisabled);
     expect((separate as HTMLButtonElement).disabled).toBe(pending);
+    for (const name of ['Previous', 'Next', 'Retry page']) expect(screen.getByRole('button', { name })).toHaveProperty('disabled', pending);
+    for (const name of ['To review', 'History']) expect(screen.getByRole('radio', { name })).toHaveProperty('disabled', pending);
     if (blocker) expect(screen.getByText(blocker === 'person_merge_required' ? /Both are saved as different people/ : /Endpoint unsupported/)).toBeDefined();
     if (!mergeDisabled) {
       await fireEvent.click(merge);
