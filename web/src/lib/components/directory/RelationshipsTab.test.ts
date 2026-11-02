@@ -1,4 +1,4 @@
-import { controllerWith, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith as entityControllerWith, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +6,14 @@ import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
+
+function controllerWith(fetchFn: typeof fetch, personID = 7) {
+  return entityControllerWith(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.method === 'GET' && pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
+    return fetchFn(input, init);
+  }, personID);
+}
 
 function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
   return {
@@ -42,7 +50,6 @@ describe('RelationshipsTab', () => {
   it('renders curated connections', () => {
     const { client, controller } = controllerWith(async input => {
       const path = pathOf(requestOf(input));
-      if (path === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       throw new Error(`Unexpected ${path}`);
     });
     controller.relationships = [
@@ -109,7 +116,6 @@ describe('RelationshipsTab', () => {
     let reads = 0;
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       if (pathOf(request) !== '/api/v1/people/7/relationships') throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
       reads += 1;
       if (reads === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
@@ -158,7 +164,6 @@ describe('RelationshipsTab', () => {
       const created = relationship(44, 1, { source_person_id: 8, target_person_id: 7, start_date: { year: 2025 }, end_date: { year: 2026, month: 8 }, notes: 'Synthetic note' });
       const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input);
-        if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
         requests.push(request);
         const path = pathOf(request);
         if (path === '/api/v1/people/directory') return Response.json({ people: [
@@ -214,7 +219,6 @@ describe('RelationshipsTab', () => {
     try {
       const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input);
-        if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
         if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [
           { id: 8, revision: 1, display_name: 'Synthetic Counterpart', categories: [], contact_state: 'active', organizations: [] }
         ] });
@@ -255,7 +259,6 @@ describe('RelationshipsTab', () => {
     let reads = 0;
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       if (pathOf(request) === '/api/v1/relationship-types') {
         reads += 1;
         return Response.json({ relationship_types: [relationshipType()] });
@@ -277,7 +280,6 @@ describe('RelationshipsTab', () => {
     const created = relationship(45, 1, { source_person_id: 7, target_person_id: 9 });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') return Response.json({ people: [
@@ -318,7 +320,6 @@ describe('RelationshipsTab', () => {
     let writes = 0;
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
@@ -356,7 +357,6 @@ describe('RelationshipsTab', () => {
     const updated = relationship(41, 3, { notes: 'Concurrent note', end_date: { year: 2026, month: 8 } });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
@@ -390,7 +390,6 @@ describe('RelationshipsTab', () => {
     const updated = relationship(41, 3, { end_date: { year: 2026, month: 7 } });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
@@ -419,7 +418,6 @@ describe('RelationshipsTab', () => {
   it('closes an unchanged relationship edit without sending an empty patch', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     });
     const { client, controller } = controllerWith(fetchFn);
@@ -432,14 +430,13 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
-    expect(fetchFn.mock.calls.some(([input]) => requestOf(input).method === 'PATCH')).toBe(false);
+    expect(fetchFn.mock.calls.some(([input]) => requestOf(input).method !== 'GET')).toBe(false);
   });
 
   it('deletes the single underlying edge with its fresh ETag', async () => {
     const requests: Request[] = [];
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
@@ -466,7 +463,6 @@ describe('RelationshipsTab', () => {
     let posts = 0;
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') return Response.json({ people: [
         { id: 8, revision: 1, display_name: 'Synthetic Counterpart', categories: [], contact_state: 'active', organizations: [] }

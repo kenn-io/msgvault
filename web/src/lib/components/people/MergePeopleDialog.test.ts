@@ -117,5 +117,4 @@ async function checkRepresentativeLink(savedAnchor: boolean) {
   } finally { view.unmount(); controller.destroy(); }
 }
 
-it('links a saved representative and an observed person without promotion', () => checkRepresentativeLink(true));
-it('keeps the captured observed origin and skips linked and close callbacks after disposal during the saved profile read', () => checkRepresentativeLink(false));
+it.each([true, false])('links the captured representative and suppresses callbacks after disposal, saved anchor=%s', checkRepresentativeLink);

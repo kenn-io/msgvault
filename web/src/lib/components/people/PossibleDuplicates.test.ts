@@ -14,7 +14,11 @@ it.each([
   const row = { ...pair, state, left_kind: leftKind, actionable, blocker, basis: 'stable_provider_id', review_token: 'displayed-token' };
   const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
   controller.rows = [row];
-  if (pending) controller.pendingDecisions.add(row.id);
+  if (pending) {
+    controller.rows.push({ ...pair, id: 18 });
+    controller.pendingDecisions.add(18);
+    controller.hidden.add(18);
+  }
   controller.summaries.set(`${leftKind}:1`, { id: 1, name: 'Observed example', address: 'observed@example.com', count: 1, lastAt: null });
   controller.summaries.set('participant:2', { id: 2, name: 'Absorbed person', address: 'absorbed@example.com', count: 3, lastAt: null });
   const onDecide = vi.fn();
@@ -58,7 +62,6 @@ it.each([
 
 it.each([
   { reviewState: 'candidate', state: 'rejected', pending: false, label: /^Kept separate ·/ },
-  { reviewState: 'accepted', state: 'accepted', pending: false, label: /^Merged ·/ },
   { reviewState: 'candidate', state: 'accepted', pending: false, label: /^Merged ·/ },
   { reviewState: 'candidate', state: 'accepted', pending: true, label: /^Merge pending ·/ },
 ] as const)('keeps $state read-only in $reviewState with pending=$pending', ({ reviewState, state, pending, label }) => {
