@@ -24,6 +24,27 @@ describe('CardDAVOperations', () => {
     controller.destroy();
   });
 
+  it('shows queue time while a sync is admitted and running', async () => {
+    const controller = new CardDAVController(createAPIClient(vi.fn<typeof fetch>()));
+    const status = {
+      configured: true, available: true, credential_configured: true, enabled: true,
+      scheduled: true, schedule: '0 * * * *', scheduler_running: false, queued_at: '2026-10-01T15:04:00Z'
+    };
+    controller.status = status;
+    controller.statusLoading = false;
+    render(CardDAVOperations, { controller });
+    const queued = screen.getByText('Queued since', { exact: false });
+    expect(queued.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-01T15:04:00Z');
+    controller.status = { ...status, scheduler_running: true };
+    await waitFor(() => expect(screen.getByLabelText('Active CardDAV sync').textContent).toContain('Running'));
+    controller.status = { ...status, active: {
+      id: 1, account_id: 1, trigger: 'scheduled', full: false, state: 'running', started_at: '2026-10-01T15:05:00Z', books: 0, created: 0, updated: 0, removed: 0
+    } };
+    await waitFor(() => expect(screen.getByText('Started', { exact: false }).getAttribute('datetime')).toBe('2026-10-01T15:05:00Z'));
+    expect(screen.getByText('Queued since', { exact: false })).toBeDefined();
+    controller.destroy();
+  });
+
   it('renders independent status, roles, history and never exposes a book URL marker', async () => {
     const forbidden = 'forbidden-url-marker.example.test/private';
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

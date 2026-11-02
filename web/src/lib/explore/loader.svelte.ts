@@ -229,6 +229,7 @@ export class ExploreLoader {
           const groupResult = loaded.result as ExploreGroupResult;
           this.result = {
             rows: [],
+            warnings: groupResult.warnings,
             totalCount: groupResult.totalCount,
             cacheRevision: groupResult.cacheRevision,
             searchProvenance: groupResult.searchProvenance,

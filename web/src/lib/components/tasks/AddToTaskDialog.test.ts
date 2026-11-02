@@ -76,19 +76,15 @@ describe('Add to task', () => {
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
-  it.each(['create', 'cancel'])('closes its single dialog and reports only completed changes after %s', async (mode) => {
+  it.each(['create', 'cancel'])('closes its single dialog after %s', async (mode) => {
     const onclose = vi.fn();
-    const onchanged = vi.fn();
     const client = taskCreationClient();
-    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose, onchanged } });
+    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose } });
     try {
       await screen.findByRole('button', { name: 'Cancel' });
       expect(screen.getAllByRole('dialog')).toHaveLength(1);
       await fireEvent.click(screen.getByRole('button', { name: mode === 'cancel' ? 'Cancel' : 'Create task' }));
       await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
-      expect(onchanged).not.toHaveBeenCalled();
-      view.unmount();
-      expect(onchanged).toHaveBeenCalledTimes(mode === 'cancel' ? 0 : 1);
     } finally { view.unmount(); }
   });
 

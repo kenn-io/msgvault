@@ -12,7 +12,7 @@ All notable changes to msgvault, grouped by release.
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
-- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.31.0 adds optional participant IDs to messages in conversation responses.
+- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.36.0 adds optional participant IDs to messages in conversation responses.
 - The web UI opens Messages first, alongside People, Files, and Sources. Saved views move into the sidebar with Undo, run history opens from the status dot's Past runs menu, and Display combines appearance controls. Old Operations links open Settings Overview, with Past runs open when they include a run, status, or history filter. Old Saved views links open Messages.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
 - Gmail full sync now includes Spam and Trash. Existing archives need an
@@ -48,6 +48,12 @@ All notable changes to msgvault, grouped by release.
   while other media keeps its 250 MiB default. WAV and MP3 recordings retain
   their detected audio MIME type and use shared Docbank audio delivery under
   `all_sources_upload_consent`; the audio path currently accepts up to 1 GiB.
+
+- Automatic message, person, and document indexing yields to queued syncs after
+  one minute and ends each pass after five minutes. It saves completed provider
+  requests before resuming behind waiting work.
+- Sources and CardDAV show when a waiting sync entered the queue, including
+  waits that begin after the page opens.
 
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.

@@ -86,7 +86,7 @@
         {/if}
         <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{#if message.subject}{message.subject}{:else}<ChevronUp size={16} aria-hidden="true" />{/if}</button>
       </div>
-      <MessageMenu {client} {message} {hasRenderableHTML} {viewMode} {onViewModeChange} {onOpenSettings} onTasksChange={() => tasksRefresh++} onError={(error) => menuError = error} />
+      <MessageMenu {client} {message} {hasRenderableHTML} {viewMode} {onViewModeChange} {onOpenSettings} onTaskDialogClose={() => tasksRefresh++} onError={(error) => menuError = error} />
     </div>
 
     {#if message.relatedMessageId}

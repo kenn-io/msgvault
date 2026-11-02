@@ -5,19 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	docbankdocument "go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 const (
-	maxWorkerRunLimit   = 1000
-	maxWorkerRetryDelay = 7 * 24 * time.Hour
+	maxWorkerRunLimit         = 1000
+	maxWorkerRetryDelay       = 7 * 24 * time.Hour
+	workerClaimCleanupTimeout = 5 * time.Second
 )
 
 var (
@@ -34,6 +37,7 @@ type Ledger interface {
 	ListDocumentVectorChunkCandidates(ctx context.Context, generationID, afterChunkID int64, limit int) ([]store.DocumentVectorChunkCandidate, error)
 	ClaimDocumentVectorChunk(ctx context.Context, generationID, afterChunkID int64, scanLimit int, owner string, now time.Time, leaseDuration time.Duration) (*store.DocumentVectorChunkClaim, error)
 	RenewDocumentVectorChunkClaim(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time, leaseDuration time.Duration) (time.Time, error)
+	ReleaseDocumentVectorChunkClaim(ctx context.Context, generationID int64, token, owner string, fence int64, submitted bool, now time.Time) error
 	CommitDocumentVectorPublication(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time) error
 	FailDocumentVectorChunk(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time, nextRetryAt *time.Time, terminal bool, errorCode string) error
 }
@@ -43,7 +47,7 @@ var _ Ledger = (*store.Store)(nil)
 // WorkerDeps are the bounded collaborators and policy values for Worker.
 type WorkerDeps struct {
 	Ledger   Ledger
-	Provider Provider
+	Provider vector.DocumentEmbedder
 	Backend  Backend
 
 	Owner             string
@@ -110,9 +114,11 @@ type workerClaimHeartbeat struct {
 	doneCh       chan struct{}
 	stopOnce     sync.Once
 
-	mu     sync.Mutex
-	active map[string]*store.DocumentVectorChunkClaim
-	runErr error
+	mu        sync.Mutex
+	active    map[string]*store.DocumentVectorChunkClaim
+	runErr    error
+	finalized map[string]bool
+	submitted map[string]bool
 }
 
 func newWorkerClaimHeartbeat(
@@ -122,7 +128,8 @@ func newWorkerClaimHeartbeat(
 	heartbeat := &workerClaimHeartbeat{
 		worker: worker, generationID: generationID, ctx: workCtx, cancel: cancel,
 		stopCh: make(chan struct{}), doneCh: make(chan struct{}),
-		active: make(map[string]*store.DocumentVectorChunkClaim, len(claims)),
+		active:    make(map[string]*store.DocumentVectorChunkClaim, len(claims)),
+		finalized: make(map[string]bool, len(claims)), submitted: make(map[string]bool, len(claims)),
 	}
 	for _, claim := range claims {
 		heartbeat.active[claim.Token] = claim
@@ -250,11 +257,17 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	result.AfterGenerationID = generationID
 
 	claims, err := w.collectClaims(ctx, generationID, limit, &result)
-	if err != nil || len(claims) == 0 {
+	if len(claims) == 0 {
 		return result, err
 	}
 	heartbeat := newWorkerClaimHeartbeat(ctx, w, generationID, claims)
-	defer heartbeat.stop()
+	defer func() {
+		heartbeat.stop()
+		runErr = errors.Join(runErr, w.releaseUnfinishedClaims(ctx, generationID, heartbeat, claims, &result))
+	}()
+	if err != nil {
+		return result, err
+	}
 	preparedTexts := make(map[string]string, len(claims))
 	preparedClaims := make([]*store.DocumentVectorChunkClaim, 0, len(claims))
 	for _, claimGroup := range groupWorkerClaimsByExtraction(claims) {
@@ -283,22 +296,142 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 		return result, errors.Join(runErr, heartbeat.err())
 	}
 	groups, inputs := groupWorkerClaims(preparedClaims, preparedTexts, w.deps.ContextualDocuments)
-	result.ProviderCalls = 1
-	result.ProviderDocuments = len(inputs)
-	for _, input := range inputs {
-		result.ProviderChunks += len(input.Chunks)
-		for _, text := range input.Chunks {
-			result.ProviderInputChars += utf8.RuneCountInString(text)
+	if jobctx.StopRequested(ctx) {
+		return result, errors.Join(runErr, heartbeat.err(), ctx.Err())
+	}
+	groups, inputs, err = w.publishSaved(ctx, generationID, heartbeat, groups, inputs, &result)
+	runErr = errors.Join(runErr, err)
+	if len(inputs) > 0 && ctx.Err() == nil && heartbeat.err() == nil {
+		runErr = errors.Join(runErr, w.publishRequests(ctx, generationID, heartbeat, groups, inputs, &result))
+	}
+	return result, errors.Join(runErr, heartbeat.err(), ctx.Err())
+}
+
+// publishSaved publishes the documents whose vectors an earlier pass saved
+// before it stopped, under the current claims, and returns the documents that
+// still need a provider request. A document is reused only when every chunk
+// was saved, because contextual vectors depend on the whole document. A lookup
+// error returns no inputs so the caller cannot dispatch work with unknown state.
+func (w *Worker) publishSaved(
+	ctx context.Context, generationID GenerationID, heartbeat *workerClaimHeartbeat,
+	groups [][]*store.DocumentVectorChunkClaim, inputs []vector.DocumentInput, result *RunResult,
+) ([][]*store.DocumentVectorChunkClaim, []vector.DocumentInput, error) {
+	var tokens []string
+	for _, group := range groups {
+		for _, claim := range group {
+			tokens = append(tokens, claim.Token)
 		}
 	}
+	saved, err := w.deps.Backend.UnpublishedTokens(heartbeat.context(), generationID, w.deps.Dimension, tokens)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read saved document vectors: %w", err)
+	}
+	var pendingGroups [][]*store.DocumentVectorChunkClaim
+	var pendingInputs []vector.DocumentInput
+	var savedClaims []*store.DocumentVectorChunkClaim
+	for index, group := range groups {
+		if slices.ContainsFunc(group, func(claim *store.DocumentVectorChunkClaim) bool { return !saved[claim.Token] }) {
+			pendingGroups = append(pendingGroups, group)
+			pendingInputs = append(pendingInputs, inputs[index])
+			continue
+		}
+		savedClaims = append(savedClaims, group...)
+	}
+	return pendingGroups, pendingInputs, w.commitClaims(ctx, generationID, heartbeat, savedClaims, result)
+}
 
-	vectors, providerErr := w.deps.Provider.EmbedDocuments(heartbeat.context(), inputs)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return result, ctxErr
+// publishRequests saves and publishes each provider request before the next
+// one is sent. A request to yield is scheduling control: the claims of
+// documents not yet embedded are released without counting an attempt.
+func (w *Worker) publishRequests(
+	ctx context.Context, generationID GenerationID, heartbeat *workerClaimHeartbeat,
+	groups [][]*store.DocumentVectorChunkClaim, inputs []vector.DocumentInput, result *RunResult,
+) (runErr error) {
+	sent := 0
+	providerErr := vector.EmbedDocumentRequests(heartbeat.context(), w.deps.Provider, inputs, func(first, count int) {
+		requestGroups := groups[first : first+count]
+		result.countProviderRequest(inputs[first : first+count])
+		for _, group := range requestGroups {
+			for _, claim := range group {
+				heartbeat.submitted[claim.Token] = true
+			}
+		}
+	},
+		func(first int, vectors [][][]float32) error {
+			end := min(first+len(vectors), len(inputs))
+			runErr = errors.Join(runErr, w.publishResponse(
+				ctx, generationID, heartbeat, groups[first:end], inputs[first:end], vectors, nil, result,
+			))
+			sent = end
+			return errors.Join(runErr, ctx.Err(), heartbeat.err())
+		})
+	_, perRequest := w.deps.Provider.(vector.DocumentRequestEmbedder)
+	switch {
+	case sent == len(inputs):
+		return runErr
+	case runErr != nil && perRequest:
+		return runErr
+	case errors.Is(providerErr, jobctx.ErrYieldedToWaiter) && ctx.Err() == nil:
+		return errors.Join(runErr, jobctx.ErrorAfterYield(ctx, providerErr))
+	case ctx.Err() != nil || heartbeat.err() != nil:
+		return errors.Join(runErr, providerErr)
 	}
-	if heartbeatErr := heartbeat.err(); heartbeatErr != nil {
-		return result, heartbeatErr
+	var submittedGroups [][]*store.DocumentVectorChunkClaim
+	var submittedInputs []vector.DocumentInput
+	for i := sent; i < len(groups); i++ {
+		if slices.ContainsFunc(groups[i], func(claim *store.DocumentVectorChunkClaim) bool { return heartbeat.submitted[claim.Token] }) {
+			submittedGroups = append(submittedGroups, groups[i])
+			submittedInputs = append(submittedInputs, inputs[i])
+		}
 	}
+	if len(submittedGroups) == 0 {
+		return errors.Join(runErr, providerErr)
+	}
+	return errors.Join(runErr, w.publishResponse(
+		ctx, generationID, heartbeat, submittedGroups, submittedInputs, nil, providerErr, result,
+	))
+}
+
+func (r *RunResult) countProviderRequest(inputs []vector.DocumentInput) {
+	r.ProviderCalls++
+	r.ProviderDocuments += len(inputs)
+	for _, input := range inputs {
+		r.ProviderChunks += len(input.Chunks)
+		for _, text := range input.Chunks {
+			r.ProviderInputChars += utf8.RuneCountInString(text)
+		}
+	}
+}
+
+// releaseUnfinishedClaims gives a fresh pass immediate access to unfinished
+// work. Only requests that never reached the provider receive an attempt refund.
+func (w *Worker) releaseUnfinishedClaims(
+	ctx context.Context, generationID GenerationID, heartbeat *workerClaimHeartbeat,
+	claims []*store.DocumentVectorChunkClaim, result *RunResult,
+) (runErr error) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerClaimCleanupTimeout)
+	defer cancel()
+	for _, claim := range claims {
+		if heartbeat.finalized[claim.Token] {
+			continue
+		}
+		w.resetCursor(result)
+		result.Exhausted = false
+		runErr = errors.Join(runErr, w.deps.Ledger.ReleaseDocumentVectorChunkClaim(
+			cleanupCtx, int64(generationID), claim.Token, claim.LeaseOwner, claim.LeaseFence,
+			heartbeat.submitted[claim.Token], w.deps.Now(),
+		))
+	}
+	return runErr
+}
+
+// publishResponse saves one provider response, then publishes or fails its
+// claims. Cancellation and heartbeat loss are left for the caller to report.
+func (w *Worker) publishResponse(
+	ctx context.Context, generationID GenerationID, heartbeat *workerClaimHeartbeat,
+	groups [][]*store.DocumentVectorChunkClaim, inputs []vector.DocumentInput,
+	vectors [][][]float32, providerErr error, result *RunResult,
+) (runErr error) {
 	outcomes, responseErr := validateWorkerProviderDocuments(inputs, vectors, providerErr, w.deps.Dimension)
 	var embeddings []Embedding
 	var completedClaims []*store.DocumentVectorChunkClaim
@@ -312,52 +445,70 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 			completedClaims = append(completedClaims, claim)
 		}
 	}
-	result.Embedded = len(completedClaims)
+	result.Embedded += len(completedClaims)
 	if len(embeddings) > 0 {
-		if err := w.deps.Backend.PutUnpublished(heartbeat.context(), generationID, w.deps.Dimension, embeddings); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return result, ctxErr
+		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerClaimCleanupTimeout)
+		// Claim loss still stops persistence; the run deadline only stops provider work.
+		stop := context.AfterFunc(heartbeat.context(), func() {
+			if ctx.Err() == nil {
+				cancel()
 			}
-			if heartbeatErr := heartbeat.err(); heartbeatErr != nil {
-				return result, heartbeatErr
+		})
+		err := w.deps.Backend.PutUnpublished(saveCtx, generationID, w.deps.Dimension, embeddings)
+		stop()
+		cancel()
+		if err != nil {
+			putErr := fmt.Errorf("put unpublished document vectors: %w", err)
+			if ctx.Err() != nil || heartbeat.err() != nil {
+				return errors.Join(responseErr, putErr)
 			}
-			putErr := fmt.Errorf("%w: %w", errBackendPut, err)
-			failureErr := w.failClaims(ctx, generationID, completedClaims, putErr, heartbeat, &result)
-			runErr = errors.Join(runErr, fmt.Errorf("put unpublished document vectors: %w", err), failureErr)
+			failureErr := w.failClaims(ctx, generationID, completedClaims, fmt.Errorf("%w: %w", errBackendPut, err), heartbeat, result)
+			runErr = errors.Join(runErr, putErr, failureErr)
 		} else {
-			for _, claim := range completedClaims {
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return result, errors.Join(runErr, ctxErr)
-				}
-				if err := heartbeat.releaseForTransition(claim); err != nil {
-					runErr = errors.Join(runErr, err)
-					break
-				}
-				err := w.deps.Ledger.CommitDocumentVectorPublication(heartbeat.context(), int64(generationID), claim.Token, claim.LeaseOwner, claim.LeaseFence, w.deps.Now())
-				switch {
-				case err == nil:
-					result.Published++
-				case errors.Is(err, store.ErrDocumentVectorSourceChanged):
-					result.SourceChanged++
-					if deleteErr := w.deps.Backend.DeleteTokens(heartbeat.context(), generationID, []string{claim.Token}); deleteErr != nil {
-						runErr = errors.Join(runErr, fmt.Errorf("delete changed document vector token: %w", deleteErr))
-					}
-				default:
-					runErr = errors.Join(runErr, err)
-				}
-			}
+			// A later pass publishes saved vectors without another request.
+			jobctx.RecordProgress(ctx)
+			runErr = errors.Join(runErr, w.commitClaims(ctx, generationID, heartbeat, completedClaims, result))
 		}
 	}
 	for documentIndex, outcome := range outcomes {
 		if outcome.err == nil {
 			continue
 		}
-		failureErr := w.failClaims(ctx, generationID, groups[documentIndex], outcome.err, heartbeat, &result)
+		failureErr := w.failClaims(ctx, generationID, groups[documentIndex], outcome.err, heartbeat, result)
 		runErr = errors.Join(runErr, outcome.err, failureErr)
 	}
-	runErr = errors.Join(runErr, responseErr)
-	runErr = errors.Join(runErr, heartbeat.err())
-	return result, runErr
+	return errors.Join(runErr, responseErr)
+}
+
+// commitClaims publishes claims whose vectors are saved.
+func (w *Worker) commitClaims(
+	ctx context.Context, generationID GenerationID, heartbeat *workerClaimHeartbeat,
+	claims []*store.DocumentVectorChunkClaim, result *RunResult,
+) (runErr error) {
+	for _, claim := range claims {
+		if ctx.Err() != nil {
+			return runErr
+		}
+		if err := heartbeat.releaseForTransition(claim); err != nil {
+			return errors.Join(runErr, err)
+		}
+		err := w.deps.Ledger.CommitDocumentVectorPublication(heartbeat.context(), int64(generationID), claim.Token, claim.LeaseOwner, claim.LeaseFence, w.deps.Now())
+		switch {
+		case err == nil:
+			heartbeat.finalized[claim.Token] = true
+			result.Published++
+			jobctx.RecordProgress(ctx)
+		case errors.Is(err, store.ErrDocumentVectorSourceChanged):
+			heartbeat.finalized[claim.Token] = true
+			result.SourceChanged++
+			if deleteErr := w.deps.Backend.DeleteTokens(heartbeat.context(), generationID, []string{claim.Token}); deleteErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("delete changed document vector token: %w", deleteErr))
+			}
+		default:
+			runErr = errors.Join(runErr, err)
+		}
+	}
+	return runErr
 }
 
 // finalizeOutcomes derives public pass accounting only from durable chunk
@@ -459,7 +610,7 @@ func (w *Worker) collectClaims(ctx context.Context, generationID GenerationID, l
 		}
 		claim, err := w.deps.Ledger.ClaimDocumentVectorChunk(ctx, int64(generationID), after, 1, w.deps.Owner, w.deps.Now(), w.deps.LeaseDuration)
 		if err != nil {
-			return nil, fmt.Errorf("claim document vector chunk: %w", err)
+			return claims, fmt.Errorf("claim document vector chunk: %w", err)
 		}
 		after = candidate.ChunkID
 		if claim != nil {
@@ -565,6 +716,7 @@ func (w *Worker) failClaims(
 			failureErr = errors.Join(failureErr, err)
 			continue
 		}
+		heartbeat.finalized[claim.Token] = true
 		if terminal {
 			result.Terminal++
 		} else {
