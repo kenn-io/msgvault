@@ -9,6 +9,12 @@ import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
 
 const when = '2026-07-19T10:00:00Z';
+const emptyCalendar = (year: number) => ({
+  participant_id: 1, canonical_id: 1, year, timezone: 'UTC', days: [], annual: [],
+  current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } },
+  peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1,
+  effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1,
+});
 function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>, requests?: string[]) {
   return createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -50,14 +56,14 @@ it('keeps the day across Details and the file filter across Files', async () => 
     const root = screen.getByRole('main', { name: 'People' });
     for (const width of [640, 1200]) {
       await act(() => observers.get(root)?.([{ target: root, contentRect: { width } } as unknown as ResizeObserverEntry], {} as ResizeObserver));
-      expect.soft(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
     }
     await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    expect.soft(screen.queryByRole('button', { name: 'Clear date' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear date' })).not.toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
-    expect.soft((await screen.findByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('report');
-    expect.soft((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
+    expect((await screen.findByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('report');
+    expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -65,7 +71,7 @@ it('Escape from People results closes the reader before leaving the person', asy
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: [] }),
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': async request => Response.json({ year: (await request.json()).year, days: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json(emptyCalendar((await request.json()).year)),
     '/api/v1/participants/1/timeline': () => Response.json({ rows: [{ key: 'message:2', kind: 'email', title: 'Saved message', occurred_at: when, first_at: when, message_type: 'email', conversation_type: 'email', source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, conversation_id: 2, anchor_message_id: 2, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/conversations/2': () => Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: when, message_type: 'email', from: 'Alice Example', to: [], body: 'Reader body', snippet: 'Reader body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false }),
     '/api/v1/cli/accounts': () => Response.json({ accounts: [] }),
@@ -95,7 +101,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: [] }),
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': async request => Response.json({ year: (await request.json()).year, days: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json(emptyCalendar((await request.json()).year)),
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
@@ -257,7 +263,7 @@ it("passes the saved person's durable ID to Files when the first binding is draf
     if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
     if (path === '/api/v1/people/91') return Response.json(profile);
     if (path === '/api/v1/participants/1') return Response.json({ error: 'not_found' }, { status: 404 });
-    if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
+    if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
     if (path === '/api/v1/participants/1/files/search') return Response.json({ files: [first], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
     if (path === '/api/v1/people/91/files/search') return Response.json({ files: [second], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });

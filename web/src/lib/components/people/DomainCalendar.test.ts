@@ -15,7 +15,7 @@ it.each([
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     bodies.push(await request.json());
-    return Response.json({ rows: [1, 2, 3, 4].map(count => ({ key: `${year}-07-${17 + count}`, label: `${year}-07-${17 + count}`, count, estimated_bytes: 0, level: ['FIRST_QUARTILE', 'SECOND_QUARTILE', 'THIRD_QUARTILE', 'FOURTH_QUARTILE'][count - 1] })), total_count: 4, cache_revision: 'cache-domain', search_provenance: {} });
+    return Response.json({ rows: [1, 2, 3, 4].map(count => ({ key: `${year}-07-${17 + count}`, label: `${year}-07-${17 + count}`, count, estimated_bytes: 0, latest_at: `${year}-07-${17 + count}T12:00:00Z`, level: ['FIRST_QUARTILE', 'SECOND_QUARTILE', 'THIRD_QUARTILE', 'FOURTH_QUARTILE'][count - 1] })), total_count: 4, cache_revision: 'cache-domain', search_provenance: {} });
   });
   const view = render(DomainCalendarHost, { props: { client, domain: 'example.com', firstAt: '2022-01-01T12:00:00Z', lastAt, selectedDate: null, onDateChange: vi.fn() } });
   try {

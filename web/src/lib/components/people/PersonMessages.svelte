@@ -36,14 +36,14 @@
   let restoredBounds = $state<{ start: string; end: string }>();
   let hasPredicate = false;
   // Each history entry owns its reader: apply it with that entry's filters and keep it through their reload.
-  function restore(restored = relationshipReaderHistory(window.history.state, 'relationships', target)): void {
+  function restore(restored: ReturnType<typeof relationshipReaderHistory>): void {
     const filters = predicate.filters ?? [];
     hasPredicate &&= JSON.stringify(filters) === JSON.stringify(exploreState.current.filters);
     restoredRow = restored?.selection.kind === 'entry' ? restored.selection.row.key : null;
     restoredBounds = restoredRow ? restored?.bounds : undefined;
     exploreState.replaceCommittedRestorableNavigation({ filters, selectedRow: restoredRow, conversationAnchor: restoredRow && restored?.anchor ? String(restored.anchor) : null });
   }
-  untrack(() => restore());
+  untrack(() => restore(relationshipReaderHistory(window.history.state, 'relationships', target)));
   const conversationBounds = $derived(period ? { start: period.after, end: period.before } : restoredBounds);
   const selection = new ExploreSelectionState();
   const session = new EverythingSessionState();

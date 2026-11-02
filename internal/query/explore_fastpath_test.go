@@ -323,7 +323,7 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 	}
 }
 
-func TestExploreParticipantPopulationMatchesLegacyWithBoundedEnrichment(t *testing.T) {
+func TestExploreFastPathMatchesLegacyAndBoundsParticipantEnrichment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
