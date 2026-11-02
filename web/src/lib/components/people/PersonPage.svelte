@@ -4,7 +4,7 @@
   import type { MessagesTable } from '../../explore/loader.svelte';
   import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
-  import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
+  import { contextPredicate, type LinkOutcome, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
   import RelationshipHeader from '../relationships/RelationshipHeader.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
@@ -17,12 +17,12 @@
 
   let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
     onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
-    onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, personFilePresentation = 'files', personFileDirections = ['from_person'],
+    onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, onIdentityChange, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange, onMessagesTableChange,
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
-      onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>;
+      onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>; onIdentityChange?: () => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
       onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
@@ -51,6 +51,11 @@
     if (domain) domainYear = year;
     else if (controller.relationshipCalendarYear !== year) void controller.loadRelationshipYear(year);
   });
+  // Linking or unlinking moves a person's activity, so the caller's saved list refreshes too.
+  async function identityChanged(outcome: LinkOutcome): Promise<LinkOutcome> {
+    if (outcome.ok) await onIdentityChange?.();
+    return outcome;
+  }
   // Files pushes its own entry first, so this drops the cleared day only from that entry's reader.
   function clearDate(): void {
     selectedDate = null;
@@ -107,7 +112,7 @@
         loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
         {onReconcilePersonMerge}
-        onLinkParticipants={(a, b) => controller.linkParticipants(a, b)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)} />
+        onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(identityChanged)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(identityChanged)} />
     </div>
     {#if !details && scope}
       {#key `${target}:${controller.activityRevision}`}
