@@ -157,3 +157,42 @@ func TestImportRefusesNewestIncompatibleCheckpointAndFullRecovers(t *testing.T) 
 		})
 	}
 }
+
+func TestLoadStateSurvivesWebhookCompletion(t *testing.T) {
+	st, _, imp, src := setupImport(t)
+	summary, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+	require.NoError(t, err)
+	require.True(t, summary.Partial)
+	before, err := loadState(t.Context(), st, src, false)
+	require.NoError(t, err)
+	require.NotEqual(t, freshSourceState(src), before)
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), src.ID)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, execution.Release()) }()
+	run, err := execution.StartSyncContext(t.Context(), WebhookSyncType, "")
+	require.NoError(t, err)
+	require.NoError(t, st.CompleteSyncContext(t.Context(), run, ""))
+	after, err := loadState(t.Context(), st, src, false)
+	require.NoError(t, err)
+	assert.Equal(t, before.Phases, after.Phases)
+	assert.Equal(t, before.NextSurface, after.NextSurface)
+}
+
+func TestLoadStateInstagramSurvivesWebhookCompletion(t *testing.T) {
+	st, _, _, _ := setupImport(t)
+	src, err := st.GetOrCreateSource(InstagramSourceType, "app:9:page:100:instagram:200")
+	require.NoError(t, err)
+	state := freshSourceState(src)
+	state.Phases[instagramMediaEdge].After = "opaque-ig-cursor"
+	blob, err := json.Marshal(state)
+	require.NoError(t, err)
+	run, err := st.StartSync(src.ID, InstagramSourceType)
+	require.NoError(t, err)
+	require.NoError(t, st.PauseSyncWithCheckpoint(run, &store.Checkpoint{PageToken: string(blob)}))
+	other, err := st.StartSync(src.ID, "instagram_comments_webhook")
+	require.NoError(t, err)
+	require.NoError(t, st.CompleteSync(other, ""))
+	got, err := loadState(t.Context(), st, src, false)
+	require.NoError(t, err)
+	assert.Equal(t, state, got)
+}

@@ -74,7 +74,7 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 	}
 	var blob string
 	var priorID int64
-	prior, err := st.GetLastSuccessfulSyncContext(ctx, src.ID)
+	prior, err := st.GetLastSuccessfulSyncByTypeContext(ctx, src.ID, src.SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		blob = prior.CursorAfter.String
 		priorID = prior.ID
 	}
-	checkpoint, err := st.GetLatestCheckpointedSyncContext(ctx, src.ID)
+	checkpoint, err := st.GetLatestCheckpointedSyncByTypeContext(ctx, src.ID, src.SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, err
 	}
