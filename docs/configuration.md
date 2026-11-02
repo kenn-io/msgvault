@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: 2026-11-02
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -19,6 +19,13 @@ For a first archive, add only the sections required by your source. Optional
 provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
+
+### TikTok export imports
+
+`msgvault import tiktok <identifier> <archive>` reads a local ZIP or extracted
+folder without provider configuration or tokens. The path is on the daemon
+host. See [TikTok export import](usage/tiktok-export.md) for supported sections,
+profile identity, fallback rules, and format limitations. This source is unreleased.
 
 ### Validation
 

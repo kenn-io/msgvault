@@ -40,6 +40,8 @@ func manualSyncCLICommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
+	case "import":
+		return len(args) > 1 && args[1] == "tiktok"
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",
 		"sync-pocket", "sync-notion-meetings", "sync-twenty", "sync-muesli", "sync-granola", "sync-omi", "sync-calendar", "sync-synctech-sms", "sync-twilio":
 		if args[0] == "sync-circleback" || args[0] == "sync-plaud" || args[0] == "sync-pocket" || args[0] == "sync-notion-meetings" || args[0] == "sync-twilio" || args[0] == "sync-twenty" || args[0] == "sync-inline" {

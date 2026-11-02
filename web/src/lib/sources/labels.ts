@@ -12,7 +12,7 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
-  apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
+  apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger', tiktok_export: 'TikTok export',
   'google-groups': 'Google Groups'
 };
 const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {

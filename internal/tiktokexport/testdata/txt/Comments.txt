@@ -1,0 +1,3 @@
+Date: 2026-01-03 04:05:06
+Comment: A synthetic comment
+Link: https://www.tiktok.com/@example/video/9007199254740995
