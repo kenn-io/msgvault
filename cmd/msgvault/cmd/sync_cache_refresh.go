@@ -39,6 +39,9 @@ func manualSyncCLICommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	if args[0] == "import" && len(args) > 1 && args[1] == "linkedin" {
+		return true
+	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",
 		"sync-pocket", "sync-notion-meetings", "sync-twenty", "sync-muesli", "sync-granola", "sync-omi", "sync-calendar", "sync-synctech-sms", "sync-twilio":

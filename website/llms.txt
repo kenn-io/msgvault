@@ -46,6 +46,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [IMAP Mail](https://msgvault.io/docs/usage/imap.md): sync folders and prepare, edit, recover, or delete managed reply drafts
 - [Local Email](https://msgvault.io/docs/usage/importing.md)
 - [Remote Email Images](https://msgvault.io/docs/usage/remote-images.md): opt-in downloads and offline display
+- [LinkedIn Export](https://msgvault.io/docs/usage/linkedin.md)
 - [Text Messages](https://msgvault.io/docs/usage/text-messages.md)
 - [Google Calendar](https://msgvault.io/docs/usage/calendar.md)
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
