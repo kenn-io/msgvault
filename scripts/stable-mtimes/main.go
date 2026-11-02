@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -15,11 +16,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("list tracked files: %w", err)
 	}
+	dirs := make(map[string]struct{})
 	for name := range bytes.SplitSeq(files, []byte{0}) {
 		if len(name) == 0 {
 			continue
 		}
 		path := string(name)
+		for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+			dirs[dir] = struct{}{}
+			if dir == "." {
+				break
+			}
+		}
 		info, err := os.Lstat(path)
 		if err != nil {
 			return fmt.Errorf("stat %s: %w", path, err)
@@ -37,6 +45,13 @@ func run() error {
 		stamp := time.Unix(946684800, int64(offset)*100)
 		if err := os.Chtimes(path, stamp, stamp); err != nil {
 			return fmt.Errorf("set times for %s: %w", path, err)
+		}
+	}
+	// Directory reads hash their own stat as well as each entry's name and stat.
+	stamp := time.Unix(946684800, 0)
+	for dir := range dirs {
+		if err := os.Chtimes(dir, stamp, stamp); err != nil {
+			return fmt.Errorf("set times for %s: %w", dir, err)
 		}
 	}
 	return nil
