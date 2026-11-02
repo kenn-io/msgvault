@@ -8093,15 +8093,18 @@ type MessageDetail struct {
 	ID                int64    `json:"id"`
 	IsFromMe          *bool    `json:"is_from_me,omitempty"`
 	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+
+	// LocalAutoKind Advisory kind from a local auto label in the closed mail-kind enum. User and provider labels are excluded; absent on older servers.
+	LocalAutoKind    *string  `json:"local_auto_kind,omitzero"`
+	MessageType      *string  `json:"message_type,omitzero"`
+	RelatedMessageID *int64   `json:"related_message_id,omitempty"`
+	SentAt           string   `json:"sent_at" validate:"required"`
+	SizeBytes        int64    `json:"size_bytes"`
+	Snippet          string   `json:"snippet" validate:"required"`
+	SourceID         *int64   `json:"source_id,omitempty"`
+	SourceMessageID  *string  `json:"source_message_id,omitzero"`
+	Subject          string   `json:"subject" validate:"required"`
+	To               []string `json:"to" validate:"required"`
 }
 
 func (m MessageDetail) Validate() error {

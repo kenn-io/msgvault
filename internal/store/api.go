@@ -68,6 +68,7 @@ type APIMessage struct {
 	SentAt               time.Time
 	Snippet              string
 	Labels               []string
+	LocalAutoKind        string
 	HasAttachments       bool
 	HiddenTextPresent    bool
 	SizeEstimate         int64
@@ -321,6 +322,10 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 
 	// Get labels (single message, per-row is fine)
 	m.Labels, err = s.getLabels(ctx, m.ID)
+	if err != nil {
+		return nil, err
+	}
+	m.LocalAutoKind, err = s.MailKindLabelContext(ctx, m.ID)
 	if err != nil {
 		return nil, err
 	}

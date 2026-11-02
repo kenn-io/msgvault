@@ -44,9 +44,10 @@ import (
 // Version 33 flags unsent messages in the relationship activity dataset.
 // Version 34 carries hidden_text_present in message rows.
 // Version 35 adds the replaceable transactional message_records dataset.
+// Version 36 also projects local auto kind rows with advisory trust.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 35
+const CacheSchemaVersion = 36
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

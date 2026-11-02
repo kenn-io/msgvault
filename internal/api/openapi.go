@@ -390,7 +390,8 @@ import (
 // 3.36.0 adds canonical body_text to message details alongside the legacy body fallback.
 // 3.37.0 adds purpose-scoped mail kind consent endpoints.
 // 3.38.0 adds local mail kind classification endpoints.
-const APISchemaVersion = "3.38.0"
+// 3.39.0 adds provenance-checked local_auto_kind to message details.
+const APISchemaVersion = "3.39.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -169,6 +169,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		DeletedAt:         deletedAt,
 		Snippet:           m.Snippet,
 		Labels:            m.Labels,
+		LocalAutoKind:     stringValue(m.LocalAutoKind),
 		HasAttachments:    m.HasAttachments,
 		HiddenTextPresent: m.HiddenTextPresent,
 		SizeEstimate:      m.SizeBytes,

@@ -28,6 +28,8 @@ export interface MessageDetail {
   id: number;
   is_from_me?: boolean;
   labels: string[];
+  /** Advisory kind from a local auto label in the closed mail-kind enum. User and provider labels are excluded; absent on older servers. */
+  local_auto_kind?: string;
   message_type?: string;
   related_message_id?: number;
   sent_at: string;
