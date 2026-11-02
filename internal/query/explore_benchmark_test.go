@@ -15,9 +15,9 @@ import (
 // generated mixed archive in buildBenchData: 100,004 messages, 104 logical
 // entries, and 20,000 attachments. Warm first-page and grouped-view operations
 // have a 500 ms reference budget; shared CI compiles and executes a bounded
-// smoke iteration instead of enforcing wall-clock timing. first_page also
-// reports min-memory-MB, the smallest DuckDB memory_limit under which the page
-// succeeds with four query threads.
+// smoke iteration instead of enforcing wall-clock timing. Listing and grouping
+// sub-benchmarks also report min-memory-MB, the smallest DuckDB memory_limit
+// under which the operation succeeds with four query threads.
 //
 // Broad search deliberately transfers at most 10,000 ranked message IDs from
 // the authoritative search engine into DuckDB. EntryRow has no message-ID list,
@@ -28,7 +28,7 @@ func BenchmarkExploreLargeArchive(b *testing.B) {
 	ctx := context.Background()
 
 	b.Run("first_page", func(b *testing.B) {
-		firstPage := func() error {
+		benchmarkWithMinimumMemory(b, engine, func() error {
 			result, err := engine.Explore(ctx, ExploreRequest{Page: PageSpec{Limit: 50}})
 			if err != nil {
 				return err
@@ -36,22 +36,70 @@ func BenchmarkExploreLargeArchive(b *testing.B) {
 			require.Len(b, result.Rows, 50)
 			require.Equal(b, int64(104), result.TotalCount)
 			return nil
-		}
-		for b.Loop() {
-			require.NoError(b, firstPage())
-		}
-		b.ReportMetric(minimumMemoryLimitMB(b, engine, firstPage), "min-memory-MB")
+		})
 	})
 
+	b.Run("page_past_end", func(b *testing.B) {
+		benchmarkWithMinimumMemory(b, engine, func() error {
+			result, err := engine.Explore(ctx, ExploreRequest{Page: PageSpec{Limit: 50, Offset: 500}})
+			if err != nil {
+				return err
+			}
+			require.Empty(b, result.Rows)
+			require.Equal(b, int64(104), result.TotalCount)
+			return nil
+		})
+	})
+
+	b.Run("domain_filter", func(b *testing.B) {
+		benchmarkWithMinimumMemory(b, engine, func() error {
+			result, err := engine.Explore(ctx, ExploreRequest{
+				Context: Context{Domains: []string{"acme.com"}},
+				Page:    PageSpec{Limit: 50},
+			})
+			if err != nil {
+				return err
+			}
+			require.Len(b, result.Rows, 8)
+			require.Equal(b, int64(8), result.TotalCount)
+			return nil
+		})
+	})
+
+	for _, tc := range []struct {
+		dimension string
+		count     int64
+	}{
+		{"participant", 500},
+		{"domain", 50},
+	} {
+		b.Run(tc.dimension+"_groups", func(b *testing.B) {
+			benchmarkWithMinimumMemory(b, engine, func() error {
+				result, err := engine.ExploreGroups(ctx, ExploreGroupRequest{
+					Dimension: tc.dimension, Page: PageSpec{Limit: 50},
+				})
+				if err != nil {
+					return err
+				}
+				require.Len(b, result.Rows, 50)
+				require.Equal(b, tc.count, result.TotalCount)
+				return nil
+			})
+		})
+	}
+
 	b.Run("files_first_page", func(b *testing.B) {
-		for b.Loop() {
+		benchmarkWithMinimumMemory(b, engine, func() error {
 			result, err := engine.SearchFiles(ctx, FileSearchRequest{
 				Page: PageSpec{Limit: 500},
 			})
-			require.NoError(b, err)
+			if err != nil {
+				return err
+			}
 			require.Len(b, result.Files, 500)
 			require.Equal(b, int64(20_000), result.TotalCount)
-		}
+			return nil
+		})
 	})
 
 	b.Run("nested_group", func(b *testing.B) {
@@ -97,6 +145,15 @@ func BenchmarkExploreLargeArchive(b *testing.B) {
 			require.LessOrEqual(b, len(result.Rows), 50)
 		}
 	})
+}
+
+// benchmarkWithMinimumMemory times run, then reports its min-memory-MB.
+func benchmarkWithMinimumMemory(b *testing.B, engine *DuckDBEngine, run func() error) {
+	b.Helper()
+	for b.Loop() {
+		require.NoError(b, run())
+	}
+	b.ReportMetric(minimumMemoryLimitMB(b, engine, run), "min-memory-MB")
 }
 
 // minimumMemoryLimitMB bisects the smallest DuckDB memory_limit, in decimal
