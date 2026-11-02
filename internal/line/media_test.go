@@ -55,16 +55,33 @@ func TestMediaTranscodingRetry(t *testing.T) {
 }
 
 func TestMediaPreparingAtRetryHorizonFinishesAttachment(t *testing.T) {
-	checks := assert.New(t)
-
-	f := newInboxFixture(t)
-	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
-	f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
-	f.run(t)
-	var state string
-	require.NoError(t, f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-	checks.Equal("failed", state)
-	checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+	for _, tc := range []struct {
+		name                 string
+		receivedAge, advance time.Duration
+	}{
+		{"at receipt", retryHorizon, 0},
+		{"after retry", 0, 25 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			path := "/v2/bot/message/1/content"
+			f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
+			f.enqueue(t, f.fileEvent(), f.now.Add(-tc.receivedAge))
+			f.run(t)
+			if tc.advance > 0 {
+				checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
+				f.now = f.now.Add(tc.advance)
+				f.run(t)
+			}
+			var state string
+			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+			checks.Equal("failed", state)
+			checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+			checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
+		})
+	}
 }
 
 func TestMediaFailureAtRetryHorizonWaitsForConversationFinalization(t *testing.T) {
@@ -191,81 +208,107 @@ func TestMediaExternalProvider(t *testing.T) {
 }
 
 func TestMediaCapAndEmpty(t *testing.T) {
-	for _, body := range []string{"", "12345678", "123456789"} {
-		t.Run(string(rune('a'+len(body))), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, body             string
+		declaredSize, maxBytes int64
+		chunked                bool
+		state                  attachmentpolicy.DownloadState
+	}{
+		{"empty", "", 0, 8, false, attachmentpolicy.StateStored},
+		{"at limit", "12345678", 0, 8, false, attachmentpolicy.StateStored},
+		{"content length", "123456789", 0, 8, false, attachmentpolicy.StateSkipped},
+		{"declared size", "", 3, 2, false, attachmentpolicy.StateSkipped},
+		{"chunked", "123456789", 0, 8, true, attachmentpolicy.StateSkipped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
-
 			f := newInboxFixture(t)
-			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: 8}))
-			f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 200, Body: body})
-			f.enqueue(t, f.fileEvent(), time.Time{})
+			path := "/v2/bot/message/1/content"
+			if tc.chunked {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == path {
+						w.Header().Set("Content-Type", "application/octet-stream")
+						w.WriteHeader(http.StatusOK)
+						checks.NoError(http.NewResponseController(w).Flush())
+						_, err := io.WriteString(w, tc.body)
+						checks.NoError(err)
+						return
+					}
+					f.api.ServeHTTP(w, r)
+				}))
+				t.Cleanup(server.Close)
+				f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
+			} else {
+				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusOK, Body: tc.body})
+			}
+			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: tc.maxBytes}))
+			event := f.fileEvent()
+			event.Message.FileSize = tc.declaredSize
+			f.enqueue(t, event, time.Time{})
 			f.run(t)
 			ref := f.media(t)
-			if len(body) > 8 {
-				checks.Equal(attachmentpolicy.StateSkipped, ref.State)
+			checks.Equal(tc.state, ref.State)
+			if tc.state == attachmentpolicy.StateSkipped {
 				checks.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)
 				checks.Empty(ref.StoragePath)
 			} else {
-				checks.Equal(attachmentpolicy.StateStored, ref.State)
-				checks.Equal(len(body), ref.Size)
+				checks.Equal(len(tc.body), ref.Size)
 				checks.Len(ref.ContentHash, 64)
+			}
+			if tc.declaredSize > 0 {
+				checks.Zero(f.api.Count(http.MethodGet, path))
+				checks.NotZero(f.archived(t, "1").id)
 			}
 		})
 	}
 }
 
 func TestUnsendCancelsMedia(t *testing.T) {
-	f := newInboxFixture(t)
-	path := "/v2/bot/message/1/content"
-	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 202})
-	base := f.fileEvent()
-	f.enqueue(t, base, time.Time{})
-	f.run(t)
-	e := Event{Type: "unsend", WebhookEventID: "unsend-media", Timestamp: base.Timestamp + 1, Source: base.Source, Unsend: &Unsend{MessageID: "1"}}
-	f.enqueue(t, e, time.Time{})
-	f.run(t)
-	assert.Equal(t, attachmentpolicy.StateUnavailable, f.media(t).State)
-	f.now = f.now.Add(time.Hour)
-	f.run(t)
-	assert.Equal(t, 1, f.api.Count(http.MethodGet, path))
-	deleted := f.archived(t, "1").deleted
-	assert.True(t, deleted)
-}
-
-func TestMediaStoredContentSurvivesUnsend(t *testing.T) {
-	f := newInboxFixture(t)
-	base := f.fileEvent()
-	f.enqueue(t, base, time.Time{})
-	f.run(t)
-	prior := f.media(t)
-	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "unsend", Timestamp: base.Timestamp + 1, Source: base.Source, Unsend: &Unsend{MessageID: "1"}}, time.Time{})
-	f.run(t)
-	after := f.media(t)
-	assert.Equal(t, attachmentpolicy.StateStored, after.State)
-	assert.Equal(t, prior.ContentHash, after.ContentHash)
-	assert.Equal(t, prior.StoragePath, after.StoragePath)
-}
-
-func TestMediaUnsendBeforeOriginalNeverDownloads(t *testing.T) {
-	f := newInboxFixture(t)
-	base := f.fileEvent()
-	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "early-unsend", Timestamp: base.Timestamp + 1, Source: base.Source, Unsend: &Unsend{MessageID: "1"}}, time.Time{})
-	f.run(t)
-	f.enqueue(t, base, time.Time{})
-	f.run(t)
-	assert.Zero(t, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
-	assert.Equal(t, attachmentpolicy.StateUnavailable, f.media(t).State)
-}
-
-func TestMediaExpiryEndsPendingState(t *testing.T) {
-	f := newInboxFixture(t)
-	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
-	f.enqueue(t, f.fileEvent(), time.Time{})
-	f.run(t)
-	f.now = f.now.Add(25 * time.Hour)
-	f.run(t)
-	assert.Equal(t, attachmentpolicy.StateFailed, f.media(t).State)
-	assert.Equal(t, 1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	for _, tc := range []struct {
+		name  string
+		state attachmentpolicy.DownloadState
+		calls int
+	}{
+		{"pending", attachmentpolicy.StateUnavailable, 1},
+		{"stored", attachmentpolicy.StateStored, 1},
+		{"before original", attachmentpolicy.StateUnavailable, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			path := "/v2/bot/message/1/content"
+			if tc.name == "pending" {
+				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
+			}
+			base := f.fileEvent()
+			unsend := Event{Type: "unsend", WebhookEventID: "unsend-media", Timestamp: base.Timestamp + 1, Source: base.Source, Unsend: &Unsend{MessageID: "1"}}
+			var prior store.AttachmentRef
+			if tc.name == "before original" {
+				f.enqueue(t, unsend, time.Time{})
+				f.run(t)
+				f.enqueue(t, base, time.Time{})
+				f.run(t)
+			} else {
+				f.enqueue(t, base, time.Time{})
+				f.run(t)
+				prior = f.media(t)
+				f.enqueue(t, unsend, time.Time{})
+				f.run(t)
+			}
+			after := f.media(t)
+			checks.Equal(tc.state, after.State)
+			if tc.name == "stored" {
+				checks.Equal(prior.ContentHash, after.ContentHash)
+				checks.Equal(prior.StoragePath, after.StoragePath)
+			}
+			if tc.name == "pending" {
+				f.now = f.now.Add(time.Hour)
+				f.run(t)
+				checks.True(f.archived(t, "1").deleted)
+			}
+			checks.Equal(tc.calls, f.api.Count(http.MethodGet, path))
+		})
+	}
 }
 
 func TestMediaProfileFailureDoesNotDelayDownload(t *testing.T) {
@@ -316,53 +359,15 @@ func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
 	checks.Equal(`"file"`, string(metadata["type"]))
 }
 
-func TestMediaStreamingCapRejectsChunkedContent(t *testing.T) {
+func TestMediaChannelPolicy(t *testing.T) {
+	checks := assert.New(t)
 	f := newInboxFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v2/bot/message/1/content" {
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.WriteHeader(http.StatusOK)
-			assert.NoError(t, http.NewResponseController(w).Flush())
-			_, err := io.WriteString(w, "123456789")
-			assert.NoError(t, err)
-			return
-		}
-		f.api.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: 8}))
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorMediaPolicy(attachmentpolicy.Policy{DisabledReason: attachmentpolicy.SkipAccountPolicy}))
 	f.enqueue(t, f.fileEvent(), time.Time{})
 	f.run(t)
-	ref := f.media(t)
-	assert.Equal(t, attachmentpolicy.StateSkipped, ref.State)
-	assert.Equal(t, attachmentpolicy.SkipSizeCap, ref.SkipReason)
-	assert.Empty(t, ref.StoragePath)
-}
-
-func TestMediaChannelPolicy(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		policy attachmentpolicy.Policy
-		size   int64
-		reason attachmentpolicy.SkipReason
-	}{
-		{"disabled", attachmentpolicy.Policy{DisabledReason: attachmentpolicy.SkipAccountPolicy}, 0, attachmentpolicy.SkipAccountPolicy},
-		{"size cap", attachmentpolicy.Policy{MaxBytes: 2}, 3, attachmentpolicy.SkipSizeCap},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			checks := assert.New(t)
-			f := newInboxFixture(t)
-			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorMediaPolicy(tc.policy))
-			event := f.fileEvent()
-			event.Message.FileSize = tc.size
-			f.enqueue(t, event, time.Time{})
-			f.run(t)
-			media := f.media(t)
-			checks.Equal(attachmentpolicy.StateSkipped, media.State)
-			checks.Equal(tc.reason, media.SkipReason)
-			checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
-			checks.NotZero(f.archived(t, "1").id)
-		})
-	}
+	media := f.media(t)
+	checks.Equal(attachmentpolicy.StateSkipped, media.State)
+	checks.Equal(attachmentpolicy.SkipAccountPolicy, media.SkipReason)
+	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	checks.NotZero(f.archived(t, "1").id)
 }

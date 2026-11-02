@@ -51,6 +51,9 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 			identifier = chatwoot.SourceIdentifier("https://chatwoot.example.com", accountID, 8)
 		case "line":
 			identifier = "2000000001"
+			if conversationType == "channel" {
+				conversationType = "group_chat"
+			}
 		case sourceTypeInline:
 			identifier = "api.inline.chat:user:42"
 		}
@@ -84,6 +87,15 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 		excludedMessageID: provider + ":excluded",
 		retainedMessageID: provider + ":retained",
 	} {
+		if provider == "line" {
+			require.NoError(t, st.UpsertAttachmentRecordWithStats(t.Context(), messageID, store.AttachmentWrite{
+				SourceAttachmentID: sourceAttachmentID, SourcePartKey: sourceAttachmentID,
+				Filename: "synthetic.bin", MediaType: "file", StoragePath: path, ContentHash: hash, Size: 100,
+				Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit,
+				State: attachmentpolicy.StateStored,
+			}, false))
+			continue
+		}
 		require.NoError(t, replaceAttachments(messageID, []store.AttachmentRef{{
 			SourceAttachmentID: sourceAttachmentID,
 			StoragePath:        path,
@@ -541,7 +553,7 @@ func TestLinePurgeAppliesChannelPolicy(t *testing.T) {
 	f := newPurgeMediaFixture(t, "line")
 	var identifier string
 	must.NoError(f.store.DB().QueryRow("SELECT identifier FROM sources LIMIT 1").Scan(&identifier))
-	f.config.Line = []config.LineSource{{ChannelID: identifier, Media: new(false)}}
+	f.config.Line = []config.LineSource{{ChannelID: identifier, SecretEnv: "EXAMPLE_LINE_SECRET", Media: new(false)}}
 	command := newPurgeExcludedMediaLocalCmd(f.deps())
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})

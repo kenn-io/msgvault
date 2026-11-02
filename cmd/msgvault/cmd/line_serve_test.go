@@ -31,16 +31,23 @@ func TestLineServeMountsOnlyReadyRegisteredChannels(t *testing.T) {
 		config.LineSource{ChannelID: "2000000003", SecretEnv: "MISSING_LINE_SECRET", Enabled: true},
 		config.LineSource{ChannelID: "2000000004", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: false},
 		config.LineSource{ChannelID: "2000000005", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true},
+		config.LineSource{ChannelID: "2000000006", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true},
 	)
 	// Channels 3 and 4 are otherwise ready, so only the missing secret or the
 	// disabled flag keeps each one unmounted.
 	t.Setenv("MISSING_LINE_SECRET", "")
-	for _, channelID := range []string{"2000000003", "2000000004"} {
+	for _, channelID := range []string{"2000000003", "2000000004", "2000000006"} {
 		source, err := st.GetOrCreateSource("line", channelID)
 		must.NoError(err)
 		must.NoError(st.SetLineBotContext(t.Context(), source.ID, wiringBot))
 	}
 	_, err = st.GetOrCreateSource("line", "2000000005")
+	must.NoError(err)
+	retired, err := st.GetSourceByTypeAndIdentifier("line", "2000000006")
+	must.NoError(err)
+	active, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
+	must.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: active.ID})
 	must.NoError(err)
 	sched := scheduler.New(nil).WithLogger(testLoggerValue())
 	t.Cleanup(func() { <-sched.Stop().Done() })
@@ -50,6 +57,7 @@ func TestLineServeMountsOnlyReadyRegisteredChannels(t *testing.T) {
 	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
 	must.NoError(err)
 	checks.True(runtime.receiver.Active(source.ID, source.Identifier))
+	checks.False(runtime.receiver.Active(retired.ID, retired.Identifier))
 	jobs := sched.JobStatus()
 	must.Len(jobs, 1)
 	checks.Equal("line:2000000001", jobs[0].Name)
@@ -144,27 +152,4 @@ func TestLineServeStartupDrainsPendingWork(t *testing.T) {
 	status, err := st.LineInboxStatusContext(t.Context(), source.ID)
 	must.NoError(err)
 	assert.Zero(t, status.Pending)
-}
-
-func TestLineServeSkipsRetiredSource(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-
-	cfg, st, _ := lineWiringFixture(t)
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
-	must.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
-	must.NoError(err)
-	target, err := st.GetOrCreateSource("line", "2000000002")
-	must.NoError(err)
-	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: target.ID})
-	must.NoError(err)
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
-	must.NoError(err)
-	sched := scheduler.New(nil).WithLogger(testLoggerValue())
-	defer func() { <-sched.Stop().Done() }()
-	runtime, err := newLineRuntime(t.Context(), st, testInvocationWithConfig(loaded), sched, nil, testLoggerValue())
-	must.NoError(err)
-	checks.False(runtime.receiver.Active(source.ID, source.Identifier))
-	checks.Empty(sched.JobStatus())
 }

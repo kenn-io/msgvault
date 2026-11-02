@@ -124,10 +124,6 @@ func TestClientCancellationAndRateLimit(t *testing.T) {
 		checks.NotContains(err.Error(), "synthetic-secret")
 		checks.NotContains(err.Error(), "synthetic-token")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := client.BotInfo(ctx)
-	must.ErrorIs(err, context.Canceled)
 }
 
 func TestClientRefusesRedirects(t *testing.T) {

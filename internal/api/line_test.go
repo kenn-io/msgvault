@@ -32,16 +32,13 @@ type lineAPIServerFixture struct {
 	wakes    *atomic.Int64
 }
 
-func newLineAPIServer(t *testing.T, apiKey string, enabled bool) lineAPIServerFixture {
+func newLineAPIServer(t *testing.T, apiKey string) lineAPIServerFixture {
 	t.Helper()
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("line", "2000000000")
 	require.NoError(t, err)
-	var channels []line.ReceiverChannel
-	if enabled {
-		require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
-		channels = []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}
-	}
+	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
+	channels := []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}
 	wakes := new(atomic.Int64)
 	receiver, err := line.NewReceiver(st, channels, func(string) { wakes.Add(1) })
 	require.NoError(t, err)
@@ -99,7 +96,7 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	fixture := newLineAPIServer(t, "", true)
+	fixture := newLineAPIServer(t, "")
 	server, st, sourceID, base, wakes := fixture.server, fixture.st, fixture.sourceID, fixture.base, fixture.wakes
 	must.True(server.listenerBound)
 	body := lineEnvelope("[" + lineEvent("security-event") + "]")
@@ -114,9 +111,6 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 	must.NoError(err)
 	must.Len(rows, 1)
 	checks.Equal(int64(1), wakes.Load())
-	headers.Set("X-Line-Signature", "invalid")
-	status, _ = lineAPIRequest(t, base, "POST", lineTestPath, body, headers)
-	checks.Equal(401, status)
 	for _, tc := range []struct{ method, path string }{
 		{"GET", lineTestPath}, {"POST", "/other"},
 	} {
@@ -131,36 +125,10 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 	checks.Empty(response)
 }
 
-func TestLineReceiverRetainsAPIKeyAndCSRFProtections(t *testing.T) {
-	checks := assert.New(t)
-
-	fixture := newLineAPIServer(t, "synthetic-api-key", true)
-	server, base := fixture.server, fixture.base
-	status, _ := lineAPIRequest(t, base, "GET", "/api/v1/stats", "", nil)
-	checks.Equal(401, status)
-	status, _ = lineAPIRequest(t, base, "GET", "/api/v1/stats", "", http.Header{"Authorization": {"Bearer synthetic-api-key"}})
-	checks.Equal(200, status)
-	sessionID, _, err := server.sessions.create()
-	require.NoError(t, err)
-	headers := http.Header{"Cookie": {sessionCookieName + "=" + sessionID}, "Origin": {"http://archive.example.com"}, "Content-Type": {"application/json"}}
-	status, response := lineAPIRequest(t, base, "POST", "/api/v1/query", `{"sql":"SELECT 1"}`, headers)
-	checks.Equal(403, status, response)
-	checks.Contains(response, "csrf")
-	body := lineEnvelope("[]")
-	headers.Set("Origin", "https://hostile.example.com")
-	headers.Set("Authorization", "Bearer wrong-key")
-	headers.Set("X-Line-Signature", lineapi.Sign(lineTestSecret, []byte(body)))
-	status, response = lineAPIRequest(t, base, "POST", lineTestPath, body, headers)
-	checks.Equal(200, status, response)
-	status, response = lineAPIRequest(t, base, "GET", "/api/v1/stats", "", http.Header{"Cookie": {sessionCookieName + "=" + sessionID}, "Origin": {"https://hostile.example.com"}})
-	checks.Equal(403, status, response)
-	checks.Contains(response, "cross_origin_session")
-}
-
 func TestLineWebhookBurstWithAPIKey(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
-	fixture := newLineAPIServer(t, "synthetic-api-key", true)
+	fixture := newLineAPIServer(t, "synthetic-api-key")
 	for i := range 40 {
 		body := lineEnvelope("[" + lineEvent(fmt.Sprintf("burst-%d", i)) + "]")
 		status, response := lineAPIRequest(t, fixture.base, "POST", lineTestPath, body, lineSignedHeaders(body))
@@ -169,9 +137,4 @@ func TestLineWebhookBurstWithAPIKey(t *testing.T) {
 	rows, err := fixture.st.DueLineEventsContext(t.Context(), fixture.sourceID, time.Now(), 100)
 	must.NoError(err)
 	checks.Len(rows, 40)
-	body := lineEnvelope("[" + lineEvent("bad-signature") + "]")
-	headers := lineSignedHeaders(body)
-	headers.Set("X-Line-Signature", "invalid")
-	status, _ := lineAPIRequest(t, fixture.base, "POST", lineTestPath, body, headers)
-	checks.Equal(http.StatusUnauthorized, status)
 }

@@ -52,6 +52,7 @@ func TestLineSourceStatusReportsDurableInboxAndActiveReceiver(t *testing.T) {
 	status := response.Sources[0].LineWebhook
 	must.NotNil(status)
 	checks.Equal(true, status["active"])
+	checks.InDelta(float64(1), status["invalid_signatures"], 0)
 	checks.Equal(received.Format(time.RFC3339), status["last_received_at"])
 	checks.InDelta(float64(1), status["pending"], 0)
 	checks.InDelta(float64(1), status["failed"], 0)

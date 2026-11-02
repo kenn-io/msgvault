@@ -207,7 +207,10 @@ func TestReceiverUnsignedBodyReadsAreBounded(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(1)}, nil)
+	source, err := st.GetOrCreateSource("line", "2000000000")
+	must.NoError(err)
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
+	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
 	must.NoError(err)
 
 	const readLimit = 16
@@ -217,21 +220,22 @@ func TestReceiverUnsignedBodyReadsAreBounded(t *testing.T) {
 	var requests sync.WaitGroup
 	unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
 	t.Cleanup(unblock)
-	for range readLimit {
+	for index := range readLimit {
 		requests.Go(func() {
 			request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
-			// Fill a prefix before blocking, so each admitted reader retains bytes.
 			request.Body = io.NopCloser(io.MultiReader(strings.NewReader(strings.Repeat("x", 4096)), &receiverBlockingBody{started: started, release: release}))
 			response := httptest.NewRecorder()
 			receiver.ServeHTTP(response, request)
 			responses <- response.Code
 		})
-	}
-	for range readLimit {
 		select {
 		case <-started:
 		case <-time.After(5 * time.Second):
 			must.FailNow("timed out waiting for unsigned body reads")
+		}
+		if index == 7 {
+			body := receiverEnvelope(`[{"type":"message","webhookEventId":"signed-through","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}]`)
+			checks.Equal(http.StatusOK, serveSignedReceiver(receiver, body).Code, "signed delivery proceeds while unsigned readers occupy eight slots")
 		}
 	}
 
@@ -266,63 +270,34 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	source, err := st.GetOrCreateSource("line", "2000000000")
 	must.NoError(err)
 	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
-	must.NoError(err)
-	waitForRequests := func(started <-chan struct{}, count int, label string) {
-		t.Helper()
-		for range count {
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				must.FailNow("timed out waiting for " + label)
-			}
-		}
-	}
-	started := make(chan struct{}, 8)
+	started := make(chan struct{}, 16)
 	release := make(chan struct{})
 	responses := make(chan int, 16)
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
-			request.Body = &receiverBlockingBody{started: started, release: release}
-			response := httptest.NewRecorder()
-			receiver.ServeHTTP(response, request)
-			responses <- response.Code
-		})
-	}
-	waitForRequests(started, 8, "unauthenticated request bodies")
-	body := receiverEnvelope(`[{"type":"message","webhookEventId":"signed-through","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}]`)
-	response := serveSignedReceiver(receiver, body)
-	checks.Equal(http.StatusOK, response.Code)
-	close(release)
-	wg.Wait()
-	for range 8 {
-		checks.Equal(http.StatusUnauthorized, <-responses)
-	}
-
-	startedAuthenticated := make(chan struct{}, 16)
-	releaseAuthenticated := make(chan struct{})
-	limited, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) {
-		startedAuthenticated <- struct{}{}
-		<-releaseAuthenticated
+	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) {
+		started <- struct{}{}
+		<-release
 	})
 	must.NoError(err)
-	var authenticated sync.WaitGroup
+	var requests sync.WaitGroup
+	unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
+	t.Cleanup(unblock)
 	for index := range 16 {
-		authenticated.Go(func() {
+		requests.Go(func() {
 			eventID := fmt.Sprintf("authenticated-%d", index)
 			body := receiverEnvelope(fmt.Sprintf(`[{"type":"future","webhookEventId":%q,"timestamp":123}]`, eventID))
-			response := serveSignedReceiver(limited, body)
-			responses <- response.Code
+			responses <- serveSignedReceiver(receiver, body).Code
 		})
 	}
-	waitForRequests(startedAuthenticated, 16, "authenticated webhook commits")
+	for range 16 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			must.FailNow("timed out waiting for authenticated webhook commits")
+		}
+	}
 	blocked := receiverEnvelope(`[{"type":"future","webhookEventId":"overflow","timestamp":123}]`)
-	response = serveSignedReceiver(limited, blocked)
-	checks.Equal(http.StatusServiceUnavailable, response.Code)
-	close(releaseAuthenticated)
-	authenticated.Wait()
+	checks.Equal(http.StatusServiceUnavailable, serveSignedReceiver(receiver, blocked).Code)
+	unblock()
 	for range 16 {
 		checks.Equal(http.StatusOK, <-responses)
 	}

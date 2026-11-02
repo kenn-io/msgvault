@@ -1936,7 +1936,7 @@ func TestLineReceiverKeepsBackgroundDaemonAlive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := lifecycleTestConfig(t.TempDir())
 		cfg.Server.DaemonIdleTimeout = time.Second
-		cfg.Line = []config.LineSource{{ChannelID: "2000000001", Enabled: true}}
+		cfg.Line = []config.LineSource{{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true}}
 		var stopped atomic.Bool
 		tracker := newDaemonIdleTracker(cfg, func() { stopped.Store(true) }, testDiscardLogger())
 		if tracker != nil {

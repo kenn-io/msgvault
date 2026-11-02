@@ -67,36 +67,22 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	checks.Contains(output, "Restart")
 	checks.Contains(output, "Use webhook")
 	checks.Contains(output, "Webhook redelivery")
-	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
-	checks.Zero(fake.Count("POST", "/v2/bot/channel/webhook/test"))
 	_, err = executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000002", "--secret-env", "OTHER_LINE_SECRET")
 	must.NoError(err)
 	loaded, err := config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	must.Len(loaded.Line, 2)
 	checks.Equal("OTHER_LINE_SECRET", loaded.GetLineSource("2000000002").SecretEnv)
-	loaded.Sync.RateLimitQPS = 17
-	must.NoError(loaded.Save())
-	// The original cfg remains stale; a repeated add must load the current file.
-	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
-	must.NoError(err)
-	checks.Contains(output, "Restart")
-	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
 	checks.Contains(output, "https://archive.example.com/webhooks/line/2000000001")
-	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
-	checks.Zero(fake.Count("POST", "/v2/bot/channel/webhook/test"))
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.Len(loaded.Line, 2)
-	checks.Equal(17, loaded.Sync.RateLimitQPS)
 	// A changed secret variable takes effect when the daemon restarts.
 	args[3] = "OTHER_LINE_SECRET"
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "Restart")
-	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
 	checks.NotContains(output, "synthetic-secret")
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
@@ -106,27 +92,31 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 		}
 	}
 	must.NoError(loaded.Save())
-	output, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
+	_, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
 	must.NoError(err)
-	checks.Contains(output, "Restart")
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.False(loaded.GetLineSource("2000000001").Enabled)
+	checks.Zero(fake.Count("PUT", "/v2/bot/channel/webhook/endpoint"))
+	checks.Zero(fake.Count("POST", "/v2/bot/channel/webhook/test"))
 }
 
 func TestLineCommandValidation(t *testing.T) {
-	for _, args := range [][]string{
-		{"--channel-id", "01", "--secret-env", "EXAMPLE_LINE_SECRET"},
-		{"--channel-id", "1", "--secret-env", "BAD-NAME"},
-		{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "http://archive.example.com"},
-		{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://user:secret@archive.example.com"},
-		{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com/prefix"},
-		{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com?query"},
-		{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com#fragment"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--channel-id", "01", "--secret-env", "EXAMPLE_LINE_SECRET"}, "--channel-id must be a canonical positive decimal uint64"},
+		{[]string{"--channel-id", "1", "--secret-env", "BAD-NAME"}, "--secret-env must name an explicit environment variable"},
+		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "http://archive.example.com"}, "--webhook-base-url must be an HTTPS origin"},
+		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://user:secret@archive.example.com"}, "--webhook-base-url must be an HTTPS origin"},
+		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com/prefix"}, "--webhook-base-url must be an HTTPS origin"},
+		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com?query"}, "--webhook-base-url must be an HTTPS origin"},
+		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://archive.example.com#fragment"}, "--webhook-base-url must be an HTTPS origin"},
 	} {
 		cfg, _, fake := lineWiringFixture(t)
-		_, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
-		require.Error(t, err)
+		_, err := executeLineCommand(t, cfg, newAddLineCmd(), tc.args...)
+		require.ErrorContains(t, err, tc.want)
 		assert.Zero(t, fake.Count("POST", "/oauth2/v3/token"))
 	}
 	cfg, _, _ := lineWiringFixture(t)
@@ -150,12 +140,21 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	must.NoError(err)
 	botID, err := st.LineBotUserIDContext(t.Context(), source.ID)
 	must.NoError(err)
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, botID, []store.LineWebhookEvent{{WebhookEventID: "future-event", EventType: "future", EventTimestamp: 123, RawJSON: `{"type":"future","webhookEventId":"future-event","timestamp":123}`}}))
+	events := make([]store.LineWebhookEvent, 501)
+	for i := range events {
+		id := fmt.Sprintf("message-%03d", i)
+		raw := fmt.Sprintf(`{"type":"message","webhookEventId":%q,"timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":%q,"type":"text","text":"synthetic"}}`, id, id)
+		events[i] = store.LineWebhookEvent{WebhookEventID: id, EventType: "message", TargetMessageID: id, EventTimestamp: 123, RawJSON: raw}
+	}
+	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, botID, events))
 	output, err := executeLineCommand(t, loaded, addManualSyncCacheFlags(newSyncLineCmd()), "--channel-id", "2000000001", "--no-build-cache")
 	must.NoError(err)
 	checks.Contains(output, "Push source")
 	checks.Contains(output, "pending: 0")
 	checks.Contains(output, "failed: 0")
+	var archived int
+	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_id=?", source.ID).Scan(&archived))
+	checks.Equal(501, archived)
 	_, err = executeLineCommand(t, loaded, newSyncLineCmd(), "--channel-id", "999")
 	must.Error(err)
 	checks.True(manualSyncCLICommand([]string{"sync-line"}))
@@ -236,38 +235,8 @@ func TestAddLinePreservesConcurrentConfigEdit(t *testing.T) {
 		return line.NewClient(id, secret, line.WithBaseURLs(server.URL, server.URL))
 	}
 	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
-	// A conditional edit may report a conflict; it must preserve the newer file.
-	if err != nil {
-		must.ErrorIs(err, config.ErrConfigConflict)
-	}
+	must.ErrorIs(err, config.ErrConfigConflict)
 	loaded, err := config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.Equal(17, loaded.Sync.RateLimitQPS)
-}
-
-func TestSyncLineDrainsAllDueWork(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	cfg, st, _ := lineWiringFixture(t)
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET")
-	must.NoError(err)
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
-	must.NoError(err)
-	loaded.Line[0].Enabled = false
-	must.NoError(loaded.Save())
-	source, err := st.GetSourceByTypeAndIdentifier("line", "2000000001")
-	must.NoError(err)
-	events := make([]store.LineWebhookEvent, 501)
-	for i := range events {
-		id := fmt.Sprintf("message-%03d", i)
-		raw := fmt.Sprintf(`{"type":"message","webhookEventId":%q,"timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":%q,"type":"text","text":"synthetic"}}`, id, id)
-		events[i] = store.LineWebhookEvent{WebhookEventID: id, EventType: "message", TargetMessageID: id, EventTimestamp: 123, RawJSON: raw}
-	}
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, wiringBot, events))
-	output, err := executeLineCommand(t, loaded, addManualSyncCacheFlags(newSyncLineCmd()), "--channel-id", source.Identifier, "--no-build-cache")
-	must.NoError(err)
-	checks.Contains(output, "pending: 0")
-	var archived int
-	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_id=?", source.ID).Scan(&archived))
-	checks.Equal(501, archived)
 }

@@ -90,8 +90,6 @@ func TestLineFirstGroupMessageLocksClockBeforeConversation(t *testing.T) {
 	}
 	must.NoError(blocker.Commit())
 	must.NoError(waitForSourceOperation(t, done))
-	_, _, err = st.RemoveSourceSerialized(ctx, source.ID)
-	must.NoError(err)
 }
 
 // Hold retirement's real source-row lock while receipt starts. This forces the

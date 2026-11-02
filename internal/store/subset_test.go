@@ -5831,39 +5831,3 @@ func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(pending, "the merged room's placeholder is not retried")
 }
-
-func TestCopySubsetPreservesLineInboxAndMembership(t *testing.T) {
-func TestCopySubsetExcludesLineOperationalInbox(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
-	source, err := Open(sourcePath)
-	must.NoError(err)
-	t.Cleanup(func() { must.NoError(source.Close()) })
-	_, err = source.DB().Exec("UPDATE sources SET source_type='line',identifier='2000000001' WHERE id=1")
-	must.NoError(err)
-	const bot = "U00000000000000000000000000000001"
-	must.NoError(source.SetLineBotContext(t.Context(), 1, bot))
-	_, err = source.DB().Exec("UPDATE conversations SET source_conversation_id='group:example',conversation_type='group_chat' WHERE id=1")
-	must.NoError(err)
-	at := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	must.NoError(source.CacheLineProfileContext(t.Context(), 1, "example-user", `{"displayName":"Example"}`, at))
-	must.NoError(source.SetLineMembershipContext(t.Context(), 1, 1, "channel:2000000001:user:U00000000000000000000000000000002", false, at))
-	must.NoError(source.EnqueueLineEventsContext(t.Context(), 1, "2000000001", bot, []LineWebhookEvent{{WebhookEventID: "excluded-chat", EventType: "message", EventTimestamp: 123, RawJSON: `{"message":{"text":"unselected private conversation"}}`}}))
-	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err = CopySubset(sourcePath, destinationDir, 1, false)
-	must.NoError(err)
-	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
-	must.NoError(err)
-	t.Cleanup(func() { must.NoError(destination.Close()) })
-	var messages, inbox int
-	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
-	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_webhook_events").Scan(&inbox))
-	checks.Equal(1, messages)
-	checks.Zero(inbox, "unselected conversations must stay outside the exported archive")
-	var profiles, clocks int
-	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_profiles").Scan(&profiles))
-	must.NoError(destination.DB().QueryRow("SELECT COUNT(*) FROM line_memberships").Scan(&clocks))
-	checks.Zero(profiles)
-	checks.Zero(clocks)
-}

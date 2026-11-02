@@ -35,7 +35,7 @@ func TestLineConfigValidation(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
-	for _, id := range []string{"", "0", "00", "01", "+1", "-1", "1.0", "1e3", "١", "18446744073709551616", "2000/evil"} {
+	for _, id := range []string{"", "0", "00", "01", "+1", "-1", "1.0", "1e3", "١", "18446744073709551616", "2000/evil", " 2000000001 "} {
 		t.Run("channel_"+id, func(t *testing.T) {
 			err := loadConfigTextError(t, fmt.Sprintf("[[line]]\nchannel_id=%q\nsecret_env=\"EXAMPLE_LINE_SECRET\"\nenabled=false\n", id))
 			require.ErrorContains(t, err, "channel_id")
@@ -63,9 +63,4 @@ secret_env="EXAMPLE_LINE_SECRET_B"
 	for _, extra := range []string{`secret="never-store"`, `schedule="* * * * *"`, `secret_en="EXAMPLE_LINE_SECRET"`} {
 		must.ErrorContains(loadConfigTextError(t, "[[line]]\nchannel_id=\"2000000000\"\nsecret_env=\"EXAMPLE_LINE_SECRET\"\n"+extra), "unknown LINE config key")
 	}
-}
-
-func TestLineConfigRejectsWhitespaceChannelID(t *testing.T) {
-	err := loadConfigTextError(t, "[[line]]\nchannel_id=\" 2000000001 \"\nsecret_env=\"EXAMPLE_LINE_SECRET\"\n")
-	require.ErrorContains(t, err, "channel_id")
 }

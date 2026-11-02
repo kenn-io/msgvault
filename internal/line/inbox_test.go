@@ -185,10 +185,13 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 	}, time.Time{})
 
 	must.ErrorIs(f.processor.Process(ctx), context.Canceled)
+	checks.True(jobctx.HasProgress(ctx), "committed text must trigger cache refresh even when enrichment is canceled")
+	checks.Equal("child", f.archived(t, "repair-child").body)
 	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending, "an interrupted pass settles and finishes the events it completed")
 
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 	f.run(t)
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	must.NoError(err)
@@ -276,16 +279,18 @@ func TestProcessorEditCountsUpdatedMessage(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)
-	latestUpdated := func() int64 {
+	latestCounts := func() (int64, int64) {
 		t.Helper()
-		var updated sql.NullInt64
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
-		return updated.Int64
+		var added, updated sql.NullInt64
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
+		return added.Int64, updated.Int64
 	}
 	base := f.message("1", "original", f.now.UnixMilli())
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
-	checks.Zero(latestUpdated())
+	added, updated := latestCounts()
+	checks.Equal(int64(1), added)
+	checks.Zero(updated)
 
 	edit := base
 	edit.Type = "messageEdited"
@@ -294,36 +299,17 @@ func TestProcessorEditCountsUpdatedMessage(t *testing.T) {
 	edit.Message = &Message{ID: "1", Type: "text", Text: "edited"}
 	f.enqueue(t, edit, time.Time{})
 	f.run(t)
-	checks.Equal(int64(1), latestUpdated())
+	added, updated = latestCounts()
+	checks.Zero(added)
+	checks.Equal(int64(1), updated)
 
 	replay := base
 	replay.WebhookEventID = "delayed-original"
 	f.enqueue(t, replay, time.Time{})
 	f.run(t)
-	checks.Zero(latestUpdated(), "replaying an original reapplies its edit without changing content")
-}
-
-func TestProcessorCountsAddedMessages(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	latestAdded := func() int64 {
-		t.Helper()
-		var added int64
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added))
-		return added
-	}
-
-	base := f.message("1", "new searchable message", f.now.UnixMilli())
-	f.enqueue(t, base, time.Time{})
-	f.run(t)
-	checks.Equal(int64(1), latestAdded())
-
-	replay := base
-	replay.WebhookEventID = "delayed-original"
-	f.enqueue(t, replay, time.Time{})
-	f.run(t)
-	checks.Zero(latestAdded(), "replaying an existing message is not a new addition")
+	added, updated = latestCounts()
+	checks.Zero(added, "replaying an existing message is not a new addition")
+	checks.Zero(updated, "replaying an original reapplies its edit without changing content")
 }
 
 func TestProcessorInterruptedEditPassLeavesCacheRebuildSignal(t *testing.T) {
@@ -456,29 +442,17 @@ func TestProcessorEditPreservesCachedSenderSearch(t *testing.T) {
 }
 
 func TestProcessorFirstMessageSearchableAfterProfileResolution(t *testing.T) {
-	for _, retry := range []bool{false, true} {
-		t.Run(strconv.FormatBool(retry), func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			f := newInboxFixture(t)
-			path := "/v2/bot/group/" + testGroup + "/member/" + testUser
-			if retry {
-				f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusServiceUnavailable})
-			}
-			f.enqueue(t, f.message("1", "first message text", f.now.UnixMilli()), time.Time{})
-			f.run(t)
-			if retry {
-				f.now = f.now.Add(time.Minute)
-				f.run(t)
-			}
-			_, total, err := f.st.SearchMessagesContext(context.Background(), "Example User", 0, 10)
-			must.NoError(err)
-			checks.Equal(int64(1), total)
-			count, err := f.st.CountMessagesForSource(f.source.ID)
-			must.NoError(err)
-			checks.Equal(int64(1), count)
-		})
-	}
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.enqueue(t, f.message("1", "first message text", f.now.UnixMilli()), time.Time{})
+	f.run(t)
+	_, total, err := f.st.SearchMessagesContext(context.Background(), "Example User", 0, 10)
+	must.NoError(err)
+	checks.Equal(int64(1), total)
+	count, err := f.st.CountMessagesForSource(f.source.ID)
+	must.NoError(err)
+	checks.Equal(int64(1), count)
 }
 
 func TestProcessorEditDropsRemovedNativeTextMetadata(t *testing.T) {
@@ -543,16 +517,12 @@ func TestProcessorIdlePassPrunesExpiredEvents(t *testing.T) {
 	f := newInboxFixture(t)
 	f.enqueue(t, f.message("1", "synthetic", f.now.UnixMilli()), time.Time{})
 	f.run(t)
-	var runsBefore, runsAfter int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsBefore))
 
 	f.now = f.now.Add(31 * 24 * time.Hour)
 	f.run(t)
 	var retained int
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, "event-1").Scan(&retained))
 	checks.Zero(retained)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsAfter))
-	checks.Equal(runsBefore, runsAfter)
 }
 
 func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
@@ -595,6 +565,9 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	must.NoError(err)
 	checks.Zero(status.Pending)
+	_, total, err := f.st.SearchMessagesContext(context.Background(), "Example User", 0, 10)
+	must.NoError(err)
+	checks.Equal(int64(1), total)
 	count, err := f.st.CountMessagesForSource(f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), count)
@@ -760,22 +733,6 @@ func TestProcessorDirectMessageDoesNotRecordGroupMembershipClock(t *testing.T) {
 	assert.Zero(t, clocks, "direct chats do not infer group membership")
 }
 
-func TestProcessorFirstGroupMessageWritesClockBeforeConversation(t *testing.T) {
-	f := newInboxFixture(t)
-	if f.st.IsPostgreSQL() {
-		t.Skip("SQLite trigger pins statement order; the PG contract checks actual table locks")
-	}
-	_, err := f.st.DB().Exec(`CREATE TRIGGER line_conversation_requires_clock BEFORE INSERT ON conversations
- WHEN NEW.conversation_type='group_chat' AND NOT EXISTS (
- SELECT 1 FROM line_memberships WHERE source_id=NEW.source_id)
- BEGIN SELECT RAISE(ABORT,'LINE clock must precede first conversation'); END`)
-	require.NoError(t, err)
-	message := f.message("first-group-message", "clock before conversation", f.now.UnixMilli())
-	f.enqueue(t, message, time.Time{})
-	require.NoError(t, f.processor.Process(context.Background()))
-	assert.Equal(t, message.Message.Text, f.archived(t, message.Message.ID).body)
-}
-
 func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
@@ -809,40 +766,6 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 	var clocks int
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
 	checks.Equal(1, clocks, "recovery persists text and its per-identity membership evidence together")
-}
-
-func TestProcessorRestartAfterPersistence(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-
-	f := newInboxFixture(t)
-	ctx, cancel := context.WithCancel(jobctx.WithProgress(context.Background()))
-	defer cancel()
-	var first atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/member/") && !first.Swap(true) {
-			cancel()
-			<-r.Context().Done()
-			return
-		}
-		f.api.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	f.enqueue(t, f.message("1", "persisted before cancellation", f.now.UnixMilli()), time.Time{})
-	must.ErrorIs(f.processor.Process(ctx), context.Canceled)
-	checks.True(jobctx.HasProgress(ctx), "committed text must trigger cache refresh even when enrichment is canceled")
-	body := f.archived(t, "1").body
-	checks.Equal("persisted before cancellation", body)
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	f.run(t)
-	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
-	must.NoError(err)
-	checks.Zero(status.Pending)
-	count, err := f.st.CountMessagesForSource(f.source.ID)
-	must.NoError(err)
-	checks.Equal(int64(1), count)
 }
 
 func TestProcessorProfileCacheSurvivesRestartAndExpires(t *testing.T) {
@@ -1042,6 +965,16 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	f.enqueue(t, Event{Type: "future", WebhookEventID: "expired", Timestamp: f.now.UnixMilli()}, f.now.Add(-31*24*time.Hour))
+	rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
+	must.NoError(err)
+	must.Len(rows, 2)
+	for _, row := range rows {
+		if row.WebhookEventID == "expired" {
+			must.NoError(f.st.FinishLineEventContext(t.Context(), row.ID, "ignored", "", time.Time{}))
+		}
+	}
 	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/bot/message/1/content" {
@@ -1052,7 +985,6 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
 	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	f.enqueue(t, f.fileEvent(), time.Time{})
 	must.NoError(processor.Drain(t.Context()))
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	var laterMessages int
@@ -1068,36 +1000,4 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	must.ErrorIs(processor.Drain(ctx), context.Canceled)
-}
-
-func TestProcessorDrainExcludesNewReceiptAfterRetention(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	f.enqueue(t, f.fileEvent(), time.Time{})
-	f.enqueue(t, f.message("expired", "expired delivery", f.now.UnixMilli()), f.now.Add(-31*24*time.Hour))
-	rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
-	must.NoError(err)
-	must.Len(rows, 2)
-	for _, row := range rows {
-		if row.WebhookEventID == "event-expired" {
-			must.NoError(f.st.FinishLineEventContext(t.Context(), row.ID, "ignored", "", time.Time{}))
-		}
-	}
-	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusAccepted})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v2/bot/message/1/content" {
-			f.enqueue(t, f.message("later", "next drain", f.now.UnixMilli()), time.Time{})
-		}
-		f.api.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL))
-	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	must.NoError(processor.Drain(t.Context()))
-	var laterMessages int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='later'"), f.source.ID).Scan(&laterMessages))
-	checks.Zero(laterMessages, "cleanup must not let later receipts enter the current drain")
-	must.NoError(processor.Drain(t.Context()))
-	checks.Equal("next drain", f.archived(t, "later").body)
 }

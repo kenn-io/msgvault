@@ -81,13 +81,13 @@ func TestLineInboxDueAndRetention(t *testing.T) {
 	must.NoError(st.SetLineBotContext(ctx, src.ID, botID))
 	now := time.Now().UTC().Truncate(time.Second)
 	old := now.Add(-31 * 24 * time.Hour)
-	events := []store.LineWebhookEvent{{WebhookEventID: "original", EventType: "message", EventTimestamp: 20, RawJSON: `{"text":"synthetic"}`, ReceivedAt: old}, {WebhookEventID: "orphan", EventType: "unsend", TargetMessageID: "late", EventTimestamp: 10, RawJSON: `{"unsend":{"messageId":"late"}}`, ReceivedAt: old}}
+	events := []store.LineWebhookEvent{{WebhookEventID: "original", EventType: "message", EventTimestamp: 20, RawJSON: `{"text":"synthetic"}`, ReceivedAt: old}, {WebhookEventID: "orphan", EventType: "unsend", TargetMessageID: "late", EventTimestamp: 10, RawJSON: `{"unsend":{"messageId":"late"}}`, ReceivedAt: old.Add(-time.Hour)}}
 	must.NoError(st.EnqueueLineEventsContext(ctx, src.ID, "2000000001", botID, events))
 	rows, err := st.DueLineEventsContext(ctx, src.ID, now, 10)
 	must.NoError(err)
 	must.Len(rows, 2)
 	checks.Equal("orphan", rows[0].WebhookEventID)
-	must.NoError(st.FinishLineEventContext(ctx, rows[0].ID, "failed", "target not yet received", time.Time{}))
+	must.NoError(st.FinishLineEventContext(ctx, rows[0].ID, "failed", strings.Repeat("界", 200), time.Time{}))
 	must.NoError(st.FinishLineEventContext(ctx, rows[1].ID, "retry", "transcoding", now.Add(time.Minute)))
 	due, err := st.DueLineEventsContext(ctx, src.ID, now, 10)
 	must.NoError(err)
@@ -105,10 +105,13 @@ func TestLineInboxDueAndRetention(t *testing.T) {
 	must.NoError(err)
 	must.Len(mutations, 1)
 	checks.Contains(mutations[0].RawJSON, "late")
+	checks.Equal(strings.Repeat("界", 166), mutations[0].LastError)
 	status, err := st.LineInboxStatusContext(ctx, src.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Failed)
 	checks.Zero(status.Pending)
+	must.NotNil(status.LastReceivedAt)
+	checks.True(old.Equal(*status.LastReceivedAt))
 }
 
 func TestLineIdentityChannelIsolation(t *testing.T) {
@@ -246,23 +249,6 @@ func TestLineQuotesStayInConversation(t *testing.T) {
 	checks.True(reply.Valid, "a batch's reply can quote an already archived parent")
 }
 
-func TestLineInboxErrorTruncationPreservesUTF8(t *testing.T) {
-	must := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("line", "2000000001")
-	must.NoError(err)
-	const bot = "U00000000000000000000000000000001"
-	must.NoError(st.SetLineBotContext(t.Context(), source.ID, bot))
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, bot, []store.LineWebhookEvent{{WebhookEventID: "error-example", EventType: "future", EventTimestamp: 1, RawJSON: `{"type":"future"}`}}))
-	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 1)
-	must.NoError(err)
-	must.Len(rows, 1)
-	must.NoError(st.FinishLineEventContext(t.Context(), rows[0].ID, "failed", strings.Repeat("界", 200), time.Time{}))
-	var message string
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT last_error FROM line_webhook_events WHERE id=?`), rows[0].ID).Scan(&message))
-	assert.Equal(t, strings.Repeat("界", 166), message)
-}
-
 func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 	for _, state := range []string{"pending", "retry"} {
 		t.Run(state, func(t *testing.T) {
@@ -293,26 +279,4 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 			must.NoError(err)
 		})
 	}
-}
-
-func TestLineLastReceiptSurvivesRetention(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("line", "2000000001")
-	must.NoError(err)
-	const bot = "U00000000000000000000000000000001"
-	must.NoError(st.SetLineBotContext(t.Context(), source.ID, bot))
-	received := time.Now().UTC().Add(-31 * 24 * time.Hour).Truncate(time.Second)
-	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, bot, []store.LineWebhookEvent{{WebhookEventID: "old-receipt", EventType: "future", EventTimestamp: 123, RawJSON: `{"type":"future"}`, ReceivedAt: received}}))
-	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
-	must.NoError(err)
-	must.Len(rows, 1)
-	must.NoError(st.FinishLineEventContext(t.Context(), rows[0].ID, "ignored", "", time.Time{}))
-	must.NoError(st.PruneLineEventsContext(t.Context(), source.ID, time.Now().Add(-30*24*time.Hour)))
-	status, err := st.LineInboxStatusContext(t.Context(), source.ID)
-	must.NoError(err)
-	must.NotNil(status.LastReceivedAt)
-	checks.True(received.Equal(*status.LastReceivedAt))
-	checks.Zero(status.Pending)
 }
