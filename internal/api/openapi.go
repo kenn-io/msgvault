@@ -1001,6 +1001,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// meaningful for canonical aliases, direct routes, unresolved routes, and
 	// candidates whose saved display name has been cleared.
 	for _, field := range []struct{ schema, property string }{
+		{"AgentRestriction", "note"},
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},

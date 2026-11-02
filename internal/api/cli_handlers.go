@@ -1814,6 +1814,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"pack-attachments",
 		"purge-excluded-media",
 		"policy",
+		"restrict",
 		"repair-dates",
 		"repair-identity",
 		"repair-labels",

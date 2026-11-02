@@ -139,6 +139,12 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 				}
 			}
 		} else {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO agent_restrictions
+				(kind, label_id, reveal, note, created_at)
+				SELECT kind, ?, reveal, note, created_at FROM agent_restrictions
+				WHERE label_id = ?`, target, l.id); err != nil {
+				return fmt.Errorf("copy merged label restrictions: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO message_labels(message_id, label_id) SELECT message_id, ? FROM message_labels WHERE label_id = ? ON CONFLICT (message_id, label_id) DO NOTHING`, target, l.id); err != nil {
 				return err
 			}
@@ -147,6 +153,13 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 			// Retain the old definition for historical source inspection.
 		}
+	}
+	// Preserve the retired source policy and conservatively cover its new home.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_restrictions
+		(kind, source_id, reveal, note, created_at)
+		SELECT kind, ?, reveal, note, created_at FROM agent_restrictions
+		WHERE source_id = ?`, into, from); err != nil {
+		return fmt.Errorf("copy merged source restrictions: %w", err)
 	}
 	for _, m := range plan.messages {
 		if m.survivor == 0 {

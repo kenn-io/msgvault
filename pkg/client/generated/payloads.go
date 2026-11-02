@@ -224,6 +224,10 @@ type GetRelationshipCalendarBody = RelationshipCalendarHTTPRequest
 
 type GetRelationshipTimelineBody = RelationshipTimelineHTTPRequest
 
+type AddRestrictionBody = RestrictionRequest
+
+type SetRestrictionTaintBody = RestrictionTaintRequest
+
 type CreateSavedViewBody = CreateSavedViewRequest
 
 type PatchSavedViewBody = PatchSavedViewRequest

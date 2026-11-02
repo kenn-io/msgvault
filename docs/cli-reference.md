@@ -5515,3 +5515,43 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
+
+## restrict
+
+Configure owner-only staged agent restriction rules. **These rules do not yet
+restrict reads.** They record configuration for future enforcement; `check`
+reports matching staged rules and does not establish that a message is protected.
+
+```sh
+msgvault restrict add label NAME [--source SOURCE_ID] [--reveal headers] [--note NOTE]
+msgvault restrict add source SOURCE_ID
+msgvault restrict add person PERSON_ID
+msgvault restrict list
+msgvault restrict check MESSAGE_ID
+msgvault restrict remove RULE_ID
+msgvault restrict taint on|off
+```
+
+The reveal levels are `minimal`, `headers` (the default), and
+`headers_subject`. Label names match current labels case-insensitively. The
+name must resolve to one label; use `--source` to narrow an ambiguous name.
+The rule stores that label's stable internal ID, so a provider rename retains
+the target. Future unrelated labels with the same name are not selected.
+If a provider deletes and recreates a restricted label with a different ID,
+the old label and its historical links keep an archive name; the replacement
+gets a separate internal ID and requires a new rule.
+Source and person IDs must already exist. A rule prevents deletion of its
+referenced label, source, or person until the owner removes the rule.
+Label and person merges transfer rules to the surviving object. A person split
+copies the rules to both people. CardDAV unlinking preserves a person with a rule.
+Source merges retain historical rules and copy them to the destination, which
+can conservatively broaden a source rule to the combined account.
+
+Thread taint defaults to on. With taint on, `check` includes rules matching
+other messages in the same conversation. The owner API exposes the same staged
+configuration at `GET` and `POST /api/v1/restrictions`,
+`DELETE /api/v1/restrictions/{id}`, `GET /api/v1/restrictions/check/{id}`,
+and `PUT /api/v1/restrictions/taint` with `{"enabled":true}` or `false`.
+API label rules take an existing `label_id` rather than a name. Delegated agent
+grants cannot read or change these rules or invoke `restrict` through the CLI
+runner. Responses identify the configuration as staged.

@@ -864,6 +864,24 @@ type GetRelationshipTimelinePath struct {
 	ID int64 `json:"id"`
 }
 
+type CheckRestrictionsPath struct {
+	// ID Message ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (c CheckRestrictionsPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type RemoveRestrictionPath struct {
+	// ID Restriction rule ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (r RemoveRestrictionPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type DeleteSavedViewPath struct {
 	// ID Saved View ID
 	ID int64 `json:"id"`

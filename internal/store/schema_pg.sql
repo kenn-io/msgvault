@@ -4236,3 +4236,18 @@ CREATE TABLE IF NOT EXISTS conversation_policy (
  override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
  last_activity_at TIMESTAMPTZ
 );
+
+-- Owner-configured agent restrictions are staged until read enforcement exists.
+CREATE TABLE IF NOT EXISTS agent_restrictions (
+ id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ kind TEXT NOT NULL CHECK (kind IN ('label','source','person')),
+ source_id BIGINT REFERENCES sources(id) ON DELETE RESTRICT,
+ label_id BIGINT REFERENCES labels(id) ON DELETE RESTRICT,
+ person_id BIGINT REFERENCES persons(id) ON DELETE RESTRICT,
+ reveal TEXT NOT NULL CHECK (reveal IN ('minimal','headers','headers_subject')),
+ note TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK ((kind='label' AND label_id IS NOT NULL AND source_id IS NULL AND person_id IS NULL) OR
+        (kind='source' AND source_id IS NOT NULL AND label_id IS NULL AND person_id IS NULL) OR
+        (kind='person' AND person_id IS NOT NULL AND label_id IS NULL AND source_id IS NULL))
+);

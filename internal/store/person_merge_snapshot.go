@@ -159,6 +159,12 @@ const personMergePersonIDColumn = "person_id"
 // point at a person. Operation tables are classified but not recursively
 // snapshotted; their targeted lineage updates are journaled separately.
 var personMergeTableRegistry = map[string]personMergeTableSpec{
+	// Owner policy is unioned on merge and copied to both people on split,
+	// rather than restored from a historical profile snapshot.
+	"agent_restrictions": {
+		TableName: "agent_restrictions", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
 	"person_participants": {
 		TableName: "person_participants", KeyColumn: "participant_id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},

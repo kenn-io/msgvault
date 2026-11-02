@@ -187,6 +187,13 @@ func (s *Store) splitPersonMergeOnce(
 		).Scan(&newPersonID); err != nil {
 			return fmt.Errorf("create split person: %w", err)
 		}
+		// A split must not lift an owner's restriction from either identity.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_restrictions
+			(kind, person_id, reveal, note, created_at)
+			SELECT kind, ?, reveal, note, created_at FROM agent_restrictions
+			WHERE person_id = ?`, newPersonID, request.SourcePersonID); err != nil {
+			return fmt.Errorf("copy split person restrictions: %w", err)
+		}
 		var splitID int64
 		if err := tx.QueryRowContext(ctx, `INSERT INTO person_splits (
 			merge_id, idempotency_key, request_hash, source_person_id, new_person_id,

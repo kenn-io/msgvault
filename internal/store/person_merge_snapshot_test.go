@@ -135,21 +135,19 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		query = `SELECT constraints.table_name, columns.column_name
-			FROM information_schema.table_constraints constraints
-			JOIN information_schema.key_column_usage columns
-			  ON columns.constraint_catalog = constraints.constraint_catalog
-			 AND columns.constraint_schema = constraints.constraint_schema
-			 AND columns.constraint_name = constraints.constraint_name
-			JOIN information_schema.constraint_column_usage target
-			  ON target.constraint_catalog = constraints.constraint_catalog
-			 AND target.constraint_schema = constraints.constraint_schema
-			 AND target.constraint_name = constraints.constraint_name
-			WHERE constraints.constraint_type = 'FOREIGN KEY'
-			  AND constraints.table_schema = current_schema()
-			  AND target.table_schema = current_schema()
-			  AND target.table_name = 'persons'
-			ORDER BY constraints.table_name, columns.column_name`
+		// Resolve the target relation before inspecting its foreign keys. The
+		// information_schema joins grow expensive across isolated test schemas.
+		query = `SELECT child.relname, column_name.attname
+			FROM pg_catalog.pg_constraint foreign_key
+			JOIN pg_catalog.pg_class child ON child.oid = foreign_key.conrelid
+			CROSS JOIN LATERAL unnest(foreign_key.conkey) AS reference(attnum)
+			JOIN pg_catalog.pg_attribute column_name
+			  ON column_name.attrelid = child.oid
+			 AND column_name.attnum = reference.attnum
+			WHERE foreign_key.contype = 'f'
+			  AND foreign_key.confrelid = 'persons'::regclass
+			  AND child.relnamespace = current_schema()::regnamespace
+			ORDER BY child.relname, column_name.attname`
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)

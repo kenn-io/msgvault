@@ -197,6 +197,9 @@ func (s *Store) GetSourcesByTypeAndAccountContext(
 // ErrSourceMergeParticipant protects source retirement and merge provenance.
 var ErrSourceMergeParticipant = errors.New("source has preserved merge history")
 
+// ErrSourceAgentRestriction protects rules before provider credentials are revoked.
+var ErrSourceAgentRestriction = errors.New("source has agent restrictions")
+
 // CheckSourceRemovalAllowedContext provides a read-only removal preflight.
 // Removal still checks under its identity lock before changing archive state.
 func (s *Store) CheckSourceRemovalAllowedContext(ctx context.Context, sourceID int64) error {
@@ -213,11 +216,21 @@ func (s *Store) requireSourceRemovalAllowed(ctx context.Context, q contextStatem
 	if merged {
 		return fmt.Errorf("source %d cannot be removed: %w", sourceID, ErrSourceMergeParticipant)
 	}
+	var restricted bool
+	if err := q.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS (
+ SELECT 1 FROM agent_restrictions r WHERE r.source_id = ? OR EXISTS (
+ SELECT 1 FROM labels l WHERE l.id = r.label_id AND l.source_id = ?
+))`), sourceID, sourceID).Scan(&restricted); err != nil {
+		return fmt.Errorf("check source restrictions: %w", err)
+	}
+	if restricted {
+		return fmt.Errorf("source %d cannot be removed: %w", sourceID, ErrSourceAgentRestriction)
+	}
 	return nil
 }
 
-// AcquireSourceRemovalLockContext fences source merges while the caller checks
-// removal eligibility, cleans up provider credentials, and removes the source.
+// AcquireSourceRemovalLockContext fences source merges and restriction creation
+// while the caller checks eligibility, cleans up credentials, and removes the source.
 // It must remain held through RemoveSourceSerialized, which rechecks eligibility
 // transactionally. Unlike sync execution acquisition, it leaves running rows
 // untouched so forced removal still observes them when deciding file cleanup.

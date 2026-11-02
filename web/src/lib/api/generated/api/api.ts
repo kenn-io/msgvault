@@ -63,6 +63,7 @@ import type {
   Catalog,
   ChangesResponse,
   ChatDiscoveryPage,
+  CheckRestrictionsPathParameters,
   CheckSettingsPeopleInferenceProviderPathParameters,
   ClearOrganizationAttributeParams,
   ClearOrganizationAttributePathParameters,
@@ -399,7 +400,11 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  RemoveRestrictionPathParameters,
   ResolveCardDAVConflictPathParameters,
+  RestrictionRequest,
+  RestrictionResponse,
+  RestrictionTaintRequest,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
   RevokeAgentTokenPathParameters,
@@ -3832,6 +3837,86 @@ export const patchRelationshipType = (
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       data: patchRelationshipTypeRequest,
+    },
+    options,
+  );
+};
+/**
+ * Staged configuration only; rules do not yet restrict reads.
+ * @summary List staged restriction rules
+ */
+export const listRestrictions = (
+  options?: SecondParameter<typeof orvalFetch<RestrictionResponse>>,
+) => {
+  return orvalFetch<RestrictionResponse>(
+    { url: `/api/v1/restrictions`, method: "GET" },
+    options,
+  );
+};
+/**
+ * Staged configuration only; rules do not yet restrict reads.
+ * @summary Add a staged restriction rule
+ */
+export const addRestriction = (
+  restrictionRequest: RestrictionRequest,
+  options?: SecondParameter<typeof orvalFetch<RestrictionResponse>>,
+) => {
+  return orvalFetch<RestrictionResponse>(
+    {
+      url: `/api/v1/restrictions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: restrictionRequest,
+    },
+    options,
+  );
+};
+/**
+ * Staged configuration only; rules do not yet restrict reads.
+ * @summary Check staged rules for a message
+ */
+export const checkRestrictions = (
+  { id }: CheckRestrictionsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<RestrictionResponse>>,
+) => {
+  return orvalFetch<RestrictionResponse>(
+    {
+      url: `/api/v1/restrictions/check/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * Staged configuration only; rules do not yet restrict reads.
+ * @summary Set staged thread taint
+ */
+export const setRestrictionTaint = (
+  restrictionTaintRequest: RestrictionTaintRequest,
+  options?: SecondParameter<typeof orvalFetch<RestrictionResponse>>,
+) => {
+  return orvalFetch<RestrictionResponse>(
+    {
+      url: `/api/v1/restrictions/taint`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: restrictionTaintRequest,
+    },
+    options,
+  );
+};
+/**
+ * Staged configuration only; rules do not yet restrict reads.
+ * @summary Remove a staged restriction rule
+ */
+export const removeRestriction = (
+  { id }: RemoveRestrictionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<RestrictionResponse>>,
+) => {
+  return orvalFetch<RestrictionResponse>(
+    {
+      url: `/api/v1/restrictions/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
     },
     options,
   );
