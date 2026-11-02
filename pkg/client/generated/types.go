@@ -3383,6 +3383,7 @@ type DeepSearchResponse struct {
 	Scope        *string             `json:"scope,omitzero"`
 	Stats        *TotalStatsResponse `json:"stats,omitempty"`
 	TotalCount   int64               `json:"total_count"`
+	Warnings     []string            `json:"warnings,omitempty"`
 }
 
 func (d DeepSearchResponse) Validate() error {
@@ -5088,6 +5089,7 @@ type ExploreGroupsHTTPResponse struct {
 	SearchDeletionScope *string           `json:"search_deletion_scope,omitzero"`
 	SearchProvenance    SearchProvenance  `json:"search_provenance"`
 	TotalCount          int64             `json:"total_count"`
+	Warnings            []string          `json:"warnings,omitempty"`
 }
 
 func (e ExploreGroupsHTTPResponse) Validate() error {
@@ -5189,6 +5191,7 @@ type ExploreHTTPResponse struct {
 	SearchDeletionScope    *string          `json:"search_deletion_scope,omitzero"`
 	SearchProvenance       SearchProvenance `json:"search_provenance"`
 	TotalCount             *int64           `json:"total_count,omitempty"`
+	Warnings               []string         `json:"warnings,omitempty"`
 }
 
 func (e ExploreHTTPResponse) Validate() error {
@@ -14473,6 +14476,7 @@ type SearchFastResponse struct {
 	Query            string              `json:"query" validate:"required"`
 	Stats            *TotalStatsResponse `json:"stats,omitempty"`
 	TotalCount       int64               `json:"total_count"`
+	Warnings         []string            `json:"warnings,omitempty"`
 }
 
 func (s SearchFastResponse) Validate() error {
@@ -14553,6 +14557,7 @@ type SearchResult struct {
 	PageSize   int64            `json:"page_size"`
 	Query      string           `json:"query" validate:"required"`
 	Total      int64            `json:"total"`
+	Warnings   []string         `json:"warnings,omitempty"`
 }
 
 func (s SearchResult) Validate() error {

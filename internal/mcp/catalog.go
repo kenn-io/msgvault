@@ -991,7 +991,8 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 type searchMetadataResponse struct {
 	paginatedResponse[query.MessageSummary]
 
-	IndexState string `json:"index_state,omitempty"`
+	IndexState string   `json:"index_state,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
 }
 type searchInMessageResponse struct {
 	paginatedResponse[messageMatch]
