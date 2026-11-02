@@ -699,3 +699,31 @@ func TestExportMessagesPersonAuthorAndScope(t *testing.T) {
 		assertions.Equal(store.MessageExportCounts{Sources: len(ids), Conversations: len(ids), Messages: len(ids)}, counts)
 	}
 }
+
+func TestExportMessagesUsesHTMLWhenPlainTextAlternativeIsMissing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "html-export@example.test")
+	require.NoError(err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	conversationID := insertMessageExportConversation(
+		t, st, source.ID, "html-only", "Order", "email_thread", `{}`,
+	)
+	messageID := insertMessageExportMessage(
+		t, st, source.ID, conversationID, "html-only-message", "email",
+		start, "", "Order confirmation", 0, false, false,
+	)
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE message_bodies SET body_text = '', body_html = ? WHERE message_id = ?`,
+	), `<p>Your order is ready to view.</p>`, messageID)
+	require.NoError(err)
+
+	sink := &collectingMessageExportSink{}
+	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+		Start: start, End: start.Add(time.Hour),
+	}, sink)
+	require.NoError(err)
+	require.Len(sink.messages, 1)
+	assert.Equal("Your order is ready to view.", sink.messages[0].Text)
+}

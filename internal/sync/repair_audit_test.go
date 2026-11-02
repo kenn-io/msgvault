@@ -177,7 +177,10 @@ func TestAuditGmailMessagesTreatsHTMLOnlyBodyTextAsEmpty(t *testing.T) {
 		Body:        htmlBody,
 	})
 	require.NoError(env.Store.UpsertMessageRaw(id, raw))
-	require.NoError(env.Store.UpsertMessageBody(id, sql.NullString{}, sql.NullString{String: htmlBody, Valid: true}))
+	require.NoError(env.Store.UpsertMessageBody(id,
+		sql.NullString{String: "", Valid: true},
+		sql.NullString{String: htmlBody, Valid: true},
+	))
 
 	assert.Empty(collectAudit(t, env.Syncer, source.ID))
 }

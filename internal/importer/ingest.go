@@ -263,7 +263,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		toAddrs := joinEmails(parsed.To)
 		ccAddrs := joinEmails(parsed.Cc)
 		if err := st.UpsertFTS(
-			messageID, subject, bodyText,
+			messageID, subject, bodyForSnippet,
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {
 			incomplete(fmt.Errorf("index message: %w", err))

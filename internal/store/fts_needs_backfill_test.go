@@ -41,6 +41,32 @@ func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
 	assertFTSContains(t, f.Store, "orchard", 2)
 }
 
+func TestStore_BackfillFTSDoesNotRewriteExistingHTMLOnlyEntry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+
+	existing := f.CreateMessage("backfill-html-existing")
+	require.NoError(f.Store.UpsertMessageBody(existing, sql.NullString{},
+		sql.NullString{String: "<p>htmlreindexonlyterm</p>", Valid: true}), "store HTML-only body")
+	require.NoError(f.Store.UpsertFTS(existing, "subject", "keepindexedonlyterm", "", "", ""),
+		"install existing FTS document")
+
+	missing := f.CreateMessage("backfill-missing")
+	require.NoError(f.Store.UpsertMessageBody(missing,
+		sql.NullString{String: "newmissingindexterm", Valid: true}, sql.NullString{}), "store missing-index body")
+
+	indexed, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+	assert.Equal(int64(1), indexed, "only the missing message should be indexed")
+	assertFTSContains(t, f.Store, "keepindexedonlyterm", 1)
+	assertFTSContains(t, f.Store, "htmlreindexonlyterm", 0)
+	assertFTSContains(t, f.Store, "newmissingindexterm", 1)
+}
+
 func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

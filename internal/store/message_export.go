@@ -388,12 +388,12 @@ func (s *Store) exportMessageRows(
 			return nil
 		}
 		for _, row := range page {
-			var text sql.NullString
+			var bodyText, bodyHTML sql.NullString
 			if err := s.db.QueryRowContext(
 				ctx,
-				s.dialect.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`),
+				s.dialect.Rebind(`SELECT body_text, body_html FROM message_bodies WHERE message_id = ?`),
 				row.id,
-			).Scan(&text); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			).Scan(&bodyText, &bodyHTML); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("load message export body: %w", err)
 			}
 			author, err := normalizeMessageExportAuthor(row)
@@ -407,7 +407,7 @@ func (s *Store) exportMessageRows(
 				ConversationID:    row.sourceConversationID,
 				MessageType:       row.messageType,
 				Subject:           row.subject,
-				Text:              text.String,
+				Text:              searchableEmailBodyText(bodyText.String, bodyHTML.String),
 				Author:            author,
 				OccurredAt:        row.occurredAt.UTC(),
 				DeletedFromSource: row.deletedFromSource,

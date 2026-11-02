@@ -2832,7 +2832,7 @@ func updateConversationCounts(db *sql.DB) error {
 
 // populateFTS rebuilds the FTS5 index from the copied data.
 func populateFTS(db *sql.DB) error {
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
 		INSERT OR REPLACE INTO messages_fts(
 			rowid, message_id, subject, body,
 			from_addr, to_addr, cc_addr
@@ -2865,8 +2865,57 @@ func populateFTS(db *sql.DB) error {
 				  AND mr.recipient_type = 'cc'
 			), '')
 		FROM messages m
-		LEFT JOIN message_bodies mb ON mb.message_id = m.id`)
-	return err
+		LEFT JOIN message_bodies mb ON mb.message_id = m.id`); err != nil {
+		return err
+	}
+
+	var htmlOnlyMessageIDs []int64
+	if err := func() (queryErr error) {
+		rows, err := db.Query(`
+			SELECT m.id
+			FROM messages m
+			JOIN message_bodies mb ON mb.message_id = m.id
+			WHERE COALESCE(mb.body_text, '') = ''
+			  AND COALESCE(mb.body_html, '') <> ''
+		`)
+		if err != nil {
+			return fmt.Errorf("find HTML-only subset messages for FTS: %w", err)
+		}
+		defer func() {
+			if err := rows.Close(); err != nil && queryErr == nil {
+				queryErr = fmt.Errorf("close HTML-only subset messages for FTS: %w", err)
+			}
+		}()
+		for rows.Next() {
+			var messageID int64
+			if err := rows.Scan(&messageID); err != nil {
+				return fmt.Errorf("scan HTML-only subset message for FTS: %w", err)
+			}
+			htmlOnlyMessageIDs = append(htmlOnlyMessageIDs, messageID)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate HTML-only subset messages for FTS: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return err
+	}
+	for _, messageID := range htmlOnlyMessageIDs {
+		var bodyHTML string
+		if err := db.QueryRow(
+			`SELECT body_html FROM message_bodies WHERE message_id = ?`,
+			messageID,
+		).Scan(&bodyHTML); err != nil {
+			return fmt.Errorf("load HTML-only subset body for FTS message %d: %w", messageID, err)
+		}
+		if _, err := db.Exec(
+			`UPDATE messages_fts SET body = ? WHERE rowid = ?`,
+			searchableEmailBodyText("", bodyHTML), messageID,
+		); err != nil {
+			return fmt.Errorf("index HTML-only subset message %d: %w", messageID, err)
+		}
+	}
+	return nil
 }
 
 // copySubsetAccountIdentities copies the confirmed identities of the subset's

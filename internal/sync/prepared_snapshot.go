@@ -77,7 +77,7 @@ func buildPreparedSnapshot(
 		MIMEAttachmentReplacement: &attachmentWrites,
 		FTS: &store.FTSDoc{
 			Subject:  message.Subject.String,
-			Body:     prepared.bodyText,
+			Body:     prepared.searchBodyText,
 			FromAddr: joinEmails(prepared.from),
 			ToAddrs:  joinEmails(prepared.to),
 			CcAddrs:  joinEmails(prepared.cc),

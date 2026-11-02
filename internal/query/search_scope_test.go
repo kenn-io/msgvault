@@ -404,6 +404,82 @@ func TestSearchMessageBodies_SQLiteOversizedBodyDoesNotPoisonFollowingHit(t *tes
 	assert.Contains(small.BodyContextSnippets[0], "needle")
 }
 
+func TestSearchMessageBodies_HTMLOnlyUsesStrippedHTML(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	messageID := createSearchScopeMessage(t, f, "html-only-context",
+		"ordinary subject", "ordinary preview", "", 0, 0)
+	htmlBody := `<html><head><title>hiddenhtmlterm</title></head><body><p>htmlonlyneedle appears in an email.</p></body></html>`
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: htmlBody, Valid: true}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"htmlonlyneedle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages.Messages, 1)
+	assert.Equal(messageID, messages.Messages[0].ID)
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "htmlonlyneedle")
+	assert.NotContains(messages.Messages[0].BodyContextSnippets[0], "<p>")
+}
+
+func TestSearchMessageBodies_HTMLOnlyImplicitHeadUsesIndexNormalization(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	messageID := createSearchScopeMessage(t, f, "html-only-implicit-head",
+		"ordinary subject", "ordinary preview", "", 0, 0)
+	htmlBody := `<head><title>ghostneedle</title><p>Visible body</p>`
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: htmlBody, Valid: true}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"ghostneedle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies must use the same complete-body normalization as indexing")
+	require.Len(messages.Messages, 1)
+	assert.Equal(messageID, messages.Messages[0].ID)
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "ghostneedle")
+}
+
+func TestSearchMessageBodiesHTMLOnlyTruncatedHiddenHTMLHasNoContext(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	messageID := createSearchScopeMessage(t, f, "truncated-hidden-html-context",
+		"ordinary subject", "ordinary preview", "", 0, 0)
+	htmlBody := `<html><head><style>.hidden { content: "htmlonlyneedle"; }` +
+		strings.Repeat("hidden-style-padding ", 60_000) +
+		`</style></head><body><p>htmlonlyneedle is visible content.</p></body></html>`
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: htmlBody, Valid: true}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"htmlonlyneedle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages.Messages, 1)
+	assert.Equal(messageID, messages.Messages[0].ID)
+	assert.Empty(messages.Messages[0].BodyContextSnippets,
+		"the truncated prefix ends inside hidden style content")
+	assert.True(messages.Messages[0].BodyContextSnippetsTruncated)
+}
+
 func TestSearchMessageBodies_LimitedHitDoesNotMaskAnotherStaleHit(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

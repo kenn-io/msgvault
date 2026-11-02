@@ -7,11 +7,10 @@ import (
 	"time"
 )
 
-// CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field-weight
-// layout. Version 2 assigns subject=A, sender=B, recipients=C, and body=D so
-// exact body-only queries can restrict tsquery matches to weight D.
+// CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field layout.
+// Version 3 indexes stripped HTML when an email has no plain-text alternative.
 const (
-	CurrentFTSIndexingVersion = 2
+	CurrentFTSIndexingVersion = 3
 	postgresDriverName        = "pgx"
 )
 
