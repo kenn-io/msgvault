@@ -91,8 +91,6 @@ function searchClient(): ReturnType<typeof createAPIClient> {
 function baseProps(overrides: Record<string, unknown> = {}) {
   return {
     detail: person(),
-    filesOpen: false,
-    onFilesToggle: vi.fn(),
     client: searchClient(),
     onLinkParticipants: vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 2, cacheState: 'ready' })),
     onUnlinkParticipants: vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 3, cacheState: 'ready' })),
@@ -126,24 +124,6 @@ describe('RelationshipHeader', () => {
     render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
     expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
     expect(screen.queryByText(/items/)).toBeNull();
-  });
-
-  it('offers Messages and Files as explicit relationship views', async () => {
-    const onFilesToggle = vi.fn();
-    render(RelationshipHeader, baseProps({ onFilesToggle }));
-
-    expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Files 3' }));
-    expect(onFilesToggle).toHaveBeenCalledWith(true);
-  });
-
-  it('selects Files when restoring a file view and switches back to Messages', async () => {
-    const onFilesToggle = vi.fn();
-    render(RelationshipHeader, baseProps({ filesOpen: true, onFilesToggle }));
-
-    expect(screen.getByRole('radio', { name: 'Files 3' }).getAttribute('aria-checked')).toBe('true');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    expect(onFilesToggle).toHaveBeenCalledWith(false);
   });
 
   it('collapses linked identities by default and opens them on request', async () => {
@@ -197,11 +177,9 @@ describe('RelationshipHeader', () => {
     expect(screen.getByRole('status').textContent).toContain('Select a person or domain');
   });
 
-  it('renders a person with identity details, item counts, and a file view', async () => {
-    const onFilesToggle = vi.fn();
-    render(RelationshipHeader, baseProps({ onFilesToggle }));
+  it('renders a person with identity details and item counts', async () => {
+    render(RelationshipHeader, baseProps());
 
-    expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
     expect(screen.getByText(/42 items/)).toBeDefined();
     expect(screen.getByText(/items · /).textContent).not.toMatch(/files/);
     expect(screen.getByText('Alice')).toBeDefined();
@@ -214,9 +192,6 @@ describe('RelationshipHeader', () => {
     const phoneChip = screen.getByLabelText('Identity +15550100001');
     expect(phoneChip.getAttribute('title')).toBe('phone · secondary · stored identifier');
     expect(document.body.textContent).not.toContain('participant_identifiers');
-
-    await fireEvent.click(screen.getByRole('radio', { name: 'Files 3' }));
-    expect(onFilesToggle).toHaveBeenCalledWith(true);
   });
 
   it('hides the identities section entirely for a single identity with nothing linked', () => {
@@ -236,17 +211,24 @@ describe('RelationshipHeader', () => {
     expect(linked.textContent).toContain('linked');
   });
 
+  it('groups person actions together', () => {
+    render(RelationshipHeader, baseProps({ onOpenDirectory: vi.fn() }));
+
+    const actions = screen.getByRole('group', { name: 'Person actions' });
+    expect(within(actions).getByRole('button', { name: 'Open in Directory' })).toBeTruthy();
+    expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
+  });
+
   it('formats the counts date range with the month spelled out', () => {
     render(RelationshipHeader, baseProps());
 
     expect(screen.getByText(/items · /).textContent).toMatch(/[A-Z][a-z]{2} \d{1,2}, \d{4} – [A-Z][a-z]{2} \d{1,2}, \d{4}/);
   });
 
-  it('offers no person actions group for a domain but keeps the view switch', () => {
+  it('offers no person actions group for a domain', () => {
     render(RelationshipHeader, baseProps({ detail: domain() }));
 
     expect(screen.queryByRole('group', { name: 'Person actions' })).toBeNull();
-    expect(screen.getByRole('radio', { name: 'Messages' })).toBeTruthy();
   });
 
   it('renders a domain by domain name and person count, without identity chips or a Same person button', () => {
@@ -256,14 +238,6 @@ describe('RelationshipHeader', () => {
     expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
     expect(screen.queryByLabelText('Linked identities')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
-  });
-
-  it('switches from Files back to Messages when Files are open', async () => {
-    const onFilesToggle = vi.fn();
-    render(RelationshipHeader, baseProps({ filesOpen: true, onFilesToggle }));
-
-    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    expect(onFilesToggle).toHaveBeenCalledWith(false);
   });
 
   it('opens the Same person dialog for a person, titled with their name, and Esc closes it', async () => {

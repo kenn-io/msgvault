@@ -1145,7 +1145,7 @@
     ) {
       return;
     }
-    void relationshipsController.openTarget(target, predicate, false);
+    void relationshipsController.openTarget(target, predicate);
   });
   function openRelationship(participantID: number): void {
     commitNavigation(relationshipDestination(participantID));

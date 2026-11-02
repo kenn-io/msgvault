@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import CopyIcon from '@lucide/svelte/icons/copy';
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, IconButton, SegmentedControl, copyToClipboard } from '@kenn-io/kit-ui';
+  import { Button, IconButton, copyToClipboard } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
@@ -19,13 +19,10 @@
   interface Props {
     detail: PersonSummary | DomainSummary | null;
     loading?: boolean;
-    filesOpen: boolean;
-    showTabs?: boolean;
     showIdentity?: boolean;
     /** Heading for the identities block when the page header already shows the person. */
     title?: string;
     missing?: boolean;
-    onFilesToggle: (value: boolean) => void;
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
@@ -39,12 +36,9 @@
   let {
     detail,
     loading = false,
-    filesOpen,
-    showTabs = true,
     showIdentity = true,
     title = undefined,
     missing = false,
-    onFilesToggle,
     client,
     onLinkParticipants,
     onUnlinkParticipants,
@@ -331,17 +325,6 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    {#if showTabs}<div class="view-row">
-      <SegmentedControl
-        ariaLabel="Relationship view"
-        value={filesOpen ? 'files' : 'messages'}
-        options={[
-          { value: 'messages', label: 'Messages' },
-          { value: 'files', label: `Files ${detail.file_count.toLocaleString()}` }
-        ]}
-        onchange={(value) => onFilesToggle(value === 'files')}
-      />
-    </div>{/if}
     {#if !title}<p class="counts">
       {detail.activity_count.toLocaleString()} items
       {#if detail.activity_count > 0}
@@ -528,10 +511,6 @@
     display: flex;
     flex: none;
     gap: var(--space-2);
-  }
-
-  .view-row {
-    display: flex;
   }
 
   .title-row h3 {
