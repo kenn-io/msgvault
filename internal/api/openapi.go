@@ -387,7 +387,10 @@ import (
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
 // 3.35.0 adds archived calendar occurrence listing.
-const APISchemaVersion = "3.35.0"
+//
+// 3.36.0 adds complete X ingestion, sanitized local source status, and
+// owner-only reply preparation and sending through the daemon CLI.
+const APISchemaVersion = "3.36.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

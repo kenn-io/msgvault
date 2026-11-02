@@ -34,7 +34,7 @@ func beeperMediaLocalGapFilter() string {
 const (
 	BeeperMediaAttachmentConsumerKey = "beeper-media/v1"
 
-	BeeperMediaRetentionPending           = "pending"
+	BeeperMediaRetentionPending           = statusPending
 	BeeperMediaRetentionRetained          = "retained"
 	BeeperMediaRetentionBlocked           = "blocked"
 	BeeperMediaRetentionSourceUnavailable = "source_unavailable"

@@ -149,6 +149,18 @@ func (s *Store) rewriteObservationsForMergeTx(
 func (s *Store) RecordContactObservationContext(
 	ctx context.Context, participantID int64, input ParticipantContactObservationInput,
 ) (*RecordContactObservationResult, error) {
+	var result *RecordContactObservationResult
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		var err error
+		result, err = s.recordContactObservationTx(ctx, tx, participantID, input)
+		return err
+	})
+	return result, err
+}
+
+// recordContactObservationTx preserves the public observation algorithm inside
+// a caller's attribution transaction; it must not commit independently.
+func (s *Store) recordContactObservationTx(ctx context.Context, tx *loggedTx, participantID int64, input ParticipantContactObservationInput) (*RecordContactObservationResult, error) {
 	if !input.AddressKind.Valid() {
 		return nil, ErrInvalidContactAddressKind
 	}
@@ -161,7 +173,7 @@ func (s *Store) RecordContactObservationContext(
 	input.ScopeKind = trimmedOrNil(input.ScopeKind)
 	input.ScopeValue = trimmedOrNil(input.ScopeValue)
 	input.ProviderUserID = trimmedOrNil(input.ProviderUserID)
-	service, hasService, err := s.resolveOptionalCommunicationServiceContext(ctx, input.ServiceSlug)
+	service, hasService, err := resolveCommunicationServiceTx(ctx, tx, input.ServiceSlug)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +204,7 @@ func (s *Store) RecordContactObservationContext(
 		}
 	}
 	result := &RecordContactObservationResult{}
-	err = s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+	err = func() error {
 		// Normal source removal takes this source-scoped lock before it
 		// recomputes generated conflicts and deletes the source. An importer for
 		// that source must finish its observation/candidate transaction before
@@ -367,7 +379,7 @@ func (s *Store) RecordContactObservationContext(
 		}
 		result.Conflicting = true
 		return nil
-	})
+	}()
 	return result, err
 }
 

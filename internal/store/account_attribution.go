@@ -116,9 +116,6 @@ func (s *Store) withAttributionTxContext(
 	sources := slices.Clone(lock.Sources)
 	slices.Sort(sources)
 	sources = slices.Compact(sources)
-	if lock.Exclusive {
-		sources = nil
-	}
 	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
 		if lock.Exclusive {
 			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {

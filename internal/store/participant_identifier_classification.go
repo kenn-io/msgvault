@@ -18,6 +18,8 @@ func classifyParticipantIdentifier(
 	value := strings.TrimSpace(identifierValue)
 	classification := participantIdentifierClassification{}
 	switch {
+	case kind == "x_user_id" && validXAuthorID(value):
+		classification.ServiceSlug = "x"
 	case kind == "imessage":
 		classification.ServiceSlug = "imessage"
 	case kind == "whatsapp":

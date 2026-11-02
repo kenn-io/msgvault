@@ -130,3 +130,10 @@ func TestParticipantIdentifierServiceScopeV2RepairsAlreadyMigratedRows(t *testin
 	require.NoError(err)
 	assert.True(t, applied)
 }
+
+func TestXNumericIdentifierClassification(t *testing.T) {
+	st := storetest.New(t).Store
+	_, err := st.EnsureParticipantByIdentifierContext(t.Context(), "x_user_id", "1001", "")
+	require.NoError(t, err)
+	assertParticipantIdentifierClassification(t, st, "x_user_id", "1001", "x", "", "")
+}

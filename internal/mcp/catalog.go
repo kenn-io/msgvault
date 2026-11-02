@@ -40,6 +40,7 @@ const (
 )
 
 type catalogCapabilities struct {
+	xReplySend      bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -131,6 +132,7 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
+		xReplySend:      opts.Replies != nil && !opts.DelegatedOnly,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -218,6 +220,7 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
+		stableReplyDefinition,
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),

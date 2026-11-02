@@ -117,6 +117,7 @@ type SourceStatusResponse struct {
 
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
+	X                     *XSourceStatus `json:"x,omitzero" nullable:"false"`
 	ID                    int64          `json:"id"`
 	SourceType            string         `json:"source_type"`
 	Identifier            string         `json:"identifier"`
@@ -1615,7 +1616,14 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	sourceType := source.SourceType
+	if sourceType == "" {
+		sourceType = sourceTypeGmail
+	}
+	scheduling, err := s.sourceScheduling(ctx, sourceType, source.Identifier)
+	if err != nil {
+		return SourceStatus{}, err
+	}
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1667,6 +1675,9 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	}
 	status.LastSuccessfulSync = syncRunStatus(lastSuccessful)
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.LastSuccessfulSync); err != nil {
+		return SourceStatus{}, err
+	}
+	if err := s.addXSourceStatus(ctx, source, &status); err != nil {
 		return SourceStatus{}, err
 	}
 
@@ -1782,7 +1793,11 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	scheduling, err := s.sourceScheduling(r.Context(), sourceType, account)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve account schedule")
+		return
+	}
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
@@ -2472,10 +2487,10 @@ func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	} else if ok {
 		opts.SourceIDs = normalizeSourceIDs(sourceIDs)
 	}
-	if r.URL.Query().Get("attachments_only") == "true" {
+	if r.URL.Query().Get("attachments_only") == booleanTrueValue {
 		opts.WithAttachmentsOnly = true
 	}
-	if r.URL.Query().Get("hide_deleted") == "true" {
+	if r.URL.Query().Get("hide_deleted") == booleanTrueValue {
 		opts.HideDeletedFromSource = true
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
@@ -2564,10 +2579,10 @@ func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	} else if ok {
 		filter.SourceIDs = normalizeSourceIDs(ids)
 	}
-	if r.URL.Query().Get("attachments_only") == "true" {
+	if r.URL.Query().Get("attachments_only") == booleanTrueValue {
 		filter.WithAttachmentsOnly = true
 	}
-	if r.URL.Query().Get("hide_deleted") == "true" {
+	if r.URL.Query().Get("hide_deleted") == booleanTrueValue {
 		filter.HideDeletedFromSource = true
 	}
 
