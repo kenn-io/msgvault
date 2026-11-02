@@ -177,7 +177,7 @@ func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
 
 	// Body
 	_, _ = fmt.Fprintln(output, "\n═══════════════════════════════════════════════════════════════════════════════")
-	if msg.BodyText != "" {
+	if msg.BodyText != "" || msg.BodyHTML != "" {
 		_, _ = fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
 	} else if msg.Snippet != "" {
 		_, _ = fmt.Fprintf(output, "[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
