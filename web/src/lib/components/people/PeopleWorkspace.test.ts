@@ -247,6 +247,7 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
     '/api/v1/people/7/contact-state': () => Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 50, computed_at: when, stale: false }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
+  const requests = vi.spyOn(client, 'fetch');
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: entry === 'deep link' ? 7 : null });
   const navigate = (patch: Parameters<typeof state.commitNavigation>[0]) => {
@@ -264,38 +265,12 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
     }
     await screen.findByRole('heading', { name: 'Saved Person' });
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
+    if (entry === 'list') {
+      await waitFor(() => expect(directory.detailLoading).toBe(false));
+      const paths = requests.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname);
+      expect(paths.filter(path => /attribute-definitions|agenda|brief/.test(path))).toEqual([]);
+    }
   } finally { release(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
-it('defers lazy person sections until Details opens', async () => {
-  const paths: string[] = [];
-  const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    paths.push(path);
-    if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
-    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
-    if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
-    if (path === '/api/v1/people/91') return Response.json(profile);
-    if (path === '/api/v1/people/91/profile') return Response.json(emptyProfile(profile));
-    if (path === '/api/v1/people/91/attributes') return Response.json({ person_id: 91, attributes: [] });
-    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
-    if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
-    if (path.endsWith('/network')) return Response.json({ root_person_id: 91, depth: 1, nodes: [], edges: [], truncated: false });
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
-  });
-  const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, relationshipTarget: 'cluster:1' });
-  const directory = new DirectoryController(client);
-  const controller = new RelationshipsController(client, () => 'UTC');
-  await controller.openTarget('cluster:1', {});
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: patch => state.commitNavigation(patch), onReplaceNavigation: patch => state.replaceCommittedNavigation(patch), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await screen.findByRole('heading', { name: 'Saved Example' });
-    await waitFor(() => expect(directory.detailLoading).toBe(false));
-    expect(paths.filter(path => /attribute-definitions|agenda|brief/.test(path))).toEqual([]);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
 it('names an empty Domains list for the selected facet', async () => {

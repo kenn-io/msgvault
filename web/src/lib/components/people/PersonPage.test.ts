@@ -253,7 +253,10 @@ it('keeps Back to People available after an observed person fails to load', asyn
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each([false, true])('uses delayed unfiltered activity while preserving explicit Details and its draft (editing=%s)', async editing => {
+it.each([
+  { editing: false, name: 'keeps Messages selected after a delayed unfiltered summary' },
+  { editing: true, name: 'preserves explicit Details and its draft after a delayed unfiltered summary' },
+])('$name', async ({ editing }) => {
   const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: [1], vcard_uid: 'saved-7', created_at: when, updated_at: when };
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
@@ -295,7 +298,7 @@ it.each([
   { activity: 0, bindings: [] },
 ])('chooses the saved person tab from unfiltered activity (activity=$activity, bindings=$bindings)', async ({ activity, bindings }) => {
   const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: bindings, vcard_uid: 'saved-7', created_at: when, updated_at: when };
-  const summary = { id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: activity ? when : '', last_at: activity ? when : '', activity_count: activity, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
+  const summary = { id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: activity, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
   const predicate = { filters: [{ dimension: 'source' as const, values: ['999'] }], presentation: 'table' as const };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;

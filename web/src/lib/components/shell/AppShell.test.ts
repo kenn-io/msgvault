@@ -2049,6 +2049,7 @@ describe('AppShell', () => {
     }))}`);
     const requests: Request[] = [];
     let promoted = false;
+    const savedPerson = { id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11], vcard_uid: 'synthetic-42', created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z' };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
@@ -2061,7 +2062,7 @@ describe('AppShell', () => {
       }] });
       if (path === '/api/v1/participants/11') return Response.json({
         id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
-        ...(promoted ? { profile: { id: 42, display_name: 'Synthetic Candidate', revision: 1 } } : {}),
+        ...(promoted ? { profile: savedPerson } : {}),
         activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
         last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
       });
@@ -2076,13 +2077,10 @@ describe('AppShell', () => {
       });
       if (path === '/api/v1/people' && request.method === 'POST') {
         promoted = true;
-        return Response.json({ id: 42, revision: 1 }, { status: 201 });
+        return Response.json(savedPerson, { status: 201 });
       }
-      if (path === '/api/v1/people/42') return Response.json({ id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11] });
-      if (path === '/api/v1/people/42/profile') return Response.json({
-        person: { id: 42, revision: 1, display_name: 'Synthetic Candidate', participant_ids: [11] }, names: [], contact_points: [],
-        addresses: [], dates: [], categories: [], media: []
-      });
+      if (path === '/api/v1/people/42') return Response.json(savedPerson);
+      if (path === '/api/v1/people/42/profile') return Response.json(emptyProfile(savedPerson));
       if (path === '/api/v1/people/42/attributes') return Response.json({ person_id: 42, attributes: [] });
       if (path === '/api/v1/people/42/network') return Response.json({ root_person_id: 42, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/42/contact-state') return Response.json({
@@ -2118,7 +2116,8 @@ describe('AppShell', () => {
     window.history.back();
     await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
     await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Candidate'));
-    expect(screen.getByRole('button', { name: 'More actions' })).toBeDefined();
+    await screen.findByRole('heading', { name: 'Synthetic Candidate' });
+    expect(await screen.findByRole('button', { name: 'More actions' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
 
     rendered.unmount();

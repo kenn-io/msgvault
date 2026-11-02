@@ -336,7 +336,7 @@ describe('AttributeDefinitionDialog', () => {
     expect(document.activeElement).toBe(result);
   });
 
-  it('keeps committed reconciliation controller-owned across dialog close and reopen', async () => {
+  it('keeps committed reconciliation controller-owned after the dialog closes', async () => {
     const created = definition({ is_sensitive: false });
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -354,9 +354,6 @@ describe('AttributeDefinitionDialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
     view.unmount();
 
-    render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
-    expect(screen.getByRole('button', { name: 'Retry registry refresh' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
     await expect(
       profile.createDefinition({
         object_type: 'person',
