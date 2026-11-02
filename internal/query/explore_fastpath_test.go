@@ -143,6 +143,9 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 		{name: "source filter", request: ExploreRequest{
 			Context: Context{SourceIDs: []int64{ids.chatSource}}, Page: PageSpec{Limit: 50},
 		}},
+		{name: "participant filter", request: ExploreRequest{
+			Context: Context{ParticipantIDs: []int64{ids.alice}}, Page: PageSpec{Limit: 50},
+		}},
 		{name: "domain sender recipient and roster membership", request: ExploreRequest{
 			Context: Context{Domains: []string{"example.com"}}, Page: PageSpec{Limit: 50},
 		}},
@@ -323,7 +326,7 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 	}
 }
 
-func TestExploreFastPathMatchesLegacyAndBoundsParticipantEnrichment(t *testing.T) {
+func TestExploreFastPathBoundsParticipantEnrichment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -339,8 +342,6 @@ func TestExploreFastPathMatchesLegacyAndBoundsParticipantEnrichment(t *testing.T
 	}
 	engine := b.BuildEngine()
 	request := ExploreRequest{Context: Context{ParticipantIDs: []int64{person}}, Page: PageSpec{Limit: 1}}
-	fast, legacy := runExploreBothPaths(t, engine, request)
-	assert.Equal(legacy, fast)
 	profile, err := profileDomainPopulation(t, engine, request)
 	require.NoError(err)
 	matchedOperators := 0
