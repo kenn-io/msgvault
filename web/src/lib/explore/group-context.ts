@@ -69,11 +69,16 @@ function replaceTimeFilters(
   after: string,
   before: string
 ): ExploreFilter[] | undefined {
-  const existingAfter = filters.find((filter) => filter.dimension === 'after')?.values[0];
-  const existingBefore = filters.find((filter) => filter.dimension === 'before')?.values[0];
-  const lower = laterBound(after, existingAfter);
-  const upper = earlierBound(before, existingBefore);
-  if (Date.parse(lower) >= Date.parse(upper)) return undefined;
+  const narrowed = narrowTimeFilters(filters, after, before);
+  const [lower, upper] = narrowed.slice(-2).map((filter) => Date.parse(filter.values[0]!));
+  return lower! < upper! ? narrowed : undefined;
+}
+
+// narrowTimeFilters intersects [after, before) with the filters' own date bounds;
+// a disjoint pair is kept as an empty range.
+export function narrowTimeFilters(filters: readonly ExploreFilter[], after: string, before: string): ExploreFilter[] {
+  const lower = laterBound(after, filters.find((filter) => filter.dimension === 'after')?.values[0]);
+  const upper = earlierBound(before, filters.find((filter) => filter.dimension === 'before')?.values[0]);
   return [
     ...filters.filter((filter) => filter.dimension !== 'after' && filter.dimension !== 'before'),
     { dimension: 'after', values: [lower] },

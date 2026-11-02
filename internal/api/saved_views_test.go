@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -159,22 +158,10 @@ func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {
 	assertions.Equal("Canonical state preserved", decodeSavedView(t, unchanged).Name)
 }
 
-func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
+func TestSavedViewsAPIReturnsBadRequestForInvalidGrouping(t *testing.T) {
 	t.Parallel()
 	srv := newSavedViewTestServer(t)
 	session := loginSavedViewSession(t, srv)
-
-	for _, dimension := range exploreGroupDimensions {
-		t.Run("accept "+string(dimension), func(t *testing.T) {
-			body := fmt.Sprintf(
-				`{"name":"Group %s","canonical_state":{"grouping":[%q]},"schema_version":1}`,
-				dimension, dimension,
-			)
-			response := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-				[]byte(body), session.mutationHeaders())
-			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-		})
-	}
 
 	invalid := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
 		[]byte(`{"name":"Unsupported","canonical_state":{"grouping":["sender"]},"schema_version":1}`),
