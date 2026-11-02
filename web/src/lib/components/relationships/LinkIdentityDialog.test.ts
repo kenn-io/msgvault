@@ -32,6 +32,7 @@ function fetchHandler(overrides: Record<string, (request: Request) => Promise<Re
     requests.push(request);
     const handler = overrides[pathOf(request)];
     if (handler) return handler(request);
+    if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [] });
     throw new Error(`unexpected path ${pathOf(request)}`);
   });
   return { fetchFn, requests };
@@ -53,6 +54,8 @@ function renderDialog(overrides: Partial<{
   const { unmount } = render(LinkIdentityDialog, {
     client: createAPIClient(fetchFn),
     excludeID: overrides.excludeID ?? 1,
+    excludePersonID: null,
+    onConfirmPerson: vi.fn(),
     personLabel: 'Alice Example',
     onConfirm,
     onMergeRequired,
@@ -74,8 +77,9 @@ describe('LinkIdentityDialog', () => {
       expect(requests).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(250);
-      expect(requests).toHaveLength(1);
-      await expect(requests[0]!.clone().json()).resolves.toMatchObject({ identity_query: 'Bob' });
+      const observedRequests = requests.filter(request => pathOf(request) === '/api/v1/participants/search');
+      expect(observedRequests).toHaveLength(1);
+      await expect(observedRequests[0]!.clone().json()).resolves.toMatchObject({ identity_query: 'Bob' });
 
       expect(await screen.findByText('Bob')).toBeDefined();
       expect(screen.getByText('Cara')).toBeDefined();
@@ -90,7 +94,7 @@ describe('LinkIdentityDialog', () => {
         rows: [person(1, 'Self'), person(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {}
       })
     });
-    render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, personLabel: 'Alice Example', onConfirm: vi.fn(), onClose: vi.fn() });
+    render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, excludePersonID: null, personLabel: 'Alice Example', onConfirm: vi.fn(), onConfirmPerson: vi.fn(), onMergeRequired: vi.fn(), onClose: vi.fn() });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'e' } });
 
     expect(await screen.findByText('Bob')).toBeDefined();
@@ -281,7 +285,7 @@ it.each((['saved', 'observed'] as const).flatMap(source => (['HTTP 503', 'transp
     if (failure === 'transport failure') throw new TypeError('Source unavailable');
     return Response.json({ error: 'unavailable', message: 'Source unavailable' }, { status: 503 });
   });
-  const view = render(LinkIdentityDialog, { client, excludeID: 1, personLabel: 'Alice Example', onConfirm, onConfirmPerson, onClose: vi.fn() });
+  const view = render(LinkIdentityDialog, { client, excludeID: 1, excludePersonID: null, personLabel: 'Alice Example', onConfirm, onConfirmPerson, onMergeRequired: vi.fn(), onClose: vi.fn() });
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await screen.findByText('Source unavailable');

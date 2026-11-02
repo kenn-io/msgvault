@@ -14,16 +14,16 @@
     /** The currently open cluster's own ID, excluded from results — linking
      * it to itself is rejected by the API and never a meaningful choice. */
     excludeID: number;
-    excludePersonID?: number;
-    onConfirmPerson?: (personID: number) => Promise<LinkOutcome>;
+    excludePersonID: number | null;
+    onConfirmPerson: (personID: number) => Promise<LinkOutcome>;
     /** The open person's display name, woven into the dialog title so the
      * flow reads in human terms ("Link another identity for Alice"). */
     personLabel: string;
     onConfirm: (participantID: number) => Promise<LinkOutcome>;
-    onMergeRequired?: (conflict: ValidatedPersonMergeRequired) => void;
+    onMergeRequired: (conflict: ValidatedPersonMergeRequired) => void;
     onClose: () => void;
   }
-  let { client, excludeID, excludePersonID, onConfirmPerson, personLabel, onConfirm, onMergeRequired = undefined, onClose }: Props = $props();
+  let { client, excludeID, excludePersonID, onConfirmPerson, personLabel, onConfirm, onMergeRequired, onClose }: Props = $props();
   let query = $state('');
   let results = $state<PersonSummary[]>([]);
   let savedResults = $state<Array<{ id: number; display_name?: string | null }>>([]);
@@ -81,7 +81,7 @@
     searchError = null;
     try {
       const [savedOutcome, observedOutcome] = await Promise.allSettled([
-        onConfirmPerson ? listDirectoryPeople({ q: trimmed, limit: SEARCH_LIMIT }, { ...client, signal: controller.signal }) : undefined,
+        listDirectoryPeople({ q: trimmed, limit: SEARCH_LIMIT }, { ...client, signal: controller.signal }),
         generatedSearchParticipants(
           {
             predicate: {},
@@ -97,7 +97,7 @@
       const observed = observedOutcome.status === 'fulfilled' ? observedOutcome.value : undefined;
       savedResults = (saved?.data?.people ?? []).filter(row => row.id !== excludePersonID);
       const seen = new Set(savedResults.map(row => row.id));
-      results = (observed?.data?.rows ?? []).filter(row => row.id !== excludeID && (excludePersonID === undefined || row.profile?.id !== excludePersonID) && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
+      results = (observed?.data?.rows ?? []).filter(row => row.id !== excludeID && row.profile?.id !== excludePersonID && (!row.profile?.id || !seen.has(row.profile.id) && Boolean(seen.add(row.profile.id))));
       const failed = saved && !saved.data ? saved : observed?.data ? undefined : observed;
       if (failed) searchError = messageFor(failed.error, failed.response.status);
       for (const outcome of [savedOutcome, observedOutcome]) if (outcome.status === 'rejected') throw outcome.reason;
@@ -127,14 +127,13 @@
     confirming = true;
     confirmError = null;
     try {
-      const outcome = selectedPersonID !== null && onConfirmPerson ? await onConfirmPerson(selectedPersonID) : await onConfirm(selectedID!);
+      const outcome = selectedPersonID !== null ? await onConfirmPerson(selectedPersonID) : await onConfirm(selectedID!);
       if (outcome.ok) {
         onClose();
         return;
       }
       if (outcome.code === 'merge_required') {
-        if (onMergeRequired) onMergeRequired(outcome.conflict);
-        else confirmError = outcome.message;
+        onMergeRequired(outcome.conflict);
         return;
       }
       confirmError =

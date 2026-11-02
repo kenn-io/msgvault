@@ -64,5 +64,5 @@
 {#if conflict}
   <PersonBindingConflictModal {client} {conflict} onOpenProfile={(id) => { close(); onOpenPerson?.(id); }} onSuccess={merged} onClose={close} />
 {:else}
-  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID ?? undefined} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || promoted) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || promoted) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} onClose={close} />
+  <LinkIdentityDialog {client} excludeID={participantID ?? 0} excludePersonID={personID} personLabel={name} onConfirm={async (id) => { const result = await link(id); if (result.ok || promoted) await onReconcile(context, result.ok); return result; }} onConfirmPerson={async (id) => { const result = await pickSaved(id); if (result.ok || promoted) await onReconcile(context, result.ok); return result; }} onMergeRequired={(value) => conflict = value} onClose={close} />
 {/if}

@@ -180,7 +180,6 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    {#if isPersonDetail(detail)}
       {#key detail.id}
       <div class="identities">
         <div class="identifiers" role="group" aria-label="Linked identities">
@@ -247,7 +246,6 @@
         {/if}
       </div>
       {/key}
-    {/if}
   {/if}
 </section>
 
