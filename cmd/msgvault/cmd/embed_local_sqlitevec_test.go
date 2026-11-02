@@ -8,9 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -133,16 +133,26 @@ func TestLocalEmbeddingRuntimeNeedsSetup(t *testing.T) {
 }
 
 func TestLocalEmbeddingRuntimeInstallError(t *testing.T) {
-	dir := t.TempDir()
-	// Discovery needs no install lock. A directory in its place prevents installation.
-	lockPath, err := (daemon.RuntimeStore{Dir: dir, Prefix: "kit-embed-install"}).LockPath()
-	require.NoError(t, err)
-	require.NoError(t, os.Mkdir(lockPath, 0o700))
-	original := localEmbeddingsDir
-	localEmbeddingsDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { localEmbeddingsDir = original })
-	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true, Model: "nomic-embed-text", Dimension: 768}}
-	_, err = resolveLocalVectorConfig(t.Context(), cfg)
-	require.ErrorContains(t, err, "install local embeddings")
-	assert.NotContains(t, err.Error(), "msgvault setup providers")
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		release, err := (daemon.RuntimeStore{Dir: dir, Prefix: "kit-embed-install"}).AcquireStartLock(t.Context())
+		require.NoError(t, err)
+		t.Cleanup(release)
+		original := localEmbeddingsDir
+		localEmbeddingsDir = func() (string, error) { return dir, nil }
+		t.Cleanup(func() { localEmbeddingsDir = original })
+		cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true, Model: "nomic-embed-text", Dimension: 768}}
+		// Cancel after discovery reaches the held installation lock.
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go func() {
+			_, err = resolveLocalVectorConfig(ctx, cfg)
+		}()
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorContains(t, err, "install local embeddings")
+		assert.NotContains(t, err.Error(), "msgvault setup providers")
+	})
 }

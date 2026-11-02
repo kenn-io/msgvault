@@ -165,6 +165,20 @@ type ControlCalendarErrorResponseJSON503 = ErrorResponse
 
 type ControlCalendarErrorResponseJSONDefault = ErrorResponse
 
+type ListCalendarEventsResponse = CalendarOccurrencePage
+
+type ListCalendarEventsErrorResponse = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON403 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON500 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON503 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSONDefault = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -2603,6 +2617,14 @@ type SearchPeopleErrorResponse = ErrorResponse
 
 type SearchPeopleErrorResponseJSON = ErrorResponse
 
+type PreviewPersonTiersResponse = PersonTierPreview
+
+type PreviewPersonTiersErrorResponse = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSON = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSONDefault = ErrorResponse
+
 type DeletePersonErrorResponse = ErrorResponse
 
 type DeletePersonErrorResponseJSON = ErrorResponse
@@ -3124,6 +3146,16 @@ type SplitPersonMergeErrorResponseJSON500 = ErrorResponse
 type SplitPersonMergeErrorResponseJSON503 = ErrorResponse
 
 type SplitPersonMergeErrorResponseJSONDefault = ErrorResponse
+
+type ExplainPersonTierResponse = PersonTierExplanation
+
+type ExplainPersonTierErrorResponse = ErrorResponse
+
+type ExplainPersonTierErrorResponseJSON = ErrorResponse
+
+type ExplainPersonTierErrorResponseJSON503 = ErrorResponse
+
+type ExplainPersonTierErrorResponseJSONDefault = ErrorResponse
 
 type GetPersonTrackingResponse = PersonTracking
 
@@ -4256,6 +4288,19 @@ type ControlCalendarResp struct {
 	JSON502      *ControlCalendarErrorResponseJSON502
 	JSON503      *ControlCalendarErrorResponseJSON503
 	JSONDefault  *ControlCalendarErrorResponseJSONDefault
+}
+
+type ListCalendarEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCalendarEventsResponse
+	JSON400      *ListCalendarEventsErrorResponse
+	JSON401      *ListCalendarEventsErrorResponseJSON
+	JSON403      *ListCalendarEventsErrorResponseJSON403
+	JSON500      *ListCalendarEventsErrorResponseJSON500
+	JSON503      *ListCalendarEventsErrorResponseJSON503
+	JSONDefault  *ListCalendarEventsErrorResponseJSONDefault
 }
 
 type SaveCardDAVAccountResp503Headers struct {
@@ -6302,6 +6347,16 @@ type SearchPeopleResp struct {
 	JSONDefault  *SearchPeopleErrorResponseJSON
 }
 
+type PreviewPersonTiersResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewPersonTiersResponse
+	JSON409      *PreviewPersonTiersErrorResponse
+	JSON503      *PreviewPersonTiersErrorResponseJSON
+	JSONDefault  *PreviewPersonTiersErrorResponseJSONDefault
+}
+
 type DeletePersonResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6813,6 +6868,17 @@ type SplitPersonMergeResp struct {
 	JSON500      *SplitPersonMergeErrorResponseJSON500
 	JSON503      *SplitPersonMergeErrorResponseJSON503
 	JSONDefault  *SplitPersonMergeErrorResponseJSONDefault
+}
+
+type ExplainPersonTierResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ExplainPersonTierResponse
+	JSON404      *ExplainPersonTierErrorResponse
+	JSON409      *ExplainPersonTierErrorResponseJSON
+	JSON503      *ExplainPersonTierErrorResponseJSON503
+	JSONDefault  *ExplainPersonTierErrorResponseJSONDefault
 }
 
 type GetPersonTrackingResp struct {

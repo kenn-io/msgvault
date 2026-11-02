@@ -66,6 +66,29 @@ describe('SourcesWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Show details for Broken archive' })).toBeDefined();
   });
 
+  it('shows a scheduled sync that queues after the page opens until it starts', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const queuedAt = '2026-10-01T15:04:00Z';
+    let current = source({ scheduled: true });
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [current] }));
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await screen.findByText('Archive');
+    expect(screen.queryByText('Queued since', { exact: false })).toBeNull();
+
+    current = source({ scheduled: true, scheduler_queued: true, scheduler_queued_at: queuedAt,
+      can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const queued = screen.getByText('Queued since', { exact: false });
+    expect(queued.querySelector('time')?.getAttribute('datetime')).toBe(queuedAt);
+
+    current = source({ scheduled: true, can_sync: false, sync_unavailable_reason: 'sync_already_running',
+      active_sync: run('running', 7) });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(screen.getByText('7 processed')).toBeDefined();
+    expect(screen.queryByText('Queued since', { exact: false })).toBeNull();
+    rendered.unmount();
+  });
+
   it('opens source-sync history from Sync history', async () => {
     const onOpenOperations = vi.fn();
     render(SourcesWorkspace, {

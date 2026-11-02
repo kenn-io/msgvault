@@ -18,7 +18,33 @@ on:
   schedule:
     - cron: '23 8 * * 1'
 jobs:
+  changes:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      groups: ${{ steps.changes.outputs.groups }}
+      all: ${{ steps.changes.outputs.all }}
+    steps:
+      - uses: kenn-io/actions/changes@e7ba4b0b573de976989328726cdcc83f8a463367
+        id: changes
+        with:
+          filters: |
+            go:
+              - '!{web/**,docs/**,*.md}'
+              - 'docs/assets/**'
+              - 'docs/screenshots/**'
+              - 'web/src/lib/settings/cron-corpus.json'
+              - 'web/tests/e2e/fixtures/operations-public.json'
+              - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
+            frontend:
+              - '!{docs/**,*.md}'
+
   release-linux-smoke:
+    needs: changes
+    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +125,8 @@ jobs:
   checks:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
+    needs: changes
+    if: *go-changed
     runs-on: ubuntu-26.04
     timeout-minutes: 37
     steps:
@@ -147,6 +175,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   test:
+    needs: changes
+    if: *go-changed
     runs-on: ubuntu-26.04
     timeout-minutes: 38
     steps:
@@ -183,6 +213,8 @@ jobs:
   # binary — scripts/test-package-shards.sh, the Linux twin of the Windows
   # lane's script — on its own runner.
   test-sharded:
+    needs: changes
+    if: *go-changed
     name: test-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -247,6 +279,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   frontend:
+    needs: changes
+    if: &web-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     runs-on: ubuntu-26.04
     timeout-minutes: 33
     steps:
@@ -264,7 +298,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.12.1
+          node-version: 26.13.0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -337,6 +371,8 @@ jobs:
           docker rm --force "$CONTAINER_ID"
 
   web-e2e:
+    needs: changes
+    if: *web-changed
     runs-on: ubuntu-26.04
     timeout-minutes: 31
     steps:
@@ -354,7 +390,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.12.1
+          node-version: 26.13.0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -419,6 +455,8 @@ jobs:
           if-no-files-found: error
 
   test-windows:
+    needs: changes
+    if: *go-changed
     runs-on: windows-2025
     timeout-minutes: 47
     steps:
@@ -502,6 +540,8 @@ jobs:
         uses: ./.github/actions/go-cache-save
 
   lint-windows:
+    needs: changes
+    if: *go-changed
     runs-on: windows-2025
     timeout-minutes: 64
     steps:
@@ -534,6 +574,10 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
           GOFLAGS: "-buildvcs=false -trimpath"
+          # Uncapped, a cold-cache run peaks near 10 GB of the runner's
+          # 16 GB, and a runner lost contact mid-lint. 6GiB holds the peak
+          # under 7 GB for about 5% more lint time.
+          GOMEMLIMIT: 6GiB
         run: |
           $version = (Select-String -Path .custom-gcl.yml -Pattern '^version: (\S+)').Matches[0].Groups[1].Value
           bash -c 'kit-retry 3 5 go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$1" custom --destination "$2" --name custom-gcl' -- "$version" "$env:RUNNER_TEMP"
@@ -541,6 +585,8 @@ jobs:
           & "$env:RUNNER_TEMP/custom-gcl.exe" run ./...
 
   test-windows-slow-packages:
+    needs: changes
+    if: *go-changed
     runs-on: windows-2025
     timeout-minutes: 21
     steps:
@@ -584,6 +630,8 @@ jobs:
           exit $status
 
   test-windows-sharded:
+    needs: changes
+    if: *go-changed
     name: test-windows-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -699,6 +747,8 @@ jobs:
   # tag is required; without it these files compile out and ship no tests,
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
+    needs: changes
+    if: *go-changed
     runs-on: ubuntu-26.04
     timeout-minutes: 109
     services:
@@ -751,11 +801,13 @@ jobs:
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
+    needs: changes
+    if: *go-changed
     runs-on: ubuntu-26.04
     timeout-minutes: 55
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: msgvault_test
@@ -808,6 +860,8 @@ jobs:
   # one package per job, each with its own PostgreSQL service so four shards'
   # connections never compete with the rest of the suite.
   test-postgres-sharded:
+    needs: changes
+    if: *go-changed
     name: test-postgres-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -830,7 +884,7 @@ jobs:
     timeout-minutes: ${{ matrix.job_timeout }}
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: msgvault_test
           POSTGRES_PASSWORD: msgvault_test

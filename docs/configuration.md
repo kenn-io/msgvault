@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-30"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -120,14 +120,17 @@ endpoints.
 `msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
 only to change which saved people it lists. Tier 1 is sustained two-way contact
 in the short window. Tier 2 is two-way contact in the long window, or meetings.
-Counts cover meetings and the email and chat messages that were sent or
-received. Drafts, texts that never left your phone, and call or voicemail
-records don't count. Archives imported before this change keep counting
-unsent texts until you import the Synctech backup again with
-`msgvault import-synctech-sms <path> --owner-phone <number>`. A Drive source
-doesn't re-download files it already imported, so download the backup from your
-Drive folder and import it locally with the source's owner phone. The import
-updates the existing messages in place. A group chat at or under `[activity]
+Counts cover meetings, the email and chat messages that were sent or received,
+and Synctech and Google Voice calls that stayed connected for at least
+`min_call_seconds`. A call counts as one message each way, whoever dialed.
+Drafts, texts that never left your phone, missed calls, voicemail, and shorter
+calls don't count. Archives imported before this change keep counting unsent
+texts, and count no calls, until you import the backup again: run
+`msgvault import-synctech-sms <path> --owner-phone <number>` for Synctech, and
+run the Google Voice Takeout import again for Google Voice. A Drive source
+doesn't re-download files it already imported, so download the Synctech backup
+from your Drive folder and run the import locally with the source's owner
+phone. The import updates the existing messages in place. A group chat at or under `[activity]
 max_direct_counterparts` counts for each member. By default, newsletter and
 list messages are left out (`exclude_list_messages = false` counts them), and so
 are messages sent to more people than that limit. A person whose address is one
@@ -138,6 +141,7 @@ of your own in any account is never listed.
 short_window_days = 90
 long_window_days = 365
 exclude_list_messages = true
+min_call_seconds = 120
 
 [people.tiers.tier1]
 min_outbound_short = 2
@@ -161,12 +165,13 @@ min_meeting_days_long = 2
 | `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
 | `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
 | `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. |
-| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window. Both are required, so one-way mail never qualifies. |
+| `min_call_seconds` | `120` | How long an answered Synctech or Google Voice call must stay connected to count. Each counted call adds one to the outbound and inbound counts and is its own channel. `0` stops calls from counting. |
+| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window, plus counted calls. Both are required, so one-way mail never qualifies. |
 | `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
 | `tier1.breadth_min_active_days_short` | `3` | Days needed for the breadth path to tier 1. |
-| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
+| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat, calls) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
 | `tier1.breadth_min_meeting_days_long` | `2` | Meeting days in the long window for the breadth path. `0` turns it off. |
-| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window. |
+| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window, plus counted calls. |
 | `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
 | `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
 
@@ -1122,7 +1127,7 @@ the CLI does not inherit the daemon's environment.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
-`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start`, `msgvault daemon restart`, and the restart after `msgvault update` still start a daemon when you run them. Commands routed to `[remote].url` are unaffected.
+`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
 
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser
@@ -1148,13 +1153,15 @@ changed from Settings; `config.toml` remains authoritative.
 | `density` | `compact` | Table density: `compact` or `comfortable` |
 
 Browser-managed settings are validated and written with optimistic concurrency.
-Only the `[web]` keys apply right away; every other `config.toml` category takes
-effect after the daemon restarts, and the Settings page says so once per
-category. Two things saved from the Settings page are not `config.toml` rows and
-apply right away: person-enrichment provider API keys, and the CardDAV account,
-which has its own save action. A "Saved. Restart the daemon" banner means the
-file is saved but the running daemon still has its old value. Changing `server.api_key` requires a confirmation and takes
-effect only after restart, which also invalidates browser sessions.
+Use **Save changes** for setting values. Provider API keys, providers, contact
+accounts, and People sweep profiles save through their own buttons.
+
+The `[web]` values, person-enrichment provider keys, and contact accounts apply
+right away. Other settings and embedding provider keys take effect after the
+daemon restarts. A restart banner appears after saving when the running daemon
+still has an old value.
+Changing `server.api_key` takes effect after restart, which also invalidates
+browser sessions.
 
 ### `[integrations.tasks]`
 
@@ -2276,6 +2283,10 @@ when explicitly set, including `false` and `""`. Already enabled text lanes keep
 their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
+Automatic message, person, and document indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
+
+Completed provider responses are saved in the vector store before the next request, so a resumed pass or restarted daemon does not repeat them; unfinished requests run again. See [scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
+
 #### `[vector.people]`
 
 Semantic people search: one curated document per durable person, built from
@@ -2433,7 +2444,7 @@ features once published. No startup hook or entrypoint wrapper is required.
   CLI recording transcript searches (`media search`) use `text`.
 - `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Everything sends no `search_empty` while recording search is unknown or set up because its archive row count excludes transcript matches.
 - `error_shown` when the web or TUI shows an error for search, archive loading, message opening, or a Sync now request on Sources that is refused or times out. TUI People readers and recording transcript hits aren't covered. A Sync now run that fails later counts through `sync_failed`. Its `kind` is `search`, `message`, `sync`, or `other`. It has no daily deduplication, so retries can send repeated events.
-- `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → CardDAV Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
+- `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → Contacts Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI
   `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.

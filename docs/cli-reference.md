@@ -1960,8 +1960,16 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1987,9 +1995,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |
@@ -3232,7 +3240,7 @@ grant consent to a provider or enroll a person in briefs.
 
 | Command | Purpose |
 |---|---|
-| `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person track <person-id>...` / `person untrack <person-id>...` | Enable or stop future profile maintenance for one or more people, in order. Stops at the first person the daemon rejects; `--json` prints one object per person per line |
 | `person tiers preview [--json]` | List saved people in tier 1 or 2 (two-way contact or meetings), whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
 | `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
@@ -4117,13 +4125,12 @@ generation, and a size rejection the worker recovers from by splitting or
 truncating a document. Messages can change while the sample is read.
 
 The job state is `idle`, `queued`, or `running`. `queued` means a scheduled run is
-waiting for the slot. A post-sync pass uses the sync's slot and goes straight
-to `running`; a manual build waiting for the slot shows as `idle` with the
-current holder. Scheduler state shows the
+waiting for the slot, including a post-sync pass after the sync releases it;
+a manual build waiting for the slot shows as `idle` with the current holder. Scheduler state shows the
 configured schedule, whether embeddings run after sync, and the current slot
 holder (`none`, `sync`, `embeddings`, or `other`). `sync` covers account syncs
-and scheduled source syncs such as Slack or CardDAV. A post-sync embedding pass
-holds the sync slot until it completes. No source names appear in slot labels.
+and scheduled source syncs such as Slack or CardDAV. No source names appear in
+slot labels.
 
 The latest 20 finished batches and current batch report attempted and newly
 covered messages, input characters the provider accepted, provider-call time, HTTP request time,
@@ -5254,11 +5261,14 @@ Update msgvault to the latest version.
 msgvault update [flags]
 ```
 
+Update restarts only a daemon msgvault started in the background. A daemon run as `msgvault serve` is left to its supervisor or the person who started it. Use `--no-restart` to leave even a background daemon stopped.
+
 A Homebrew install reports whether a newer release exists but does not replace
 itself. Run `brew upgrade msgvault` instead.
 
 | Flag | Description |
 |---|---|
+| `--no-restart` | Leave the daemon stopped after the update |
 | `--check` | Check for updates without installing |
 | `-y`, `--yes` | Skip confirmation prompt |
 | `-f`, `--force` | Force update even if already on the latest version |

@@ -39,19 +39,14 @@ type Config struct {
 }
 
 var (
-	// reReplyPreamble matches "On <date>, <name> wrote:" followed by one
-	// or more quoted lines. A quoted line starts with one or more `>`
-	// characters, optionally followed by a single space or tab, so nested
-	// quotes (">>", ">>>") and clients that omit the space after `>` are
-	// both recognised.
+	// reReplyPreamble matches "On <date>, <name> wrote:" followed by quoted lines.
 	reReplyPreamble = regexp.MustCompile(`(?m)^On [^\n]+wrote:\s*\n(?:>+[ \t]?.*\n?)+`)
+	// reQuoteLine matches standalone quoted lines.
+	reQuoteLine = regexp.MustCompile(`(?m)^>+[ \t]?.*\n?`)
+
 	// reSigDelim matches a signature delimiter "\n-- \n" (or "\n--\n") through
 	// end of string.
 	reSigDelim = regexp.MustCompile(`\n--\s*\n[\s\S]*\z`)
-	// reQuoteLine matches standalone quoted lines: one or more `>`
-	// characters followed by optional whitespace and the rest of the
-	// line. Handles ">", "> foo", ">foo", ">> nested", ">>>deep".
-	reQuoteLine = regexp.MustCompile(`(?m)^>+[ \t]?.*\n?`)
 
 	// reStyleBlock and reScriptBlock match <style>...</style> and
 	// <script>...</script> including their CSS/JS contents. Applied

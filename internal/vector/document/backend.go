@@ -96,6 +96,10 @@ type PagedBackend interface {
 // token so claim-heartbeat loss can safely abort publication.
 type Backend interface {
 	PutUnpublished(ctx context.Context, generationID GenerationID, dimension int, embeddings []Embedding) error
+	// UnpublishedTokens reports which of the given tokens have saved vectors that
+	// exist in the generation, so a later pass can publish them without
+	// another provider request.
+	UnpublishedTokens(ctx context.Context, generationID GenerationID, dimension int, tokens []string) (map[string]bool, error)
 	DeleteTokens(ctx context.Context, generationID GenerationID, tokens []string) error
 	Search(ctx context.Context, generationID GenerationID, dimension int, query []float32, k int) ([]Hit, error)
 }
