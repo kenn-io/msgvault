@@ -55,6 +55,7 @@ type activityReadMessage struct {
 	Direction                              ActivityDirection
 	Meeting, List, Encrypted, LargeInbound bool
 	ContactEligible                        bool
+	ExcludedSender                         bool
 	Counterparts                           []ActivityMessageCounterpart
 }
 
@@ -235,6 +236,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 	maxDirect := f.directLimit()
 	for i := range messages {
 		m := &messages[i]
+		m.ExcludedSender = false
 		raw := collapseActivityCounterparts(population[m.ID])
 		owner := activityOwnerLinked(raw)
 		audience := map[string]bool{}
@@ -284,6 +286,9 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 				if p.phone && excluded == "automated_address" {
 					excluded = ""
 				}
+			}
+			if cp.RecipientType == meetingSenderRole && excluded != "" && excluded != "owner" {
+				m.ExcludedSender = true
 			}
 			refKind := "message"
 			if m.Meeting {
