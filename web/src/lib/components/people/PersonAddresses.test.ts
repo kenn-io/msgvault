@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PersonSummary } from '../../explore/models';
@@ -187,7 +187,7 @@ describe('PersonAddresses', () => {
     expect(screen.queryByRole('group', { name: /Confirm unlinking/ })).toBeNull();
     release(outcome === 'failure' ? { ok: false, code: 'error', message: 'Request failed (500)' } : { ok: true, identityRevision: 3, cacheState: 'ready' });
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56));
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await act(async () => { await onUnlinkParticipants.mock.results[1]!.value; });
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });

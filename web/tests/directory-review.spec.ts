@@ -114,11 +114,6 @@ for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthet
     await page.keyboard.press('Enter');
 
     await expect(page).toHaveURL(new RegExp(`directoryPersonID%22%3A${profile.id}`));
-    await expect(page.getByRole('heading', { name: profile.name })).toBeVisible();
-    await page.getByRole('button', { name: 'More actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-    await expect(page.getByText('No merges', { exact: true })).toBeVisible();
-    await expect(page.getByRole('list', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
   });

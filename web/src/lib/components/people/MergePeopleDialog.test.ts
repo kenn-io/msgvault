@@ -11,11 +11,11 @@ vi.mock('../directory/PersonBindingConflictModal.svelte', { spy: true });
 
 it.each([
   { savedAnchor: true, promote: false, outcome: 'merge' },
-  { savedAnchor: false, promote: false, outcome: 'selected saved profile read fails' },
+  { savedAnchor: false, outcome: 'selected saved profile read fails' },
   { savedAnchor: true, promote: true, outcome: 'retry and merge' },
   { savedAnchor: true, promote: true, outcome: 'cancel' },
   { savedAnchor: false, promote: true, outcome: 'read failure' }
-])('merges profiles with saved anchor=$savedAnchor, promotion=$promote, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
+])('merges profiles with saved anchor=$savedAnchor, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
   const requests: Request[] = [];
   let failProfile = outcome === 'retry and merge' || outcome === 'read failure';
   const client = createAPIClient(async input => {
@@ -34,6 +34,7 @@ it.each([
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
+  const context = controller.personMergeContextSnapshot();
   const onReconcile = vi.fn(async () => undefined);
   const onOpenPerson = vi.fn(), onClose = vi.fn();
   const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, participantID: savedAnchor ? null : 1, name: 'Synthetic One', onReconcile, onOpenPerson, onClose });
@@ -61,9 +62,10 @@ it.each([
       expect(onClose).toHaveBeenCalledOnce();
       return;
     }
+    controller.query = 'Another person';
     await modal.onSuccess({ result: mergeResult(profile(7)), survivor: profile(7), responseETag: '"person-7-r5"' });
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
-    expect(onReconcile).toHaveBeenLastCalledWith(controller.personMergeContextSnapshot());
+    expect(onReconcile).toHaveBeenLastCalledWith(context);
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });

@@ -10,6 +10,7 @@ interface Answers {
   failing?: string[];
   deletions?: Promise<Response>;
   waiting?: boolean;
+  duplicateFailure?: boolean;
 }
 
 function setup(answers: Answers = {}) {
@@ -19,7 +20,7 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: answers.waiting ? [pair] : [] });
+    if (path.endsWith('/identity/match-candidates')) return answers.duplicateFailure ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json({ candidates: answers.waiting ? [pair] : [] });
     if (path === '/api/v1/deletions') return answers.deletions ?? Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
@@ -225,7 +226,7 @@ it('restores the visible view and reports a failed delete', async () => {
 
 it('polls jobs and duplicate counts, and refreshes deletions explicitly', async () => {
   vi.useFakeTimers();
-  const answers = { waiting: false };
+  const answers = { waiting: false, duplicateFailure: false };
   const { data, requests } = setup(answers);
   try {
     await data.refresh();
@@ -233,28 +234,16 @@ it('polls jobs and duplicate counts, and refreshes deletions explicitly', async 
     answers.waiting = true;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(data.duplicateCount).toBe(1);
+    answers.duplicateFailure = true;
+    await data.refreshDuplicates();
+    expect(data.duplicateCount).toBe(1);
+    const queries = requests.filter(request => new URL(request.url).pathname.endsWith('/identity/match-candidates')).map(request => new URL(request.url).search);
+    expect(queries).toEqual(Array(3).fill('?state=candidate%2Cconflict&limit=500&offset=0'));
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
     await data.refresh();
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
   } finally { data.stop(); vi.useRealTimers(); }
-});
-
-it('counts waiting matches and retains its badge after a 503 response', async () => {
-  const count = 4;
-  const queries: string[] = [];
-  const data = new ShellData(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    queries.push(new URL(request.url).search);
-    if (queries.length > 1) return Response.json({ error: 'unavailable' }, { status: 503 });
-    return Response.json({ candidates: Array.from({ length: count }, (_, id) => ({ ...pair, id: id + 1 })) });
-  }));
-  try {
-    await data.refreshDuplicates();
-    await data.refreshDuplicates();
-    expect(queries).toEqual(['?state=candidate%2Cconflict&limit=500&offset=0', '?state=candidate%2Cconflict&limit=500&offset=0']);
-    expect(data.duplicateCount).toBe(count);
-  } finally { data.stop(); }
 });
 
 it('keeps the post-decision badge when an earlier read completes late', async () => {
