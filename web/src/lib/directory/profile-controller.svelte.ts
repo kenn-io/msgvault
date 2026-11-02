@@ -139,7 +139,7 @@ export class DirectoryProfileController {
   }
   async reload(resolveDraft = true): Promise<DirectoryProfileOperationResult> {
     if (this.mutationPending) return { ok: false, code: 'mutation_in_progress' };
-    if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
+    this.reloadAbort?.abort();
     this.reloadPending = true;
     const abort = new AbortController();
     this.reloadAbort = abort;

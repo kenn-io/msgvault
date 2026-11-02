@@ -1148,8 +1148,11 @@ describe('DirectoryController', () => {
     } finally { controller.destroy(); }
   });
 
-  it.each(['pending attribute save', 'split'])('refreshes the selected profile after a %s and permits its next structured edit', async cause => {
+  it.each(['pending attribute save', 'pending profile reload', 'split'])('refreshes the selected profile after a %s and permits its next structured edit', async cause => {
     const pendingSave = deferredResponse();
+    const pendingReload = deferredResponse();
+    let holdProfileRead = false;
+    let staleProfile: Response | undefined;
     let linked = false;
     const patches: Request[] = [];
     const definition = { id: 1, universal_id: '00000000-0000-4000-8000-000000000001', object_type: 'person', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_sensitive: false, is_active: true, revision: 1 };
@@ -1166,7 +1169,11 @@ describe('DirectoryController', () => {
       }
       if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: linked ? 1 : 3, last_contact_at: linked ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: linked ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
       if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: `"person-7-r${person().revision}"` } });
-      if (path === '/api/v1/people/7/profile') return Response.json(profile(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+      if (path === '/api/v1/people/7/profile') {
+        const response = Response.json(profile(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+        if (holdProfileRead) { holdProfileRead = false; staleProfile = response; return pendingReload.promise; }
+        return response;
+      }
       if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [definition] });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current: linked ? [value] : [], history: [] }] });
       if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
@@ -1174,29 +1181,38 @@ describe('DirectoryController', () => {
     });
     const controller = new DirectoryController(client);
     let save: ReturnType<NonNullable<typeof controller.profile>['setAttribute']> | undefined;
+    let reload: ReturnType<NonNullable<typeof controller.profile>['reload']> | undefined;
     try {
       await controller.loadSelection(7);
       const owner = controller.profile;
       expect(controller.detail?.contactState).toMatchObject({ interaction_count: 3, last_contact_at: '2026-08-15T00:00:00Z', cadence_status: 'ok' });
       if (cause === 'pending attribute save') save = controller.profile!.setAttribute('note', { value: { type: 'text', text: 'A note' } });
       if (cause === 'pending attribute save') expect(controller.profile!.mutationPending).toBe(true);
+      if (cause === 'pending profile reload') {
+        holdProfileRead = true;
+        reload = controller.profile!.reload();
+        await vi.waitFor(() => expect(staleProfile).toBeDefined());
+      }
       linked = true;
       if (cause === 'split') await controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
       else await controller.refreshSelectedPerson();
       pendingSave.resolve(Response.json({ dry_run: false, value }));
       await save;
+      pendingReload.resolve(staleProfile ?? Response.json({}));
+      await reload;
       expect(controller.profile).toBe(owner);
-      expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
       expect(controller.detail?.person?.participant_ids).toEqual(cause === 'split' ? [11] : [11, 12]);
       expect(controller.detail?.structuredProfile?.person.participant_ids).toEqual(cause === 'split' ? [11] : [11, 12]);
       expect(controller.detail?.etags).toMatchObject({ person: '"person-7-r4"', structuredProfile: '"person-7-r4"' });
+      expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
       await controller.profile!.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
       expect(patches).toHaveLength(1);
       expect(patches[0]!.headers.get('If-Match')).toBe('"person-7-r4"');
       expect(controller.profile!.conflict).toBeNull();
     } finally {
       pendingSave.resolve(Response.json({ message: 'Save unavailable' }, { status: 503 }));
-      await save;
+      pendingReload.resolve(staleProfile ?? Response.json({ message: 'Profile unavailable' }, { status: 503 }));
+      await Promise.all([save, reload]);
       controller.destroy();
     }
   });
