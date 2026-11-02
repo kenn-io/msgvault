@@ -138,6 +138,15 @@ type ListAttributeDefinitionsQuery struct {
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 
+type ListCalendarEventsQuery struct {
+	From time.Time `json:"from" validate:"required"`
+	To   time.Time `json:"to" validate:"required"`
+}
+
+func (l ListCalendarEventsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListCardDAVBooksQuery struct {
 	// Connection Saved connection name; omit for all connections
 	Connection *string `json:"connection,omitempty"`
@@ -958,6 +967,9 @@ func (f FindContactCandidatesQuery) Validate() error {
 type ListDirectoryPeopleQuery struct {
 	// Q Lexical query over person names, contact points, and organizations
 	Q *string `json:"q,omitempty"`
+
+	// Address Literal case-insensitive substring of current bound participant identities or curated contact points
+	Address *string `json:"address,omitempty"`
 
 	// Cursor Opaque cursor returned by the previous Directory page
 	Cursor *string `json:"cursor,omitempty"`

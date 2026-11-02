@@ -19,6 +19,10 @@ func (b *DocumentBackend) PutUnpublished(context.Context, document.GenerationID,
 	return ErrNotBuilt
 }
 
+func (b *DocumentBackend) UnpublishedTokens(context.Context, document.GenerationID, int, []string) (map[string]bool, error) {
+	return nil, ErrNotBuilt
+}
+
 func (b *DocumentBackend) DeleteTokens(context.Context, document.GenerationID, []string) error {
 	return ErrNotBuilt
 }

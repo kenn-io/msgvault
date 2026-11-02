@@ -48,9 +48,11 @@ the provider keys you have, start with
 
 ## Prerequisites
 
-1. **A running embedding endpoint.** msgvault does
-   not host a model. Point it at a local, self-hosted, or hosted
-   endpoint that you trust. Common local options include [Ollama](https://ollama.com),
+1. **An embedding provider.** Run `msgvault setup providers --local-embeddings`
+   to install and start the shared local server after confirming any missing
+   downloads. This works without a running endpoint. You can also point msgvault
+   at a running local, self-hosted, or hosted endpoint that you trust.
+   Common local options include [Ollama](https://ollama.com),
    [llama.cpp's `server`](https://github.com/ggerganov/llama.cpp/tree/master/examples/server),
    and [LM Studio](https://lmstudio.ai). On an Apple Silicon Mac,
    [`afm`](https://github.com/scouzi1966/maclocal-api) is another option
@@ -109,7 +111,13 @@ go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
 ## Enable
 
-Use `msgvault setup providers` to select defaults, or add a `[vector]` block
+Use `msgvault setup providers` to select defaults. Without a hosted key, setup uses Ollama with `nomic-embed-text` or offers the shared local server. It asks once before downloading missing model and runtime files.
+
+Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. The switch changes document-vector and semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
+
+The switch also changes the separate document-vector generation: renew its consents, restart the daemon, and build the matching generation to restore document semantic search.
+
+For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.
 
 Guided Ollama setup uses a conservative `max_input_chars = 2000`, leaving
@@ -501,9 +509,9 @@ trigger).
 |---|---|
 | Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
 | Manual `sync-calendar` / `sync-teams` / `sync-discord` | No. Run `msgvault embeddings build` afterward |
-| Manual `sync-slack` / `sync-beeper` / `sync-omi` / `sync-granola` / `sync-plaud` / `sync-circleback` / `sync-notion-meetings` / `sync-muesli` / `sync-twilio` / `sync-twenty` / `sync-chatwoot` | No. Run `msgvault embeddings build` afterward |
+| Manual `sync-slack` / `sync-beeper` / `sync-omi` / `sync-granola` / `sync-plaud` / `sync-circleback` / `sync-pocket` / `sync-notion-meetings` / `sync-muesli` / `sync-twilio` / `sync-twenty` / `sync-chatwoot` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams, Discord) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
-| Scheduled calendar, Slack, Beeper, Omi, Granola, Plaud, Circleback, Notion, Muesli, Twilio, Twenty, and Chatwoot syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
+| Scheduled calendar, Slack, Beeper, Omi, Granola, Plaud, Circleback, Pocket, Notion, Muesli, Twilio, Twenty, and Chatwoot syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
 | Local email imports (`import-pst`, `import-emlx`, `import-eml`, `import-mbox`) | No. Run `msgvault embeddings build` afterward |
 | Local chat/text imports | No. Run `msgvault embeddings build` afterward |
 

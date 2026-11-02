@@ -96,7 +96,8 @@
       (key: number) => void,
       SettingsNavigationTarget | undefined,
       string,
-      (categoryID: string) => void
+      (categoryID: string) => void,
+      () => void
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -355,6 +356,10 @@
   }
 
   setContext('msgvault:open-carddav-operations', () => openOperations('contacts', 'carddav_sync'));
+  setContext('msgvault:hold-settings-leave', (hold: ExploreState['holdLeave'], cancel: ExploreState['cancelHeldLeave']) => {
+    exploreState.holdLeave = hold;
+    exploreState.cancelHeldLeave = cancel;
+  });
   function consumeCardDAVSettingsRequest(key: number): void {
     if (cardDAVSettingsRequest?.key === key) cardDAVSettingsRequest = undefined;
   }
@@ -799,9 +804,9 @@
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
+    if (exploreState.current.workspace === 'settings' && document.activeElement?.closest('.app-main')) return;
     const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
-      ? focusableResultsGrid()
-      : null;
+      ? focusableResultsGrid() : null;
     (grid ?? navigationFocusTarget())?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
@@ -1343,7 +1348,8 @@
           consumeCardDAVSettingsRequest,
           settingsNavigationTarget,
           exploreState.current.settingsCategory,
-          selectSettingsCategory
+          selectSettingsCategory,
+          () => commitNavigation({ workspace: 'sources' })
         )}{/if}
       {:else if exploreState.current.workspace === 'saved_views'}
         <SavedViewsWorkspace
@@ -1370,6 +1376,7 @@
           onStateChange={(patch) => commitNavigation(patch)}
           onNavigate={openOperationAuthority}
           onConfigure={openVisualAttachmentSettings}
+          onOverview={() => commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '' })}
           onSetUp={setUpOperation}
           onAnnounce={announceOperation}
         />

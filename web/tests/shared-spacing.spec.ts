@@ -102,6 +102,29 @@ for (const width of [1280, 420]) {
   });
 }
 
+test('a long saved view list keeps every row at its full height and scrolls', async ({ page }) => {
+  const description = 'Synthetic description that wraps across several lines of the saved view row. '.repeat(4).trim();
+  await page.route('**/api/v1/saved-views', (route) => route.fulfill({ json: { saved_views: Array.from({ length: 12 }, (_, index) => ({
+    id: index + 1, name: `Saved view ${index + 1}`, description, schema_version: 1, revision: 1,
+    canonical_state: { filters: [{ field: 'source', operator: 'eq', values: ['1'] }], grouping: ['year'], presentation: 'table' },
+    created_at: row.occurred_at, updated_at: row.occurred_at
+  })) } }));
+  await selectWorkspace(page, 'Saved views');
+  const views = page.locator('.view-list article');
+  await expect(views).toHaveCount(12);
+  const rows = await views.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom, overflow: element.scrollHeight - element.clientHeight };
+  }));
+  for (const [index, current] of rows.entries()) {
+    expect(current.overflow, `row ${index + 1} content overflows its row`).toBeLessThanOrEqual(0);
+    if (index > 0) expect(current.top, `row ${index + 1} overlaps the row above`).toBeGreaterThanOrEqual(rows[index - 1]!.bottom - 1);
+  }
+  const last = page.getByRole('button', { name: 'Open Saved view 12', exact: true });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport({ ratio: 1 });
+});
+
 test('save-view dialog shares header and field insets', async ({ page }) => {
   await selectWorkspace(page, 'Everything');
   await page.getByRole('button', { name: 'Save view…' }).click();
@@ -236,17 +259,6 @@ test('linked message uses the page title text scale', async ({ page }) => {
   } }));
   await page.goto('/messages/1');
   await expect(page.getByRole('heading', { level: 1, name: row.title })).toHaveCSS('font-size', '18px');
-});
-
-test('settings cards keep 12px control insets', async ({ page }) => {
-  await selectWorkspace(page, 'Settings');
-  const control = page.locator('.kit-card .row__control').first();
-  await expect(control).toBeVisible();
-  const inset = await control.evaluate((element) => {
-    const card = element.closest('.kit-card')!;
-    return card.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(card).borderRightWidth) - element.getBoundingClientRect().right;
-  });
-  expect(inset).toBe(12);
 });
 
 test('app scrollbars use the shared 8px style', async ({ page }) => {

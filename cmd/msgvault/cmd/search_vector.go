@@ -173,13 +173,14 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 	rows := make([]map[string]any, len(resp.Results))
 	for i, r := range resp.Results {
 		row := map[string]any{
-			"id":              r.ID,
-			"subject":         r.Subject,
-			"from_email":      r.FromEmail,
-			"sent_at":         r.SentAt.Format(time.RFC3339),
-			"boosted":         r.SubjectBoosted,
-			"conversation_id": r.Message.ConversationID,
-			"snippet":         r.Message.Snippet,
+			"id":                  r.ID,
+			"subject":             r.Subject,
+			"from_email":          r.FromEmail,
+			"sent_at":             r.SentAt.Format(time.RFC3339),
+			"boosted":             r.SubjectBoosted,
+			"conversation_id":     r.Message.ConversationID,
+			"snippet":             r.Message.Snippet,
+			"hidden_text_present": r.Message.HiddenTextPresent,
 		}
 		if r.AttachmentCount != nil {
 			row["attachment_count"] = *r.AttachmentCount

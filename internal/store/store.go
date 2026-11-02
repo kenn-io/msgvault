@@ -1898,6 +1898,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
 
+	if err := s.runOnceMigration(ctx, migrationMessagesHiddenTextBackfill, 1, false, s.backfillMessagesHiddenText); err != nil {
+		return fmt.Errorf("backfill messages hidden text flags: %w", err)
+	}
+
 	// Gmail exposes archived chat transcripts as MIME messages carrying its
 	// system CHAT label. Older syncs stored every Gmail payload as email, which
 	// made the archive present these transcripts as separate email items. Run
@@ -2306,6 +2310,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for

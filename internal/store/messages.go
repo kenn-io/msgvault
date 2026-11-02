@@ -427,6 +427,8 @@ type Message struct {
 	SenderID         sql.NullInt64
 	ReplyToMessageID sql.NullInt64
 	IsFromMe         bool
+	// IsSent is whether the message left the sender; invalid keeps the stored value.
+	IsSent sql.NullBool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
 	// account identity rather than a source-native sent-by-me signal.
 	IdentityDerivedIsFromMe bool
@@ -963,7 +965,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1377,12 +1382,12 @@ func upsertMessageSQL(now string) string {
 		reply_to_message_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
 		subject, snippet, size_estimate,
-		has_attachments, attachment_count, archived_at, last_modified
+		has_attachments, attachment_count, archived_at, last_modified, is_sent
 	)
 	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
-	       ?, ?, ?, ?, ?, %[1]s, %[1]s
+	       ?, ?, ?, ?, ?, %[1]s, %[1]s, COALESCE(CAST(? AS BOOLEAN), TRUE)
 	FROM attribution
 	WHERE TRUE
 	ON CONFLICT(source_id, source_message_id) DO UPDATE SET
@@ -1407,7 +1412,8 @@ func upsertMessageSQL(now string) string {
 		snippet = excluded.snippet,
 		size_estimate = excluded.size_estimate,
 		has_attachments = CASE WHEN ? THEN messages.has_attachments ELSE excluded.has_attachments END,
-		attachment_count = CASE WHEN ? THEN messages.attachment_count ELSE excluded.attachment_count END`, now)
+		attachment_count = CASE WHEN ? THEN messages.attachment_count ELSE excluded.attachment_count END,
+		is_sent = COALESCE(CAST(? AS BOOLEAN), messages.is_sent)`, now)
 }
 
 // UpsertMessage inserts or updates a message.
@@ -1439,6 +1445,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -1499,8 +1508,8 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.SentAt, msg.ReceivedAt, msg.InternalDate, msg.SenderID,
 		msg.ReplyToMessageID,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
-		msg.HasAttachments, msg.AttachmentCount,
-		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
+		msg.HasAttachments, msg.AttachmentCount, msg.IsSent,
+		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats, msg.IsSent,
 	}
 
 	// Use RETURNING to avoid an extra SELECT per message when supported.
@@ -1709,6 +1718,11 @@ func upsertMessageBody(
 	`, messageID, bodyText, bodyHTML)
 	if err != nil {
 		return err
+	}
+	hiddenTextPresent := bodyHTML.Valid && mime.HTMLHasHiddenText(bodyHTML.String)
+	if _, err := q.Exec(`UPDATE messages SET hidden_text_present = ? WHERE id = ? AND hidden_text_present <> ?`,
+		hiddenTextPresent, messageID, hiddenTextPresent); err != nil {
+		return fmt.Errorf("update message hidden text flag: %w", err)
 	}
 	if !embeddingChanged {
 		return nil
@@ -2442,6 +2456,9 @@ func (s *Store) persistMessageWith(
 	}
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -6154,6 +6171,9 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
 		switch {

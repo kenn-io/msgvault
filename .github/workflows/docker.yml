@@ -9,6 +9,8 @@ permissions: read-all
 jobs:
   # PR validation: build and smoke-test only, no registry access
   validate:
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
@@ -26,6 +28,8 @@ jobs:
       - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version: 1.4.4
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
       - name: Build browser application
         run: make web-assets-check

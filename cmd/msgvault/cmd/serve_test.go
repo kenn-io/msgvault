@@ -559,7 +559,21 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
-	go func() { errCh <- runServe(cmd, nil) }()
+	serveStopped := make(chan struct{})
+	go func() {
+		defer close(serveStopped)
+		errCh <- runServe(cmd, nil)
+	}()
+	// A failed assertion must not leave the daemon holding daemon.lock while
+	// TempDir cleanup runs, or running after the build stub is restored.
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-serveStopped:
+		case <-time.After(serveLifecycleTestTimeout):
+			assert.Fail("runServe did not stop during cleanup")
+		}
+	})
 
 	select {
 	case <-buildStarted:
@@ -570,7 +584,9 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
 
-	healthClient := &http.Client{Timeout: time.Second}
+	// The runner's throughput is not under test; the stubbed build keeps the
+	// daemon initializing for as long as these requests take.
+	healthClient := &http.Client{Timeout: serveLifecycleTestTimeout}
 	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
 	require.NoError(err, "GET /health")
 	var health api.HealthResponse

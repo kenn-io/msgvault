@@ -302,26 +302,27 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 	}
 	out := CLIHybridSearchResult{
 		Message: query.MessageSummary{
-			ID:              item.ID,
-			SourceID:        int64Value(item.SourceID),
-			SourceMessageID: stringValue(item.SourceMessageID),
-			ConversationID:  int64Value(item.ConversationID),
-			Subject:         item.Subject,
-			Snippet:         item.Snippet,
-			AttachmentCount: intValue(item.AttachmentCount),
-			AttachmentNames: item.AttachmentNames,
-			FromEmail:       stringValue(item.FromEmail),
-			FromName:        stringValue(item.FromName),
-			FromPhone:       stringValue(item.FromPhone),
-			To:              queryAddressesFromStrings(item.To),
-			Cc:              queryAddressesFromStrings(item.Cc),
-			Bcc:             queryAddressesFromStrings(item.Bcc),
-			SentAt:          sentAt,
-			SizeEstimate:    item.SizeBytes,
-			HasAttachments:  item.HasAttachments,
-			Labels:          item.Labels,
-			DeletedAt:       deletedAt,
-			MessageType:     stringValue(item.MessageType),
+			ID:                item.ID,
+			SourceID:          int64Value(item.SourceID),
+			SourceMessageID:   stringValue(item.SourceMessageID),
+			ConversationID:    int64Value(item.ConversationID),
+			Subject:           item.Subject,
+			Snippet:           item.Snippet,
+			AttachmentCount:   intValue(item.AttachmentCount),
+			AttachmentNames:   item.AttachmentNames,
+			FromEmail:         stringValue(item.FromEmail),
+			FromName:          stringValue(item.FromName),
+			FromPhone:         stringValue(item.FromPhone),
+			To:                queryAddressesFromStrings(item.To),
+			Cc:                queryAddressesFromStrings(item.Cc),
+			Bcc:               queryAddressesFromStrings(item.Bcc),
+			SentAt:            sentAt,
+			SizeEstimate:      item.SizeBytes,
+			HasAttachments:    item.HasAttachments,
+			HiddenTextPresent: item.HiddenTextPresent,
+			Labels:            item.Labels,
+			DeletedAt:         deletedAt,
+			MessageType:       stringValue(item.MessageType),
 		},
 		AttachmentCount:  item.AttachmentCount,
 		ID:               item.ID,
@@ -377,6 +378,7 @@ func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) quer
 		Subject:              msg.Subject,
 		Snippet:              msg.Snippet,
 		MatchSnippet:         stringValue(msg.MatchSnippet),
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		AttachmentNames:      msg.AttachmentNames,
 		FromEmail:            msg.FromEmail,
 		FromName:             msg.FromName,
@@ -417,6 +419,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	return &query.MessageDetail{
 		RelatedMessageID:     resp.RelatedMessageID,
 		ID:                   resp.ID,
+		Calendar:             calendarProjectionFromGenerated(resp.Calendar),
 		SourceMessageID:      resp.SourceMessageID,
 		RFC822MessageID:      stringValue(resp.Rfc822MessageID),
 		ConversationID:       resp.ConversationID,
@@ -437,6 +440,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 		Attachments:          cliMessageAttachmentsFromGenerated(resp.Attachments),
 		BodyText:             resp.BodyText,
 		BodyHTML:             resp.BodyHTML,
+		HiddenTextPresent:    resp.HiddenTextPresent,
 	}
 }
 
@@ -933,4 +937,19 @@ func docbankRefsFromGenerated(refs []generated.DocbankAttachmentRef) []store.Doc
 		result[i] = store.DocbankAttachmentRef{Endpoint: ref.Endpoint, Folder: ref.Folder, NodeID: ref.NodeID, VersionID: ref.VersionID, BlobHash: ref.BlobHash}
 	}
 	return result
+}
+
+func calendarProjectionFromGenerated(calendar *generated.CalendarProjection) *store.CalendarProjection {
+	if calendar == nil {
+		return nil
+	}
+	return &store.CalendarProjection{
+		Status:   calendar.Status,
+		Sequence: calendar.Sequence,
+		Start:    calendar.Start,
+		End:      calendar.End,
+		AllDay:   calendar.AllDay,
+		TimeZone: calendar.TimeZone,
+		ICalUID:  calendar.IcalUID,
+	}
 }

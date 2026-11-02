@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-11-01"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -821,6 +821,31 @@ where the listing is intentionally incomplete. Gmail source-deletion
 reconciliation happens only during the complete mailbox recovery described
 under [`sync`](#sync).
 
+### Gmail Spam and Trash coverage
+
+Gmail full sync includes messages in Spam and Trash. A full sync with a Gmail
+`--query`, `--after`, `--before`, or `--limit` is still scoped by those options.
+To discover historical Spam and Trash messages omitted by an earlier full sync,
+run a complete full sync for the account with none of those options:
+
+```bash
+msgvault sync-full account@example.com
+```
+
+An idle incremental sync cannot discover older omitted messages unless Gmail
+reports a new history event for them. The full listing resumes from its saved
+checkpoint when the request scope matches; after this coverage change, an older
+narrower checkpoint restarts from the first page. Previously archived messages
+are not duplicated. Gmail can return only messages that still exist in the
+mailbox; permanently deleted messages cannot be backfilled.
+
+At the current 500-ID page size, a listing of N matching messages needs roughly
+`ceil(N / 500)` Gmail list requests. Each newly discovered message also needs one
+RAW-message fetch; retries can add requests. Previously archived messages still
+appear in the listing but are not downloaded again. Actual quota use, transfer,
+storage, and first-full duration depend on mailbox size, newly discovered mail,
+and retries. Plan for additional API use and storage on large accounts.
+
 ---
 
 ## sync
@@ -862,6 +887,23 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+Recovery saves its phase and the history cursor captured before enumeration.
+After an interruption, `sync` or an unfiltered `sync-full` resumes that recovery.
+An interrupted presence inventory is collected again before reconciling absence.
+Once the catch-up phase is durably checkpointed, retries consume History from
+the saved cursor without repeating the full listings. An interruption between
+the reconciliation commit and that checkpoint repeats reconciliation safely.
+The source cursor advances only after catch-up succeeds. If the saved recovery
+cursor also expires, msgvault starts a new complete recovery; one invocation
+attempts at most one such restart.
+Like an ordinary sync, recovery records per-message fetch and ingest
+errors without stopping, so one failing message cannot hold the account in
+recovery. Fetches that fail during catch-up are retried by the next `sync`.
+
+While recovery is pending, a Gmail `sync-full` with query, date, or limit
+filters is rejected. Finish the complete recovery first. `--noresume` restarts
+the complete recovery from a fresh cursor.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use
@@ -1019,6 +1061,51 @@ configured source that has been removed from the archive and directs you to run
 See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
+
+## add-pocket
+
+Verify a configured personal Pocket API key and register its meeting source.
+Available on `main`; consult the release changelog for installed releases.
+
+```bash
+msgvault add-pocket [identifier]
+```
+
+The identifier can be omitted when exactly one `[[pocket]]` entry is configured.
+The daemon reads the key from `api_key_env` (default `POCKET_API_KEY`). The live
+account email must match `account_email`. Registration binds the source to both
+that email and Pocket's stable user ID. A different account needs a new label.
+
+## sync-pocket
+
+Archive Pocket transcripts, completed summaries, and structured action items.
+
+```bash
+msgvault sync-pocket
+msgvault sync-pocket personal --limit 10
+msgvault sync-pocket personal --full --after 2026-01-01
+```
+
+Without an identifier, sync all configured Pocket sources. Each run enumerates
+all recording metadata and fetches selected recordings in least-attempted
+order, then newest meeting time and recording ID. Limited runs retain attempt
+order, including failed attempts, so one invalid recording does not block
+older meetings. Edits update the same archived message.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--limit` | `0` | Maximum detail fetches in this run; zero means unlimited; negative values fail |
+| `--after` | Unset | Include meetings dated on or after this UTC date (`YYYY-MM-DD`); implies `--full`. Recordings listed with an earlier recording date skip detail fetches |
+| `--full` | `false` | Repair derived projections and invalid sync state; preserve valid attempt order |
+| `--build-cache` | `false` | Request analytics cache refresh after sync |
+| `--no-build-cache` | `false` | Skip analytics cache refresh after sync |
+
+Failed or canceled runs preserve committed meetings and recoverable attempt
+state without advancing the last successful sync. Processing or missing
+sections retain prior usable content independently. Explicit successful empty
+sections clear it. Provider deletions do not remove archived meetings.
+
+See the [Pocket workflow](usage/meetings.md#pocket) for setup and limitations.
 
 ## add-notion-meetings
 
@@ -1873,8 +1960,16 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1900,9 +1995,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |
@@ -2587,6 +2682,9 @@ attachments of the message. JSON includes `snippet` (the stored preview) and `co
 The `filename:` operator requires daemon API schema 3.14.0 or newer.
 FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
 its array output; vector/hybrid keep their object containing `results`.
+On newer `main` builds, every JSON result includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. False does not guarantee that text is visible.
+See `show-message` below for the detector and one-time backfill.
 
 Use hybrid for natural-language intent with lexical clues, and vector for
 meaning alone. Date operators filter before ranking; `--sort date` only sorts
@@ -2960,7 +3058,40 @@ database size. The message total includes active and source-deleted messages;
 when source-deleted messages exist, their counts are shown separately. The
 analytics cache also retains source-deleted messages.
 
-Text output only. For structured counts use:
+Text output is the default. Use `--json` to emit one JSON object:
+
+```bash
+msgvault stats --json
+msgvault stats --collection team --json
+```
+
+JSON always includes these integer counts, even when zero:
+
+| Field | Meaning |
+|---|---|
+| `total_messages` | Active plus source-deleted messages, excluding dedup-hidden rows |
+| `active_messages` | Messages still present at the source |
+| `source_deleted_messages` | Messages deleted at the source and retained in the archive |
+| `total_threads`, `total_attachments`, `total_labels` | Counts associated with active messages |
+| `total_accounts` | Source records in the selected scope, including calendar sources and sources with no messages |
+
+The CLI's `total_messages` includes active and source-deleted messages. The
+daemon HTTP API retains its legacy active-only `total_messages` for compatibility.
+
+The `scope` object identifies `kind` as `archive`, `account`, `collection`, or
+`agent_grant`. Its `source_count` equals `total_accounts`; both count source
+records, including associated calendar sources and sources with no messages.
+One account can span multiple source records. Scoped results include a `label`
+when available. Without an explicit account or collection, delegated reads use
+`agent_grant` and count only granted sources, including a zero count when none
+remain.
+
+Owner reads include `database_size_bytes`, even when zero, with
+`database_size_scope: "global"`. Size remains global with `--account` or
+`--collection`. Delegated reads omit both size fields. JSON contains no database
+path or server URL. `--json=false` selects text output.
+
+For custom structured counts, use:
 
 ```bash
 msgvault query "SELECT count(*) AS n FROM messages"
@@ -2974,6 +3105,7 @@ msgvault stats [flags]
 |---|---|
 | `--account` | Show stats for a specific account |
 | `--collection` | Show stats for all member accounts of a collection |
+| `--json` | Output structured archive counts and scope metadata as JSON |
 
 ---
 
@@ -3095,14 +3227,16 @@ reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
 
-### person track, provider, sweep, and facts
+### person track, tiers, provider, sweep, and facts
 
 Tracking chooses which profiles automatic maintenance may process. It does not
 grant consent to a provider or enroll a person in briefs.
 
 | Command | Purpose |
 |---|---|
-| `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person track <person-id>...` / `person untrack <person-id>...` | Enable or stop future profile maintenance for one or more people, in order. Stops at the first person the daemon rejects; `--json` prints one object per person per line |
+| `person tiers preview [--json]` | List saved people in tier 1 or 2 (two-way contact or meetings), whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
+| `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
 | `person provider list` | List configured model profiles |
 | `person provider use <name>` | Select a checked profile and enable sweeps |
@@ -3310,6 +3444,13 @@ identity cluster or by importing contacts from a subscribed CardDAV address book
 A participant is one address or handle seen in messages; a person groups
 participants into a profile with notes, attributes, relationships, and briefs.
 
+Find saved people without semantic search or creating a profile:
+
+```bash
+msgvault person directory --query "Alex Example"
+msgvault person directory --address alex@example.test
+```
+
 Find an observed contact by address without creating a person:
 
 ```bash
@@ -3498,10 +3639,12 @@ text around it, up to 10 passages at a time; `--offset` reads the next page. See
 
 ## person directory
 
-Browse promoted people by last contact through the selected local or configured remote daemon. The default order is most recent first, `last_contact_desc`. Each page uses the daemon's default of 50 people.
+Find saved people by curated name or attached address, or browse by last contact through the selected local or configured remote daemon. The default order is most recent first, `last_contact_desc`. Each page uses the daemon's default of 50 people. Lookup is read-only and works without semantic search.
 
 ```bash
 msgvault person directory
+msgvault person directory --query "Alex Example"
+msgvault person directory --address alex@example.test
 msgvault person directory --last-contact-after 2026-06-01 --last-contact-before 2026-07-01 --json
 msgvault person directory --sort last_contact_asc
 msgvault person directory --sort name
@@ -3510,6 +3653,8 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 
 | Flag | Default | Description |
 |---|---|---|
+| `--query <text>` | absent | Lexical search over current curated names, contact points, and organizations |
+| `--address <text>` | absent | Literal, case-insensitive substring of current bound participant addresses/identifiers or curated contact points |
 | `--last-contact-after <date>` | absent | Inclusive lower bound, `YYYY-MM-DD` or RFC3339 |
 | `--last-contact-before <date>` | absent | Inclusive upper bound, `YYYY-MM-DD` or RFC3339 |
 | `--sort <order>` | `last_contact_desc` | `name`, `last_contact_desc`, or `last_contact_asc` |
@@ -3518,7 +3663,11 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 
 Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets and fractional seconds. Both bounds include the specified instant, so `--last-contact-before 2026-07-01` includes midnight at the start of July 1. Use a timestamp when you need a different cutoff.
 
-Human output shows `ID`, `DISPLAY NAME`, and `LAST CONTACT` in daemon order. Timestamps use UTC RFC3339 at seconds precision; JSON preserves fractional seconds. Missing display names and timestamps show `-`. A page with more results prints `Next cursor`. Pass that value unchanged to `--cursor` and repeat the same bounds and sort to continue.
+All filters intersect. `%`, `_`, and backslash in `--address` are ordinary characters. Address lookup includes archived aliases on currently bound participants and current curated contact points, excluding superseded values and unpromoted participants. Postal addresses are excluded. Curated display names stay unchanged, including cleared names. An older daemon that cannot apply the address filter reports an upgrade error.
+
+Sparse or no-match address-only lookups can scan the full saved directory. Remote PostgreSQL connections can add network latency to these database round trips. Combine `--query` with `--address` when you know a name or organization to narrow the candidates first.
+
+Human output shows `ID`, `DISPLAY NAME`, and `LAST CONTACT` in daemon order. Timestamps use UTC RFC3339 at seconds precision; JSON preserves fractional seconds. Missing display names and timestamps show `-`. A page with more results prints `Next cursor`. Pass that value unchanged to `--cursor` and repeat the same query, address, bounds, and sort to continue.
 
 JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, revision, `vcard_uid`, and `carddav_bindings`. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.
 
@@ -3876,7 +4025,7 @@ Use this if `verify` reports FTS5 shadow-table corruption such as a malformed in
 
 ## embeddings
 
-Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and a configured `[vector.embeddings]` endpoint. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
+Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and configured `[vector.embeddings]` settings. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
 
 ```bash
 msgvault embeddings <subcommand> [flags]
@@ -3970,13 +4119,12 @@ generation, and a size rejection the worker recovers from by splitting or
 truncating a document. Messages can change while the sample is read.
 
 The job state is `idle`, `queued`, or `running`. `queued` means a scheduled run is
-waiting for the slot. A post-sync pass uses the sync's slot and goes straight
-to `running`; a manual build waiting for the slot shows as `idle` with the
-current holder. Scheduler state shows the
+waiting for the slot, including a post-sync pass after the sync releases it;
+a manual build waiting for the slot shows as `idle` with the current holder. Scheduler state shows the
 configured schedule, whether embeddings run after sync, and the current slot
 holder (`none`, `sync`, `embeddings`, or `other`). `sync` covers account syncs
-and scheduled source syncs such as Slack or CardDAV. A post-sync embedding pass
-holds the sync slot until it completes. No source names appear in slot labels.
+and scheduled source syncs such as Slack or CardDAV. No source names appear in
+slot labels.
 
 The latest 20 finished batches and current batch report attempted and newly
 covered messages, input characters the provider accepted, provider-call time, HTTP request time,
@@ -4464,7 +4612,7 @@ Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
 configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
-available loopback Ollama model at `[chat].server`. Hosted people inference
+available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
 select it. Without an OpenAI key or explicit provider choice, setup can offer
 the configured local Ollama chat model. The running daemon does not fall back
@@ -4494,7 +4642,9 @@ search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
 
-An existing text model or endpoint is preserved even if the feature is disabled.
+`--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
+
+Without that flag, an existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
 schedule keys, including an empty cron and `run_after_sync = false`, are also
 preserved. Setup does not configure source syncs, track people, enroll briefs,
@@ -4586,6 +4736,20 @@ preserved. With JSON, cleaning changes
 
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
+On newer `main` builds, JSON includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. The check uses a set of
+inline-style heuristics, plus `hidden` and legacy color attributes. Non-blank
+HTML that fails to parse also sets the flag. Text output writes
+`Warning: this message's HTML may hide text.` to stderr when flagged, including
+with `--body-only`. Message bodies stay unchanged. The check excludes
+stylesheets and browser layout. False does not guarantee that text is visible.
+Many newsletters hide a preview line, called a preheader, and those set the flag
+too. The flag marks hidden text rather than malicious intent.
+MCP `get_message` and `search_in_message`
+return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
+also include it on every result row. Archive schema 16 flags older mail during
+a one-time backfill at archive initialization; new HTML writes refresh the flag.
+
 ## show-thread
 
 On newer `main` builds, read a conversation in chronological order with quoted
@@ -4608,6 +4772,10 @@ JSON includes `conversation_id`, `total`, `offset`, `has_more`, and `messages`
 containing message details with cleaned `body_text`. Text and JSON use the same
 `--strip-quoted` policy. Pass `--strip-quoted=false` to
 keep the archived body text unchanged.
+
+Each message in `show-thread --json` includes `hidden_text_present`, using the
+same check as `show-message`. Text output prints the same stderr warning once
+when any message on the shown page is flagged.
 
 ---
 
@@ -5087,11 +5255,14 @@ Update msgvault to the latest version.
 msgvault update [flags]
 ```
 
+Update restarts only a daemon msgvault started in the background. A daemon run as `msgvault serve` is left to its supervisor or the person who started it. Use `--no-restart` to leave even a background daemon stopped.
+
 A Homebrew install reports whether a newer release exists but does not replace
 itself. Run `brew upgrade msgvault` instead.
 
 | Flag | Description |
 |---|---|
+| `--no-restart` | Leave the daemon stopped after the update |
 | `--check` | Check for updates without installing |
 | `-y`, `--yes` | Skip confirmation prompt |
 | `-f`, `--force` | Force update even if already on the latest version |

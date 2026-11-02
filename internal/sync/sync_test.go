@@ -3133,7 +3133,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	assertMessageCount(t, env.Store, 4)
 }
 
-func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
+func TestFullSyncRestartsLegacyUnfilteredCheckpoint(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
@@ -3160,9 +3160,9 @@ func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
 	requirements.NoError(env.Store.FailSync(syncID, "worker stopped"))
 
 	summary := runFullSync(t, env)
-	checks.True(summary.WasResumed)
-	checks.Equal("page_1", summary.ResumedFromToken)
-	checks.Equal(1, env.Mock.ListMessagesCalls)
+	checks.False(summary.WasResumed)
+	checks.Empty(summary.ResumedFromToken)
+	checks.Equal(2, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -3389,7 +3389,7 @@ func TestInitSyncState_Resume(t *testing.T) {
 	assert.Equal(int64(45), state.checkpoint.MessagesAdded, "MessagesAdded")
 }
 
-func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
+func TestLegacyFullCheckpointRestartsForCoverage(t *testing.T) {
 	t.Parallel()
 	legacy := &store.SyncRun{
 		CursorBefore: sql.NullString{String: "page_1", Valid: true},
@@ -3403,7 +3403,7 @@ func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
 		modify func(*Options)
 		want   bool
 	}{
-		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: true},
+		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: false},
 		{name: "filtered Gmail", run: legacy, modify: func(options *Options) {
 			options.Query = "after:2024/01/01"
 		}},

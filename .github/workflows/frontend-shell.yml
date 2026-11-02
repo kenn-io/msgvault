@@ -25,9 +25,11 @@ jobs:
       - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version-file: web/package.json
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
       - name: Install frontend dependencies
         working-directory: web
-        run: bun install --frozen-lockfile
+        shell: bash
+        run: kit-retry 3 5 bun install --frozen-lockfile
       - name: Test Command Prompt quoting and provider commands
         working-directory: web
         run: bun run test src/lib/settings/shell-quote.test.ts src/lib/components/settings/CardDAVAccountSettings.test.ts
