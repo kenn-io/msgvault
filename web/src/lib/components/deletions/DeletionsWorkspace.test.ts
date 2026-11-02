@@ -51,7 +51,10 @@ describe('DeletionsWorkspace', () => {
 
   it('lists staged batches and shows cancelled history without detail reads', async () => {
     const seen: Seen[] = [];
-    const client = api([batch('b1', 'pending', 2), batch('hidden', 'cancelled', 3)], seen);
+    const client = api([
+      { ...batch('b1', 'pending', 2), account: 'work@example.com' },
+      { ...batch('hidden', 'cancelled', 3), account: 'personal@example.com' },
+    ], seen);
     render(DeletionsWorkspace, { client, controller: new DeletionsController(client) });
     expect(await screen.findByText('2 messages')).toBeDefined();
     expect(screen.getByText('Staged')).toBeDefined();
@@ -64,6 +67,10 @@ describe('DeletionsWorkspace', () => {
     expect(screen.getByText('3 messages')).toBeDefined();
     expect(screen.getByText('Cancelled')).toBeDefined();
     expect(screen.getAllByRole('button', { name: /^Open batch from/ })).toHaveLength(2);
+    const table = screen.getByRole('table', { name: 'Staged deletions' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(within(rows[0]).getByText('work@example.com')).toBeDefined();
+    expect(within(rows[1]).getByText('personal@example.com')).toBeDefined();
     expect(seen).toEqual([{ method: 'GET', path: '/api/v1/deletions' }]);
   });
 
@@ -96,7 +103,7 @@ describe('DeletionsWorkspace', () => {
     } finally { view.unmount(); controller.destroy(); }
   });
 
-  it('shows Account unavailable after loading batch details with an empty account', async () => {
+  it('shows Account unavailable after loading batch details without an account', async () => {
     const seen: Seen[] = [];
     let finish!: (response: Response) => void;
     const client = createAPIClient(async input => {
@@ -111,7 +118,8 @@ describe('DeletionsWorkspace', () => {
     const panel = screen.getByRole('dialog', { name: /^Staged / });
     expect(within(panel).queryByText('Account unavailable')).toBeNull();
     expect(within(panel).getByText('Loading…')).toBeDefined();
-    finish(Response.json(detail('b1', 'completed', { account: '' })));
+    const { account, ...withoutAccount } = detail('b1', 'completed');
+    finish(Response.json(withoutAccount));
     expect(await within(panel).findByText('Account unavailable')).toBeDefined();
     expect(within(panel).queryByText('Loading…')).toBeNull();
     expect(seen).toEqual([{ method: 'GET', path: '/api/v1/deletions' }, { method: 'GET', path: '/api/v1/deletions/b1' }]);

@@ -649,10 +649,12 @@ func TestListDeletions(t *testing.T) {
 		deletion.StatusPending: {{
 			ID: "batch-1", Status: deletion.StatusPending, CreatedAt: now,
 			CreatedBy: "api", Description: "old mail", GmailIDs: []string{"gm-1", "gm-2"},
+			Filters: deletion.Filters{Account: "work@example.com"},
 		}},
 		deletion.StatusCancelled: {{
 			ID: "batch-2", Status: deletion.StatusCancelled, CreatedAt: now.Add(time.Hour),
 			CreatedBy: "tui", Description: "cancelled batch", GmailIDs: []string{"gm-3"},
+			Filters: deletion.Filters{Account: "personal@example.com"},
 		}},
 	}}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
@@ -665,6 +667,8 @@ func TestListDeletions(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 	require.Len(resp.Manifests, 2)
 	assert.Equal("batch-2", resp.Manifests[0].ID, "newest first")
+	assert.Equal("personal@example.com", resp.Manifests[0].Account)
+	assert.Equal("work@example.com", resp.Manifests[1].Account)
 	assert.Equal(2, resp.Manifests[1].MessageCount)
 
 	// Filtered by status.

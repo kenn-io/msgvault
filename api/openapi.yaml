@@ -3607,6 +3607,8 @@ components:
     DeletionManifestSummary:
       additionalProperties: true
       properties:
+        account:
+          type: string
         created_at:
           format: date-time
           type: string
