@@ -198,6 +198,12 @@ jobs:
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
+      # Go's test cache keys repo files by mtime.
+      # Checkout rewrites them, so derive stable times from file contents.
+      - &stable-mtimes
+        name: Stabilize tracked file times
+        run: go run ./scripts/stable-mtimes
+
       - name: Test
         run: make test-unsharded TEST_TIMEOUT=17m
 
@@ -508,6 +514,8 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
+
+      - *stable-mtimes
 
       - name: Test
         shell: pwsh
@@ -855,6 +863,8 @@ jobs:
       # on a contended runner. Leave time for stack output inside the job cap.
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
+      - *stable-mtimes
+
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
