@@ -857,3 +857,57 @@ it('refreshes duplicates after Details unlink and deletion of only loaded saved 
     await waitFor(() => expect(onDuplicatesChanged).toHaveBeenCalledTimes(2));
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
+
+it.each([true, false])('keeps the reopened People selection when an earlier merge refresh finishes, Saved=%s', async saved => {
+  let merged = false, refreshStarted = false;
+  let finishRefresh!: () => void;
+  const pending = new Promise<void>(resolve => { finishRefresh = resolve; });
+  const one = profile(7, 4, []), two = profile(9, 2, []), unrelated = profile(42, 1, [], 'Unrelated person');
+  const survivor = profile(7, 5, []);
+  const client = clientFor({
+    '/api/v1/people/directory': async request => {
+      if (merged && !refreshStarted) {
+        refreshStarted = true;
+        await new Promise<void>((resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+          void pending.then(resolve);
+        });
+      }
+      return Response.json({ people: [directoryPerson(7, { revision: merged ? 5 : 4 }), ...(!merged ? [directoryPerson(9)] : []), directoryPerson(42, { display_name: unrelated.display_name })] });
+    },
+    '/api/v1/people/7': () => Response.json(merged ? survivor : one, { headers: { ETag: merged ? '"person-7-r5"' : '"person-7-r4"' } }),
+    '/api/v1/people/9': () => Response.json(two, { headers: { ETag: '"person-9-r2"' } }),
+    '/api/v1/people/42': () => Response.json(unrelated, { headers: { ETag: '"person-42-r1"' } }),
+    '/api/v1/people/7/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-7-r5"' } }); },
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: saved, directoryPersonID: 7 });
+  const refresh = vi.spyOn(directory, 'reloadFirstPage');
+  const props = () => ({ client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onOpenDirectoryPerson: vi.fn() });
+  let view = render(PeopleWorkspace, { props: props() });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Two/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic One (Person 7)' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+    await waitFor(() => expect(refreshStarted).toBe(true));
+    const oldRefresh = refresh.mock.results.at(-1)!.value;
+    view.unmount();
+    state.commitNavigation({ workspace: 'sources' });
+    state.commitNavigation({ workspace: 'relationships', relationshipSaved: saved, directoryPersonID: 7 });
+    view = render(PeopleWorkspace, { props: props() });
+    await screen.findByRole('heading', { name: 'Synthetic One' });
+    state.commitNavigation({ directoryPersonID: 42 });
+    await view.rerender({ urlState: state.current });
+    await screen.findByRole('heading', { name: 'Unrelated person' });
+    await act(async () => { finishRefresh(); await oldRefresh; });
+    expect(directory.selectedPersonID).toBe(42);
+    expect(state.current.directoryPersonID).toBe(42);
+    expect(screen.getByRole('heading', { name: 'Unrelated person' })).toBeDefined();
+    expect(screen.queryByText('Loading person…')).toBeNull();
+    expect(directory.rows.find(person => person.id === 7)?.revision).toBe(5);
+  } finally { finishRefresh(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});

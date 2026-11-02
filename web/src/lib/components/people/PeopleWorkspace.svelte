@@ -195,7 +195,6 @@
     onDuplicatesChanged();
     await directory.reloadFirstPage();
     if (directory.selectedPersonID === selectedProfileID) await directory.refreshSelectedPerson();
-    else await directory.loadSelection(selectedProfileID);
   }
   async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
     await Promise.all([controller.reconcilePersonMerge(context), refreshProfiles()]);
