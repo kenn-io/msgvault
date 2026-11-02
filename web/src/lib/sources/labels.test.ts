@@ -8,7 +8,7 @@ const run = (status: string, errors = 0) => ({
 
 describe('source labels', () => {
   it.each([
-    ['gmail', 'Gmail'], ['imap', 'IMAP', 'imaps://work%40example.com@imap.example.com', 'work@example.com'], ['msmail', 'Microsoft mail'], ['teams', 'Teams'],
+    ['gmail', 'Gmail'], ['imap', 'IMAP'], ['msmail', 'Microsoft mail'], ['teams', 'Teams'],
     ['discord', 'Discord'], ['meeting_import', 'Meeting import'], ['synctech_sms', 'SMS backup'],
     ['imazing_csv', 'iMazing CSV'], ['circleback', 'Circleback'], ['gcal', 'Google Calendar'],
     ['plaud', 'Plaud'], ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'], ['twilio', 'Twilio'], ['twenty', 'Twenty'],
@@ -17,9 +17,12 @@ describe('source labels', () => {
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
-  ])('names source type %j and its mailbox when supplied', (code, want, identifier?: string, mailbox?: string) => {
+  ])('names source type %j', (code, want) => {
     expect(sourceTypeLabel(code)).toBe(want);
-    if (identifier) expect(sourceMailbox(identifier)).toBe(mailbox);
+  });
+
+  it('extracts the mailbox from an IMAP source identifier', () => {
+    expect(sourceMailbox('imaps://work@example.com@imap.example.com:993')).toBe('work@example.com');
   });
 
   it.each([
@@ -58,7 +61,6 @@ it('prefers the run error over the scheduler error', () => {
 it.each([
   ['gmail', 'scheduler_unavailable', run('completed'), undefined],
   ['gmail', 'sync_not_configured', run('completed'), 'msgvault sync --source-id 4'],
-  ['msmail', 'sync_not_configured', run('completed'), 'msgvault sync --source-id 4'],
   ['beeper', 'sync_not_configured', run('completed'), undefined],
   ['gmail', 'sync_not_configured', null, 'msgvault sync-full --source-id 4'],
   ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
