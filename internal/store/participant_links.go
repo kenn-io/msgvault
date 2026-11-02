@@ -892,7 +892,7 @@ func (s *Store) rewriteLinksForMergeContext(
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 		return err
 	}
-	edges, err := s.loadComponentEdgesTxContext(ctx, tx, loser, winner)
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 	if err != nil {
 		return err
 	}

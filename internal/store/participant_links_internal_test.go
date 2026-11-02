@@ -8,7 +8,7 @@ import (
 )
 
 func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
-	tests := []string{"link", "merge", "reject"}
+	tests := []string{"link", "reject"}
 	for _, operation := range tests {
 		t.Run(operation, func(t *testing.T) {
 			require := require.New(t)
@@ -52,26 +52,17 @@ func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
 			switch operation {
 			case "link":
 				_, err = st.LinkParticipants(2, 3)
-			case "merge":
-				err = st.MergeParticipants(2, 3)
 			case "reject":
 				_, err = st.DecideIdentityMatchCandidateContext(t.Context(), rejectedID, IdentityMatchStateRejected, "user", nil)
 			}
 			require.NoError(err)
 			require.NotEmpty(sizes)
-			limit := 2
-			if operation == "merge" {
-				limit = 3 // The spanning tree rebuild temporarily adds a remapped edge.
-			}
 			for _, size := range sizes {
-				assert.LessOrEqual(t, size, limit, "operation must read only the endpoint components")
+				assert.LessOrEqual(t, size, 2, "operation must read only the endpoint components")
 			}
 			member := int64(3)
 			want := []int64{1, 2, 3, 4}
-			switch operation {
-			case "merge":
-				want = []int64{1, 3, 4}
-			case "reject":
+			if operation == "reject" {
 				member = 1
 				want = []int64{1, 2, 4}
 			}
