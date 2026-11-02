@@ -19,6 +19,8 @@ func TestPackageShardsUnix(t *testing.T) {
 	r := require.New(t)
 	script, err := filepath.Abs("test-package-shards.sh")
 	r.NoError(err)
+	_, err = os.ReadFile(script)
+	r.NoError(err)
 	bash, err := exec.LookPath("bash")
 	r.NoError(err)
 	dir := filepath.Join(t.TempDir(), "package with spaces")

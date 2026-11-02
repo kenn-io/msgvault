@@ -2239,6 +2239,10 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	// A versioned go run outside the module resolves a separate dependency graph
 	// and can fail on checksum-service requests during an otherwise local test.
 	generator := filepath.Join(tmpRoot, "oapi-codegen.exe")
+	for _, name := range []string{"go.mod", "go.sum"} {
+		_, err := os.ReadFile(filepath.Join("..", "..", "tools", "oapi-codegen", name))
+		requirements.NoError(err)
+	}
 	cmd := exec.Command("go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
 		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -2256,6 +2260,10 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	requirements.NoError(err, "generate client:\n%s", out)
 	fixer, err := filepath.Abs("../codegenfix/cmd")
 	requirements.NoError(err, "resolve generated-client validator fixup")
+	for _, name := range []string{"main.go", "../fix.go"} {
+		_, err := os.ReadFile(filepath.Join(fixer, name))
+		requirements.NoError(err)
+	}
 	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))
 	out, err = cmd.CombinedOutput()
 	requirements.NoError(err, "apply generated-client validator fixup:\n%s", out)
