@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
@@ -21,6 +22,24 @@ func withVerificationCache(ctx context.Context) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, verificationCacheKey{}, make(map[int64]*query.MessageDetail))
+}
+
+func (h *handlers) guardVerificationSearch(ctx context.Context, rows []query.MessageSummary, q *search.Query) ([]query.MessageSummary, int, error) {
+	if h.delegatedOnly || h.unmaskVerification {
+		return rows, 0, nil
+	}
+	tokens := query.VerificationQueryTokens(q)
+	out := make([]query.MessageSummary, 0, len(rows))
+	for _, row := range rows {
+		canonical, err := h.canonicalVerification(ctx, row.ID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if !query.VerificationQueryMatches(canonical, tokens) {
+			out = append(out, row)
+		}
+	}
+	return out, len(rows) - len(out), nil
 }
 
 func (h *handlers) canonicalVerification(ctx context.Context, id int64) (*query.MessageDetail, error) {
@@ -88,6 +107,28 @@ func (h *handlers) prepareVerificationThread(ctx context.Context, page *query.Th
 func (h *handlers) protectVerificationAttachment(ctx context.Context, att *query.AttachmentInfo) error {
 	_, err := h.prepareVerificationAttachment(ctx, att)
 	return err
+}
+
+func (h *handlers) guardVerificationSearchItems(ctx context.Context, items []searchMessageItem, parsed *search.Query) ([]searchMessageItem, int, error) {
+	rows := make([]query.MessageSummary, len(items))
+	for i := range items {
+		rows[i] = items[i].MessageSummary
+	}
+	rows, dropped, err := h.guardVerificationSearch(ctx, rows, parsed)
+	if err != nil || dropped == 0 {
+		return items, dropped, err
+	}
+	allowed := make(map[int64]bool, len(rows))
+	for _, row := range rows {
+		allowed[row.ID] = true
+	}
+	filtered := make([]searchMessageItem, 0, len(rows))
+	for _, item := range items {
+		if allowed[item.ID] {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, dropped, nil
 }
 
 func (h *handlers) prepareVerificationAttachment(ctx context.Context, att *query.AttachmentInfo) (*query.AttachmentInfo, error) {

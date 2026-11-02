@@ -17,7 +17,8 @@ import (
 // Every admitted read has either a source filter or an object-source check.
 // SQL, export, administrative reads, and unsupported analytics remain owner-only.
 var agentReadPermissions = map[string]agentgrant.Permission{
-	"searchCLI": agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
+	"listVerifications": agentgrant.PermissionSearchRead,
+	"searchCLI":         agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
 	"fastSearch": agentgrant.PermissionSearchRead, "deepSearch": agentgrant.PermissionSearchRead,
 	"getAggregates": agentgrant.PermissionSearchRead, "getSubAggregates": agentgrant.PermissionSearchRead,
 	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,

@@ -6,8 +6,11 @@ import type { TotalStatsResponse } from "./totalStatsResponse";
 
 export interface SearchFastResponse {
   applied_source_ids?: number[];
+  has_more: boolean;
   index_state?: string;
+  masked_hits_dropped?: number;
   messages: MessageSummary[];
+  next_offset?: number;
   query: string;
   stats?: TotalStatsResponse;
   total_count: number;

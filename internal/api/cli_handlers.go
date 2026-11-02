@@ -680,10 +680,11 @@ type cliDeleteDedupedExecuteResponse struct {
 }
 
 type cliSearchResponse struct {
-	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
-	Results          []query.MessageSummary `json:"results"`
-	ScopeLabel       string                 `json:"scope_label,omitempty"`
-	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
+	MaskedHitsDropped int                    `json:"masked_hits_dropped,omitzero"`
+	HybridAvailable   bool                   `json:"hybrid_available,omitzero"`
+	Results           []query.MessageSummary `json:"results"`
+	ScopeLabel        string                 `json:"scope_label,omitempty"`
+	ScopeSourceCount  int                    `json:"scope_source_count,omitzero"`
 	// IndexBuilt/IndexedMessages are only set by daemons that built the FTS
 	// index synchronously inside the request (pre-0.18); current daemons
 	// build in the background and report IndexState instead. Kept in the
@@ -2520,6 +2521,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Results = protected
+	resp.MaskedHitsDropped = verificationHitsDropped(r)
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {

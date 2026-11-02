@@ -1108,6 +1108,8 @@ func (e *Engine) SearchDeepWithStats(
 		return nil, err
 	}
 	return &query.SearchFastResult{
+		MaskedHitsDropped: int(int64Value(resp.JSON200.MaskedHitsDropped)),
+		NextOffset:        int(int64Value(resp.JSON200.NextOffset)), HasMore: resp.JSON200.HasMore,
 		Messages:   e.store.messageSummariesWithURLs(resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,
 		Stats:      totalStatsFromGenerated(resp.JSON200.Stats),
@@ -1156,7 +1158,7 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 	if err != nil {
 		return nil, err
 	}
-	return &query.SearchFastResult{Messages: messages, IndexState: stringValue(resp.JSON200.IndexState)}, nil
+	return &query.SearchFastResult{Messages: messages, IndexState: stringValue(resp.JSON200.IndexState), MaskedHitsDropped: int(int64Value(resp.JSON200.MaskedHitsDropped)), NextOffset: int(int64Value(resp.JSON200.NextOffset)), HasMore: resp.JSON200.HasMore}, nil
 }
 
 // SearchFast searches message metadata only (no body text).
@@ -1229,6 +1231,8 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 		return nil, err
 	}
 	return &query.SearchFastResult{
+		MaskedHitsDropped: int(int64Value(resp.JSON200.MaskedHitsDropped)),
+		NextOffset:        int(int64Value(resp.JSON200.NextOffset)), HasMore: resp.JSON200.HasMore,
 		IndexState: stringValue(resp.JSON200.IndexState),
 		Messages:   e.store.messageSummariesWithURLs(resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,

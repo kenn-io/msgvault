@@ -4039,6 +4039,10 @@ type GetTextStatsResponse = TotalStatsResponse
 
 type GetTextStatsErrorResponse = ErrorResponse
 
+type ListVerificationsResponse = ArrivalPage
+
+type ListVerificationsErrorResponse = ErrorResponse
+
 type HealthResponseJSON = HealthResponse
 
 type HealthErrorResponse = ErrorResponse
@@ -7742,6 +7746,14 @@ type GetTextStatsResp struct {
 	StatusCode   int
 	JSON200      *GetTextStatsResponse
 	JSONDefault  *GetTextStatsErrorResponse
+}
+
+type ListVerificationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListVerificationsResponse
+	JSONDefault  *ListVerificationsErrorResponse
 }
 
 type HealthResp struct {

@@ -277,6 +277,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	requirements.NoError(err)
 	// These expectations stay independent of the production permission map.
 	reads := map[string]struct{ path, want string }{
+		"listVerifications":       {"/api/v1/verifications", `"data":[]`},
 		"searchCLI":               {"/api/v1/cli/search?q=glacier", src.Identifier},
 		"searchMessages":          {"/api/v1/search?q=glacier", src.Identifier},
 		"fastSearch":              {"/api/v1/search/fast?q=glacier", src.Identifier},
@@ -358,7 +359,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 20)
+	assertions.Len(reads, 21)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

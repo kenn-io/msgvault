@@ -48,6 +48,7 @@ const (
 	ToolExportEML                 = "export_eml"
 	ToolListThread                = "list_thread"
 	ToolListMessages              = "list_messages"
+	ToolListVerifications         = "list_verifications"
 	ToolGetStats                  = "get_stats"
 	ToolAggregate                 = "aggregate"
 	ToolStageDeletion             = "stage_deletion"
@@ -182,6 +183,7 @@ type ServeOptions struct {
 	DelegatedOnly bool
 	// UnmaskVerification is owner launch configuration, never a delegated override.
 	UnmaskVerification bool
+	Verifications      VerificationLister
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
 	// mode, a read tool is listed only when the grant holds its permission.
 	GrantPermissions []string
@@ -382,6 +384,7 @@ func newMCPServerWithPolicy(
 		embeddingStatus:      opts.EmbeddingStatus,
 		delegatedOnly:        opts.DelegatedOnly,
 		unmaskVerification:   opts.UnmaskVerification && !opts.DelegatedOnly,
+		verifications:        opts.Verifications,
 		downloads:            opts.downloads,
 		engine:               opts.Engine,
 		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
@@ -643,7 +646,7 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 // agentReadToolPermission names the grant permission the daemon requires for a read tool.
 func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolListVerifications:
 		return agentgrant.PermissionSearchRead, true
 	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
 		return agentgrant.PermissionMessageRead, true

@@ -5,6 +5,7 @@ import type { MessageSummary } from "./messageSummary";
 
 export interface SearchResult {
   index_state?: string;
+  masked_hits_dropped?: number;
   messages: MessageSummary[];
   page: number;
   page_size: number;

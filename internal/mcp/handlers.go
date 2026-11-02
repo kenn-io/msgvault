@@ -82,11 +82,13 @@ const (
 )
 
 type paginatedResponse[T any] struct {
-	Data     []T   `json:"data"`
-	Total    int64 `json:"total"`
-	Returned int   `json:"returned"`
-	Offset   int   `json:"offset"`
-	HasMore  bool  `json:"has_more"`
+	MaskedHitsDropped int   `json:"masked_hits_dropped,omitzero"`
+	NextOffset        int   `json:"next_offset,omitzero"`
+	Data              []T   `json:"data"`
+	Total             int64 `json:"total"`
+	Returned          int   `json:"returned"`
+	Offset            int   `json:"offset"`
+	HasMore           bool  `json:"has_more"`
 }
 
 func newPaginatedResponse[T any](data []T, total int64, offset int) paginatedResponse[T] {
@@ -137,6 +139,7 @@ type handlers struct {
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
 	unmaskVerification   bool
+	verifications        VerificationLister
 	downloads            *downloadCache
 	engine               query.Engine
 	archiveSQLQuerier    ArchiveSQLQuerier
@@ -785,16 +788,34 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	if err != nil {
 		return nil, newInternalError("search metadata", err)
 	}
-	protected, err := h.prepareVerificationSummaries(ctx, result.Messages)
+	hasMore := len(result.Messages) > limit
+	pageRows := result.Messages
+	if hasMore {
+		pageRows = pageRows[:limit]
+	}
+	nextOffset := offset + len(pageRows)
+	if h.delegatedOnly && result.MaskedHitsDropped > 0 {
+		// A dropped lookahead row leaves at most limit survivors. Return them
+		// all and advance over the daemon's original candidate page.
+		hasMore, nextOffset = result.HasMore, result.NextOffset
+	}
+	protected, err := h.prepareVerificationSummaries(ctx, pageRows)
 	if err != nil {
 		return toolErrorResult(errVerificationUnavailable.Error()), nil
 	}
 	resultCopy := *result
 	result = &resultCopy
 	result.Messages = protected
-	hasMore := len(result.Messages) > limit
-	if hasMore {
-		result.Messages = result.Messages[:limit]
+	var dropped int
+	result.Messages, dropped, err = h.guardVerificationSearch(ctx, result.Messages, q)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	dropped += result.MaskedHitsDropped
+	if dropped > 0 {
+		page := newPaginatedResponseNoTotal(result.Messages, offset, hasMore)
+		page.MaskedHitsDropped, page.NextOffset = dropped, nextOffset
+		return jsonResult(searchMetadataResponse{paginatedResponse: page, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr)})
 	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
@@ -995,6 +1016,15 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	if hasMore {
 		results = results[:limit]
 	}
+	nextOffset := offset + len(results)
+	if h.delegatedOnly && result.MaskedHitsDropped > 0 {
+		hasMore, nextOffset = result.HasMore, result.NextOffset
+	}
+	results, dropped, err := h.guardVerificationSearch(ctx, results, q)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	dropped += result.MaskedHitsDropped
 
 	data := make([]searchMessageItem, 0, len(results))
 	for _, r := range results {
@@ -1016,8 +1046,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 		data = append(data, item)
 	}
 
+	page := newPaginatedResponseNoTotal(data, offset, hasMore)
+	if dropped > 0 {
+		page.MaskedHitsDropped, page.NextOffset = dropped, nextOffset
+	}
 	return jsonResult(searchMessageBodiesResponse{
-		paginatedResponse: newPaginatedResponseNoTotal(data, offset, hasMore),
+		paginatedResponse: page,
 		Mode:              searchModeKeyword,
 		IndexState:        result.IndexState,
 	})
@@ -1254,9 +1288,18 @@ func (h *handlers) searchMessageBodiesHybrid(
 			hasMore = true
 		}
 	}
+	nextOffset := offset + len(page)
+	page, dropped, err := h.guardVerificationSearchItems(ctx, page, parsed)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	pagination := newPaginatedResponseNoTotal(page, offset, hasMore)
+	if dropped > 0 {
+		pagination.MaskedHitsDropped, pagination.NextOffset = dropped, nextOffset
+	}
 
 	return jsonResult(searchMessageBodiesResponse{
-		paginatedResponse: newPaginatedResponseNoTotal(page, offset, hasMore),
+		paginatedResponse: pagination,
 		Mode:              mode,
 		PoolSaturated:     meta.PoolSaturated,
 		Accelerator:       meta.Accelerator,
@@ -1364,8 +1407,17 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		items = append(items, item)
 	}
 
+	nextOffset := offset + len(pageHits)
+	items, dropped, err := h.guardVerificationSearchItems(ctx, items, parsed)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	pagination := newPaginatedResponseNoTotal(items, offset, hasMore)
+	if dropped > 0 {
+		pagination.MaskedHitsDropped, pagination.NextOffset = dropped, nextOffset
+	}
 	return jsonResult(searchMessageBodiesResponse{
-		paginatedResponse: newPaginatedResponseNoTotal(items, offset, hasMore),
+		paginatedResponse: pagination,
 		Mode:              mode,
 		PoolSaturated:     result.PoolSaturated,
 		Accelerator:       result.Accelerator,

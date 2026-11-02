@@ -483,6 +483,70 @@ func (a AppendPersonNoteRequest) Validate() error {
 	return errors
 }
 
+type Arrival struct {
+	ConversationID  int64           `json:"conversation_id"`
+	MessageID       int64           `json:"message_id"`
+	SourceID        int64           `json:"source_id"`
+	SourceMessageID string          `json:"source_message_id" validate:"required"`
+	Values          []RevealedValue `json:"values,omitempty"`
+	Verification    Metadata        `json:"verification"`
+}
+
+func (a Arrival) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	for i, item := range a.Values {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Values[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(a.Verification).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Verification", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ArrivalPage struct {
+	Before        time.Time `json:"before" validate:"required"`
+	Data          []Arrival `json:"data" validate:"required"`
+	ScanTruncated bool      `json:"scan_truncated"`
+	Scanned       int64     `json:"scanned"`
+	Since         time.Time `json:"since" validate:"required"`
+}
+
+func (a ArrivalPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Before, "required"); err != nil {
+		errors = errors.Append("Before", err)
+	}
+	if err := typesValidator.Var(a.Data, "required"); err != nil {
+		errors = errors.Append("Data", err)
+	}
+	for i, item := range a.Data {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Data[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.Since, "required"); err != nil {
+		errors = errors.Append("Since", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type AttachmentInfo struct {
 	ContentHash *string                `json:"content_hash,omitzero"`
 	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
@@ -2870,13 +2934,14 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
-	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
-	IndexBuilt       *bool                    `json:"index_built,omitempty"`
-	IndexState       *string                  `json:"index_state,omitzero"`
-	IndexedMessages  *int64                   `json:"indexed_messages,omitempty"`
-	Results          []CLIQueryMessageSummary `json:"results" validate:"required"`
-	ScopeLabel       *string                  `json:"scope_label,omitzero"`
-	ScopeSourceCount *int64                   `json:"scope_source_count,omitempty"`
+	HybridAvailable   *bool                    `json:"hybrid_available,omitempty"`
+	IndexBuilt        *bool                    `json:"index_built,omitempty"`
+	IndexState        *string                  `json:"index_state,omitzero"`
+	IndexedMessages   *int64                   `json:"indexed_messages,omitempty"`
+	MaskedHitsDropped *int64                   `json:"masked_hits_dropped,omitempty"`
+	Results           []CLIQueryMessageSummary `json:"results" validate:"required"`
+	ScopeLabel        *string                  `json:"scope_label,omitzero"`
+	ScopeSourceCount  *int64                   `json:"scope_source_count,omitempty"`
 }
 
 func (c CliSearchResponse) Validate() error {
@@ -3490,18 +3555,20 @@ func (d DecidePersonMergeCandidateRequest) Validate() error {
 }
 
 type DeepSearchResponse struct {
-	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
-	Count        int64               `json:"count"`
-	HasMore      bool                `json:"has_more"`
-	IndexState   *string             `json:"index_state,omitzero"`
-	Limit        int64               `json:"limit"`
-	Messages     []MessageSummary    `json:"messages" validate:"required"`
-	Offset       int64               `json:"offset"`
-	Query        string              `json:"query" validate:"required"`
-	Scope        *string             `json:"scope,omitzero"`
-	Stats        *TotalStatsResponse `json:"stats,omitempty"`
-	TotalCount   int64               `json:"total_count"`
-	Warnings     []string            `json:"warnings,omitempty"`
+	BodyContexts      []BodySearchContext `json:"body_contexts,omitempty"`
+	Count             int64               `json:"count"`
+	HasMore           bool                `json:"has_more"`
+	IndexState        *string             `json:"index_state,omitzero"`
+	Limit             int64               `json:"limit"`
+	MaskedHitsDropped *int64              `json:"masked_hits_dropped,omitempty"`
+	Messages          []MessageSummary    `json:"messages" validate:"required"`
+	NextOffset        *int64              `json:"next_offset,omitempty"`
+	Offset            int64               `json:"offset"`
+	Query             string              `json:"query" validate:"required"`
+	Scope             *string             `json:"scope,omitzero"`
+	Stats             *TotalStatsResponse `json:"stats,omitempty"`
+	TotalCount        int64               `json:"total_count"`
+	Warnings          []string            `json:"warnings,omitempty"`
 }
 
 func (d DeepSearchResponse) Validate() error {
@@ -5975,13 +6042,14 @@ func (f FileSuggestionRow) Validate() error {
 }
 
 type FilteredMessagesResponse struct {
-	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
-	Count            int64            `json:"count"`
-	HasMore          bool             `json:"has_more"`
-	IndexState       *string          `json:"index_state,omitzero"`
-	Limit            int64            `json:"limit"`
-	Messages         []MessageSummary `json:"messages" validate:"required"`
-	Offset           int64            `json:"offset"`
+	AppliedSourceIds  []int64          `json:"applied_source_ids,omitempty"`
+	Count             int64            `json:"count"`
+	HasMore           bool             `json:"has_more"`
+	IndexState        *string          `json:"index_state,omitzero"`
+	Limit             int64            `json:"limit"`
+	MaskedHitsDropped *int64           `json:"masked_hits_dropped,omitempty"`
+	Messages          []MessageSummary `json:"messages" validate:"required"`
+	Offset            int64            `json:"offset"`
 }
 
 func (f FilteredMessagesResponse) Validate() error {
@@ -14463,6 +14531,16 @@ func (r Result) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type RevealedValue struct {
+	Host  *string `json:"host,omitzero"`
+	Kind  string  `json:"kind" validate:"required"`
+	Value string  `json:"value" validate:"required"`
+}
+
+func (r RevealedValue) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type RunSavedViewRequest struct {
 	Cursor *string `json:"cursor,omitzero"`
 	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
@@ -14817,13 +14895,16 @@ func (s SearchCoverageResponse) Validate() error {
 }
 
 type SearchFastResponse struct {
-	AppliedSourceIds []int64             `json:"applied_source_ids,omitempty"`
-	IndexState       *string             `json:"index_state,omitzero"`
-	Messages         []MessageSummary    `json:"messages" validate:"required"`
-	Query            string              `json:"query" validate:"required"`
-	Stats            *TotalStatsResponse `json:"stats,omitempty"`
-	TotalCount       int64               `json:"total_count"`
-	Warnings         []string            `json:"warnings,omitempty"`
+	AppliedSourceIds  []int64             `json:"applied_source_ids,omitempty"`
+	HasMore           bool                `json:"has_more"`
+	IndexState        *string             `json:"index_state,omitzero"`
+	MaskedHitsDropped *int64              `json:"masked_hits_dropped,omitempty"`
+	Messages          []MessageSummary    `json:"messages" validate:"required"`
+	NextOffset        *int64              `json:"next_offset,omitempty"`
+	Query             string              `json:"query" validate:"required"`
+	Stats             *TotalStatsResponse `json:"stats,omitempty"`
+	TotalCount        int64               `json:"total_count"`
+	Warnings          []string            `json:"warnings,omitempty"`
 }
 
 func (s SearchFastResponse) Validate() error {
@@ -14898,13 +14979,14 @@ func (s SearchResponse) Validate() error {
 }
 
 type SearchResult struct {
-	IndexState *string          `json:"index_state,omitzero"`
-	Messages   []MessageSummary `json:"messages" validate:"required"`
-	Page       int64            `json:"page"`
-	PageSize   int64            `json:"page_size"`
-	Query      string           `json:"query" validate:"required"`
-	Total      int64            `json:"total"`
-	Warnings   []string         `json:"warnings,omitempty"`
+	IndexState        *string          `json:"index_state,omitzero"`
+	MaskedHitsDropped *int64           `json:"masked_hits_dropped,omitempty"`
+	Messages          []MessageSummary `json:"messages" validate:"required"`
+	Page              int64            `json:"page"`
+	PageSize          int64            `json:"page_size"`
+	Query             string           `json:"query" validate:"required"`
+	Total             int64            `json:"total"`
+	Warnings          []string         `json:"warnings,omitempty"`
 }
 
 func (s SearchResult) Validate() error {

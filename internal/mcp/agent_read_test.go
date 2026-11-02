@@ -161,14 +161,14 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
+	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListVerifications, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
 	for _, tc := range []struct {
 		permission string
 		want       []string
 	}{
 		{"draft.create", nil},
 		{"verification.read", nil},
-		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
+		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListVerifications, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
 		{"message.read", []string{ToolGetMessage, ToolListThread, ToolSearchInMessage}},
 		{"attachment.read", []string{ToolGetAttachment}},
 		{"stats.read", []string{ToolGetStats}},
@@ -184,6 +184,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 			opts := agentServeOptions(t, agent)
 			opts.AttachmentReader = agent
 			opts.EmbeddingStatus = agent
+			opts.Verifications = agent
 			session := task5ConnectClient(t, opts, true)
 			initialized := session.InitializeResult()
 			requirements.NotNil(initialized)

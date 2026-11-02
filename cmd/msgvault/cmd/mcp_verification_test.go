@@ -14,7 +14,7 @@ import (
 )
 
 func TestVerificationDelegatedCapabilitiesRequireCurrentDaemon(t *testing.T) {
-	for _, version := range []string{"3.9.0", "3.34.0", "3.35.0", api.APISchemaVersion} {
+	for _, version := range []string{"3.9.0", "3.34.0", "3.35.0", "3.36.0", api.APISchemaVersion} {
 		t.Run(version, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -34,6 +34,7 @@ func TestVerificationDelegatedCapabilitiesRequireCurrentDaemon(t *testing.T) {
 			opts, err := delegatedMCPServeOptions(t.Context(), client)
 			requirements.NoError(err)
 			assertions.True(opts.DelegatedOnly)
+			assertions.Equal(daemonclient.APISchemaVersionAtLeast(version, daemonclient.VerificationArrivalsMinAPISchemaVersion), opts.Verifications != nil)
 			if daemonclient.APISchemaVersionAtLeast(version, daemonclient.VerificationMinAPISchemaVersion) {
 				assertions.NotNil(opts.Engine)
 			} else {

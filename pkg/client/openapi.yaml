@@ -517,6 +517,56 @@ components:
       required:
         - text
       type: object
+    Arrival:
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        values:
+          items:
+            $ref: "#/components/schemas/RevealedValue"
+          type: array
+        verification:
+          $ref: "#/components/schemas/Metadata"
+      required:
+        - message_id
+        - source_id
+        - source_message_id
+        - conversation_id
+        - verification
+      type: object
+    ArrivalPage:
+      properties:
+        before:
+          format: date-time
+          type: string
+        data:
+          items:
+            $ref: "#/components/schemas/Arrival"
+          type: array
+        scan_truncated:
+          type: boolean
+        scanned:
+          format: int64
+          type: integer
+        since:
+          format: date-time
+          type: string
+      required:
+        - data
+        - since
+        - before
+        - scanned
+        - scan_truncated
+      type: object
     AttachmentInfo:
       properties:
         content_hash:
@@ -2955,6 +3005,9 @@ components:
         indexed_messages:
           format: int64
           type: integer
+        masked_hits_dropped:
+          format: int64
+          type: integer
         results:
           items:
             $ref: "#/components/schemas/CLIQueryMessageSummary"
@@ -3643,10 +3696,16 @@ components:
         limit:
           format: int64
           type: integer
+        masked_hits_dropped:
+          format: int64
+          type: integer
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
           type: array
+        next_offset:
+          format: int64
+          type: integer
         offset:
           format: int64
           type: integer
@@ -6327,6 +6386,9 @@ components:
         index_state:
           type: string
         limit:
+          format: int64
+          type: integer
+        masked_hits_dropped:
           format: int64
           type: integer
         messages:
@@ -14422,6 +14484,18 @@ components:
         - blockers
         - status
       type: object
+    RevealedValue:
+      properties:
+        host:
+          type: string
+        kind:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
+      type: object
     RunSavedViewRequest:
       additionalProperties: false
       properties:
@@ -14786,12 +14860,20 @@ components:
             format: int64
             type: integer
           type: array
+        has_more:
+          type: boolean
         index_state:
           type: string
+        masked_hits_dropped:
+          format: int64
+          type: integer
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
           type: array
+        next_offset:
+          format: int64
+          type: integer
         query:
           type: string
         stats:
@@ -14804,6 +14886,7 @@ components:
             type: string
           type: array
       required:
+        - has_more
         - query
         - messages
         - total_count
@@ -14845,6 +14928,9 @@ components:
       properties:
         index_state:
           type: string
+        masked_hits_dropped:
+          format: int64
+          type: integer
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -16856,7 +16942,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.36.0
+  version: 3.37.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -34150,6 +34236,59 @@ paths:
       security:
         - apiKey: []
       summary: Get text message totals
+      tags:
+        - API
+  /api/v1/verifications:
+    get:
+      operationId: listVerifications
+      parameters:
+        - description: RFC3339 lower bound, defaults to one hour ago and is capped at 24 hours
+          in: query
+          name: since
+          schema:
+            type: string
+        - description: Exact sender claim, case-insensitive
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Verification kind
+          in: query
+          name: kind
+          schema:
+            type: string
+        - description: Maximum arrivals, default 20, max 100; at most 1000 candidates are scanned
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Include expired credentials, still masked by default
+          in: query
+          name: include_expired
+          schema:
+            type: boolean
+        - description: Owner reveal opt-in; delegated reads always use their source grant instead
+          in: query
+          name: reveal
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArrivalPage"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List recent verification arrivals without revealing credentials by default
       tags:
         - API
   /health:

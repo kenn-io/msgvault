@@ -223,6 +223,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.Engine = daemonclient.NewEngineAdapter(st)
 		opts.AttachmentReader = st
 		opts.GrantPermissions = grant.Permissions
+		if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.VerificationArrivalsMinAPISchemaVersion) {
+			opts.Verifications = st
+		}
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
@@ -299,6 +302,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	var schemaVersion string
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.VerificationArrivalsMinAPISchemaVersion) {
+		opts.Verifications = st
 	}
 	if capabilityErr == nil && health != nil && health.Vector != nil &&
 		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {

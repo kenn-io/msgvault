@@ -264,10 +264,13 @@ type DomainSearchResult struct {
 
 // SearchFastResult carries messages and index status, with optional totals and aggregate stats.
 type SearchFastResult struct {
-	IndexState string
-	Messages   []MessageSummary
-	TotalCount int64
-	Stats      *TotalStats
+	MaskedHitsDropped int
+	NextOffset        int  // raw candidate offset after daemon-side protection
+	HasMore           bool // daemon-side pagination before dropped hits
+	IndexState        string
+	Messages          []MessageSummary
+	TotalCount        int64
+	Stats             *TotalStats
 }
 
 // TotalStats provides overall database statistics.
