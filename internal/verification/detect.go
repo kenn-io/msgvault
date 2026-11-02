@@ -75,11 +75,13 @@ var cues = []cue{
 }
 
 var (
-	codePattern     = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
-	urlPattern      = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
-	tokenPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
-	codeWordPattern = regexp.MustCompile(`\bcode\b`)
-	expiryPattern   = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
+	codePattern                 = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
+	groupedCodeTokenPattern     = regexp.MustCompile(`[A-Z0-9]+`)
+	groupedCodeSeparatorPattern = regexp.MustCompile(`^[\s\p{Z}\x{0085}\v]+$`)
+	urlPattern                  = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
+	tokenPattern                = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
+	codeWordPattern             = regexp.MustCompile(`\bcode\b`)
+	expiryPattern               = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
 )
 
 var knownDomains = []string{
@@ -192,6 +194,76 @@ func nearCue(text string, start, end int, matches []cueMatch) bool {
 		return true
 	}
 	return false
+}
+
+func overlapsCue(start, end int, matches []cueMatch) bool {
+	first := sort.Search(len(matches), func(i int) bool { return matches[i].maxEnd > start })
+	for _, cue := range matches[first:] {
+		if cue.start >= end {
+			break
+		}
+		if cue.end > start {
+			return true
+		}
+	}
+	return false
+}
+
+func groupedCodeIndices(original string) [][]int {
+	tokens := groupedCodeTokenPattern.FindAllStringIndex(original, -1)
+	indices := make([][]int, 0, max(0, len(tokens)-1))
+	isNumericToken := func(token []int) bool {
+		for i := token[0]; i < token[1]; i++ {
+			if original[i] < '0' || original[i] > '9' {
+				return false
+			}
+		}
+		return token[0] < token[1]
+	}
+	for i := 0; i < len(tokens); {
+		first := tokens[i]
+		if isNumericToken(first) {
+			last := i
+			digits := first[1] - first[0]
+			for last+1 < len(tokens) {
+				previous, next := tokens[last], tokens[last+1]
+				if !isNumericToken(next) ||
+					!groupedCodeSeparatorPattern.MatchString(original[previous[1]:next[0]]) {
+					break
+				}
+				digits += next[1] - next[0]
+				last++
+			}
+			if last > i && digits >= 4 && digits <= 8 {
+				indices = append(indices, []int{first[0], tokens[last][1]})
+			} else if i+1 < len(tokens) {
+				// Numeric-first alphanumeric groups are credentials too. Keep this
+				// pairing separate from the numeric-run scan so a run of digits
+				// still forms one complete code.
+				second := tokens[i+1]
+				firstWidth, secondWidth := first[1]-first[0], second[1]-second[0]
+				if !isNumericToken(second) && firstWidth >= 2 && firstWidth <= 6 &&
+					secondWidth >= 2 && secondWidth <= 6 &&
+					groupedCodeSeparatorPattern.MatchString(original[first[1]:second[0]]) {
+					indices = append(indices, []int{first[0], second[1]})
+					last++
+				}
+			}
+			i = last + 1
+			continue
+		}
+		if i+1 >= len(tokens) {
+			break
+		}
+		second := tokens[i+1]
+		firstWidth, secondWidth := first[1]-first[0], second[1]-second[0]
+		if firstWidth >= 2 && firstWidth <= 6 && secondWidth >= 2 && secondWidth <= 6 &&
+			groupedCodeSeparatorPattern.MatchString(original[first[1]:second[0]]) {
+			indices = append(indices, []int{first[0], second[1]})
+		}
+		i++
+	}
+	return indices
 }
 
 // normalizedOffsets maps increasing original offsets into their lowercased
@@ -415,19 +487,29 @@ func Detect(in Input) *Finding {
 		urls := urlPattern.FindAllStringIndex(original, -1)
 		urlIndex := 0
 		codeOffset := normalizedOffsets(original)
-		for _, loc := range codePattern.FindAllStringIndex(original, -1) {
+		codeMatches := append(codePattern.FindAllStringIndex(original, -1), groupedCodeIndices(original)...)
+		sort.Slice(codeMatches, func(i, j int) bool {
+			if codeMatches[i][0] == codeMatches[j][0] {
+				return codeMatches[i][1] < codeMatches[j][1]
+			}
+			return codeMatches[i][0] < codeMatches[j][0]
+		})
+		for _, loc := range codeMatches {
 			for urlIndex < len(urls) && urls[urlIndex][1] <= loc[0] {
 				urlIndex++
 			}
 			if urlIndex < len(urls) && loc[1] > urls[urlIndex][0] {
 				continue
 			}
-			value := original[loc[0]:loc[1]]
+			value := normalizeGroupedCode(original[loc[0]:loc[1]])
 			if !wordBoundary(original, loc[0], loc[1]) || !codeShape(value) {
 				continue
 			}
 			start := codeOffset(loc[0])
-			end := start + len(strings.ToLower(value))
+			end := start + len(strings.ToLower(original[loc[0]:loc[1]]))
+			if overlapsCue(start, end, matches) {
+				continue
+			}
 			if nearCue(text, start, end, matches) {
 				add(Secret{Kind: "code", Value: value})
 			}
@@ -519,6 +601,17 @@ func codeShape(s string) bool {
 		}
 	}
 	return digits >= 4 && letters <= 1 || digits > 0 && letters > 0 && len(s) >= 6 && len(s) <= 8
+}
+
+func normalizeGroupedCode(value string) string {
+	var compact strings.Builder
+	compact.Grow(len(value))
+	for _, r := range value {
+		if !unicode.IsSpace(r) {
+			compact.WriteRune(r)
+		}
+	}
+	return compact.String()
 }
 
 func kindRank(kind string) int {

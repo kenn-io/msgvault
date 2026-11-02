@@ -15,6 +15,7 @@ import (
 type Permission string
 
 const (
+	PermissionVerificationRead  Permission = "verification.read"
 	PermissionSearchRead        Permission = "search.read"
 	PermissionMessageRead       Permission = "message.read"
 	PermissionAttachmentRead    Permission = "attachment.read"
@@ -29,6 +30,7 @@ const (
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionVerificationRead):  PermissionVerificationRead,
 	string(PermissionSearchRead):        PermissionSearchRead,
 	string(PermissionMessageRead):       PermissionMessageRead,
 	string(PermissionAttachmentRead):    PermissionAttachmentRead,

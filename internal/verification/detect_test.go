@@ -23,7 +23,7 @@ func TestDetectCorpus(t *testing.T) {
 		{"your code", "Your code is 482913", "otp_code", "482913", 0},
 		{"reverse", "482913 is your sign-in code", "otp_code", "482913", 0},
 		{"prefixed", "G-482913 is your verification code", "otp_code", "G-482913", 0},
-		{"space grouped", "Verification code: 482 913", "otp_code", "482 913", 0},
+		{"space grouped", "Verification code: 482 913", "otp_code", "482913", 0},
 		{"dash grouped", "Verification code: 482-913", "otp_code", "482-913", 0},
 		{"alphanumeric", "Verification code: AB4C9D", "otp_code", "AB4C9D", 0},
 		{"eight digits", "Security code: 48291376", "otp_code", "48291376", 0},
@@ -279,6 +279,138 @@ func TestCuesAllowWrappedWhitespace(t *testing.T) {
 	f := Detect(Input{Subject: "Verification\r\n code", BodyText: "482913"})
 	require.NotNil(t, f)
 	assert.Equal(t, []Secret{{Kind: "code", Value: "482913"}}, f.Values)
+}
+
+func TestDetectNormalizesGroupedCodeWhitespace(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, want string
+	}{
+		{name: "nonbreaking space", value: "AB4\u00a0C9D", want: "AB4C9D"},
+		{name: "line break", value: "AB4\nC9D", want: "AB4C9D"},
+		{name: "numeric nonbreaking space", value: "482\u00a0913", want: "482913"},
+		{name: "numeric line break", value: "482\r\n913", want: "482913"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			finding := Detect(Input{BodyText: "Your verification code is " + tc.value})
+			require.NotNil(t, finding)
+			assert.Equal(t, []Secret{{Kind: "code", Value: tc.want}}, finding.Values)
+		})
+	}
+}
+
+func TestDetectAndMaskGroupedCodesWithoutConsumingOTPCues(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, masked string
+		input              Input
+	}{
+		{
+			name:   "cue and code in body",
+			input:  Input{BodyText: "OTP AB4 C9D"},
+			text:   "OTP AB4 C9D",
+			masked: "OTP " + CodePlaceholder,
+		},
+		{
+			name:   "cue in subject",
+			input:  Input{Subject: "OTP", BodyText: "AB4 C9D"},
+			text:   "AB4 C9D",
+			masked: CodePlaceholder,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			finding := Detect(tc.input)
+			require.NotNil(t, finding)
+			require.Equal(t, []Secret{{Kind: "code", Value: "AB4C9D"}}, finding.Values)
+			assert.Equal(t, tc.masked, NewMasker(finding).Text(tc.text))
+		})
+	}
+}
+
+func TestDetectAndMaskNumericFirstGroupedAlphanumericCode(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, want string
+	}{
+		{name: "three-digit prefix", value: "482 AB4", want: "482AB4"},
+		{name: "numeric and alphabetic groups", value: "123 ABC", want: "123ABC"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			body := "Your verification code is " + tc.value
+			finding := Detect(Input{BodyText: body})
+			requirements.NotNil(finding)
+			requirements.Equal([]Secret{{Kind: "code", Value: tc.want}}, finding.Values)
+
+			masked := NewMasker(finding).Text(body)
+			assertions.Equal("Your verification code is "+CodePlaceholder, masked)
+			assertions.NotContains(masked, tc.value)
+		})
+	}
+}
+
+func TestDetectAndMaskGroupedCodeWithDistantCue(t *testing.T) {
+	body := "482" + strings.Repeat(" ", 100) + "913 is your verification code"
+	finding := Detect(Input{BodyText: body})
+	require.NotNil(t, finding)
+	require.Equal(t, []Secret{{Kind: "code", Value: "482913"}}, finding.Values)
+	assert.Equal(t, CodePlaceholder+" is your verification code", NewMasker(finding).Text(body))
+}
+
+func TestDetectAndMaskSingleDigitGroupedCode(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		input      Input
+	}{
+		{
+			name:  "plain text",
+			input: Input{BodyText: "Your verification code is 4 8 2 9 1 3"},
+			text:  "Your verification code is 4 8 2 9 1 3",
+		},
+		{
+			name:  "HTML table cells",
+			input: Input{BodyHTML: `<table><tr><td>Your verification code is</td><td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td></tr></table>`},
+			text:  "Your verification code is 4 8 2 9 1 3",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			finding := Detect(tc.input)
+			require.NotNil(finding)
+			require.Equal([]Secret{{Kind: "code", Value: "482913"}}, finding.Values)
+
+			masker := NewMasker(finding)
+			assert.Equal("Your verification code is "+CodePlaceholder, masker.Text(tc.text))
+			if tc.input.BodyHTML != "" {
+				assert.Equal(ContentPlaceholder, masker.HTML(tc.input.BodyHTML))
+			}
+		})
+	}
+}
+
+func TestDetectAndMaskThreeTwoDigitGroups(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	body := "Your verification code is 48 29 13"
+	finding := Detect(Input{BodyText: body})
+	require.NotNil(finding)
+	require.Equal([]Secret{{Kind: "code", Value: "482913"}}, finding.Values)
+
+	masked := NewMasker(finding).Text(body)
+	assert.Equal("Your verification code is "+CodePlaceholder, masked)
+	assert.NotContains(masked, "13")
+}
+
+func TestDetectDoesNotGroupOverlengthDigitSequences(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, body := range []string{
+		"Your verification code is 1 2 3 4 5 6 7 8 9",
+		"Your verification code is 48 29 13 76 54",
+	} {
+		finding := Detect(Input{BodyText: body})
+		require.NotNil(finding)
+		assert.Empty(finding.Values)
+	}
 }
 
 func TestHTMLImplicitHeadClosing(t *testing.T) {
