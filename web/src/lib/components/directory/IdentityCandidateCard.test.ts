@@ -8,7 +8,7 @@ function completeCandidate(state = 'candidate'): IdentityMatchCandidate {
   return {
     id: 17,
     left_id: 170,
-    left_kind: 'beeper_user',
+    left_kind: 'participant',
     right_id: 171,
     right_kind: 'participant',
     basis: 'stable_provider_id',
@@ -59,7 +59,7 @@ describe('IdentityCandidateCard', () => {
     expect(screen.getByText('Candidate')).toBeDefined();
     expect(screen.queryByText('candidate')).toBeNull();
     expect(within(card).getByRole('region', { name: 'Candidate endpoints for identity match 17' })).toBeDefined();
-    expect(within(card).getByText('beeper_user / 170')).toBeDefined();
+    expect(within(card).getByText('participant / 170')).toBeDefined();
     expect(within(card).getByText('participant / 171')).toBeDefined();
     expect(card.textContent).toContain('stable_provider_id');
     expect(card.textContent).toContain('synthetic@example.com');

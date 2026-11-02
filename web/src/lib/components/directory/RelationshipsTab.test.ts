@@ -44,7 +44,7 @@ function controllerWith(fetchFn: typeof fetch, personID = 7): { client: ReturnTy
 }
 
 describe('RelationshipsTab', () => {
-  it('renders curated connections', async () => {
+  it('renders curated connections', () => {
     const { client, controller } = controllerWith(vi.fn());
     controller.relationships = [
       view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
@@ -54,6 +54,7 @@ describe('RelationshipsTab', () => {
       })
     ];
     render(RelationshipsTab, { client, controller, personID: 7 });
+    expect(screen.queryByRole('heading', { name: 'Connection types' })).toBeNull();
     for (const [name, label] of [['Synthetic Learner', 'Mentors'], ['Synthetic Guide', 'Is mentored by'], ['Synthetic Peer', 'Works with']]) {
       const row = screen.getByText(name).closest('.detail-row') as HTMLElement;
       expect(within(row).getByText(label)).toBeDefined();

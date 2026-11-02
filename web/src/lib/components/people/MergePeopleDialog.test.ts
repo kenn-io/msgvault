@@ -61,6 +61,7 @@ it.each([
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
+    expect(onReconcile).toHaveBeenLastCalledWith(controller.personMergeContextSnapshot());
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });
