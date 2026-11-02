@@ -179,7 +179,7 @@ export class DirectoryReviewController {
         if (targetOffset > 0 && !response.data.candidates?.length) return await this.loadIdentityPage(0, state);
         this.moreRows = (response.data.candidates?.length ?? 0) > IDENTITY_REVIEW_PAGE_LIMIT;
         this.rows = (response.data.candidates ?? []).slice(0, IDENTITY_REVIEW_PAGE_LIMIT);
-        this.offset = response.data.offset;
+        [this.offset, this.lastMerge] = [response.data.offset, response.data.offset === this.offset ? this.lastMerge : null];
         return true;
       }
       this.retainPageFailure(targetOffset, failureMessage(response.error, response.response.status));

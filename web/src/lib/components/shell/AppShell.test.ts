@@ -2906,7 +2906,11 @@ it('returns focus to a merged pair once, preserves review navigation focus, and 
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
     if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [directoryPerson(7)] : [directoryPerson(7), directoryPerson(9)] });
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: url.searchParams.get('state') === 'accepted,rejected' ? [] : [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }, { ...pair, id: 18, review_token: 'review-18' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/identity/match-candidates')) {
+      const offset = Number(url.searchParams.get('offset'));
+      const candidates = Array.from({ length: 11 }, (_, index) => ({ ...pair, id: 17 + index, review_token: `${merged ? 'refreshed' : 'review'}-${17 + index}`, ...(index === 0 ? { actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) } : {}) }));
+      return Response.json({ candidates: url.searchParams.get('state') === 'accepted,rejected' ? [] : candidates.slice(offset, offset + Number(url.searchParams.get('limit'))), limit: Number(url.searchParams.get('limit')), offset });
+    }
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
     if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
     if (/\/people\/(7|9)\/profile$/.test(path)) { const id = Number(path.split('/').at(-2)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json({ person: profile(id), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); }
@@ -2940,6 +2944,14 @@ it('returns focus to a merged pair once, preserves review navigation focus, and 
     expect(document.getElementById('duplicate-17')?.textContent).toContain('Choose Merge to record this pair.');
     const secondChoice = within(document.getElementById('duplicate-18')!).getByRole('button', { name: 'Keep separate' });
     secondChoice.focus();
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(document.getElementById('duplicate-27')).not.toBeNull());
+    const previous = screen.getByRole('button', { name: 'Previous' });
+    previous.focus();
+    await fireEvent.click(previous);
+    await waitFor(() => expect(document.getElementById('duplicate-17')).not.toBeNull());
+    await tick();
+    expect(document.activeElement?.closest('[id^="duplicate-"]')?.id).not.toBe('duplicate-17');
     await fireEvent.click(screen.getByRole('radio', { name: 'History' }));
     await screen.findByText('Nothing decided yet');
     const toReview = screen.getByRole('radio', { name: 'To review' });
