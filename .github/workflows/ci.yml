@@ -574,6 +574,10 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
           GOFLAGS: "-buildvcs=false -trimpath"
+          # Uncapped, a cold-cache run peaks near 10 GB of the runner's
+          # 16 GB, and a runner lost contact mid-lint. 6GiB holds the peak
+          # under 7 GB for about 5% more lint time.
+          GOMEMLIMIT: 6GiB
         run: |
           $version = (Select-String -Path .custom-gcl.yml -Pattern '^version: (\S+)').Matches[0].Groups[1].Value
           bash -c 'kit-retry 3 5 go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$1" custom --destination "$2" --name custom-gcl' -- "$version" "$env:RUNNER_TEMP"
