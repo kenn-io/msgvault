@@ -41,7 +41,7 @@
   // Each history entry keeps its own day: Back restores that entry's day, even for the same target.
   $effect(() => { void page.target; untrack(() => selectedDate = relationshipDayHistory(window.history.state, 'relationships', page.target)); });
   $effect(() => { const target = untrack(() => page.target); window.history.replaceState({ ...window.history.state, [RELATIONSHIP_DAY_HISTORY_KEY]: selectedDate && target ? { target, date: selectedDate } : undefined }, ''); });
-  $effect(() => { void (soloPerson ?? target); untrack(() => { domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
+  $effect(() => { void (selectedProfileID ?? target); untrack(() => { domainYear = null; details = false; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
@@ -55,6 +55,8 @@
   let bulkCompleted = $state(0);
   let bulkContext = $state<ReturnType<RelationshipsController['personMergeContextSnapshot']>>();
   let staleLink = $state<{ a: number; b: number } | null>(null);
+  // A bulk run that linked anyone moved activity between people, so Saved refreshes as it does after a Details link.
+  $effect(() => { if (!bulkPending && bulkCompleted > 0) untrack(() => void directory.reloadFirstPage()); });
   const profileFilters = $derived(Boolean(urlState.directoryContactState || urlState.directoryCategory || urlState.directoryOrganization || urlState.directoryPrimaryChannel || urlState.directoryLastContactAfter || urlState.directoryLastContactBefore));
   const directoryMode = $derived(facet === 'people' && (saved || profileFilters));
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');

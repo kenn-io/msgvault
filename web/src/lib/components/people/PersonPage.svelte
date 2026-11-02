@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
@@ -43,6 +44,19 @@
   const scope = $derived(domain ? { kind: 'domain' as const, domain } : controller.target === target && controller.canonicalID !== null ? { kind: 'person' as const, id: controller.canonicalID } : undefined);
   const profileID = $derived(durablePersonID ?? person?.profile?.id ?? null);
   const savedProfile = $derived(directory.selectedPersonID === profileID ? directory.profile : null);
+  $effect(() => {
+    void savedProfile;
+    // Stop following loading state once this profile's unfiltered metadata is available.
+    if (untrack(() => !directory.detail)) void directory.detailLoading;
+    if (untrack(() => !directory.detail?.contactState && (controller.target !== target || !controller.detail))) void controller.timelineLoading;
+    untrack(() => {
+      if (directory.detailLoading || directory.selectedPersonID !== profileID || !directory.detail) return;
+      if (controller.timelineLoading && !directory.detail.contactState) return;
+      details ||= !filesOpen &&
+        !(controller.target === target && target !== null && controller.firstContactAt) &&
+        !directory.detail.contactState?.interaction_count;
+    });
+  });
   const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
   let saving = $state(false);
   let mergeOpen = $state(false);
@@ -108,17 +122,13 @@
       {/snippet}
     </PersonHeader>
   {/if}
+  {#if directory.detailLoading && durablePersonID !== null && !details}<p role="status">Loading details…</p>{/if}
   {#if controller.timelineLoading && !detail && durablePersonID === null}
     <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-  {:else if durablePersonID !== null && (!detail || controller.detailMissing || person?.activity_count === 0)}
-    {#if controller.timelineLoading}<p role="status">Loading…</p>{/if}
-    {#if controller.timelineError}<div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} /></div>{/if}
-    <div class="tabs"><SegmentedControl ariaLabel="Person tabs" value={filesOpen && !details ? 'files' : 'details'} options={[{ value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]} onchange={(value) => { details = value === 'details'; onFilesToggle(value === 'files'); }} /></div>
-    {#if filesOpen && !details}{@render files()}{/if}
-  {:else if controller.detailMissing}
+  {:else if controller.detailMissing && durablePersonID === null}
     <EmptyState title="Person or domain not found" />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-  {:else if !detail}
+  {:else if !detail && durablePersonID === null}
     <EmptyState title={controller.timelineError ?? 'Select a person or domain'} />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
     {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate, false)} />{/if}
@@ -144,18 +154,18 @@
         options={[{ value: 'messages', label: 'Messages' }, { value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]}
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
-    {#if !details && scope}
+    {#if !details && (scope || (filesOpen && profileID !== null))}
       {#key `${target}:${controller.activityRevision}`}
         {#if filesOpen}
           {@render files()}
-        {:else}
+        {:else if scope}
           <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} {onMessagesTableChange} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
         {/if}
       {/key}
     {/if}
   {/if}
-  <div class="details" hidden={!(details || (durablePersonID !== null && (!detail || controller.detailMissing || person?.activity_count === 0) && !filesOpen))}>
-    {#if profileID !== null && (details || (durablePersonID !== null && (!detail || controller.detailMissing || person?.activity_count === 0) && !filesOpen))}
+  <div class="details" hidden={!details}>
+    {#if profileID !== null && details}
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}

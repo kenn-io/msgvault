@@ -292,7 +292,7 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 	assert.Equal("message:"+strconv.FormatInt(entryWithX, 10), filtered.Rows[0].Key)
 }
 
-// TestRelationshipTimelineExcludesOwnerAbsentEvents pins the timeline to
+// TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents pins the timeline to
 // the ranking's owner-participation rule for event/meeting rows (see
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality for the ranking
 // side): an event or meeting the archive owner never attended — e.g. a
@@ -303,7 +303,7 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 // only through participant_clusters, proving owner-cluster expansion) and a
 // plain owner-absent email from the counterpart both remain — the timeline
 // scopes emails/chats by counterpart membership only, not owner involvement.
-func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
+func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 

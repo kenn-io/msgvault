@@ -38,7 +38,12 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'ok', interaction_count: 1, computed_at: detail.sent_at, stale: false });
     if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
     if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
-    if (path === '/api/v1/relationships/7/calendar') return Response.json({ year: 2026, days: [] });
+    if (path === '/api/v1/relationships/7/calendar') return Response.json({
+      participant_id: 7, canonical_id: 7, year: 2026, timezone: 'UTC', days: [], annual: [],
+      current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } },
+      peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1,
+      effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1,
+    });
     if (path === '/api/v1/people/directory') return Response.json({ people: [] });
     if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
     if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });

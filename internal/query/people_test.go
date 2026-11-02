@@ -883,6 +883,9 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 					require.Len(t, response.Rows, 1)
 					assert.Equal(t, int64(2), response.TotalCount)
 					assert.Equal(t, order.first, response.Rows[0].ID, "sort applies before the first page is selected")
+					if order.name == "default relevance" {
+						assert.Equal(t, 100, response.Rows[0].CurrentRelationshipTemperature)
+					}
 				})
 			}
 		})

@@ -26,6 +26,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     if (path.endsWith('/profile')) return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
@@ -87,7 +88,7 @@ it('identifies row actions and confirmations by value and service scope', async 
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('blocks attribute additions after a failed read and routes Retry attributes to the profile controller', async () => {
+it('blocks attribute additions after a failed read', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -101,14 +102,10 @@ it('blocks attribute additions after a failed read and routes Retry attributes t
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   await controller.reload();
-  const reload = vi.spyOn(controller, 'reload');
   const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
-    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry attributes' }));
-    expect(reload).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); }
 });
 

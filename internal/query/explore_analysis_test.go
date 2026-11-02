@@ -684,6 +684,9 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 50, MessageType: "slack", SentAt: at, SizeEstimate: 10})
 		b.AddFrom(id, alice, "Alice Example")
 		b.AddTo(id, bob, "Bob Example")
+		if instant == "2024-01-01T00:00:00Z" {
+			b.AddAttachment(id, 15, "notes.txt")
+		}
 	}
 	draft := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 50, MessageType: "slack", SentAt: time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC)})
 	b.AddFrom(draft, alice, "Alice Example")
@@ -698,7 +701,7 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.Len(result.Rows, 2)
 	assert.Equal("2024-01-01", result.Rows[0].Key)
 	assert.Equal(int64(2), result.Rows[0].Count)
-	assert.Equal(int64(20), result.Rows[0].EstimatedBytes)
+	assert.Equal(int64(25), result.Rows[0].EstimatedBytes)
 	assert.Equal("2024-02-29", result.Rows[1].Key)
 	assert.Equal(int64(1), result.Rows[1].Count)
 	local, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: ExploreRequest{Context: context, SentOnly: true}, Dimension: "day", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 366}})

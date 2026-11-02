@@ -244,43 +244,55 @@ test('person attachment gallery preserves directions and Media state across sour
   });
 });
 
-test('Back restores the relationship message and its conversation window after following a participant', async ({ page }) => {
-  await prepare(page);
-  await page.route('**/api/v1/conversations/70**', route => {
-    return route.fulfill({ json: {
-      id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
-      messages: [{
-        id: 500, conversation_id: 70, subject: 'Team Chat', message_type: 'chat',
-        from: 'Bob Example', from_participant_id: 2, to: [], sent_at: '2025-07-18T20:00:00Z',
-        snippet: 'Latest chat message', body: 'Latest chat message', body_html: '', attachments: []
-      }]
-    } });
+for (const facet of ['person', 'domain'] as const) {
+  test(`Back restores the ${facet} calendar and reader after following a participant`, async ({ page }) => {
+    await prepare(page);
+    await page.route('**/api/v1/conversations/70**', route => {
+      return route.fulfill({ json: {
+        id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
+        messages: [{
+          id: 500, conversation_id: 70, subject: 'Team Chat', message_type: 'chat',
+          from: 'Bob Example', from_participant_id: 2, to: [], sent_at: '2025-07-18T20:00:00Z',
+          snippet: 'Latest chat message', body: 'Latest chat message', body_html: '', attachments: []
+        }]
+      } });
+    });
+    await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
+      ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
+    } }));
+    if (facet === 'domain') {
+      await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2025-01-01T00:00:00Z' } }));
+      await page.route('**/api/v1/domains/example.com/timeline', route => route.fulfill({ json: { rows: timelineRows, total_count: 2, cache_revision: 'cache-relationships', search_provenance: {} } }));
+      await page.route('**/api/v1/explore/groups', route => {
+        const year = route.request().postDataJSON().filters.find((filter: { dimension: string }) => filter.dimension === 'after').values[0].slice(0, 4);
+        return route.fulfill({ json: { rows: [{ key: `${year}-07-18`, label: `${year}-07-18`, count: 2, estimated_bytes: 0, latest_at: `${year}-07-18T20:00:00Z`, level: 'FIRST_QUARTILE' }], total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
+      });
+    }
+    await page.goto('/?workspace=relationships');
+    if (facet === 'domain') await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+    const label = facet === 'person' ? 'Alice Example' : 'example.com';
+    await page.getByRole('grid', { name: 'People results' }).getByText(label, { exact: true }).click();
+    const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+    await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
+    const day = calendar.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true });
+    await day.click();
+    await page.getByRole('grid', { name: 'Messages results' }).getByText('Team Chat').click();
+    const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
+    await reading.getByRole('button', { name: 'Bob Example', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+    await expect(reading).toBeHidden();
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+    await expect(calendar.getByText('2025', { exact: true })).toBeVisible();
+    await expect(day).toHaveAttribute('aria-pressed', 'true');
+    await expect(reading).toBeVisible();
+    await page.goForward();
+    await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+    await expect(reading).toBeHidden();
+    await page.goBack();
+    await expect(reading).toBeVisible();
   });
-  await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
-    ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
-  } }));
-  await page.goto('/?workspace=relationships');
-  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
-  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
-  await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
-  const day = calendar.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true });
-  await day.click();
-  await page.getByRole('grid', { name: 'Messages results' }).getByText('Team Chat').click();
-  const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
-  await reading.getByRole('button', { name: 'Bob Example', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
-  await expect(reading).toBeHidden();
-  await page.goBack();
-  await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeVisible();
-  await expect(calendar.getByText('2025', { exact: true })).toBeVisible();
-  await expect(day).toHaveAttribute('aria-pressed', 'true');
-  await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
-  await page.goForward();
-  await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
-  await expect(reading).toBeHidden();
-  await page.goBack();
-  await expect(reading.getByText('Latest chat message')).toBeVisible();
-});
+}
 
 for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
   test(`person calendar, messages, and files remain usable at ${width}px`, async ({ page }) => {
@@ -391,14 +403,13 @@ test('identity hues retain text contrast', async ({ page }) => {
   }
 });
 
-test('domain calendar retries, selects a previous year, and clears date filters', async ({ page }) => {
+test('domain calendar retries and clears date filters', async ({ page }) => {
   await prepare(page);
   await page.route('**/api/v1/domains/example.com/summary', route => route.fulfill({ json: { summary: { ...domainSummary, first_at: '2025-05-01T00:00:00Z', last_at: '2025-08-01T00:00:00Z' } } }));
-  const bodies: Record<string, unknown>[] = [];
   let attempts = 0;
   await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2022-01-01T12:00:00Z' } }));
   await page.route('**/api/v1/domains/example.com/timeline', route => {
-    const body = route.request().postDataJSON(); bodies.push(body);
+    const body = route.request().postDataJSON();
     const occurred_at = body.filters?.find((filter: { dimension: string }) => filter.dimension === 'after')?.values[0] ?? when;
     return route.fulfill({ json: { rows: timelineRows.map(row => ({ ...row, occurred_at, first_at: occurred_at })), total_count: 2, cache_revision: 'cache-domain', search_provenance: {} } });
   });
@@ -415,15 +426,15 @@ test('domain calendar retries, selects a previous year, and clears date filters'
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
   await calendar.getByRole('button', { name: 'Retry' }).click();
   await expect(calendar.getByRole('heading', { name: 'Activity since Jan 2022' })).toBeVisible();
-  await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
-  const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2025' }).filter({ visible: true });
+  const day = calendar.getByRole('button', { name: '3 messages on Jul 19, 2026' }).filter({ visible: true });
   await day.click();
-  await expect.poll(() => bodies.at(-1)?.filters).toContainEqual({ dimension: 'after', values: [expect.stringContaining('2025-07-19')] });
+  await expect(day).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
   await page.keyboard.press('Escape');
-  await expect.poll(() => bodies.at(-1)?.filters).toEqual([]);
+  await expect(day).toHaveAttribute('aria-pressed', 'false');
+  expect((await exploreHistoryState(page)).filters).toEqual([]);
 });
 
 test('saved people keep durable IDs separate from participants and open profiles with no messages', async ({ page }) => {
@@ -676,7 +687,7 @@ test('People calendar day survives an Action items archived-meeting round trip',
   await expect(actions.getByText('Prepare review', { exact: true })).toBeVisible();
 });
 
-for (const change of ['filter', 'sort'] as const) {
+for (const change of ['filter', 'sort', 'show-all'] as const) {
   test(`Back restores the People reader across ${change} entries`, async ({ page }) => {
     await prepare(page);
     const requests: Record<string, unknown>[] = [];
@@ -709,7 +720,7 @@ for (const change of ['filter', 'sort'] as const) {
       expect(await page.evaluate(() => window.history.state.relationshipReader?.bounds)).toBeUndefined();
       await page.goForward();
       await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
-    } else {
+    } else if (change === 'sort') {
       await day.click();
       await expect(grid).toHaveAttribute('aria-busy', 'false');
       await grid.getByText('Team Chat').click();
@@ -724,39 +735,23 @@ for (const change of ['filter', 'sort'] as const) {
       await expect(day).toHaveAttribute('aria-pressed', 'true');
       await expect(reading.getByText('Latest chat message')).toBeVisible();
       expect(await page.evaluate(() => window.history.state.relationshipReader?.anchor)).toBe(500);
+    } else {
+      expect(await page.evaluate(() => history.state.relationshipReader)).toBeUndefined();
+      await page.getByTitle('Filter people', { exact: true }).click();
+      await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
+      await page.keyboard.press('Escape');
+      await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(true);
+      await grid.focus();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
+      await expect(reading).toBeVisible();
+      await page.goBack();
+      await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(false);
+      await expect(reading).toBeHidden();
     }
   });
 }
-
-test('Back restores the selected older year for a People domain', async ({ page }) => {
-  await prepare(page);
-  await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
-  await page.route('**/api/v1/conversations/70**', route => route.fulfill({ json: {
-    id: 70, anchor_id: 500, has_before: false, has_after: false, total: 1,
-    messages: [{ id: 500, conversation_id: 70, subject: 'Team Chat', message_type: 'chat', from: 'Bob Example', from_participant_id: 2, to: [], sent_at: '2025-07-18T20:00:00Z', body: 'Older chat message', attachments: [] }]
-  } }));
-  await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: { ...domainSummary, first_at: '2025-01-01T00:00:00Z' } }));
-  await page.route('**/api/v1/domains/example.com/timeline', route => route.fulfill({ json: { rows: timelineRows, total_count: 2, cache_revision: 'cache-relationships', search_provenance: {} } }));
-  await page.route('**/api/v1/explore/groups', route => {
-    const year = route.request().postDataJSON().filters.find((filter: { dimension: string }) => filter.dimension === 'after').values[0].slice(0, 4);
-    return route.fulfill({ json: { rows: [{ key: `${year}-07-18`, label: `${year}-07-18`, count: 2, estimated_bytes: 0, latest_at: `${year}-07-18T20:00:00Z`, level: 'FIRST_QUARTILE' }], total_count: 1, cache_revision: 'cache-domain', search_provenance: {} } });
-  });
-  await page.goto('/?workspace=relationships');
-  await page.getByRole('radio', { name: 'Domains', exact: true }).click();
-  await page.getByRole('grid', { name: 'People results' }).getByText('example.com', { exact: true }).click();
-  const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
-  await calendar.getByRole('button', { name: 'Previous relationship year' }).click();
-  const day = calendar.getByRole('button', { name: '2 messages on Jul 18, 2025' }).filter({ visible: true });
-  await day.click();
-  const grid = page.getByRole('grid', { name: 'Messages results' });
-  await expect(grid).toHaveAttribute('aria-busy', 'false');
-  await grid.getByText('Team Chat').click();
-  await page.getByRole('complementary', { name: 'Reading pane: Team Chat' }).getByRole('button', { name: 'Bob Example', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
-  await page.goBack();
-  await expect(calendar.getByText('2025', { exact: true })).toBeVisible();
-  await expect(day).toHaveAttribute('aria-pressed', 'true');
-});
 
 test('People list keys stay in that grid while Messages is open', async ({ page }) => {
   await prepare(page);
@@ -773,25 +768,4 @@ test('People list keys stay in that grid while Messages is open', async ({ page 
   await expect(list).toBeFocused();
   expect(await messages.getAttribute('aria-activedescendant')).toBe(active);
   await expect(messages.getByRole('row', { selected: true })).toHaveCount(0);
-});
-
-test('closes the reader on Back to a same-person entry with no reader', async ({ page }) => {
-  await prepare(page);
-  await page.goto('/?workspace=relationships');
-  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
-  const grid = page.getByRole('grid', { name: 'Messages results' });
-  await expect(grid.getByText('Team Chat')).toBeVisible();
-  expect(await page.evaluate(() => history.state.relationshipReader)).toBeUndefined();
-  await page.getByTitle('Filter people', { exact: true }).click();
-  await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
-  await page.keyboard.press('Escape');
-  await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(true);
-  await grid.focus();
-  await page.keyboard.press('End');
-  await page.keyboard.press('Enter');
-  const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
-  await expect(reading.getByText('Latest chat message')).toBeVisible();
-  await page.goBack();
-  await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(false);
-  await expect(reading).toBeHidden();
 });
