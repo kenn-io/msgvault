@@ -54,8 +54,8 @@ func (s *Store) personTierReadiness(ctx context.Context, tx *loggedTx) (PersonTi
 }
 
 // personTierSignals reads the windowed counts for one page of saved people.
-// asOf is already in the projection timezone and maxDirect is the limit the
-// projection was built under; windows include both boundary dates. The
+// asOf holds the projection's local calendar date in UTC, and maxDirect is the
+// limit the projection was built under; windows include both boundary dates. The
 // projection holds each person's direct events; the inbound audience cut comes
 // from the projector's own classifier. Events arrive in keyset pages and fold
 // into the counters, so memory follows the page size and the number of people
