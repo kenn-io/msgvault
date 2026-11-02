@@ -193,8 +193,8 @@ it('keeps an open field draft when the saved person activity finishes loading', 
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
     if (path === '/api/v1/participants/1') return pending;
-    if (path === '/api/v1/people/7') return Response.json(person);
-    if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0 });
@@ -209,7 +209,9 @@ it('keeps an open field draft when the saved person activity finishes loading', 
   const opening = controller.openTarget('cluster:1', {}, false);
   const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target: 'cluster:1', details: true, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add phone' }));
+    const addPhone = await screen.findByRole('button', { name: 'Add phone' });
+    expect(addPhone).toHaveProperty('disabled', false);
+    await fireEvent.click(addPhone);
     await fireEvent.input(screen.getByRole('textbox', { name: 'Contact value' }), { target: { value: '+1 202 555 0199' } });
     await act(async () => { release(Response.json({ id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })); await opening; });
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toHaveProperty('value', '+1 202 555 0199');
