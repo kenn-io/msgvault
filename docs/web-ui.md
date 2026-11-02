@@ -292,7 +292,7 @@ fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Selecting a Directory row opens the person's **Details** tab in People. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Editing a row opens its editor below the fields; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
+Selecting a Directory row opens the same person page as People: **Messages** and the calendar when the person has archived activity, **Details** otherwise. On Details, each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Editing a row opens its editor below the fields; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
 Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations.
 
@@ -305,7 +305,7 @@ relationships; the **Review type** control switches between them. Inspect the
 evidence before accepting or rejecting a candidate. Conflicts between existing
 profiles require an explicit merge decision. Facts starts with a person: search
 by name in the **Person** field to see that person's evidence, claims,
-decisions, and pins. **Open person profile** opens their Details tab in People.
+decisions, and pins. **Open person profile** opens their person page in People.
 Merge history and reversal follow the boundaries documented in
 [People](/docs/usage/people/).
 
