@@ -1073,7 +1073,7 @@ describe('ExploreState history ownership', () => {
     }, '', search);
     const state = new ExploreState(window);
     try {
-      state.commitNavigation({ workspace: 'relationships', relationshipFacet: 'domains', relationshipTarget: 'domain:example.com' });
+      state.commitRestorableNavigation({ workspace: 'relationships', relationshipFacet: 'domains', relationshipTarget: 'domain:example.com', directoryQuery: 'bob', directoryPersonID: 9 });
       window.history.back();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       expect(state.current).toMatchObject({
@@ -1084,34 +1084,19 @@ describe('ExploreState history ownership', () => {
         directoryCategory: 'friend',
         directoryPersonID: 7
       });
+      window.history.forward();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current).toMatchObject({
+        workspace: 'relationships',
+        relationshipFacet: 'domains',
+        relationshipTarget: 'domain:example.com',
+        directoryQuery: 'bob',
+        directoryCategory: 'friend',
+        directoryPersonID: 9
+      });
     } finally {
       state.destroy();
     }
-  });
-
-  it('restores Directory filters and selection on browser back and forward', async () => {
-    window.history.replaceState(null, '', serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'relationships',
-      directoryQuery: 'alice',
-      directoryContactState: 'active',
-      directoryPersonID: 7
-    }));
-    const state = new ExploreState(window);
-
-    state.commitRestorableNavigation({
-      directoryQuery: 'bob',
-      directoryCategory: 'friend',
-      directoryPersonID: 9
-    });
-    window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({ workspace: 'relationships', directoryQuery: 'alice', directoryContactState: 'active', directoryPersonID: 7 });
-
-    window.history.forward();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({ workspace: 'relationships', directoryQuery: 'bob', directoryCategory: 'friend', directoryPersonID: 9 });
-    state.destroy();
   });
 
   it('uses remembered mode only when the URL has no explicit mode and remembers user changes', () => {

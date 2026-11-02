@@ -81,7 +81,7 @@ describe('PersonBindingConflictModal', () => {
     expect(screen.queryByRole('button', { name: 'Merge into selected survivor' })).toBeNull();
   });
 
-  it('reuses one UUID only for an explicit unchanged transport retry', async () => {
+  it('reuses one request ID only for an explicit unchanged transport retry', async () => {
     const requests: Request[] = [];
     const merged = person(7, 5, [70], 'Synthetic One');
     let attempts = 0;
@@ -91,7 +91,7 @@ describe('PersonBindingConflictModal', () => {
       if (attempts === 1) throw new TypeError('connection reset');
       return Response.json(mergeResult(merged), { headers: { ETag: '"person-7-r5"' } });
     });
-    const uuid = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('123-456-789-12');
+    const requestIDSpy = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('123-456-789-12');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -104,7 +104,7 @@ describe('PersonBindingConflictModal', () => {
       '123-456-789-12',
       '123-456-789-12',
     ]);
-    expect(uuid).toHaveBeenCalledOnce();
+    expect(requestIDSpy).toHaveBeenCalledOnce();
   });
 
   it('changing the survivor clears confirmation and rotates the full-snapshot key', async () => {
@@ -212,7 +212,7 @@ describe('PersonBindingConflictModal', () => {
       requests.push(requestOf(input));
       return Response.json({ error, message: 'Application failure' }, { status });
     });
-    const uuid = vi
+    const requestIDSpy = vi
       .spyOn(requestID, 'createBrowserRequestID')
       .mockReturnValueOnce('123-456-789-12')
       .mockReturnValueOnce('234-567-890-23');
@@ -234,7 +234,7 @@ describe('PersonBindingConflictModal', () => {
       '123-456-789-12',
       '234-567-890-23',
     ]);
-    expect(uuid).toHaveBeenCalledTimes(2);
+    expect(requestIDSpy).toHaveBeenCalledTimes(2);
   });
 
   it.each([

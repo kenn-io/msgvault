@@ -190,7 +190,7 @@ describe('PersonMergeHistoryController', () => {
     expect(regular.confirmSplit()).toBe(false);
   });
 
-  it('reuses a UUID only after a thrown transport failure of the unchanged confirmation', async () => {
+  it('reuses a request ID only after a thrown transport failure of the unchanged confirmation', async () => {
     const requests: Request[] = [];
     let postAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -223,7 +223,7 @@ describe('PersonMergeHistoryController', () => {
     ]);
   });
 
-  it('rotates the UUID and requires reconfirmation after a thrown non-transport exception', async () => {
+  it('rotates the request ID and requires reconfirmation after a thrown non-transport exception', async () => {
     const requests: Request[] = [];
     let postAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
