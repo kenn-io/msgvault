@@ -33,6 +33,7 @@ func createScoringCandidate(t *testing.T, st *store.Store, suffix string) int64 
 	return candidate.ID
 }
 
+// Raw SQL seeds ordered candidate IDs; claims and records still use the real API.
 func createScoringCandidates(t *testing.T, st *store.Store, count int) []int64 {
 	t.Helper()
 	addresses := make([]mime.Address, 2*count)
@@ -51,8 +52,9 @@ func createScoringCandidates(t *testing.T, st *store.Store, count int) []int64 {
 		values[i] = "('participant', ?, 'participant', ?, 'email', 'archive_observation')"
 		args = append(args, left, right)
 	}
-	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`INSERT INTO identity_match_candidates
-		(left_kind, left_id, right_kind, right_id, basis, source) VALUES `+strings.Join(values, ",")+` RETURNING id`), args...)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(
+		`INSERT INTO identity_match_candidates (left_kind, left_id, right_kind, right_id, basis, source)
+		VALUES `+strings.Join(values, ",")+` RETURNING id`), args...)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	ids := make([]int64, 0, count)
