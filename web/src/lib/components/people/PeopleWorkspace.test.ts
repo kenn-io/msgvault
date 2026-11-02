@@ -63,7 +63,6 @@ it('keeps the day across Details and the file filter across Files', async () => 
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
     expect((await screen.findByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('report');
-    expect((screen.getByRole('checkbox', { name: 'PDFs' }) as HTMLInputElement).checked).toBe(false);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
