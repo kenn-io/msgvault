@@ -13,11 +13,11 @@ import (
 )
 
 type API interface {
-	Me(context.Context) (Owner, error)
-	OwnPosts(context.Context, ListQuery) (Page, error)
-	OwnReplies(context.Context, ListQuery) (Page, error)
-	Conversation(context.Context, string, string) (Page, error)
-	Media(context.Context, string) (Media, error)
+	Me(ctx context.Context) (Owner, error)
+	OwnPosts(ctx context.Context, query ListQuery) (Page, error)
+	OwnReplies(ctx context.Context, query ListQuery) (Page, error)
+	Conversation(ctx context.Context, root, after string) (Page, error)
+	Media(ctx context.Context, id string) (Media, error)
 }
 
 type Owner struct {
@@ -50,7 +50,7 @@ type MediaChildren struct {
 	Data []MediaChild `json:"data"`
 }
 
-// Optional pointers distinguish explicit empty/false values from omissions.
+// Media uses optional pointers to distinguish explicit empty/false values from omissions.
 // Present additionally retains explicit JSON null; Raw is the original snapshot.
 type Media struct {
 	ID                                                        string
@@ -163,10 +163,10 @@ func (m *Media) UnmarshalJSON(data []byte) error {
 // PublishAPI is the Threads-specific reply surface. Publishing has no retry.
 type PublishAPI interface {
 	API
-	ReplyQuota(context.Context) (ReplyQuota, error)
-	CreateReply(context.Context, string, string) (string, error)
-	ContainerStatus(context.Context, string) (string, error)
-	PublishReply(context.Context, string, string) (string, error)
+	ReplyQuota(ctx context.Context) (ReplyQuota, error)
+	CreateReply(ctx context.Context, parent, body string) (string, error)
+	ContainerStatus(ctx context.Context, id string) (string, error)
+	PublishReply(ctx context.Context, owner, container string) (string, error)
 }
 
 type ReplyQuota struct {

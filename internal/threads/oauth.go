@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -207,7 +208,7 @@ func newOAuthHTTP(opts OAuthClientOptions) (*oauthHTTP, error) {
 		return nil, errors.New("invalid Threads OAuth origin")
 	}
 	ip := net.ParseIP(u.Hostname())
-	if u.Scheme != "https" && !(u.Scheme == "http" && ip != nil && ip.IsLoopback()) {
+	if u.Scheme != "https" && (u.Scheme != "http" || ip == nil || !ip.IsLoopback()) {
 		return nil, errors.New("insecure Threads OAuth origin")
 	}
 	client := http.Client{Timeout: 30 * time.Second}
@@ -338,13 +339,7 @@ func (c *oauthHTTP) verify(ctx context.Context, token, inspector, appID, ownerID
 		return TokenRecord{}, ErrReauthorizationRequired
 	}
 	for _, scope := range required {
-		found := false
-		for _, granted := range d.Scopes {
-			if scope == granted {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(d.Scopes, scope)
 		if !found {
 			return TokenRecord{}, ErrReauthorizationRequired
 		}

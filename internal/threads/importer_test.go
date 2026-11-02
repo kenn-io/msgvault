@@ -2,6 +2,7 @@ package threads
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -102,14 +103,14 @@ func (f *importFixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := json.Marshal(map[string]any{"data": data, "paging": map[string]any{"cursors": map[string]any{"after": strconv.Itoa(end)}}})
 	if err != nil {
-		http.Error(w, "fixture encoding", 500)
+		http.Error(w, "fixture encoding", http.StatusInternalServerError)
 		return
 	}
 	respond(w, 200, string(body))
 }
-func (f *importFixture) importer(t *testing.T, cap int) (*Importer, ImportOptions) {
+func (f *importFixture) importer(t *testing.T, attemptLimit int) (*Importer, ImportOptions) {
 	t.Helper()
-	budget := f.clock.budget(cap)
+	budget := f.clock.budget(attemptLimit)
 	c, err := NewClient(ClientOptions{HTTPClient: f.server.Client(), BaseURL: f.server.URL + "/v1.0", AccessToken: testToken, Budget: budget})
 	require.NoError(t, err)
 	return NewImporter(f.st, c), ImportOptions{SourceID: f.sourceID, SourceIdentifier: writerSource, Budget: budget, Now: f.clock.Now}
@@ -122,7 +123,7 @@ func TestThreadsImportCapAndReplay(t *testing.T) {
 	f.posts = []Media{writerMedia("100", "new root"), writerMedia("200", "history root")}
 	f.posts[0].Timestamp = f.clock.Now().Add(-time.Hour)
 	var completed bool
-	for run := 0; run < 30; run++ {
+	for range 30 {
 		imp, opts := f.importer(t, 1)
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
@@ -161,4 +162,232 @@ func TestThreadsModesRejectBeforeIO(t *testing.T) {
 		require.Error(t, err, fmt.Sprint(r))
 	}
 	assert.Empty(t, f.calls)
+}
+
+func TestThreadsMaintainerEmptyContinuationArchivesLaterReply(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	f := newImportFixture(t)
+	f.failure = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/v1.0/300/conversation" {
+			return false
+		}
+		switch r.URL.Query().Get("after") {
+		case "":
+			respond(w, 200, `{"data":[],"paging":{"cursors":{"after":"A"},"next":"https://untrusted.example/next?access_token=synthetic"}}`)
+		case "A":
+			respond(w, 200, fmt.Sprintf(`{"data":[{"id":"301","timestamp":%q,"root_post":{"id":"300"},"replied_to":{"id":"300"},"text":"Synthetic later reply"}],"paging":{"cursors":{"after":"B"}}}`, writerTime.Format(time.RFC3339)))
+		case "B":
+			respond(w, 200, `{"data":[]}`)
+		default:
+			assert.Fail("unexpected continuation")
+			respond(w, 400, `{}`)
+		}
+		return true
+	}
+	imp, opts := f.importer(t, 100)
+	opts.Request.PostID = "300"
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, sum.Status)
+	_, found, err := f.st.ThreadsArchiveMessageMetadataContext(t.Context(), f.sourceID, "301")
+	require.NoError(err)
+	assert.True(found, "an empty page with an explicit continuation must not hide later replies")
+}
+
+func TestThreadsMaintainerThirdExpiredCursorCanResume(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	f := newImportFixture(t)
+	starts := 0
+	f.failure = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/v1.0/300/conversation" {
+			return false
+		}
+		after := r.URL.Query().Get("after")
+		if strings.HasPrefix(after, "expired-") {
+			respond(w, 400, `{"error":{"code":100,"message":"The paging cursor has expired"}}`)
+		} else if after == "fresh" {
+			respond(w, 200, `{"data":[]}`)
+		} else {
+			starts++
+			next := "fresh"
+			if starts <= 3 {
+				next = fmt.Sprintf("expired-%d", starts)
+			}
+			respond(w, 200, fmt.Sprintf(`{"data":[{"id":"301","timestamp":%q,"root_post":{"id":"300"},"replied_to":{"id":"300"}}],"paging":{"cursors":{"after":%q}}}`, writerTime.Format(time.RFC3339), next))
+		}
+		return true
+	}
+	imp, opts := f.importer(t, 100)
+	opts.Request.PostID = "300"
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.Equal(store.SyncStatusPaused, first.Status)
+	assert.Positive(first.Incomplete)
+	imp, opts = f.importer(t, 100)
+	opts.Request.PostID = "300"
+	resumed, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, resumed.Status, "a later run must restart pinned bounds rather than retry a permanently expired cursor")
+	assert.GreaterOrEqual(starts, 4)
+}
+
+func TestThreadsMaintainerDefiniteCreateRejectionReleasesDraft(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden} {
+		for _, action := range []string{"edit", "delete"} {
+			t.Run(strconv.Itoa(status)+"/"+action, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+
+				f := newSendFixture(t)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/v1.0/me/threads_publishing_limit":
+						respond(w, 200, `{"data":[{"reply_quota_usage":0,"reply_config":{"quota_total":1000,"quota_duration":86400}}]}`)
+					case "/v1.0/me/threads":
+						respond(w, status, `{"error":{"code":100,"message":"Invalid reply text"}}`)
+					default:
+						assert.Fail("unexpected provider call", r.URL.Path)
+						respond(w, 500, `{}`)
+					}
+				}))
+				t.Cleanup(server.Close)
+				var err error
+				f.api, err = NewClient(ClientOptions{BaseURL: server.URL + "/v1.0", HTTPClient: server.Client(), AccessToken: testToken, Budget: f.clock.budget(100)})
+				require.NoError(err)
+				_, err = NewSender(f.st, f.options).Send(t.Context(), f.request())
+				require.Error(err)
+				var rejected *APIError
+				require.ErrorAs(err, &rejected)
+				assert.Equal(status, rejected.StatusCode, "exercise the actual provider response")
+				if action == "edit" {
+					edited, editErr := f.st.UpdateChatDraftContext(t.Context(), f.draft.DraftID, 1, "Synthetic corrected reply")
+					require.NoError(editErr, "a definite provider rejection must release the draft")
+					assert.Equal(int64(2), edited.Revision)
+				} else {
+					require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1), "a definite provider rejection must permit deletion")
+				}
+			})
+		}
+	}
+}
+
+func TestThreadsParentRepairYieldsBeforeDrainingBacklog(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	w, st := writerFixture(t)
+	// All children arrive before their parent. A repair boundary must yield
+	// while eligible work remains, without relying on runner throughput.
+	for n := range 201 {
+		applyWriter(t, w, writerReply(strconv.Itoa(1000+n), "100", "101"), ItemOrigin{Kind: "conversation", RootID: "100"})
+	}
+	parent := applyWriter(t, w, writerReply("101", "100", "100"), ItemOrigin{Kind: "conversation", RootID: "100"})
+	require.NoError(w.ResolveParents(t.Context()))
+	var linked int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id=? AND reply_to_message_id=?`), w.sourceID, parent).Scan(&linked))
+	assert.Positive(linked)
+	assert.Less(linked, 201, "a single repair boundary must leave finite work for later boundaries")
+	// Ingestion can continue between repair batches.
+	applyWriter(t, w, writerMedia("9000", "Newly ingested post"), ItemOrigin{Kind: "own_posts"})
+	require.NoError(w.ResolveParents(t.Context()))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id=? AND reply_to_message_id=?`), w.sourceID, parent).Scan(&linked))
+	assert.Equal(201, linked, "later boundaries must finish pending repair")
+}
+
+func TestThreadsMergedArchiveOnlyRepliesDoNotBlockRepair(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(strconv.FormatBool(present), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			live, st := writerFixture(t)
+			history, err := st.GetOrCreateSource("threads", "threads:123:789")
+			require.NoError(err)
+			archived := NewWriter(st, history.ID, history.Identifier)
+			child := applyWriter(t, archived, writerReply("101", "100", "200"), ItemOrigin{Kind: "conversation", RootID: "100"})
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: live.sourceID})
+			require.NoError(err)
+			if present {
+				applyWriter(t, live, writerMedia("200", "Native parent in a different conversation"), ItemOrigin{Kind: "own_posts"})
+			}
+			require.NoError(live.ResolveParents(t.Context()))
+			link, err := st.GetMessageReplyToMessageIDContext(t.Context(), child)
+			require.NoError(err)
+			assert.False(link.Valid, "merged history must stay archive-only even when a native ID matches its parent")
+			applyWriter(t, live, writerMedia("300", "Ingestion continues"), ItemOrigin{Kind: "own_posts"})
+		})
+	}
+}
+
+func TestThreadsParentRepairScanWrapsAcrossWriters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newImportFixture(t)
+	source, err := f.st.GetSourceByID(f.sourceID)
+	require.NoError(err)
+	coverage := source.SyncConfig
+	live := NewWriter(f.st, f.sourceID, source.Identifier)
+	otherSource, err := f.st.GetOrCreateSource("threads", "threads:123:789")
+	require.NoError(err)
+	other := NewWriter(f.st, otherSource.ID, otherSource.Identifier)
+	otherChild := applyWriter(t, other, writerReply("501", "500", "502"), ItemOrigin{Kind: "conversation", RootID: "500"})
+	otherParent := applyWriter(t, other, writerReply("502", "500", "500"), ItemOrigin{Kind: "conversation", RootID: "500"})
+	var first int64
+	for n := range 201 {
+		id := applyWriter(t, live, writerReply(strconv.Itoa(1000+n), "300", "9999"), ItemOrigin{Kind: "conversation", RootID: "300"})
+		if n == 0 {
+			first = id
+		}
+	}
+	require.NoError(live.ResolveParents(t.Context()))
+	// A canceled boundary cannot lose the completed durable scan position.
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(NewWriter(f.st, f.sourceID, source.Identifier).ResolveParents(canceled), context.Canceled)
+	// This source's earlier row IDs must not inherit the first source's cursor.
+	require.NoError(NewWriter(f.st, otherSource.ID, otherSource.Identifier).ResolveParents(t.Context()))
+	link, err := f.st.GetMessageReplyToMessageIDContext(t.Context(), otherChild)
+	require.NoError(err)
+	assert.Equal(sql.NullInt64{Int64: otherParent, Valid: true}, link)
+	parent := applyWriter(t, live, writerReply("9999", "300", "300"), ItemOrigin{Kind: "conversation", RootID: "300"})
+	require.NoError(NewWriter(f.st, f.sourceID, source.Identifier).ResolveParents(t.Context()))
+	link, err = f.st.GetMessageReplyToMessageIDContext(t.Context(), first)
+	require.NoError(err)
+	assert.False(link.Valid, "a new writer resumes after the missing-parent prefix before wrapping")
+	require.NoError(NewWriter(f.st, f.sourceID, source.Identifier).ResolveParents(t.Context()))
+	link, err = f.st.GetMessageReplyToMessageIDContext(t.Context(), first)
+	require.NoError(err)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, link, "wraparound repairs children whose parent arrived later")
+	source, err = f.st.GetSourceByID(f.sourceID)
+	require.NoError(err)
+	assert.Equal(coverage, source.SyncConfig, "repair scanning cannot move pinned provider coverage")
+}
+
+func TestThreadsEmptyContinuationRetainsRepeatedPageProtection(t *testing.T) {
+	require := require.New(t)
+	f := newImportFixture(t)
+	f.failure = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/v1.0/300/conversation" {
+			return false
+		}
+		switch r.URL.Query().Get("after") {
+		case "", "B":
+			after := "A"
+			if r.URL.Query().Get("after") == "B" {
+				after = "C"
+			}
+			respond(w, http.StatusOK, fmt.Sprintf(`{"data":[{"id":"301","timestamp":%q,"root_post":{"id":"300"},"replied_to":{"id":"300"}}],"paging":{"cursors":{"after":%q}}}`, writerTime.Format(time.RFC3339), after))
+		case "A":
+			respond(w, http.StatusOK, `{"data":[],"paging":{"cursors":{"after":"B"},"next":"https://untrusted.example/next"}}`)
+		default:
+			respond(w, http.StatusOK, `{"data":[]}`)
+		}
+		return true
+	}
+	imp, opts := f.importer(t, 100)
+	opts.Request.PostID = "300"
+	_, err := imp.Import(t.Context(), opts)
+	require.ErrorIs(err, ErrPagination, "an empty continuation cannot erase repeated-page evidence")
 }

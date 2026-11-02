@@ -91,7 +91,7 @@ func TestThreadsCompatibleResume(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(base)
 	assert.Equal(q.FullFingerprint, base.RequestFingerprint.String)
-	assert.Equal(`{"epoch":"normalized-source-baseline"}`, base.CursorAfter.String)
+	assert.JSONEq(`{"epoch":"normalized-source-baseline"}`, base.CursorAfter.String)
 	for _, status := range []string{store.SyncStatusFailed, store.SyncStatusCancelled, store.SyncStatusPaused} {
 		id := threadsRun(t, st, source, store.ThreadsSyncBaseline, q.BaselineFingerprint, status, `{"committed_page":2}`)
 		check(q, fullComplete, id, `{"committed_page":2}`)

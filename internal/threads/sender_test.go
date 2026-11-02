@@ -70,7 +70,11 @@ func newSendFixture(t *testing.T) *sendFixture {
 			assert.Equal(t, f.draft.Body, r.PostForm.Get("text"))
 			id := 400 + f.creates.Add(1) - 1
 			if f.createMode == "drop" {
-				conn, _, err := w.(http.Hijacker).Hijack()
+				hijacker, ok := w.(http.Hijacker)
+				if !assert.True(t, ok) {
+					return
+				}
+				conn, _, err := hijacker.Hijack()
 				require.NoError(t, err)
 				require.NoError(t, conn.Close())
 				return
@@ -82,7 +86,11 @@ func newSendFixture(t *testing.T) *sendFixture {
 			f.publishedContainers = append(f.publishedContainers, r.PostForm.Get("creation_id"))
 			switch f.publishMode {
 			case "drop":
-				conn, _, err := w.(http.Hijacker).Hijack()
+				hijacker, ok := w.(http.Hijacker)
+				if !assert.True(t, ok) {
+					return
+				}
+				conn, _, err := hijacker.Hijack()
 				require.NoError(t, err)
 				require.NoError(t, conn.Close())
 			case "500":

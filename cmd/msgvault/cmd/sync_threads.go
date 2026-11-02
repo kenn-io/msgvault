@@ -52,7 +52,7 @@ func newSyncThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		summary, runErr := importThreadsSource(cmd.Context(), st, source, deps, request, threads.ManualRequestLimit, nil)
+		summary, runErr := importThreadsSource(cmd.Context(), st, source, deps, request, threads.ManualRequestLimit)
 		// A page may have committed physical writes before a later error, even if
 		// the safe checkpoint still has zero counters. Ownership is released first.
 		if summary != nil && summary.SyncRunID != 0 && deps.rebuildCache != nil {
@@ -82,7 +82,7 @@ func newSyncThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 
 // importThreadsSource is shared by manual, scheduled and Sync now dispatch.
 // Credential refresh and every page share one budget and one lifecycle lease.
-func importThreadsSource(ctx context.Context, st *store.Store, source *store.Source, deps threadsCommandDeps, request threads.SyncRequest, limit int, progress func(string)) (summary *threads.ImportSummary, retErr error) {
+func importThreadsSource(ctx context.Context, st *store.Store, source *store.Source, deps threadsCommandDeps, request threads.SyncRequest, limit int) (summary *threads.ImportSummary, retErr error) {
 	if err := request.Validate(); err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func importThreadsSource(ctx context.Context, st *store.Store, source *store.Sou
 		if err != nil {
 			return err
 		}
-		summary, err = threads.NewImporter(st, api).Import(ctx, threads.ImportOptions{SourceID: source.ID, SourceIdentifier: source.Identifier, Request: request, Budget: budget, Execution: execution, Now: deps.now, Progress: progress})
+		summary, err = threads.NewImporter(st, api).Import(ctx, threads.ImportOptions{SourceID: source.ID, SourceIdentifier: source.Identifier, Request: request, Budget: budget, Execution: execution, Now: deps.now})
 		if apiErr, ok := errors.AsType[*threads.APIError](err); ok && apiErr.CredentialInvalid() {
 			err = errors.Join(err, manager.Invalidate(record))
 		}

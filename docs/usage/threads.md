@@ -162,7 +162,17 @@ The owner MCP tool `send_reply` takes either `message_id` plus `body`, or
 archived message or draft determines the source. Each send requires explicit
 client confirmation of that tool and those arguments. A `confirmed` argument
 cannot authorize it. Clients unable to complete confirmation cannot send.
-Delegated sessions do not expose this tool. See [MCP draft and send
+Delegated sessions do not expose this tool.
+
+This restriction applies to delegated credentials, not agents with access to the
+host filesystem. Msgvault does not enforce that an account is robot-owned.
+The operator chooses the account and controls the daemon's config, owner key,
+provider credentials, and restart authority. An agent that can edit the daemon's
+configuration and restart it can change its startup opt-in; an agent that can
+read the owner key can use owner access. Keep those host capabilities outside
+the delegated agent's reach when relying on these restrictions.
+
+See [MCP draft and send
 tools](chat.md#draft-and-send-tools).
 
 ## Inspect and recover an interrupted send
@@ -175,7 +185,7 @@ exit does not mean the provider failed to publish.
 | `complete` | Known remote media ID archived locally; the reviewed draft was consumed. |
 | `container_saved` or `ready` | Resumable processing before publication. Repeat the same draft ID and revision. |
 | `rate_limited`, `reply_not_permitted`, `invalid_body` | The attempt was rejected or paused before publishing. Inspect the result and fix the stated condition. |
-| `send_failed` | A proven unpublished terminal container outcome; the draft remains available. |
+| `send_failed` | A definite creation rejection or unpublished terminal container outcome; the draft can be edited or deleted. |
 | `remote_unknown` | A publish may have happened. Repeating inspects the receipt and never republishes it. |
 | `sent_archive_pending` | The remote ID is known; local archive or cache completion needs repair. Repeat the same ID and revision. |
 

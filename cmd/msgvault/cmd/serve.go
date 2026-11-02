@@ -2572,7 +2572,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
 	if len(req.Args) > 0 && req.Args[0] == "add-threads" && req.Grant != nil {
-		return errors.New("Threads connection requires the owner")
+		return errors.New("threads connection requires the owner")
 	}
 	if api.IsCLIRunSendReply(req.Args) {
 		return a.runCLISendReply(ctx, req, emit)
@@ -4259,7 +4259,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			)
 			logScheduledDiscordIssues(identifier, discordSummary, logger)
 		case sourceTypeThreads:
-			_, err = importThreadsSource(ctx, s, src, defaultThreadsCommandDeps().bind(ctx), threads.SyncRequest{}, threads.ScheduledRequestLimit, nil)
+			_, err = importThreadsSource(ctx, s, src, defaultThreadsCommandDeps().bind(ctx), threads.SyncRequest{}, threads.ScheduledRequestLimit)
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}

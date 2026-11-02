@@ -60,11 +60,11 @@ func TestThreadsExactSourceAndCredentialAdmission(t *testing.T) {
 	record, err := deps.tokenManager().Load("123", "20")
 	require.NoError(err)
 	require.NoError(deps.tokenManager().Invalidate(record))
-	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, threads.ScheduledRequestLimit, nil)
+	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, threads.ScheduledRequestLimit)
 	require.ErrorIs(err, threads.ErrReauthorizationRequired)
 	assert.Zero(calls)
 	// Invalid mode combinations are rejected before provider/token work.
-	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{Full: true, PostID: "100"}, 200, nil)
+	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{Full: true, PostID: "100"}, 200)
 	require.Error(err)
 	assert.Zero(calls)
 	command := newSyncThreadsLocalCmd(deps)
@@ -94,14 +94,14 @@ func TestThreadsExecutionExclusionBeforeProvider(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err = importThreadsSource(ctx, st, source, deps, threads.SyncRequest{}, 200, nil)
+	_, err = importThreadsSource(ctx, st, source, deps, threads.SyncRequest{}, 200)
 	require.ErrorIs(err, store.ErrSyncAlreadyActive)
 	assert.Zero(t, opened)
 }
 
 func TestThreadsWholeRunCapsIncludeCredentialRefresh(t *testing.T) {
 	for _, limit := range []int{threads.ScheduledRequestLimit, threads.ManualRequestLimit} {
-		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
@@ -120,7 +120,7 @@ func TestThreadsWholeRunCapsIncludeCredentialRefresh(t *testing.T) {
 					return false
 				}
 				if r.URL.Path == "/v1.0/me/replies" {
-					fmt.Fprint(w, `{"data":[]}`)
+					_, _ = fmt.Fprint(w, `{"data":[]}`)
 					return true
 				}
 				serial++
@@ -128,7 +128,7 @@ func TestThreadsWholeRunCapsIncludeCredentialRefresh(t *testing.T) {
 				require.NoError(err)
 				// Repost facades exercise actual page requests and cursor progress without
 				// creating thousands of irrelevant archive fixtures merely to reach a cap.
-				fmt.Fprintf(w, `{"data":[{"id":"%d","timestamp":%q,"reposted_post":{"id":"99999"}}],"paging":{"cursors":{"after":"page%d"}}}`, 100000+serial, time.Unix(until-1, 0).UTC().Format(time.RFC3339), serial)
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":"%d","timestamp":%q,"reposted_post":{"id":"99999"}}],"paging":{"cursors":{"after":"page%d"}}}`, 100000+serial, time.Unix(until-1, 0).UTC().Format(time.RFC3339), serial)
 				return true
 			}
 			provider.mu.Unlock()
@@ -136,7 +136,7 @@ func TestThreadsWholeRunCapsIncludeCredentialRefresh(t *testing.T) {
 				assert.Equal(2, budget.Attempts(), "refresh and inspection consume the same run budget")
 				return threads.NewClient(threads.ClientOptions{HTTPClient: provider.server.Client(), BaseURL: provider.server.URL + "/v1.0", AccessToken: record.AccessToken(), Budget: budget})
 			}
-			sum, err := importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, limit, nil)
+			sum, err := importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, limit)
 			require.NoError(err)
 			assert.Equal(store.SyncStatusPaused, sum.Status)
 			provider.mu.Lock()
@@ -158,20 +158,20 @@ func TestThreadsReadInvalidationStopsRepeatedProviderCalls(t *testing.T) {
 	require.NoError(err)
 	provider.mu.Lock()
 	provider.readHandler = func(w http.ResponseWriter, _ *http.Request) bool {
-		w.WriteHeader(400)
-		fmt.Fprint(w, `{"error":{"code":190}}`)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":{"code":190}}`)
 		return true
 	}
 	provider.mu.Unlock()
 	deps.newAPI = func(record threads.TokenRecord, budget *threads.RequestBudget) (threads.API, error) {
 		return threads.NewClient(threads.ClientOptions{HTTPClient: provider.server.Client(), BaseURL: provider.server.URL + "/v1.0", AccessToken: record.AccessToken(), Budget: budget})
 	}
-	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, 200, nil)
+	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, 200)
 	require.Error(err)
 	provider.mu.Lock()
 	attempts := provider.attempts
 	provider.mu.Unlock()
-	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, 200, nil)
+	_, err = importThreadsSource(t.Context(), st, source, deps, threads.SyncRequest{}, 200)
 	require.ErrorIs(err, threads.ErrReauthorizationRequired)
 	provider.mu.Lock()
 	after := provider.attempts

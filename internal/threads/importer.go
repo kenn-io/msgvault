@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"go.kenn.io/msgvault/internal/jobctx"
@@ -397,18 +398,22 @@ func (i *Importer) step(ctx context.Context, st *store.Store, w *Writer, s *Sync
 	if err != nil && !isPause(err) {
 		var api *APIError
 		if errors.As(err, &api) && before != "" && api.CursorExpired {
-			if e := guard.restart(); e != nil {
-				s.Coverage.Incomplete++
-				return 0, 0, 0, &PauseError{Reason: "cursor_gap"}
-			}
+			restartErr := guard.restart()
 			if feed != nil {
 				feed.Cursor = ""
 			} else {
 				pass.Cursor = ""
 			}
+			if restartErr != nil {
+				// Pause this invocation, retaining the gap and pinned bounds/root.
+				// Its checkpoint must let a later run request a fresh cursor.
+				*guard = WalkGuard{}
+				s.Coverage.Incomplete++
+				return 0, 0, 0, &PauseError{Reason: "cursor_gap"}
+			}
 			return 0, 0, 0, nil
 		}
-		if pass != nil && errors.As(err, &api) && (api.StatusCode == 404 || api.StatusCode == 410 || (api.Code == 100 && api.Subcode == 33)) {
+		if pass != nil && errors.As(err, &api) && (api.StatusCode == http.StatusNotFound || api.StatusCode == http.StatusGone || (api.Code == 100 && api.Subcode == 33)) {
 			s.Coverage.Unavailable++
 			finishRoot(pass, s.Mode == store.ThreadsSyncPost)
 			return 0, 0, 0, nil
@@ -464,13 +469,13 @@ func (i *Importer) step(ctx context.Context, st *store.Store, w *Writer, s *Sync
 	}
 	if feed != nil {
 		feed.Cursor = page.After
-		if len(page.Items) == 0 {
+		if page.After == "" {
 			feed.Done = true
 			feed.CompletedThrough = feed.Until
 		}
 	} else {
 		pass.Cursor = page.After
-		if len(page.Items) == 0 {
+		if page.After == "" {
 			finishRoot(pass, s.Mode == store.ThreadsSyncPost)
 		}
 	}

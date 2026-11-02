@@ -6,12 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/clirun"
-	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/internal/threads"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +13,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/clirun"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/threads"
 )
 
 type threadsConnectFixture struct {
@@ -47,7 +48,9 @@ func newThreadsConnectFixture(t *testing.T, owner string) *threadsConnectFixture
 			if f.beforeShort != nil {
 				f.beforeShort()
 			}
-			require.NoError(t, r.ParseForm())
+			if !assert.NoError(t, r.ParseForm()) {
+				return
+			}
 			assert.Equal(t, "synthetic-app-secret", r.Form.Get("client_secret"))
 			f.appID = r.Form.Get("client_id")
 			_, _ = fmt.Fprintf(w, `{"access_token":"synthetic-short-token","user_id":%q}`, f.ownerID)
@@ -67,7 +70,9 @@ func newThreadsConnectFixture(t *testing.T, owner string) *threadsConnectFixture
 			}
 			assert.Equal(t, expected, r.URL.Query().Get("access_token"))
 			scopes, err := json.Marshal(f.scopes)
-			require.NoError(t, err)
+			if !assert.NoError(t, err) {
+				return
+			}
 			_, _ = fmt.Fprintf(w, `{"data":{"app_id":%q,"user_id":%q,"is_valid":true,"issued_at":%d,"expires_at":%d,"data_access_expires_at":%d,"scopes":%s}}`, f.appID, f.ownerID, f.now.Add(-48*time.Hour).Unix(), f.now.Add(60*24*time.Hour).Unix(), f.now.Add(90*24*time.Hour).Unix(), scopes)
 		default:
 			if f.readHandler != nil && f.readHandler(w, r) {

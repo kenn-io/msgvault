@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,9 +87,10 @@ func TestThreadsSentArchivePendingReplay(t *testing.T) {
 			require.NoError(err)
 			assert.Equal("500", r.MediaID)
 			assert.Equal("sent_archive_pending", r.State)
-			if fault == "archive" {
+			switch fault {
+			case "archive":
 				dropArchiveFault(t, f.st)
-			} else if fault == "finish" {
+			case "finish":
 				dropSenderReceiptFault(t, f.st)
 			}
 			disableRecoveryCredentials(t, f)
@@ -265,7 +267,7 @@ func TestThreadsUnknownCandidatesAreBoundedHints(t *testing.T) {
 	f.api, err = NewClient(ClientOptions{BaseURL: f.api.base.String(), HTTPClient: f.api.http, AccessToken: testToken, Budget: f.clock.budget(1000)})
 	require.NoError(err)
 	for n := range 150 {
-		f.recoveryReplies = append(f.recoveryReplies, recoveryMediaJSON(fmt.Sprint(600+n), f.draft.Body, *receipt.PublishDispatchedAt))
+		f.recoveryReplies = append(f.recoveryReplies, recoveryMediaJSON(strconv.Itoa(600+n), f.draft.Body, *receipt.PublishDispatchedAt))
 	}
 	result, err := NewSender(f.st, f.options).Reconcile(t.Context(), f.request())
 	require.NoError(err)

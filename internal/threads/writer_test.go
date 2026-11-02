@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -212,7 +213,8 @@ func TestThreadsEditCrashRepairAndSparseSnapshot(t *testing.T) {
 	sparse.HasReplies = new(false)
 	applyWriter(t, w, sparse, ItemOrigin{Kind: "own_posts"})
 	meta = writerMetadata(t, s, id)
-	assert.Equal("", meta["permalink"])
+	assert.IsType("", meta["permalink"], "an explicit empty value must remain a string")
+	assert.Empty(meta["permalink"])
 	assert.Equal(false, meta["has_replies"])
 	assert.Equal("hidden", meta["hide_status"])
 	provisional := writerMedia("500", "provisional body")
@@ -227,7 +229,7 @@ func TestThreadsEditCrashRepairAndSparseSnapshot(t *testing.T) {
 
 func TestThreadsEmptyRootCaptionReplacesStaleTitle(t *testing.T) {
 	for _, prior := range []bool{false, true} {
-		t.Run(fmt.Sprint(prior), func(t *testing.T) {
+		t.Run(strconv.FormatBool(prior), func(t *testing.T) {
 			w, st := writerFixture(t)
 			applyWriter(t, w, writerReply("101", "100", "100"), ItemOrigin{Kind: "conversation", RootID: "100"})
 			if prior {
@@ -248,7 +250,7 @@ func TestThreadsFrozenRootOffsetNanosecondRegression(t *testing.T) {
 			w, st := writerFixture(t)
 			floor := time.Date(2026, 10, 1, 12, 0, 0, boundary.nanos, time.FixedZone("synthetic", boundary.offset))
 			for n, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
-				m := writerMedia(fmt.Sprint(1000+n), "synthetic root")
+				m := writerMedia(strconv.Itoa(1000+n), "synthetic root")
 				m.Timestamp = floor.Add(delta)
 				applyWriter(t, w, m, ItemOrigin{Kind: "own_posts"})
 			}

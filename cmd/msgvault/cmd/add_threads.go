@@ -34,7 +34,7 @@ func newAddThreadsCmd(deps threadsCommandDeps) *cobra.Command {
 	local := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if isAgentMode(invocationFromCommand(cmd)) {
-			return errors.New("Threads connection requires the owner")
+			return errors.New("threads connection requires the owner")
 		}
 		if isDaemonCLISubprocess() {
 			return local(cmd, args)
@@ -69,7 +69,7 @@ func newAddThreadsCmd(deps threadsCommandDeps) *cobra.Command {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Open this authorization URL in your browser:\n%s\n", authorization)
 		_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Paste the full returned callback URL: ")
 		callback, err := reader.ReadString('\n')
-		if err != nil && !(errors.Is(err, io.EOF) && callback != "") {
+		if err != nil && (!errors.Is(err, io.EOF) || callback == "") {
 			return errors.New("read Threads callback")
 		}
 		code, err := threads.ParseOAuthCallback(redirect, strings.TrimSpace(callback), state)
@@ -92,7 +92,7 @@ func newAddThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 		Use: "add-threads", Short: "Connect Threads", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if isAgentMode(invocationFromCommand(cmd)) {
-				return errors.New("Threads connection requires the owner")
+				return errors.New("threads connection requires the owner")
 			}
 			if invocationFromCommand(cmd) != nil && deps.bind != nil {
 				deps = deps.bind(cmd.Context())
@@ -115,7 +115,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 		raw = deps.oauthPayload()
 	}
 	if len(raw) > 64<<10 {
-		return errors.New("Threads OAuth handoff is too large")
+		return errors.New("threads OAuth handoff is too large")
 	}
 	var payload threadsOAuthPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload.AppID != appID || payload.RedirectURI != redirectURI || payload.Code == "" || payload.AppSecret == "" {
@@ -230,7 +230,7 @@ func registerThreadsSource(ctx context.Context, st *store.Store, record threads.
 		return nil, err
 	}
 	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return nil, errors.New("Threads source is retired")
+		return nil, errors.New("threads source is retired")
 	}
 	label := record.Name
 	if label == "" {

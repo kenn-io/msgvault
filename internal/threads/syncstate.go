@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"time"
 
@@ -141,9 +142,7 @@ func PrepareSourceSyncConfigContext(ctx context.Context, st *store.Store, source
 		if err := json.Unmarshal(encoded, &coverage); err != nil {
 			return SourceSyncConfig{}, err
 		}
-		for key, value := range coverage {
-			fields[key] = value
-		}
+		maps.Copy(fields, coverage)
 		encoded, err = json.Marshal(fields)
 		if err != nil {
 			return SourceSyncConfig{}, fmt.Errorf("encode Threads source config: %w", err)
@@ -318,7 +317,7 @@ func (w *FeedWalk) PinHead(floor, until time.Time) error {
 	return nil
 }
 
-func (s SyncState) validate() error {
+func (s *SyncState) validate() error {
 	fp, err := decodeSyncFingerprint(s.Fingerprint)
 	if err != nil {
 		return err
@@ -342,7 +341,7 @@ func (s SyncState) validate() error {
 	return nil
 }
 
-func (s SyncState) Encode() (string, error) {
+func (s *SyncState) Encode() (string, error) {
 	if err := s.validate(); err != nil {
 		return "", err
 	}

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -76,12 +76,12 @@ func threadsReadyReceipt(t *testing.T, st *store.Store, conv, parent int64) stor
 	return receipt
 }
 func TestThreadsReceiptConcurrentClaimsAndTransitions(t *testing.T) {
-	assert := Assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, _, conv, parent := threadsDraftDestination(t)
 	other := threadsSecondStore(t, st, "threads-claim-race")
 	draft, err := st.CreateChatDraftContext(t.Context(), conv, parent, "one reviewed body", allowChatDraft)
-	require.NoError(err)
+	requirements.NoError(err)
 	type outcome struct {
 		receipt store.ThreadsReplySend
 		err     error
@@ -103,13 +103,13 @@ func TestThreadsReceiptConcurrentClaimsAndTransitions(t *testing.T) {
 	var first store.ThreadsReplySend
 	for n := range 8 {
 		result := <-results
-		require.NoError(result.err)
+		requirements.NoError(result.err)
 		if n == 0 {
 			first = result.receipt
 		}
-		assert.Equal(first, result.receipt)
+		assertions.Equal(first, result.receipt)
 	}
-	assert.Equal("one reviewed body", first.Body)
+	assertions.Equal("one reviewed body", first.Body)
 	at := time.Now().UTC()
 	start = make(chan struct{})
 	for n, handle := range []*store.Store{st, other} {
@@ -126,10 +126,10 @@ func TestThreadsReceiptConcurrentClaimsAndTransitions(t *testing.T) {
 		if result.err == nil {
 			winners++
 		} else {
-			assert.ErrorIs(result.err, store.ErrThreadsReplyConflict)
+			assertions.ErrorIs(result.err, store.ErrThreadsReplyConflict)
 		}
 	}
-	assert.Equal(1, winners)
+	assertions.Equal(1, winners)
 }
 
 // The advisory barrier holds claim inside INSERT after its draft row lock.
@@ -137,35 +137,35 @@ func TestThreadsReceiptConcurrentClaimsAndTransitions(t *testing.T) {
 func TestThreadsReceiptPGClaimVersusMutation(t *testing.T) {
 	for _, operation := range []string{"edit", "delete"} {
 		t.Run(operation, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st, _, conv, parent := threadsDraftDestination(t)
 			if !st.IsPostgreSQL() {
 				t.Skip("requires PostgreSQL row-lock interleavings")
 			}
 			other := threadsSecondStore(t, st, "threads-mutation-race")
 			draft, err := st.CreateChatDraftContext(t.Context(), conv, parent, "immutable", allowChatDraft)
-			require.NoError(err)
+			requirements.NoError(err)
 			_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION hold_threads_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(912230); RETURN NEW; END $$;
    CREATE TRIGGER threads_claim_barrier BEFORE INSERT ON threads_reply_sends FOR EACH ROW EXECUTE FUNCTION hold_threads_claim()`)
-			require.NoError(err)
+			requirements.NoError(err)
 			barrier, err := st.DB().Conn(t.Context())
-			require.NoError(err)
-			defer func() { require.NoError(barrier.Close()) }()
+			requirements.NoError(err)
+			defer func() { requirements.NoError(barrier.Close()) }()
 			_, err = barrier.ExecContext(t.Context(), `SELECT pg_advisory_lock(912230)`)
-			require.NoError(err)
+			requirements.NoError(err)
 			defer func() {
 				_, err := barrier.ExecContext(context.WithoutCancel(t.Context()), `SELECT pg_advisory_unlock_all()`)
-				require.NoError(err)
+				requirements.NoError(err)
 			}()
 			claimed := make(chan error, 1)
 			go func() { _, err := st.ClaimThreadsReplySendContext(t.Context(), draft.DraftID, 1); claimed <- err }()
-			require.EventuallyWithT(func(c *Assert.CollectT) {
-				assert := Assert.New(c)
+			requirements.EventuallyWithT(func(c *assert.CollectT) {
+				assertions := assert.New(c)
 				var waiting bool
 				err := st.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=912230 AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database()))`).Scan(&waiting)
-				assert.NoError(err)
-				assert.True(waiting)
+				assertions.NoError(err)
+				assertions.True(waiting)
 			}, 20*time.Second, 10*time.Millisecond)
 			mutated := make(chan error, 1)
 			go func() {
@@ -176,26 +176,26 @@ func TestThreadsReceiptPGClaimVersusMutation(t *testing.T) {
 					mutated <- other.DeleteChatDraftContext(t.Context(), draft.DraftID, 1)
 				}
 			}()
-			require.EventuallyWithT(func(c *Assert.CollectT) {
-				assert := Assert.New(c)
+			requirements.EventuallyWithT(func(c *assert.CollectT) {
+				assertions := assert.New(c)
 				var waiting bool
 				err := st.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='threads-mutation-race' AND wait_event_type='Lock')`).Scan(&waiting)
-				assert.NoError(err)
-				assert.True(waiting)
+				assertions.NoError(err)
+				assertions.True(waiting)
 			}, 20*time.Second, 10*time.Millisecond)
 			_, err = barrier.ExecContext(t.Context(), `SELECT pg_advisory_unlock(912230)`)
-			require.NoError(err)
-			require.NoError(<-claimed)
-			assert.ErrorIs(<-mutated, store.ErrChatDraftClaimed)
+			requirements.NoError(err)
+			requirements.NoError(<-claimed)
+			assertions.ErrorIs(<-mutated, store.ErrChatDraftClaimed)
 			got, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
-			require.NoError(err)
-			assert.Equal("immutable", got.Body)
+			requirements.NoError(err)
+			assertions.Equal("immutable", got.Body)
 		})
 	}
 }
 func TestThreadsReceiptDispatchCommitFailure(t *testing.T) {
-	assert := Assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, _, conv, parent := threadsDraftDestination(t)
 	r := threadsReadyReceipt(t, st, conv, parent)
 	var err error
@@ -206,14 +206,14 @@ func TestThreadsReceiptDispatchCommitFailure(t *testing.T) {
 		_, err = st.DB().ExecContext(t.Context(), `CREATE TABLE threads_commit_parent(id INTEGER PRIMARY KEY); CREATE TABLE threads_commit_child(id INTEGER REFERENCES threads_commit_parent(id) DEFERRABLE INITIALLY DEFERRED);
    CREATE TRIGGER threads_commit_failure AFTER UPDATE ON threads_reply_sends WHEN NEW.state='publish_dispatched' BEGIN INSERT INTO threads_commit_child(id) VALUES(1); END`)
 	}
-	require.NoError(err)
+	requirements.NoError(err)
 	won, err := st.TryDispatchThreadsReplyContext(t.Context(), r.DraftID, r.RowRevision)
-	require.Error(err)
-	assert.False(won, "an UPDATE without a confirmed COMMIT never authorizes publication")
+	requirements.Error(err)
+	assertions.False(won, "an UPDATE without a confirmed COMMIT never authorizes publication")
 	saved, err := st.GetThreadsReplySendContext(t.Context(), r.DraftID)
-	require.NoError(err)
-	assert.Equal("ready", saved.State)
-	assert.Nil(saved.PublishDispatchedAt)
+	requirements.NoError(err)
+	assertions.Equal("ready", saved.State)
+	assertions.Nil(saved.PublishDispatchedAt)
 }
 
 // The proxy drops the real server's COMMIT success response. The transaction
@@ -239,17 +239,13 @@ func threadsCommitDropProxy(t *testing.T, dsn string, armed *atomic.Bool) string
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	t.Cleanup(func() { require.NoError(t, listener.Close()); wg.Wait() })
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			client, err := listener.Accept()
 			if err != nil {
 				return
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer func() { _ = client.Close() }()
 				server, err := net.Dial(network, address)
 				if err != nil {
@@ -280,9 +276,9 @@ func threadsCommitDropProxy(t *testing.T, dsn string, armed *atomic.Bool) string
 						return
 					}
 				}
-			}()
+			})
 		}
-	}()
+	})
 	u.Host = listener.Addr().String()
 	q.Del("host")
 	q.Del("port")
@@ -291,8 +287,8 @@ func threadsCommitDropProxy(t *testing.T, dsn string, armed *atomic.Bool) string
 	return u.String()
 }
 func TestThreadsReceiptDispatchCommitResponseLostPG(t *testing.T) {
-	assert := Assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, _, conv, parent := threadsDraftDestination(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("requires real PostgreSQL COMMIT response loss")
@@ -301,18 +297,18 @@ func TestThreadsReceiptDispatchCommitResponseLostPG(t *testing.T) {
 	var armed atomic.Bool
 	dsn := threadsCommitDropProxy(t, threadsReceiptDSN(t, st), &armed)
 	viaProxy, err := store.Open(dsn)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(viaProxy.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(viaProxy.Close()) })
 	armed.Store(true)
 	won, err := viaProxy.TryDispatchThreadsReplyContext(t.Context(), r.DraftID, r.RowRevision)
-	require.Error(err)
-	assert.False(won)
-	assert.False(armed.Load(), "the proxy observed the server's committed transaction")
+	requirements.Error(err)
+	assertions.False(won)
+	assertions.False(armed.Load(), "the proxy observed the server's committed transaction")
 	saved, err := st.GetThreadsReplySendContext(t.Context(), r.DraftID)
-	require.NoError(err)
-	assert.Equal("publish_dispatched", saved.State)
-	assert.NotNil(saved.PublishDispatchedAt)
+	requirements.NoError(err)
+	assertions.Equal("publish_dispatched", saved.State)
+	assertions.NotNil(saved.PublishDispatchedAt)
 	won, err = st.TryDispatchThreadsReplyContext(t.Context(), r.DraftID, saved.RowRevision)
-	assert.ErrorIs(err, store.ErrThreadsReplyConflict)
-	assert.False(won)
+	assertions.ErrorIs(err, store.ErrThreadsReplyConflict)
+	assertions.False(won)
 }

@@ -12,26 +12,26 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestThreadsClientEndpointContracts(t *testing.T) {
-	assert := Assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	ctx := context.Background()
 	common := "id,text,timestamp,username,permalink,media_type,media_url,shortcode,children,is_quote_post,quoted_post,has_replies"
 	replies := common + ",root_post,replied_to,is_reply,is_reply_owned_by_me"
 	var calls atomic.Int32
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		assert.Equal(http.MethodGet, r.Method)
-		assert.Equal("Bearer "+testToken, r.Header.Get("Authorization"))
+		assertions.Equal(http.MethodGet, r.Method)
+		assertions.Equal("Bearer "+testToken, r.Header.Get("Authorization"))
 		q := r.URL.Query()
-		assert.Empty(q.Get("access_token"))
+		assertions.Empty(q.Get("access_token"))
 		switch r.URL.Path {
 		case "/v1.0/me":
-			assert.Equal(url.Values{"fields": {"id,username,name"}}, q)
+			assertions.Equal(url.Values{"fields": {"id,username,name"}}, q)
 			respond(w, 200, `{"id":"`+testID+`","username":"example_owner","name":"Example Owner"}`)
 			return
 		case "/v1.0/me/threads", "/v1.0/me/replies":
@@ -39,64 +39,64 @@ func TestThreadsClientEndpointContracts(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "replies") {
 				fields = replies
 			}
-			assert.Equal(url.Values{"fields": {fields}, "limit": {"100"}, "since": {"1688540400"}, "until": {"1793318400"}, "after": {"opaque + / cursor"}}, q)
+			assertions.Equal(url.Values{"fields": {fields}, "limit": {"100"}, "since": {"1688540400"}, "until": {"1793318400"}, "after": {"opaque + / cursor"}}, q)
 		case "/v1.0/123/conversation":
-			if !assert.Equal(url.Values{"fields": {replies + ",hide_status"}, "reverse": {"true"}, "after": {"cursor"}}, q) {
+			if !assertions.Equal(url.Values{"fields": {replies + ",hide_status"}, "reverse": {"true"}, "after": {"cursor"}}, q) {
 				respond(w, 400, `{}`)
 				return
 			}
 		case "/v1.0/" + testID:
-			assert.Equal(url.Values{"fields": {replies}}, q)
+			assertions.Equal(url.Values{"fields": {replies}}, q)
 			respond(w, 200, mediaJSON)
 			return
 		default:
-			assert.Fail("unexpected API route")
+			assertions.Fail("unexpected API route")
 			respond(w, 404, `{}`)
 			return
 		}
 		respond(w, 200, `{"data":[`+mediaJSON+`],"paging":{"cursors":{"after":"next"}}}`)
 	}, nil)
 	owner, err := c.Me(ctx)
-	require.NoError(err)
-	assert.Equal(testID, owner.ID)
+	requirements.NoError(err)
+	assertions.Equal(testID, owner.ID)
 	q := ListQuery{Since: time.Unix(1688540400, 0), Until: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC), After: "opaque + / cursor"}
 	for _, fetch := range []func(context.Context, ListQuery) (Page, error){c.OwnPosts, c.OwnReplies} {
 		p, err := fetch(ctx, q)
-		require.NoError(err)
-		require.Len(p.Items, 1)
-		assert.Equal(testID, p.Items[0].ID)
+		requirements.NoError(err)
+		requirements.Len(p.Items, 1)
+		assertions.Equal(testID, p.Items[0].ID)
 	}
 	p, err := c.Conversation(ctx, "123", "cursor")
-	require.NoError(err)
-	require.Len(p.Items, 1)
-	assert.Nil(p.Items[0].Username)
-	assert.Nil(p.Items[0].RootPost, "missing root stays incomplete")
-	require.NotNil(p.Items[0].Text)
-	assert.Empty(*p.Items[0].Text)
-	require.NotNil(p.Items[0].HasReplies)
-	assert.False(*p.Items[0].HasReplies)
-	assert.True(p.Items[0].Present["text"])
-	assert.False(p.Items[0].Present["username"])
-	assert.JSONEq(mediaJSON, string(p.Items[0].Raw))
+	requirements.NoError(err)
+	requirements.Len(p.Items, 1)
+	assertions.Nil(p.Items[0].Username)
+	assertions.Nil(p.Items[0].RootPost, "missing root stays incomplete")
+	requirements.NotNil(p.Items[0].Text)
+	assertions.Empty(*p.Items[0].Text)
+	requirements.NotNil(p.Items[0].HasReplies)
+	assertions.False(*p.Items[0].HasReplies)
+	assertions.True(p.Items[0].Present["text"])
+	assertions.False(p.Items[0].Present["username"])
+	assertions.JSONEq(mediaJSON, string(p.Items[0].Raw))
 	m, err := c.Media(ctx, testID)
-	require.NoError(err)
-	assert.Equal(testID, m.ID)
-	assert.Equal(int32(5), calls.Load())
+	requirements.NoError(err)
+	assertions.Equal(testID, m.ID)
+	assertions.Equal(int32(5), calls.Load())
 
 	t.Run("invalid input makes no request", func(t *testing.T) {
-		assert := Assert.New(t)
+		assertions := assert.New(t)
 		before := calls.Load()
 		for _, id := range []string{"", "../me", "1/2", "-1", "1e9", "1?access_token=secret", " 123"} {
 			_, err := c.Media(ctx, id)
-			assert.Error(err)
+			assertions.Error(err)
 			_, err = c.Conversation(ctx, id, "")
-			assert.Error(err)
+			assertions.Error(err)
 		}
 		for _, query := range []ListQuery{{}, {Since: q.Until, Until: q.Since}, {Since: q.Since.Add(-time.Second), Until: q.Until}, {Since: q.Since, Until: q.Until.Add(time.Hour)}, {Since: q.Since.Add(time.Nanosecond), Until: q.Since.Add(2 * time.Nanosecond)}} {
 			_, err := c.OwnPosts(ctx, query)
-			assert.Error(err)
+			assertions.Error(err)
 		}
-		assert.Equal(before, calls.Load())
+		assertions.Equal(before, calls.Load())
 	})
 
 	for name, body := range map[string]string{
@@ -113,8 +113,8 @@ func TestThreadsClientEndpointContracts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { respond(w, 200, body) }, nil)
 			_, err := client.Media(ctx, "1")
-			require.ErrorIs(err, ErrDecodeResponse)
-			assert.NotContains(err.Error(), testToken)
+			requirements.ErrorIs(err, ErrDecodeResponse)
+			assertions.NotContains(err.Error(), testToken)
 		})
 	}
 	t.Run("null presence", func(t *testing.T) {
@@ -122,9 +122,9 @@ func TestThreadsClientEndpointContracts(t *testing.T) {
 			respond(w, 200, `{"id":"1","timestamp":"2026-10-28T12:00:00Z","text":null}`)
 		}, nil)
 		m, err := client.Media(ctx, "1")
-		require.NoError(err)
-		assert.Nil(m.Text)
-		assert.True(m.Present["text"])
+		requirements.NoError(err)
+		assertions.Nil(m.Text)
+		assertions.True(m.Present["text"])
 	})
 }
 
@@ -137,28 +137,28 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 		{"501", 501, 0, 1}, {"400", 400, 0, 1}, {"4", 400, 4, 3}, {"17", 400, 17, 3}, {"32", 400, 32, 3}, {"613", 400, 613, 3}, {"190", 400, 190, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			var calls atomic.Int32
 			c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				respond(w, tc.status, fmt.Sprintf(`{"error":{"code":%d,"message":"%s"}}`, tc.code, testToken))
 			}, nil)
 			_, err := c.Me(context.Background())
-			require.Error(err)
+			requirements.Error(err)
 			var api *APIError
-			require.ErrorAs(err, &api)
-			assert.Equal(tc.code, api.Code)
-			assert.Equal(tc.status, api.StatusCode)
-			assert.Equal(tc.code == 190, api.CredentialInvalid())
-			assert.Equal(int32(tc.want), calls.Load())
-			assert.Equal(tc.want, b.Attempts())
-			assert.NotContains(fmt.Sprintf("%+v", err), testToken)
+			requirements.ErrorAs(err, &api)
+			assertions.Equal(tc.code, api.Code)
+			assertions.Equal(tc.status, api.StatusCode)
+			assertions.Equal(tc.code == 190, api.CredentialInvalid())
+			assertions.Equal(int32(tc.want), calls.Load())
+			assertions.Equal(tc.want, b.Attempts())
+			assertions.NotContains(fmt.Sprintf("%+v", err), testToken)
 		})
 	}
 	for _, date := range []bool{false, true} {
 		t.Run(fmt.Sprintf("90 seconds date=%v", date), func(t *testing.T) {
-			assert := Assert.New(t)
+			assertions := assert.New(t)
 			var calls atomic.Int32
 			var clock *testClock
 			c, b, cl := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -176,13 +176,13 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 			clock = cl
 			_, err := c.Me(context.Background())
 			require.NoError(t, err)
-			assert.Equal(int32(2), calls.Load())
-			assert.Equal(2, b.Attempts())
+			assertions.Equal(int32(2), calls.Load())
+			assertions.Equal(2, b.Attempts())
 			wantDelay := 90 * time.Second
 			if date {
 				wantDelay -= 500 * time.Millisecond
 			} // HTTP dates have whole-second precision.
-			assert.Contains(clock.waits, wantDelay)
+			assertions.Contains(clock.waits, wantDelay)
 		})
 	}
 	for _, tc := range []struct {
@@ -205,7 +205,7 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 			_, err := c.Me(context.Background())
 			var pause *PauseError
 			require.ErrorAs(t, err, &pause)
-			Assert.Equal(t, int32(1), calls.Load())
+			assert.Equal(t, int32(1), calls.Load())
 		})
 	}
 	for _, tc := range []struct {
@@ -222,8 +222,8 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 		{"invalid header", "X-App-Usage", `not-json`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set(tc.header, tc.value)
 				respond(w, 200, `{"data":[`+mediaJSON+`],"paging":{"cursors":{"after":"next"}}}`)
@@ -231,28 +231,28 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 			p, err := c.Conversation(context.Background(), "123", "")
 			if tc.pause {
 				var pause *PauseError
-				require.ErrorAs(err, &pause)
+				requirements.ErrorAs(err, &pause)
 			} else {
-				require.NoError(err)
+				requirements.NoError(err)
 			}
-			require.Len(p.Items, 1)
-			assert.Equal("next", p.After)
-			assert.Equal(1, b.Attempts())
+			requirements.Len(p.Items, 1)
+			assertions.Equal("next", p.After)
+			assertions.Equal(1, b.Attempts())
 		})
 	}
 	t.Run("redirects never dispatch destination", func(t *testing.T) {
-		assert := Assert.New(t)
+		assertions := assert.New(t)
 		var dest atomic.Int32
 		attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { dest.Add(1) }))
 		defer attacker.Close()
 		c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, attacker.URL+"?access_token="+testToken, 307)
+			http.Redirect(w, r, attacker.URL+"?access_token="+testToken, http.StatusTemporaryRedirect)
 		}, nil)
 		_, err := c.Me(context.Background())
 		require.ErrorIs(t, err, ErrRedirect)
-		assert.NotContains(err.Error(), testToken)
-		assert.Zero(dest.Load())
-		assert.Equal(1, b.Attempts())
+		assertions.NotContains(err.Error(), testToken)
+		assertions.Zero(dest.Load())
+		assertions.Equal(1, b.Attempts())
 	})
 	t.Run("credential failure takes precedence over usage", func(t *testing.T) {
 		c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -262,8 +262,8 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 		_, err := c.Me(context.Background())
 		var api *APIError
 		require.ErrorAs(t, err, &api)
-		Assert.True(t, api.CredentialInvalid())
-		Assert.Equal(t, 1, b.Attempts())
+		assert.True(t, api.CredentialInvalid())
+		assert.Equal(t, 1, b.Attempts())
 	})
 	t.Run("high usage stops a retryable failure", func(t *testing.T) {
 		c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -273,10 +273,10 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 		_, err := c.Me(context.Background())
 		var pause *PauseError
 		require.ErrorAs(t, err, &pause)
-		Assert.Equal(t, 1, b.Attempts())
+		assert.Equal(t, 1, b.Attempts())
 	})
 	t.Run("transport failure", func(t *testing.T) {
-		assert := Assert.New(t)
+		assertions := assert.New(t)
 		var calls int
 		c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {}, func(o *ClientOptions) {
 			o.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -286,21 +286,21 @@ func TestThreadsReadRetryDelayAndRedaction(t *testing.T) {
 		})
 		_, err := c.Me(context.Background())
 		require.Error(t, err)
-		assert.NotContains(fmt.Sprintf("%+v", err), testToken)
-		assert.Equal(1, calls)
-		assert.Equal(1, b.Attempts())
-		assert.NotContains(fmt.Sprintf("%+v", c), testToken)
+		assertions.NotContains(fmt.Sprintf("%+v", err), testToken)
+		assertions.Equal(1, calls)
+		assertions.Equal(1, b.Attempts())
+		assertions.NotContains(fmt.Sprintf("%+v", c), testToken)
 	})
 	t.Run("cancelled wait", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var clock = newTestClock()
 		budget := NewRequestBudget(BudgetOptions{Now: clock.Now, Wait: func(ctx context.Context, d time.Duration) error { cancel(); return ctx.Err() }})
-		c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { Assert.Fail(t, "cancelled wait reached transport") }, func(o *ClientOptions) { o.Budget = budget })
+		c, b, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { assert.Fail(t, "cancelled wait reached transport") }, func(o *ClientOptions) { o.Budget = budget })
 		_, err := c.Me(ctx)
 		require.ErrorIs(t, err, context.Canceled)
-		Assert.Zero(t, b.Attempts())
-		Assert.Zero(t, budget.Attempts())
+		assert.Zero(t, b.Attempts())
+		assert.Zero(t, budget.Attempts())
 	})
 }
 

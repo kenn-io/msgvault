@@ -32,7 +32,7 @@ type TokenRecord struct {
 	Name                string    `json:"name,omitempty"`
 	Scopes              []string  `json:"scopes"`
 	IssuedAt            time.Time `json:"issued_at"`
-	RefreshedAt         time.Time `json:"refreshed_at,omitempty"`
+	RefreshedAt         time.Time `json:"refreshed_at"`
 	ExpiresAt           time.Time `json:"expires_at"`
 	DataAccessExpiresAt time.Time `json:"data_access_expires_at"`
 	RedirectURI         string    `json:"redirect_uri"`
@@ -113,7 +113,7 @@ func (m *TokenManager) inspectRoot(create bool) error {
 			return errors.New("create Threads token directory")
 		}
 	}
-	info, err := os.Lstat(m.tokensDir)
+	info, err := os.Lstat(m.tokensDir) // #nosec G703 -- Inspect the owner-selected root itself; symlinks and directory replacement are rejected below.
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return os.ErrNotExist
@@ -130,7 +130,7 @@ func (m *TokenManager) inspectRoot(create bool) error {
 	return nil
 }
 func tokenRegularPath(path string, missingOK bool) error {
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) // #nosec G703 -- Metadata-only symlink check on a validated numeric credential name under the pinned owner root.
 	if errors.Is(err, os.ErrNotExist) && missingOK {
 		return nil
 	}

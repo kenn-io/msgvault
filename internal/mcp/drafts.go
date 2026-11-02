@@ -45,7 +45,9 @@ var stableDraftDefinitions = func() map[string]toolDefinition {
 			"message_id": safeIDSchema("Archived message ID for a direct reply or quota inspection"), "body": stringSchema("Reply text for a direct send"),
 			"draft_id": stringSchema("Reviewed local chat draft ID"), "revision": safeIDSchema("Reviewed draft revision"), "adopt_media_id": stringSchema("Explicit existing own-reply media ID for recovery"),
 			"quota": booleanSchema("Inspect reply quota for the archived message's source"),
-		}), stableDraftOutputSchema, sendReplyToolHandler),
+		}), stableDraftOutputSchema, func(h *handlers, ctx context.Context, req toolRequest) (*toolResult, error) {
+			return h.sendReplyToolHandler(ctx, req)
+		}),
 		"draft-reply": writeDefinition(ToolDraftReply, "Run msgvault draft-reply through the daemon to create a reply draft. This draft tool does not send messages.", closedObject(map[string]*jsonschema.Schema{
 			"message_id": safeIDSchema("Archived parent message ID"), "body": stringSchema("Reply body"), "from": stringSchema("Confirmed source identity"), "all": booleanSchema("Reply to all visible recipients"), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"),
 		}, "message_id", "body"), stableDraftOutputSchema, draftToolHandler("draft-reply", "message_id")),

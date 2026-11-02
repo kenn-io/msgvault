@@ -2,7 +2,7 @@ package threads
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +55,7 @@ func TestThreadsTokenLifecycleStorage(t *testing.T) {
 	assert.Error(m.Save(r), "stale generation cannot overwrite a newer record")
 	for _, id := range []string{"", "0", "../123", "1/2", "1e3", "-1", "01"} {
 		_, err = m.Load(id, oauthTestOwner)
-		assert.Error(err)
+		require.Error(err)
 		bad := testTokenRecord()
 		bad.AppID = id
 		assert.Error(m.Save(bad))
@@ -236,9 +236,9 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 		link := filepath.Join(base, "link")
 		require.NoError(os.Symlink(target, link))
 		m := NewTokenManager(link)
-		assert.Error(m.Save(testTokenRecord()))
+		require.Error(m.Save(testTokenRecord()))
 		_, err := m.Load("123", oauthTestOwner)
-		assert.Error(err)
+		require.Error(err)
 		assert.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error { return nil }))
 	})
 	for _, name := range []string{"threads_123_" + oauthTestOwner + ".json", ".threads-token.lock", ".threads_123_" + oauthTestOwner + ".lock"} {
@@ -251,12 +251,12 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 			require.NoError(os.Symlink(target, filepath.Join(dir, name)))
 			m := NewTokenManager(dir)
 			if strings.HasSuffix(name, ".json") {
-				assert.Error(m.Save(testTokenRecord()))
+				require.Error(m.Save(testTokenRecord()))
 				_, err := m.Load("123", oauthTestOwner)
-				assert.Error(err)
+				require.Error(err)
 				assert.Error(m.Delete("123", oauthTestOwner))
 			} else if name == ".threads-token.lock" {
-				assert.Error(m.Save(testTokenRecord()))
+				require.Error(m.Save(testTokenRecord()))
 			} else {
 				assert.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error { return nil }))
 			}
@@ -299,14 +299,16 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		m := NewTokenManager(dir)
-		err := m.WithSourceLock(ctx, oauthTestSource, func() error { return fmt.Errorf("child entered held lifecycle lock") })
+		err := m.WithSourceLock(ctx, oauthTestSource, func() error { return errors.New("child entered held lifecycle lock") })
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		return
 	}
 	dir := t.TempDir()
 	m := NewTokenManager(dir)
 	require.NoError(t, m.WithSourceLock(context.Background(), oauthTestSource, func() error {
-		child := exec.Command(os.Args[0], "-test.run=^TestThreadsTokenLifecycleCrossProcessLock$")
+		binaryPath, err := os.Executable()
+		require.NoError(t, err)
+		child := exec.CommandContext(t.Context(), binaryPath, "-test.run=^TestThreadsTokenLifecycleCrossProcessLock$")
 		child.Env = append(os.Environ(), "MSGVAULT_THREADS_LOCK_TEST_DIR="+dir)
 		output, err := child.CombinedOutput()
 		require.NoError(t, err, string(output))

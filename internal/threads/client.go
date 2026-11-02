@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +172,7 @@ func (c *Client) page(ctx context.Context, path string, params url.Values, after
 			Cursors struct {
 				After string `json:"after"`
 			} `json:"cursors"`
+			Next string `json:"next"`
 		} `json:"paging"`
 	}
 	err := c.getJSON(ctx, path, params, &wire)
@@ -184,7 +186,9 @@ func (c *Client) page(ctx context.Context, path string, params url.Values, after
 		return Page{}, ErrDecodeResponse
 	}
 	page := Page{Items: *wire.Data, After: wire.Paging.Cursors.After}
-	if len(page.Items) == 0 {
+	// An empty page is terminal only without an explicit continuation. Never
+	// follow next itself: reconstruct the request at our fixed API origin.
+	if len(page.Items) == 0 && wire.Paging.Next == "" {
 		page.After = ""
 		return page, err
 	}
@@ -299,8 +303,7 @@ func safeRequestError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	var pause *PauseError
-	if errors.As(err, &pause) {
+	if pause, ok := errors.AsType[*PauseError](err); ok {
 		return pause
 	}
 	if errors.Is(err, ErrRedirect) {
@@ -345,7 +348,7 @@ func retryable(e *APIError) bool {
 		return true
 	}
 	switch e.StatusCode {
-	case 429, 500, 502, 503, 504:
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	}
 	return false
@@ -361,10 +364,8 @@ func highUsage(h http.Header) bool {
 	var business map[string][]map[string]jsontext.Value
 	if json.Unmarshal([]byte(h.Get("X-Business-Use-Case-Usage")), &business) == nil {
 		for _, uses := range business {
-			for _, use := range uses {
-				if usageMetrics(use) {
-					return true
-				}
+			if slices.ContainsFunc(uses, usageMetrics) {
+				return true
 			}
 		}
 	}

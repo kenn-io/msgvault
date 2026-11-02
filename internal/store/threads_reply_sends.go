@@ -16,6 +16,8 @@ var (
 	ErrChatDraftClaimed     = errors.New("chat draft is claimed by a reply attempt")
 )
 
+const threadsReplyReadyState = "ready"
+
 type ChatDraftClaimedError struct{ DraftID string }
 
 func (e *ChatDraftClaimedError) Error() string        { return ErrChatDraftClaimed.Error() }
@@ -223,9 +225,9 @@ func validThreadsTransition(r ThreadsReplySend, t ThreadsReplyTransition) bool {
 	case "claimed":
 		return state == "claimed" || (state == "container_saved" && t.ContainerID != "" && t.ContainerCreatedAt != nil)
 	case "container_saved":
-		return state == "container_saved" || state == "ready"
-	case "ready":
-		return state == "ready"
+		return state == "container_saved" || state == threadsReplyReadyState
+	case threadsReplyReadyState:
+		return state == threadsReplyReadyState
 	}
 	return false
 }
@@ -280,7 +282,7 @@ func (s *Store) AdvanceThreadsReplySendContext(ctx context.Context, id string, r
 		if t.State != "" {
 			r.State = t.State
 		}
-		if (r.State == "container_saved" || r.State == "ready") && (r.ContainerID == "" || r.ContainerCreatedAt == nil) {
+		if (r.State == "container_saved" || r.State == threadsReplyReadyState) && (r.ContainerID == "" || r.ContainerCreatedAt == nil) {
 			return ErrThreadsReplyConflict
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE threads_reply_sends SET state=?,container_id=?,media_id=?,container_created_at=?,last_status_at=?,next_poll_at=?,row_revision=row_revision+1,updated_at=`+s.dialect.Now()+` WHERE draft_id=? AND row_revision=?`, r.State, nullThreadsID(r.ContainerID), nullThreadsID(r.MediaID), r.ContainerCreatedAt, r.LastStatusAt, r.NextPollAt, id, revision)
@@ -315,7 +317,7 @@ func threadsReplyCAS(res sql.Result, err error) error {
 	return nil
 }
 
-// Only a confirmed commit winner may dispatch. A commit error deliberately
+// TryDispatchThreadsReplyContext authorizes only a confirmed commit winner to dispatch. A commit error deliberately
 // loses authorization even if the database might have accepted the barrier.
 func (s *Store) TryDispatchThreadsReplyContext(ctx context.Context, id string, revision int64) (bool, error) {
 	candidate := false
@@ -330,7 +332,7 @@ func (s *Store) TryDispatchThreadsReplyContext(ctx context.Context, id string, r
 		if err = validateThreadsReplySourceTx(ctx, tx, r); err != nil {
 			return err
 		}
-		if r.RowRevision != revision || r.State != "ready" || r.PublishDispatchedAt != nil || r.ContainerID == "" || r.MediaID != "" {
+		if r.RowRevision != revision || r.State != threadsReplyReadyState || r.PublishDispatchedAt != nil || r.ContainerID == "" || r.MediaID != "" {
 			return ErrThreadsReplyConflict
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE threads_reply_sends SET state='publish_dispatched',publish_dispatched_at=`+s.dialect.Now()+`,row_revision=row_revision+1,updated_at=`+s.dialect.Now()+` WHERE draft_id=? AND row_revision=? AND state='ready' AND publish_dispatched_at IS NULL`, id, revision)

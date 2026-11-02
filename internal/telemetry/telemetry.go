@@ -198,7 +198,7 @@ func reason(err error) string {
 		if api.CredentialInvalid() {
 			return "auth"
 		}
-		if api.StatusCode == 429 || api.Code == 4 || api.Code == 17 || api.Code == 32 || api.Code == 613 {
+		if api.StatusCode == http.StatusTooManyRequests || api.Code == 4 || api.Code == 17 || api.Code == 32 || api.Code == 613 {
 			return "rate_limited"
 		}
 	}

@@ -3,6 +3,8 @@ package threads
 import (
 	"context"
 	"errors"
+	"net/http"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -172,6 +174,15 @@ func (s *Sender) Send(ctx context.Context, request SendRequest) (SendResult, err
 			if createErr == nil {
 				createErr = ErrDecodeResponse
 			}
+			// A definite create rejection cannot have published anything. Release
+			// the draft; lost responses and server errors remain resumable claims.
+			if rejected, ok := errors.AsType[*APIError](createErr); ok && rejected.StatusCode >= 400 && rejected.StatusCode < 500 && rejected.StatusCode != http.StatusRequestTimeout {
+				terminal, saveErr := s.store.AdvanceThreadsReplySendContext(ctx, receipt.DraftID, receipt.RowRevision, store.ThreadsReplyTransition{State: quotaFailureStatus(createErr)})
+				if saveErr != nil {
+					return result, errors.Join(createErr, saveErr)
+				}
+				return replyResult(terminal), createErr
+			}
 			return result, createErr
 		}
 		created := s.options.Now().UTC()
@@ -245,13 +256,7 @@ func (s *Sender) requireEnabled(ctx context.Context, r store.ThreadsReplySend) e
 }
 func hasReplyScopes(scopes []string) bool {
 	for _, required := range []string{"threads_basic", "threads_content_publish", "threads_manage_replies"} {
-		found := false
-		for _, scope := range scopes {
-			if scope == required {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(scopes, required)
 		if !found {
 			return false
 		}
@@ -413,7 +418,9 @@ func (s *Sender) markUnknown(ctx context.Context, r store.ThreadsReplySend) (sto
 	return next, nil
 }
 func (s *Sender) dispatch(ctx context.Context, r store.ThreadsReplySend, api PublishAPI) (SendResult, error) {
-	if budgeted, ok := api.(interface{ checkPublishBudget(context.Context) error }); ok {
+	if budgeted, ok := api.(interface {
+		checkPublishBudget(ctx context.Context) error
+	}); ok {
 		if err := budgeted.checkPublishBudget(ctx); err != nil {
 			return replyResult(r), err
 		}
@@ -450,7 +457,6 @@ func (s *Sender) dispatch(ctx context.Context, r store.ThreadsReplySend, api Pub
 		return s.knownPersistenceFailure(ctx, r, media, saveErr)
 	}
 	return s.finishKnown(ctx, saved, api, nil)
-
 }
 
 func quotaFailureStatus(err error) string {
@@ -470,10 +476,10 @@ func quotaFailureStatus(err error) string {
 		return "paused"
 	}
 	if api, ok := errors.AsType[*APIError](err); ok {
-		if api.CredentialInvalid() || api.StatusCode == 401 || api.StatusCode == 403 {
+		if api.CredentialInvalid() || api.StatusCode == http.StatusUnauthorized || api.StatusCode == http.StatusForbidden {
 			return "reply_not_permitted"
 		}
-		if api.StatusCode == 429 || api.Code == 4 || api.Code == 17 || api.Code == 32 || api.Code == 613 {
+		if api.StatusCode == http.StatusTooManyRequests || api.Code == 4 || api.Code == 17 || api.Code == 32 || api.Code == 613 {
 			return "rate_limited"
 		}
 	}

@@ -214,53 +214,39 @@ func (w *Writer) repair(ctx context.Context, id, parentID int64, e snapshotEvide
 	return nil
 }
 
-// ResolveParents repeats after committed pages and on resume. It validates
-// native metadata before linking, including cycles through missing parents.
-// Callers run this global deferred pass at explicit page/resume boundaries;
-// Apply repairs only its current message and does not call this method.
+// ResolveParents repairs one bounded batch after pages and on resume. Only
+// replies with archived parents enter the batch. The scan cursor persists across
+// invocations and wraps so parents arriving later can repair older children.
 func (w *Writer) ResolveParents(ctx context.Context) error {
 	if err := w.checkSource(ctx); err != nil {
 		return err
 	}
-	var after int64
-	for {
-		pending, err := w.store.ListUnresolvedMessageRepliesAfterContext(ctx, w.sourceID, "threads", after, 200)
+	pending, next, err := w.store.ListThreadsReplyRepairCandidatesContext(ctx, w.sourceID, 200)
+	if err != nil {
+		return err
+	}
+	for _, reply := range pending {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		e, err := decodeEvidence(reply.Metadata)
 		if err != nil {
 			return err
 		}
-		if len(pending) == 0 {
-			return nil
+		parent := e.text("parent_id")
+		root := e.text("root_id")
+		if root != reply.SourceConversationID {
+			return errors.New("cross-conversation Threads reply metadata")
 		}
-		for _, reply := range pending {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			after = reply.MessageID
-			record, found, err := w.store.ThreadsArchiveMessageMetadataContext(ctx, w.sourceID, reply.SourceMessageID)
-			if err != nil {
-				return err
-			}
-			if !found {
-				continue
-			}
-			e, err := decodeEvidence(record.Metadata.String)
-			if err != nil {
-				return err
-			}
-			parent := e.text("parent_id")
-			root := e.text("root_id")
-			if root != record.SourceConversationID.String {
-				return errors.New("cross-conversation Threads reply metadata")
-			}
-			parentID, err := w.validateParent(ctx, reply.SourceMessageID, root, parent)
-			if err != nil {
-				return err
-			}
-			if parentID != 0 {
-				if err := w.store.SetMessageReplyContext(ctx, record.ID, parentID); err != nil {
-					return fmt.Errorf("link Threads parent: %w", err)
-				}
+		parentID, err := w.validateParent(ctx, reply.SourceMessageID, root, parent)
+		if err != nil {
+			return err
+		}
+		if parentID != 0 {
+			if err := w.store.SetMessageReplyContext(ctx, reply.MessageID, parentID); err != nil {
+				return fmt.Errorf("link Threads parent: %w", err)
 			}
 		}
 	}
+	return w.store.CheckpointThreadsParentRepairContext(ctx, w.sourceID, next)
 }

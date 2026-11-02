@@ -145,14 +145,12 @@ func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {
 	assert.Equal(t, []string{"work@example.org"}, children())
 }
 
-// TestAgentAccountCatalogReadsReusedSourceIDFresh covers a SQLite source ID
-// reused after a removal: the shared catalog still lists the removed source's
-// addresses under that ID, and an agent granted the new source must not see
-// them.
-func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
+// TestAgentAccountCatalogReadsReplacementSourceFresh warms a shared owner
+// catalog, removes its source, then grants a replacement with a fresh ID.
+// Delegated reads must return the live replacement and none of the stale data.
+func TestAgentAccountCatalogReadsReplacementSourceFresh(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "PostgreSQL identity columns never reuse an ID")
 	st := testutil.NewTestStore(t)
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}},
@@ -186,24 +184,25 @@ func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
 	require.Contains(accounts("Authorization", "Bearer owner"), "private@example.org", "the owner warms the shared catalog")
 	require.NoError(st.RemoveSource(removed.ID))
 	granted := addSourceWithMail("granted@example.net")
-	require.Equal(removed.ID, granted.ID, "SQLite reuses the removed source's ID")
+	require.Greater(granted.ID, removed.ID, "replacement sources receive fresh IDs")
+	require.NoError(st.AddAccountIdentity(granted.ID, "granted-sender@example.org", "manual"))
 
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
 		[]agentgrant.SourceRef{{ID: granted.ID, Type: granted.SourceType, Identifier: granted.Identifier}}, time.Time{})
 	require.NoError(err)
 	body := accounts(apiprotocol.AgentTokenHeader, token)
 	assert.Contains(body, "granted@example.net")
+	assert.Contains(body, "granted-sender@example.org", "the replacement catalog is loaded fresh")
 	assert.NotContains(body, "private@example.org", "an agent never sees a removed source's addresses")
 }
 
 // TestAgentAccountCatalogUsesAuthorizationSnapshot replaces a granted source
 // while an agent request is between its authorization and its catalog read.
-// The catalog must come from the request's snapshot, or the replacement's
-// addresses would appear under the reused source ID.
+// The catalog must retain the authorized source and its addresses from that
+// snapshot, even though deletion and fresh-ID creation have already committed.
 func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "PostgreSQL identity columns never reuse an ID")
 	st := testutil.NewTestStore(t)
 	paused, resume := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -232,6 +231,7 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 		return src
 	}
 	granted := addSourceWithMail("granted@example.net")
+	require.NoError(st.AddAccountIdentity(granted.ID, "allowed@example.org", "manual"))
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
 		[]agentgrant.SourceRef{{ID: granted.ID, Type: granted.SourceType, Identifier: granted.Identifier}}, time.Time{})
 	require.NoError(err)
@@ -247,11 +247,14 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 	<-paused
 	require.NoError(st.RemoveSource(granted.ID))
 	replacement := addSourceWithMail("replacement@example.net")
-	require.Equal(granted.ID, replacement.ID, "SQLite reuses the removed source's ID")
+	require.Greater(replacement.ID, granted.ID, "replacement sources receive fresh IDs")
 	require.NoError(st.AddAccountIdentity(replacement.ID, "private@example.org", "manual"))
 	close(resume)
 
 	w := <-done
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(w.Body.String(), "granted@example.net", "the catalog retains the authorized snapshot")
+	assert.Contains(w.Body.String(), "allowed@example.org", "the authorized addresses survive concurrent removal")
+	assert.NotContains(w.Body.String(), "replacement@example.net")
 	assert.NotContains(w.Body.String(), "private@example.org", "the catalog read sees the authorization snapshot")
 }

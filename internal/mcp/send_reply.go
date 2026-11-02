@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/threads"
 )
 
-func sendReplyToolHandler(h *handlers, ctx context.Context, req toolRequest) (*toolResult, error) {
+func (h *handlers) sendReplyToolHandler(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 	for key := range args {
 		switch key {
@@ -28,14 +28,14 @@ func sendReplyToolHandler(h *handlers, ctx context.Context, req toolRequest) (*t
 	if messageProvided {
 		intent.MessageID, err = getIDArg(args, "message_id")
 		if err != nil {
-			return toolErrorResult("invalid_args: " + err.Error()), nil
+			return sendReplyArgumentError(err.Error())
 		}
 	}
 	_, revisionProvided := args["revision"]
 	if revisionProvided {
 		intent.Revision, err = getIDArg(args, "revision")
 		if err != nil {
-			return toolErrorResult("invalid_args: " + err.Error()), nil
+			return sendReplyArgumentError(err.Error())
 		}
 	}
 	_, draftProvided := args["draft_id"]
@@ -101,7 +101,7 @@ func sendReplyToolHandler(h *handlers, ctx context.Context, req toolRequest) (*t
 	}
 	argv = append(argv, "--json")
 	if _, err := api.ParseCLIRunSendReply(api.CLIRunRequest{Args: argv}); err != nil {
-		return toolErrorResult("invalid_args: invalid send-reply request"), nil
+		return sendReplyArgumentError("invalid send-reply request")
 	}
 	encoded, err := json.Marshal(args, json.Deterministic(true))
 	if err != nil {
@@ -142,8 +142,7 @@ func sendReplyToolHandler(h *handlers, ctx context.Context, req toolRequest) (*t
 	if len(raw) > 0 && raw[0] == '{' && raw.IsValid() && json.Unmarshal(raw, &outcome) == nil && outcome.DraftID != "" && outcome.Status != "" && outcome.RemoteStatus != "" && outcome.LocalStatus != "" {
 		return &toolResult{text: string(raw), structuredContent: raw, isError: runErr != nil}, nil
 	}
-	var reported *DraftCommandError
-	if errors.As(runErr, &reported) {
+	if reported, ok := errors.AsType[*DraftCommandError](runErr); ok {
 		message := strings.TrimSpace(reported.Stderr)
 		if message == "" {
 			message = reported.Message
@@ -156,4 +155,9 @@ func sendReplyToolHandler(h *handlers, ctx context.Context, req toolRequest) (*t
 		return toolErrorResult("send-reply outcome unknown: inspect " + intent.DraftID + " with the same revision before taking any further action"), nil
 	}
 	return toolErrorResult("send-reply outcome unknown: do not repeat the send; inspect the archived conversation and local drafts first"), nil
+}
+
+// Validation failures belong in the MCP tool-error payload, not its transport.
+func sendReplyArgumentError(message string) (*toolResult, error) {
+	return toolErrorResult("invalid_args: " + message), nil
 }

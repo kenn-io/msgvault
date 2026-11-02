@@ -19,7 +19,7 @@ type WalkGuard struct {
 }
 
 func (g *WalkGuard) observe(before string, p Page) error {
-	if len(p.Items) == 0 {
+	if len(p.Items) == 0 && p.After == "" {
 		return nil
 	}
 	var ids strings.Builder
@@ -28,21 +28,26 @@ func (g *WalkGuard) observe(before string, p Page) error {
 		ids.WriteByte(0)
 	}
 	digest := sha256.Sum256([]byte(ids.String()))
-	hash := hex.EncodeToString(digest[:])
-	if p.After == "" || p.After == before || p.After == g.AnchorCursor || hash == g.AnchorPage || hash == g.LastPage {
+	hash := ""
+	if len(p.Items) > 0 {
+		hash = hex.EncodeToString(digest[:])
+	}
+	if p.After == "" || p.After == before || p.After == g.AnchorCursor || (hash != "" && (hash == g.AnchorPage || hash == g.LastPage)) {
 		return ErrPagination
 	}
-	g.LastPage = hash
+	if hash != "" {
+		g.LastPage = hash
+	}
 	if g.Power == 0 {
 		g.Power = 1
 		g.AnchorCursor = p.After
-		g.AnchorPage = hash
+		g.AnchorPage = g.LastPage
 		return nil
 	}
 	g.Distance++
 	if g.Distance == g.Power {
 		g.AnchorCursor = p.After
-		g.AnchorPage = hash
+		g.AnchorPage = g.LastPage
 		g.Distance = 0
 		if g.Power < 1<<63 {
 			g.Power *= 2

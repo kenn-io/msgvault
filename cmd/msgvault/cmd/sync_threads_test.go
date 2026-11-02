@@ -55,7 +55,10 @@ func (d *threadsSyncDaemon) RunCLICommand(ctx context.Context, req api.CLIRunReq
 				return e
 			}
 		}
-		return err
+		if err != nil {
+			return fmt.Errorf("execute synthetic Threads sync: %w", err)
+		}
+		return nil
 	})
 }
 func TestSyncThreadsEndToEnd(t *testing.T) {
@@ -112,7 +115,7 @@ func TestSyncThreadsEndToEnd(t *testing.T) {
 			w.Header().Set("X-App-Usage", `{"call_count":80}`)
 		}
 		if r.URL.Query().Get("after") != "" {
-			fmt.Fprint(w, `{"data":[]}`)
+			_, _ = fmt.Fprint(w, `{"data":[]}`)
 			return true
 		}
 		data := []map[string]any{}
@@ -178,7 +181,7 @@ func TestSyncThreadsEndToEnd(t *testing.T) {
 	matches, err := remote.SearchFast(t.Context(), search.ParseOR("Root phrase"), query.MessageFilter{SourceID: &source.ID, MessageType: "threads"}, 20, 0)
 	require.NoError(err)
 	require.Len(matches, 1)
-	page, err := remote.ListThread(t.Context(), query.ThreadQuery{MessageRef: query.MessageRef{SourceMessageID: "100", Account: source.Identifier}, All: true})
+	page, err := remote.ListThread(t.Context(), query.ThreadQuery{SourceMessageID: "100", Account: source.Identifier, All: true})
 	require.NoError(err)
 	require.Len(page.Messages, 3)
 }
@@ -192,7 +195,7 @@ func TestSyncThreadsJSONCoverage(t *testing.T) {
 	_, err := executeAddThreadsFixture(t, deps, "123", false)
 	require.NoError(err)
 	provider.mu.Lock()
-	provider.readHandler = func(w http.ResponseWriter, _ *http.Request) bool { fmt.Fprint(w, `{"data":[]}`); return true }
+	provider.readHandler = func(w http.ResponseWriter, _ *http.Request) bool { _, _ = fmt.Fprint(w, `{"data":[]}`); return true }
 	provider.mu.Unlock()
 	deps.newAPI = func(record threads.TokenRecord, budget *threads.RequestBudget) (threads.API, error) {
 		return threads.NewClient(threads.ClientOptions{HTTPClient: provider.server.Client(), BaseURL: provider.server.URL + "/v1.0", AccessToken: record.AccessToken(), Budget: budget})

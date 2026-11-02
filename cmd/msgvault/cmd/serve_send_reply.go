@@ -37,7 +37,7 @@ func (a *storeAPIAdapter) runCLISendReply(
 }
 
 func (a *storeAPIAdapter) sendReplySource(ctx context.Context, intent api.SendReplyIntent) (*store.Source, error) {
-	sourceID := int64(0)
+	var sourceID int64
 	if intent.DraftID != "" {
 		receipt, err := a.store.GetThreadsReplySendContext(ctx, intent.DraftID)
 		if err == nil {

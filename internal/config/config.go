@@ -1306,7 +1306,7 @@ func (c *Config) validateThreadsSources(content []byte) error {
 	}
 	metadata, err := toml.Decode(string(content), &raw)
 	if err != nil {
-		return err
+		return fmt.Errorf("decode Threads send configuration: %w", err)
 	}
 	for _, key := range metadata.Undecoded() {
 		if len(key) > 0 && key[0] == "threads" {

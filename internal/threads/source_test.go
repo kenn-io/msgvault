@@ -2,6 +2,7 @@ package threads
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -43,10 +44,5 @@ func TestThreadsSourceIdentifierAndAuthorization(t *testing.T) {
 }
 
 func containsScope(scopes, want string) bool {
-	for _, scope := range strings.Split(scopes, ",") {
-		if scope == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(scopes, ","), want)
 }

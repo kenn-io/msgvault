@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -53,9 +54,11 @@ func TestThreadsDocumentedWorkflow(t *testing.T) {
 				}
 			}
 			payload, err := json.Marshal(map[string]any{"data": data, "paging": map[string]any{"cursors": map[string]string{"after": "next"}}})
-			require.NoError(err)
+			if !assert.NoError(err) {
+				return true
+			}
 			_, err = w.Write(payload)
-			require.NoError(err)
+			assert.NoError(err)
 			return true
 		default:
 			return original(w, r)
@@ -98,7 +101,7 @@ func TestThreadsDocumentedWorkflow(t *testing.T) {
 	require.Len(matches, 1)
 	var nested int64
 	require.NoError(f.adapter.store.DB().QueryRow(f.adapter.store.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id='102'`), f.source.ID).Scan(&nested))
-	output, err = run("draft-reply", fmt.Sprint(nested), "--body=reviewed daemon reply", "--json")
+	output, err = run("draft-reply", strconv.FormatInt(nested, 10), "--body=reviewed daemon reply", "--json")
 	require.NoError(err)
 	var draft chatDraftOutput
 	require.NoError(json.Unmarshal([]byte(output), &draft))
@@ -126,7 +129,7 @@ func TestThreadsDocumentedWorkflow(t *testing.T) {
 	assert.Equal("complete", result.Status)
 	assert.Equal("sent", result.RemoteStatus)
 	// A second, intentionally separate draft exercises lost-response adoption.
-	output, err = run("draft-reply", fmt.Sprint(nested), "--body=reviewed daemon reply", "--json")
+	output, err = run("draft-reply", strconv.FormatInt(nested, 10), "--body=reviewed daemon reply", "--json")
 	require.NoError(err)
 	require.NoError(json.Unmarshal([]byte(output), &draft))
 	f.draft.DraftID = draft.DraftID
@@ -162,14 +165,14 @@ func TestThreadsDocumentedWorkflow(t *testing.T) {
 	f.mode = "drop"
 	f.draft.Body = "direct daemon reply"
 	f.draft.ReplyToSourceMessageID = "102"
-	output, err = run("send-reply", fmt.Sprint(nested), "--body="+f.draft.Body, "--json")
+	output, err = run("send-reply", strconv.FormatInt(nested, 10), "--body="+f.draft.Body, "--json")
 	require.Error(err)
 	require.NoError(json.Unmarshal([]byte(output), &result))
 	assert.Equal("remote_unknown", result.Status)
 	assert.NotEmpty(result.DraftID)
 	assert.Equal(int32(3), f.publishes.Load())
 	directDraftID := result.DraftID
-	output, err = run("send-reply", fmt.Sprint(nested), "--body="+f.draft.Body, "--json")
+	output, err = run("send-reply", strconv.FormatInt(nested, 10), "--body="+f.draft.Body, "--json")
 	require.Error(err)
 	require.NoError(json.Unmarshal([]byte(output), &result))
 	assert.Equal(directDraftID, result.DraftID)

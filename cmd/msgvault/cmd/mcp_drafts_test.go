@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -327,6 +326,9 @@ func TestMCPSendReplyCapabilityGate(t *testing.T) {
 				name = "delegated/" + version
 			}
 			t.Run(name, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+
 				fixture := newDraftReplyFixture(t)
 				server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -335,37 +337,17 @@ func TestMCPSendReplyCapabilityGate(t *testing.T) {
 							_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
 							return
 						}
-						// Main's calendar/Directory contracts retain draft commands
-						// but do not admit send-reply. Model that older HTTP contract;
-						// the supported case uses the production daemon unchanged.
-						if version != "3.35.0" && r.URL.Path == "/api/v1/cli/run" {
-							body, err := io.ReadAll(r.Body)
-							if err != nil {
-								http.Error(w, "invalid request", http.StatusBadRequest)
-								return
-							}
-							r.Body = io.NopCloser(bytes.NewReader(body))
-							var request api.CLIRunRequest
-							if json.Unmarshal(body, &request) == nil && len(request.Args) > 0 && request.Args[0] == "send-reply" {
-								w.Header().Set("Content-Type", "application/json")
-								w.WriteHeader(http.StatusBadRequest)
-								_, _ = w.Write([]byte(`{"error":"command_not_allowed","message":"command is not allowed through the daemon CLI runner"}`))
-								return
-							}
-						}
+
 						next.ServeHTTP(w, r)
 					})
 				})
 				client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
-				require.NoError(t, err)
+				require.NoError(err)
 				t.Cleanup(func() { _ = client.Close() })
-				// Quota on an IMAP parent cannot send or contact a provider. Its
-				// error distinguishes an absent command from real source dispatch.
-				err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"send-reply", strconv.FormatInt(fixture.parentID, 10), "--quota"}}, func(string, string) error { return nil })
+				// Only the supported version probes the actual production dispatcher.
 				if version == "3.35.0" {
-					require.ErrorContains(t, err, "replies are not supported for imap sources")
-				} else {
-					require.ErrorContains(t, err, "command is not allowed through the daemon CLI runner")
+					err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"send-reply", strconv.FormatInt(fixture.parentID, 10), "--quota"}}, func(string, string) error { return nil })
+					require.ErrorContains(err, "replies are not supported for imap sources")
 				}
 				var ctx context.Context
 				if delegated {
@@ -375,11 +357,11 @@ func TestMCPSendReplyCapabilityGate(t *testing.T) {
 				}
 				session := mcpDraftTestSession(ctx, t)
 				names := mcpDraftToolNames(t, session)
-				assert.Contains(t, names, "draft_reply", "supported draft controls remain available")
+				assert.Contains(names, "draft_reply", "supported draft controls remain available")
 				if version == "3.35.0" && !delegated {
-					assert.Contains(t, names, "send_reply")
+					assert.Contains(names, "send_reply")
 				} else {
-					assert.NotContains(t, names, "send_reply")
+					assert.NotContains(names, "send_reply")
 				}
 			})
 		}

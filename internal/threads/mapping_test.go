@@ -168,7 +168,8 @@ func TestThreadsWriterExplicitEmptyAndNull(t *testing.T) {
 	assert.Empty(writerBody(t, s, id), "explicit empty visible text replaces earlier content")
 	meta := writerMetadata(t, s, id)
 	assert.Nil(meta["media_url"])
-	assert.Equal("", meta["current_username"])
+	assert.IsType("", meta["current_username"], "an explicit empty value must remain a string")
+	assert.Empty(meta["current_username"])
 	assert.Equal("author_a", meta["first_username"])
 	assert.NotContains(meta, "text", "root/graph metadata does not duplicate bodies")
 }

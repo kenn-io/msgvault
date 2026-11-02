@@ -5,17 +5,19 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,7 +140,7 @@ func TestSendReplyUnsupportedSourceExplainsType(t *testing.T) {
 	require.NoError(err)
 	adapter := &storeAPIAdapter{store: st}
 	err = adapter.runCLISendReply(t.Context(), api.CLIRunRequest{
-		Args: []string{"send-reply", fmt.Sprint(messageID), "--body=Thanks!"},
+		Args: []string{"send-reply", strconv.FormatInt(messageID, 10), "--body=Thanks!"},
 	}, nil)
 	require.Error(err)
 	assert.ErrorContains(t, err, "replies are not supported for slack sources")
@@ -355,7 +357,7 @@ func TestThreadsRemovalReauthSendRace(t *testing.T) {
 			root := newTestRootCmd()
 			root.SetContext(testInvocationContext(ctx, f.cfg, invocationOptions{}))
 			root.AddCommand(newRemoveAccountLocalTestCmd())
-			root.SetArgs([]string{"remove-account", "--source-id", fmt.Sprint(f.source.ID), "--yes"})
+			root.SetArgs([]string{"remove-account", "--source-id", strconv.FormatInt(f.source.ID, 10), "--yes"})
 			return root.Execute()
 		}
 		result, _, err := f.run(t.Context(), f.args())
@@ -389,7 +391,7 @@ func TestThreadsQuotaInvalidatesRevokedGeneration(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"error":{"code":190,"message":"synthetic revoked token"}}`)
 		return true
 	}
-	args := []string{"send-reply", fmt.Sprint(f.root), "--quota", "--json"}
+	args := []string{"send-reply", strconv.FormatInt(f.root, 10), "--quota", "--json"}
 	_, _, err := f.run(t.Context(), args)
 	require.Error(err)
 	saved, err := f.deps.tokenManager().Load("123", "20")

@@ -2,7 +2,7 @@ package threads
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -180,7 +180,7 @@ func TestThreadsOccurrenceMergedObservationHistoryRegression(t *testing.T) {
 	items := make([]Media, 2)
 	pids := make([]int64, 2)
 	for n := range items {
-		items[n] = writerReply(fmt.Sprint(101+n), "100", "100")
+		items[n] = writerReply(strconv.Itoa(101+n), "100", "100")
 		items[n].Username = new("author_a")
 		id := applyWriter(t, w, items[n], ItemOrigin{Kind: "conversation", RootID: "100"})
 		pids[n] = writerSender(t, st, id)

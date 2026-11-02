@@ -51,7 +51,7 @@ func TestThreadsBudgetRateAndTime(t *testing.T) {
 	var starts []time.Time
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		starts = append(starts, clock.Now())
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(http.NoBody), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(http.NoBody), Request: r}, nil
 	})
 	start := clock.Now()
 	for range 3 {
@@ -118,7 +118,7 @@ func TestThreadsBudgetBindVerifiedSource(t *testing.T) {
 	clock := newTestClock()
 	sourceLimiter := NewRateLimiter(clock.Now, clock.Wait)
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 	})
 	sourceBudget := NewRequestBudget(BudgetOptions{MaxAttempts: 10, Now: clock.Now, Wait: clock.Wait, Limiter: sourceLimiter})
 	// Finish one source operation, leaving its next permitted attempt in force.
@@ -150,7 +150,7 @@ func TestThreadsBudgetConcurrentSourceOperations(t *testing.T) {
 			b := NewRequestBudget(BudgetOptions{Limiter: limiter})
 			c := NewBudgetedHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				starts <- time.Now()
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: http.NoBody}, nil
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 			})}, b)
 			go func() {
 				res, err := c.Get("https://example.com")

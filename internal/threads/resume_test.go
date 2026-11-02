@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,10 +23,10 @@ func importCheckpoint(t *testing.T, f *importFixture) (*store.SyncRun, *SyncStat
 	require.NoError(t, err)
 	return run, state
 }
-func finishImport(t *testing.T, f *importFixture, cap int) *ImportSummary {
+func finishImport(t *testing.T, f *importFixture, attemptLimit int) *ImportSummary {
 	t.Helper()
-	for attempt := 0; attempt < 200; attempt++ {
-		imp, opts := f.importer(t, cap)
+	for range 200 {
+		imp, opts := f.importer(t, attemptLimit)
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(t, err)
 		if sum.Status == store.SyncStatusCompleted {
@@ -100,13 +101,13 @@ func TestThreadsFairOldRootSweep(t *testing.T) {
 	root.Timestamp = f.clock.Now().Add(-24 * time.Hour)
 	root.HasReplies = new(false)
 	applyWriter(t, w, root, ItemOrigin{Kind: "own_posts"})
-	for n := 0; n < 12; n++ {
-		id := fmt.Sprint(301 + n)
+	for n := range 12 {
+		id := strconv.Itoa(301 + n)
 		f.conversations["300"] = append(f.conversations["300"], writerReply(id, "300", "300"))
 	}
 	// Root 400's first reply was created after its false snapshot.
 	f.conversations["400"] = []Media{writerReply("401", "400", "400")}
-	for n := 0; n < 6; n++ {
+	for range 6 {
 		imp, opts := f.importer(t, 1)
 		_, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
@@ -240,7 +241,7 @@ func TestThreadsCursorExpiryAndCycleAcrossResumes(t *testing.T) {
 			return false
 		}
 		failed := false
-		for attempt := 0; attempt < 12; attempt++ {
+		for range 12 {
 			imp, opts := f.importer(t, 1)
 			_, err := imp.Import(t.Context(), opts)
 			if err != nil {
@@ -338,8 +339,8 @@ func TestThreadsImportHeadProgressDuringHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newImportFixture(t)
-	for n := 0; n < 8; n++ {
-		m := writerMedia(fmt.Sprint(100+n), "history")
+	for n := range 8 {
+		m := writerMedia(strconv.Itoa(100+n), "history")
 		m.Timestamp = writerTime.Add(-30 * time.Minute)
 		f.posts = append(f.posts, m)
 	}
@@ -352,7 +353,7 @@ func TestThreadsImportHeadProgressDuringHistory(t *testing.T) {
 	m.Timestamp = f.clock.Now().Add(-time.Minute)
 	f.posts = append(f.posts, m)
 	found := false
-	for n := 0; n < 12; n++ {
+	for range 12 {
 		imp, opts = f.importer(t, 1)
 		_, err = imp.Import(t.Context(), opts)
 		require.NoError(err)
@@ -379,7 +380,7 @@ func TestThreadsImportRepeatedCursorExpiryKeepsGap(t *testing.T) {
 		return false
 	}
 	gap := false
-	for run := 0; run < 12; run++ {
+	for range 12 {
 		imp, opts := f.importer(t, 4)
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(t, err)

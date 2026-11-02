@@ -29,6 +29,7 @@ func concurrentSenderStore(t *testing.T, st *store.Store) *store.Store {
 	} else {
 		rows, err := st.DB().QueryContext(t.Context(), `PRAGMA database_list`)
 		require.NoError(t, err)
+		defer func() { require.NoError(t, rows.Close()) }()
 		for rows.Next() {
 			var seq int
 			var name, path string
@@ -38,7 +39,6 @@ func concurrentSenderStore(t *testing.T, st *store.Store) *store.Store {
 			}
 		}
 		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
 	}
 	require.NotEmpty(t, dsn)
 	other, err := store.OpenForTest(dsn)
