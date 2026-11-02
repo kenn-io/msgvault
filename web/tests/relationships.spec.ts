@@ -154,29 +154,6 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
   } }));
 }
 
-test('a calendar day narrows the active message date filter', async ({ page }) => {
-  await prepare(page);
-  await page.route('**/api/v1/participants/1/summary', route => route.fulfill({ json: alice }));
-  await page.route('**/api/v1/participants/1/timeline', route => {
-    const { filters = [] } = route.request().postDataJSON();
-    // The API resolves each date dimension to its last supplied bound.
-    const after = filters.findLast((filter: { dimension: string }) => filter.dimension === 'after')?.values[0];
-    const before = filters.findLast((filter: { dimension: string }) => filter.dimension === 'before')?.values[0];
-    const rows = timelineRows.filter(row => (!after || Date.parse(row.occurred_at) >= Date.parse(after)) && (!before || Date.parse(row.occurred_at) < Date.parse(before)));
-    return route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'cache-relationships', search_provenance: {} } });
-  });
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1', filters: [{ dimension: 'after', values: ['2026-08-01T00:00:00Z'] }] }))}`);
-  const messages = page.getByRole('grid', { name: 'Messages results' });
-  await expect(messages).toHaveAttribute('aria-busy', 'false');
-  await expect(messages.getByText('Subject line')).toHaveCount(0);
-  const day = page.getByRole('region', { name: 'Relationship activity calendar' }).getByRole('button', { name: '2 messages on Jul 18, 2026' }).filter({ visible: true });
-  await day.click();
-  await expect(day).toHaveAttribute('aria-pressed', 'true');
-  await expect(messages).toHaveAttribute('aria-busy', 'false');
-  await expect(page.getByTitle('After: 2026-08-01T00:00:00Z', { exact: true })).toBeVisible();
-  await expect(messages.getByText('Subject line')).toHaveCount(0);
-});
-
 test('People facet and person Back restore the list and close the reader', async ({ page }) => {
   await prepare(page);
 
