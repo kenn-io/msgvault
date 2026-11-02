@@ -24,15 +24,23 @@ func main() {
 }
 
 func run(check bool) error {
-	source, err := os.ReadFile("internal/agentguide/quickstart.md")
+	return publishGuide("internal/agentguide/quickstart.md", "docs/guides/agent-quickstart.md", check)
+}
+
+func publishGuide(sourcePath, destination string, check bool) error {
+	source, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return err
 	}
-	generated, err := updateToolTable(source, mcp.ToolSummaries())
+	tools := mcp.ToolSummaries()
+	if err := validateGuide(string(source), tools); err != nil {
+		return err
+	}
+	generated, err := updateToolTable(source, tools)
 	if err != nil {
 		return err
 	}
-	for _, path := range []string{"internal/agentguide/quickstart.md", "docs/guides/agent-quickstart.md"} {
+	for _, path := range []string{sourcePath, destination} {
 		if err := syncFile(path, generated, check); err != nil {
 			return err
 		}

@@ -1,0 +1,43 @@
+{
+  "arguments": {
+    "id": 9001,
+    "max_chars": 13
+  },
+  "response": {
+    "attachments": [],
+    "bcc": [],
+    "body_format": "text",
+    "body_html": "",
+    "body_length": 41,
+    "body_returned": 13,
+    "body_text": "Hello, Alice.",
+    "cc": [],
+    "conversation_id": 41,
+    "from": [
+      {
+        "Email": "alice@example.com",
+        "Name": "Alice Example"
+      }
+    ],
+    "has_attachments": false,
+    "has_more": true,
+    "hidden_text_present": false,
+    "id": 9001,
+    "labels": [],
+    "message_type": "email",
+    "offset": 0,
+    "sent_at": "2026-01-01T12:00:00Z",
+    "size_estimate": 0,
+    "snippet": "",
+    "source_conversation_id": "example-thread-41",
+    "source_message_id": "example-message-9001",
+    "subject": "Project update",
+    "to": [
+      {
+        "Email": "bob@example.com",
+        "Name": "Bob Example"
+      }
+    ]
+  },
+  "tool": "get_message"
+}
