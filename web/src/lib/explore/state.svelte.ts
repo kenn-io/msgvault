@@ -419,7 +419,7 @@ function normalize(value: unknown): ExploreURLState {
       ? value.presentation
       : defaultExploreURLState.presentation;
   const legacyFacet: RelationshipFacet | undefined =
-    value.workspace === 'people' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
+    value.workspace === 'people' || value.workspace === 'directory' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
   const workspace = value.workspace === 'everything' || value.workspace === 'settings' ||
     value.workspace === 'files' || value.workspace === 'relationships' ||
     value.workspace === 'sources' ||

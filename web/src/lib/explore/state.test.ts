@@ -1066,6 +1066,37 @@ describe('relationships workspace state', () => {
 
 describe('ExploreState history ownership', () => {
 
+  it('restores a legacy Directory history snapshot to Saved People after Domains', async () => {
+    const search = '?workspace=directory';
+    window.history.replaceState({
+      exploreSearch: search,
+      exploreState: {
+        ...defaultExploreURLState,
+        workspace: 'directory',
+        relationshipFacet: 'domains',
+        directoryQuery: 'alice',
+        directoryCategory: 'friend',
+        directoryPersonID: 7
+      }
+    }, '', search);
+    const state = new ExploreState(window);
+    try {
+      state.commitNavigation({ workspace: 'relationships', relationshipFacet: 'domains', relationshipTarget: 'domain:example.com' });
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current).toMatchObject({
+        workspace: 'relationships',
+        relationshipFacet: 'people',
+        relationshipSaved: true,
+        directoryQuery: 'alice',
+        directoryCategory: 'friend',
+        directoryPersonID: 7
+      });
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('restores Directory filters and selection on browser back and forward', async () => {
     window.history.replaceState(null, '', serializeExploreURLState({
       ...defaultExploreURLState,
