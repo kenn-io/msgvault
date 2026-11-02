@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -195,7 +196,7 @@ func TestEmbeddingStatusQueryAndJobState(t *testing.T) {
 		},
 		{
 			name:   "scheduled job snapshot stopped updating",
-			holder: "scheduled embedding",
+			holder: jobctx.ScheduledEmbeddingLabel,
 			path:   "/api/v1/embeddings/status",
 			setup: func(srv *Server, now time.Time) {
 				jobStarted := now.Add(-4 * time.Minute)
@@ -265,7 +266,7 @@ func TestEmbeddingSlotKind(t *testing.T) {
 	}{
 		{label: "", held: false, want: "none"},
 		{label: "", held: true, want: "other"},
-		{label: "scheduled embedding", held: true, want: "embeddings"},
+		{label: jobctx.ScheduledEmbeddingLabel, held: true, want: "embeddings"},
 		{label: "msgvault embeddings build", held: true, want: "embeddings"},
 		{label: "msgvault build-embeddings", held: true, want: "embeddings"},
 		{label: "scheduled sync of user@example.com", held: true, want: "sync"},

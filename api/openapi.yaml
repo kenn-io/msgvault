@@ -65,6 +65,9 @@ components:
           type: boolean
         queued:
           type: boolean
+        queued_at:
+          format: date-time
+          type: string
         running:
           type: boolean
         schedule:
@@ -2180,6 +2183,9 @@ components:
         next_scheduled_at:
           format: date-time
           type: string
+        queued_at:
+          format: date-time
+          type: string
         repair_reason:
           enum:
             - account_missing
@@ -2194,6 +2200,8 @@ components:
           type: string
         scheduled:
           type: boolean
+        scheduler_running:
+          type: boolean
       required:
         - configured
         - available
@@ -2201,6 +2209,7 @@ components:
         - enabled
         - scheduled
         - schedule
+        - scheduler_running
       type: object
     CardDAVSyncRequest:
       additionalProperties: false
@@ -15302,6 +15311,8 @@ components:
           type: boolean
         scheduler_queued:
           type: boolean
+        scheduler_queued_at:
+          type: string
         scheduler_started_at:
           type: string
         source_type:
@@ -16725,7 +16736,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.31.0
+  version: 3.32.0
 openapi: 3.1.0
 paths:
   /api/ping:
