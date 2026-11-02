@@ -43,7 +43,7 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 
 ### meetings link, unlink, links, and suggest
 
-See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.27.0 or newer.
+See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.35.0 or newer.
 
 ```bash
 msgvault meetings suggest msg:42
