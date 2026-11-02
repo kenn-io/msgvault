@@ -263,7 +263,10 @@ Nothing becomes searchable until every range succeeds and one transaction
 publishes the combined document. Complete mappings preserve original page
 numbers, including blank pages. If any range needs Markdown fallback, every
 range's Markdown is joined in page order as one document without page claims.
-Degraded ranges and ranges that would push saved normalized characters past `max_normalized_chars` stay in memory for the current run and are resent on retry; the completed document is truncated at publication, while exceeding `max_response_bytes` fails the extraction.
+Degraded ranges, and ranges that would push saved normalized characters past
+`max_normalized_chars`, stay in memory for the current run and are resent on
+retry. The completed document is truncated at publication. Exceeding
+`max_response_bytes` fails the extraction.
 Partial-success results are rejected and never checkpointed.
 
 A job that is still running when `total_timeout` or `max_poll_attempts` runs
