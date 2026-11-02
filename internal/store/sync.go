@@ -43,11 +43,6 @@ var ErrSyncAlreadyActive = errors.New("sync already active")
 // generation that is no longer running or current for its source.
 var ErrSyncRunSuperseded = errors.New("sync run superseded")
 
-// ErrAcquisitionSettled is returned when a message is saved to resolve a
-// failed acquisition that something else, such as a dedup purge, has already
-// settled. Nothing is saved, so the purge stands.
-var ErrAcquisitionSettled = errors.New("acquisition already settled")
-
 type syncGeneration struct {
 	sourceID int64
 	runID    int64
@@ -401,8 +396,7 @@ type Checkpoint struct {
 // SyncRunItem records an individual item outcome within a sync run.
 // Error items are actionable and count toward SyncRun.ErrorsCount; skipped
 // items preserve expected churn such as Gmail messages deleted before fetch.
-// Resolved items settle earlier acquisition failures once a message is archived
-// or deliberately purged.
+// Resolved items settle earlier acquisition failures once a message is archived.
 type SyncRunItem struct {
 	ID              int64
 	SyncRunID       int64
@@ -978,66 +972,6 @@ func (s *Store) recordSyncRunItemWith(ctx context.Context, q contextQuerier, ite
 		return fmt.Errorf("insert sync_run_item: %w", err)
 	}
 	return nil
-}
-
-// resolveAcquisitionWith records item unless the message's latest acquisition
-// outcome is already resolved, and returns ErrAcquisitionSettled if it is.
-func (s *Store) resolveAcquisitionWith(ctx context.Context, q contextQuerier, item SyncRunItem) error {
-	recorded, err := s.recordUnlessAcquisitionSettled(ctx, q, item)
-	if err != nil {
-		return fmt.Errorf("resolve acquisition: %w", err)
-	}
-	if !recorded {
-		return fmt.Errorf("message %q: %w", item.SourceMessageID, ErrAcquisitionSettled)
-	}
-	return nil
-}
-
-// RecordAcquisitionRetryError records a failed retry of an earlier acquisition
-// failure. It reports false and records nothing if the message's latest
-// outcome is already resolved: a dedup purge settled it after the sync read its
-// pending retries, and a newer error would let a later sync restore the purged
-// message.
-func (s *Store) RecordAcquisitionRetryError(ctx context.Context, item SyncRunItem) (bool, error) {
-	recorded, err := s.recordUnlessAcquisitionSettled(ctx, s.db, item)
-	if err != nil {
-		return false, fmt.Errorf("record acquisition retry error: %w", err)
-	}
-	return recorded, nil
-}
-
-// recordUnlessAcquisitionSettled inserts item in one statement unless the
-// message's latest fetch or ingest outcome is resolved, and reports whether it
-// inserted.
-func (s *Store) recordUnlessAcquisitionSettled(ctx context.Context, q contextQuerier, item SyncRunItem) (bool, error) {
-	result, err := q.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO sync_run_items (
-			sync_run_id, source_message_id, phase, status,
-			error_kind, error_message, created_at
-		)
-		SELECT ?, ?, ?, ?, ?, ?, %s
-		WHERE COALESCE((
-			SELECT i.status
-			FROM sync_run_items i
-			JOIN sync_runs r ON r.id = i.sync_run_id
-			WHERE r.source_id = (SELECT source_id FROM sync_runs WHERE id = ?)
-			  AND i.source_message_id = ? AND i.phase IN ('fetch', 'ingest')
-			ORDER BY i.id DESC
-			LIMIT 1
-		), '') <> ?
-	`, s.dialect.Now()),
-		item.SyncRunID, item.SourceMessageID, item.Phase, item.Status,
-		item.ErrorKind, item.ErrorMessage,
-		item.SyncRunID, item.SourceMessageID, SyncRunItemStatusResolved,
-	)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return affected > 0, nil
 }
 
 // CountSyncRunItems returns the number of recorded per-item sync outcomes for

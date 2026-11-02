@@ -296,9 +296,6 @@ func (s *Syncer) incrementalWithRecovery(
 						if _, err := s.ingestMessage(
 							ctx, source.ID, raw, threadID, labelMap,
 						); err != nil {
-							if errors.Is(err, store.ErrAcquisitionSettled) {
-								continue
-							}
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 							checkpoint.ErrorsCount++
@@ -400,10 +397,9 @@ func (s *Syncer) incrementalWithRecovery(
 	return summary, nil
 }
 
-// replayAcquisitionFailures retries earlier acquisition failures, skipping IDs
-// whose raw MIME already reached the archive. A metadata row without raw MIME is
-// still incomplete, as in full sync. It fetches and ingests locally; repeated
-// failures remain eligible for the next run.
+// replayAcquisitionFailures retries earlier acquisition failures, skipping IDs that
+// already reached the archive. It fetches and ingests locally; repeated failures
+// remain eligible for the next run.
 func (s *Syncer) replayAcquisitionFailures(
 	ctx context.Context,
 	syncID, sourceID int64,
@@ -416,7 +412,7 @@ func (s *Syncer) replayAcquisitionFailures(
 		return nil, nil
 	}
 
-	existing, err := s.store.MessageExistsWithRawBatchContext(ctx, sourceID, messageIDs)
+	existing, err := s.store.MessageExistsBatchContext(ctx, sourceID, messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check replay messages: %w", err)
 	}
@@ -453,10 +449,9 @@ func (s *Syncer) replayAcquisitionFailures(
 			}
 			s.logger.Warn("failed to batch fetch replay messages", "error", fetchErr)
 			for _, messageID := range batchIDs {
-				if s.recordReplayError(ctx, syncID, messageID, syncItemPhaseFetch, syncItemKindBatchFetchError, fetchErr) {
-					checkpoint.ErrorsCount++
-				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
 			}
+			checkpoint.ErrorsCount += int64(len(batchIDs))
 			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
 				return nil, fmt.Errorf("checkpoint replay batch: %w", err)
 			}
@@ -475,9 +470,8 @@ func (s *Syncer) replayAcquisitionFailures(
 				}
 				errMsg := syncItemErrorMessage(result.Err, errRawBatchMissing.Error())
 				err := errors.New(errMsg)
-				if s.recordReplayError(ctx, syncID, messageID, syncItemPhaseFetch, syncItemKindFetchError, err) {
-					checkpoint.ErrorsCount++
-				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
 				continue
 			}
 
@@ -485,13 +479,8 @@ func (s *Syncer) replayAcquisitionFailures(
 				if errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil {
 					return nil, err
 				}
-				if errors.Is(err, store.ErrAcquisitionSettled) {
-					// A purge settled this retry after the run read it.
-					continue
-				}
-				if s.recordReplayError(ctx, syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err) {
-					checkpoint.ErrorsCount++
-				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				checkpoint.ErrorsCount++
 				continue
 			}
 			checkpoint.MessagesAdded++
@@ -565,9 +554,6 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if _, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
-				if errors.Is(err, store.ErrAcquisitionSettled) {
-					return false, false, nil
-				}
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, false, err

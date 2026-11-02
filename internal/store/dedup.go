@@ -776,10 +776,16 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
-			affected, err := s.purgeDedupHidden(ctx, tx,
-				"delete_batch_id = ? AND deleted_at IS NOT NULL", batchID)
+			result, err := tx.ExecContext(ctx, `
+				DELETE FROM messages
+				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
+			`, batchID)
 			if err != nil {
 				return fmt.Errorf("delete dedup batch %q: %w", batchID, err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count deleted dedup batch %q: %w", batchID, err)
 			}
 			deleted += affected
 		}
@@ -787,69 +793,6 @@ func (s *Store) DeleteDedupedBatchesContext(
 	})
 	if err != nil {
 		return 0, err
-	}
-	return deleted, nil
-}
-
-// purgeDedupHidden deletes the messages matching filter and settles their
-// outstanding acquisition failures, so a later Gmail incremental sync does not
-// download them again. It settles exactly the rows the DELETE removed: a
-// message hidden concurrently is either deleted and settled here or left for
-// the next purge.
-func (s *Store) purgeDedupHidden(
-	ctx context.Context, tx *loggedTx, filter string, args ...any,
-) (int64, error) {
-	rows, err := tx.QueryContext(ctx,
-		"DELETE FROM messages WHERE "+filter+" RETURNING source_id, source_message_id", args...)
-	if err != nil {
-		return 0, err
-	}
-	bySource := make(map[int64][]string)
-	var deleted int64
-	for rows.Next() {
-		var sourceID int64
-		var sourceMessageID string
-		if err := rows.Scan(&sourceID, &sourceMessageID); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
-		bySource[sourceID] = append(bySource[sourceID], sourceMessageID)
-		deleted++
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return 0, err
-	}
-	for sourceID, ids := range bySource {
-		for start := 0; start < len(ids); start += 500 {
-			chunk := ids[start:min(start+500, len(ids))]
-			chunkArgs := make([]any, 0, len(chunk)+1)
-			chunkArgs = append(chunkArgs, sourceID)
-			for _, id := range chunk {
-				chunkArgs = append(chunkArgs, id)
-			}
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-				INSERT INTO sync_run_items (
-					sync_run_id, source_message_id, phase, status,
-					error_kind, error_message, created_at
-				)
-				SELECT i.sync_run_id, i.source_message_id, 'fetch', '%s',
-				       'purged', 'purged', %s
-				FROM sync_run_items i
-				WHERE i.status = '%s' AND i.id IN (
-					SELECT MAX(j.id)
-					FROM sync_run_items j
-					JOIN sync_runs r ON r.id = j.sync_run_id
-					WHERE r.source_id = ? AND j.phase IN ('fetch', 'ingest')
-					  AND j.source_message_id IN (%s)
-					GROUP BY j.source_message_id
-				)
-			`, SyncRunItemStatusResolved, s.dialect.Now(), SyncRunItemStatusError,
-				strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")),
-				chunkArgs...,
-			); err != nil {
-				return 0, fmt.Errorf("settle purged acquisition debt: %w", err)
-			}
-		}
 	}
 	return deleted, nil
 }
@@ -942,10 +885,16 @@ func (s *Store) DeleteAllDedupedContext(
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
 
-		deleted, err = s.purgeDedupHidden(ctx, tx,
-			"deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL")
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM messages
+			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
+		`)
 		if err != nil {
 			return fmt.Errorf("delete all dedup-hidden: delete: %w", err)
+		}
+		deleted, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete all dedup-hidden: rows affected: %w", err)
 		}
 		return nil
 	})

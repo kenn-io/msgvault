@@ -5923,39 +5923,6 @@ func TestIncrementalSyncReplaysEarlierRunFailures(t *testing.T) {
 	assert.Empty(env.Mock.GetMessageCalls)
 }
 
-// A full sync re-downloads a stored message that lacks raw MIME. When that
-// download fails, incremental replay must download it again rather than treat
-// the metadata row as archived.
-func TestIncrementalSyncReplaysFailedRawRefill(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	env := newTestEnv(t)
-	seedMessages(env, 1, 1000, "refill")
-	runFullSync(t, env)
-	_, err := env.Store.DB().Exec(`
-		DELETE FROM message_raw WHERE message_id = (
-			SELECT id FROM messages WHERE source_message_id = 'refill'
-		)`)
-	require.NoError(err)
-
-	env.Mock.GetMessageError["refill"] = errors.New("temporary fetch failure")
-	summary := runFullSync(t, env)
-	require.Equal(int64(1), summary.Errors)
-	delete(env.Mock.GetMessageError, "refill")
-
-	env.SetHistory(1000)
-	env.Mock.GetMessageCalls = nil
-	summary = runIncrementalSync(t, env)
-	assert.Zero(summary.Errors)
-	assert.Equal([]string{"refill"}, env.Mock.GetMessageCalls)
-	assertRawDataExists(t, env.Store, "refill")
-
-	env.Mock.GetMessageCalls = nil
-	runIncrementalSync(t, env)
-	assert.Empty(env.Mock.GetMessageCalls, "the refilled message no longer needs a retry")
-}
-
 func TestAcquisitionResolutionCommitsWithMessage(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

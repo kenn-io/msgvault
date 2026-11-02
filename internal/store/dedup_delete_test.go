@@ -8,7 +8,6 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -246,90 +245,4 @@ func TestDeleteDedupedBatch_ThenUndoNoOps(t *testing.T) {
 	restored, err := f.Store.UndoDedup("batch-noop")
 	require.NoError(err, "UndoDedup after delete")
 	assert.Equal(t, int64(0), restored, "UndoDedup after delete restored")
-}
-
-// A dedup purge settles the purged message's outstanding acquisition failure,
-// so a later Gmail incremental sync does not download it again. Debt for a
-// message that stays in the archive is left for sync to resolve.
-func TestDedupPurgeSettlesAcquisitionDebt(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		purge func(*storetest.Fixture) (int64, error)
-	}{
-		{"batch", func(f *storetest.Fixture) (int64, error) { return f.Store.DeleteDedupedBatch("batch-debt") }},
-		{"all", func(f *storetest.Fixture) (int64, error) {
-			deleted, _, err := f.Store.DeleteAllDeduped()
-			return deleted, err
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := storetest.New(t)
-			idKeep := newRFC822Message(t, f, "keep", "rfc822-debt")
-			idDrop := newRFC822Message(t, f, "drop", "rfc822-debt")
-			runID := f.StartSync()
-			for _, id := range []string{"keep", "drop"} {
-				require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
-					SyncRunID: runID, SourceMessageID: id, Phase: "fetch",
-					Status: store.SyncRunItemStatusError, ErrorKind: "fetch_error",
-				}))
-			}
-			_, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-debt")
-			require.NoError(err)
-
-			deleted, err := tc.purge(f)
-			require.NoError(err)
-			require.Equal(int64(1), deleted)
-
-			items, err := f.Store.ListUnresolvedSyncItemErrors(context.Background(), f.Source.ID)
-			require.NoError(err)
-			ids := make([]string, 0, len(items))
-			for _, item := range items {
-				ids = append(ids, item.SourceMessageID)
-			}
-			assert.Equal([]string{"keep"}, ids)
-		})
-	}
-}
-
-// Saving a message resolves its failed acquisition only while the failure is
-// outstanding. Once a purge has settled it, the save is refused, so a sync that
-// read the failure before the purge cannot bring the message back.
-func TestPersistMessageResolvesOnlyOutstandingAcquisition(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	runID := f.StartSync()
-	for _, id := range []string{"outstanding", "purged"} {
-		require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
-			SyncRunID: runID, SourceMessageID: id, Phase: "fetch",
-			Status: store.SyncRunItemStatusError, ErrorKind: "fetch_error",
-		}))
-	}
-	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
-		SyncRunID: runID, SourceMessageID: "purged", Phase: "fetch",
-		Status: store.SyncRunItemStatusResolved, ErrorKind: "purged",
-	}))
-	persist := func(id string) error {
-		_, err := f.Store.PersistMessage(&store.MessagePersistData{
-			Message: f.NewMessage().WithSourceMessageID(id).Build(),
-			SyncRunItem: &store.SyncRunItem{
-				SyncRunID: runID, SourceMessageID: id, Phase: "fetch",
-				Status: store.SyncRunItemStatusResolved, ErrorKind: "acquired",
-			},
-		})
-		return err
-	}
-
-	require.NoError(persist("outstanding"))
-	require.ErrorIs(persist("purged"), store.ErrAcquisitionSettled)
-
-	ids, err := f.Store.MessageExistsBatch(f.Source.ID, []string{"outstanding", "purged"})
-	require.NoError(err)
-	assert.Contains(ids, "outstanding")
-	assert.NotContains(ids, "purged", "a refused save writes nothing")
-	items, err := f.Store.ListUnresolvedSyncItemErrors(context.Background(), f.Source.ID)
-	require.NoError(err)
-	assert.Empty(items)
 }
