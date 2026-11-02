@@ -86,15 +86,18 @@ TXT fallback accepts files named `Direct Messages.txt`, `Direct Message.txt`,
 `Profile.txt`. Profile files use `Username: …` and optional `Nickname: …`.
 Messages use `Date: …`, `From: …`, `Content: …` under a
 `Chat History with <username>:` heading. Comments use `Date: …`, `Comment: …`
-and optional `Link: …`. Content can continue across lines until the next
-recognized field or chat header. A content line that starts with such a header
+and optional `Link: …` or `URL: …`. Content can continue across lines until the
+next recognized field or chat header. A content line that starts with such a header
 is ambiguous in TXT; choose JSON to preserve it.
 
 JSON wins for each chat and for a nonempty comment array. TXT supplies chats
-or comments absent from JSON, plus missing profile fields. It does not enrich
-individual JSON messages with extra TXT fields. Conflicting profile usernames
-fail the import. Every import requires a profile username, including comments-only
-exports. Export filenames and enclosing directories do not affect message keys.
+or comments absent from JSON, plus missing profile fields. A JSON record with
+no separate link can receive a TXT link when category, chat, timestamp, sender,
+and text match exactly. This requires one matching JSON record and one distinct
+TXT link. Conflicting or ambiguous links stay unresolved. Enriched links carry
+`link_source: "txt"` in message metadata; JSON text is never replaced.
+Conflicting profile usernames fail the import. Every import requires a profile
+username, including comments-only exports. Export filenames and enclosing directories do not affect message keys.
 
 Dates accept `YYYY-MM-DD HH:MM:SS`, that format followed by a numeric timezone
 such as `+0100`, or RFC 3339. Dates without timezone information are treated

@@ -11,17 +11,21 @@ import (
 )
 
 func TestTikTokExportVisibleAsTextConversations(t *testing.T) {
-	st := testutil.NewTestStore(t)
+	assert := assert.New(t)
+	require := require.New(t)
+
+	// TextEngine is a SQLite reader; importer persistence also runs on PostgreSQL.
+	st := testutil.NewSQLiteTestStore(t)
 	_, err := tiktokexport.Import(t.Context(), st, "example-account", "../tiktokexport/testdata/json")
-	require.NoError(t, err)
+	require.NoError(err)
 	rows, err := query.NewSQLiteEngine(st.DB()).ListConversations(t.Context(), query.TextFilter{})
-	require.NoError(t, err)
-	require.Len(t, rows, 2)
-	assert.True(t, query.IsKnownMessageType(tiktokexport.SourceType))
-	assert.True(t, query.IsChatEntry(tiktokexport.SourceType, "public_comments"))
+	require.NoError(err)
+	require.Len(rows, 2)
+	assert.True(query.IsKnownMessageType(tiktokexport.SourceType))
+	assert.True(query.IsChatEntry(tiktokexport.SourceType, "public_comments"))
 	var count int64
 	for _, row := range rows {
 		count += row.MessageCount
 	}
-	assert.Equal(t, int64(4), count)
+	assert.Equal(int64(4), count)
 }

@@ -148,10 +148,15 @@ func Import(ctx context.Context, st *store.Store, identifier, filename string) (
 		if utf8.RuneCountInString(snippet) > 200 {
 			snippet = string([]rune(snippet)[:200])
 		}
+		linkSource := ""
+		if m.LinkFromTXT {
+			linkSource = "txt"
+		}
 		meta, err := json.Marshal(struct {
-			Username string `json:"account_username"`
-			PostURL  string `json:"post_url,omitempty"`
-		}{data.Username, m.Link})
+			Username   string `json:"account_username"`
+			PostURL    string `json:"post_url,omitempty"`
+			LinkSource string `json:"link_source,omitempty"`
+		}{data.Username, m.Link, linkSource})
 		if err != nil {
 			return nil, err
 		}

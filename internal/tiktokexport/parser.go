@@ -16,14 +16,15 @@ import (
 )
 
 type message struct {
-	Chat    string    `json:"chat"`
-	Sender  string    `json:"sender"`
-	Text    string    `json:"text"`
-	Link    string    `json:"link,omitempty"`
-	Date    time.Time `json:"date"`
-	Comment bool      `json:"comment,omitempty"`
-	Raw     []byte    `json:"-"`
-	Format  string    `json:"-"`
+	Chat        string    `json:"chat"`
+	Sender      string    `json:"sender"`
+	Text        string    `json:"text"`
+	Link        string    `json:"link,omitempty"`
+	Date        time.Time `json:"date"`
+	Comment     bool      `json:"comment,omitempty"`
+	Raw         []byte    `json:"-"`
+	Format      string    `json:"-"`
+	LinkFromTXT bool      `json:"-"`
 }
 
 func digest(parts ...string) string {
@@ -40,6 +41,16 @@ func digest(parts ...string) string {
 func (m message) key() string {
 	return digest(m.conversation(), m.Date.UTC().Format(time.RFC3339Nano), username(m.Sender), m.Text, m.Link)
 }
+
+// contentKey matches copies across formats without using an optional URL.
+func (m message) contentKey() string {
+	kind, sender := "dm", username(m.Sender)
+	if m.Comment {
+		kind, sender = "comment", ""
+	}
+	return digest(kind, username(m.Chat), m.Date.UTC().Format(time.RFC3339Nano), sender, m.Text)
+}
+
 func (m message) conversation() string {
 	if m.Comment {
 		if m.Link != "" {
@@ -128,7 +139,7 @@ func (a *archive) sections(o object) error {
 	for _, key := range keys(o) {
 		value := o[key]
 		name := normalized(key)
-		next := ""
+		var next string
 		switch name {
 		case "profile", "profileandsettings", "profileinformation", "profilemap":
 			next = "profile"

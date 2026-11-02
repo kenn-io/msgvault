@@ -15,7 +15,7 @@ func newImportTikTokCommand() *cobra.Command {
 		Long: `Import a TikTok Download your data ZIP or extracted directory.
 
 Include Profile Information so the account owner's messages count as me.
-JSON takes precedence per chat and comment section; TXT fills missing sections.
+JSON takes precedence per chat and comment section; TXT fills missing sections and links.
 Shared post and media URLs are retained as links. Files are read on the daemon
 host. This unreleased importer was checked against published field descriptions,
 not a real export. See docs/usage/tiktok-export.md for accepted layouts.`,
@@ -50,7 +50,7 @@ not a real export. See docs/usage/tiktok-export.md for accepted layouts.`,
 		},
 	}
 	cmd.Flags().Bool(flagJSON, false, "Output import summary and errors as JSON")
-	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error { return reportTikTokError(cmd, err) })
+	cmd.SetFlagErrorFunc(reportTikTokError)
 	return addManualSyncCacheFlags(cmd)
 }
 
@@ -100,7 +100,10 @@ func runImportTikTok(cmd *cobra.Command, identifier, filename string) error {
 		return printJSONTo(cmd.OutOrStdout(), summary)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Imported TikTok: %d messages added, %d processed, %d conversations, %d from me.\n", summary.MessagesAdded, summary.MessagesProcessed, summary.Conversations, summary.FromMe)
-	return err
+	if err != nil {
+		return fmt.Errorf("write TikTok import summary: %w", err)
+	}
+	return nil
 }
 
 func init() {

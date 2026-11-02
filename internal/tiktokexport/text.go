@@ -65,7 +65,7 @@ func (a *archive) parseTXT(data []byte, kind string) error {
 		}
 		key, value, ok := strings.Cut(line, ":")
 		name := normalized(key)
-		if ok && (name == "date" || name == "from" || name == "content" || name == "comment" || name == "commentcontent" || name == "link" || name == "videolink" || name == "originalpostlandingpagelink") {
+		if ok && (name == "date" || name == "from" || name == "content" || name == "comment" || name == "commentcontent" || name == "link" || name == "url" || name == "videolink" || name == "originalpostlandingpagelink") {
 			if name == "date" {
 				if err := flush(); err != nil {
 					return err

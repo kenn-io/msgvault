@@ -90,7 +90,7 @@ func readArchive(ctx context.Context, filename string) (*archive, error) {
 		if !entry.IsDir() && (strings.EqualFold(path.Ext(name), ".json") || strings.EqualFold(path.Ext(name), ".txt")) {
 			info, err := entry.Info()
 			if err != nil {
-				return err
+				return fmt.Errorf("inspect export member: %w", err)
 			}
 			if !info.Mode().IsRegular() {
 				return errors.New("export member is not a regular file")
@@ -135,7 +135,7 @@ func readArchive(ctx context.Context, filename string) (*archive, error) {
 				return nil, fmt.Errorf("read export member: %w", readErr)
 			}
 			if closeErr != nil {
-				return nil, closeErr
+				return nil, fmt.Errorf("close export member: %w", closeErr)
 			}
 			total += int64(len(b))
 			if int64(len(b)) > maxFileBytes || total > maxArchiveBytes {
@@ -160,6 +160,7 @@ func readArchive(ctx context.Context, filename string) (*archive, error) {
 	if text.Username != "" && out.Username != text.Username {
 		return nil, errors.New("JSON and TXT profile usernames disagree")
 	}
+	fillTXTLinks(out.Messages, text.Messages)
 	for _, m := range text.Messages {
 		if m.Comment {
 			if out.comments {
@@ -188,4 +189,38 @@ func readArchive(ctx context.Context, filename string) (*archive, error) {
 		}
 	}
 	return out, nil
+}
+
+// Enrich only one exact JSON record from one distinct TXT link. Repeated or
+// conflicting JSON records and conflicting TXT links provide no safe match.
+func fillTXTLinks(primary, fallback []message) {
+	counts := map[string]int{}
+	for _, m := range primary {
+		counts[m.contentKey()]++
+	}
+	links := map[string]map[string]bool{}
+	for _, m := range fallback {
+		if m.Link == "" {
+			continue
+		}
+		key := m.contentKey()
+		if links[key] == nil {
+			links[key] = map[string]bool{}
+		}
+		links[key][m.Link] = true
+	}
+	for i := range primary {
+		m := &primary[i]
+		if m.Link != "" {
+			continue
+		}
+		key := m.contentKey()
+		if counts[key] != 1 || len(links[key]) != 1 {
+			continue
+		}
+		for link := range links[key] {
+			m.Link = link
+			m.LinkFromTXT = true
+		}
+	}
 }
