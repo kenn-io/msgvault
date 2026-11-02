@@ -2121,12 +2121,13 @@ Top-level toggle and backend marker for semantic/hybrid search. SQLite vector se
 
 #### `[vector.embeddings]`
 
-External OpenAI-compatible embedding endpoint used to convert message text into vectors. msgvault does not host a model; it calls the endpoint you configure. Use a local or self-hosted endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) when message text must stay on your machine or network. Hosted endpoints also work but receive the text being embedded.
+Text embeddings use a configured endpoint or the shared local `kennembed` server. Run `msgvault setup providers --local-embeddings` to install the local server after confirming any missing downloads. Local requests ignore saved and environment API keys. Local and self-hosted endpoints keep text on your machine or network. Hosted endpoints receive the text being embedded.
 
 | Key | Default | Description |
 |---|---|---|
 | `api_format` | `openai` | Request contract: `openai` (OpenAI-compatible `/embeddings`, one vector per message chunk) or `voyage-contextual` (Voyage `/contextualizedembeddings`; pins `model = "voyage-context-4"` and embeds chat conversation windows and turn-aware meeting chunks as contextual documents). |
-| `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
+| `local_only` | `false` | Use the shared local server, even while Ollama is running. Setup installs its model and runtime; subsequent commands reuse them. |
+| `endpoint` | (required unless `local_only = true`) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
 | `model` | (required) | Model name or serving alias to pass in each request (e.g., `nomic-embed-text`). Use a new alias when the served weights or vector recipe change; msgvault does not verify the checkpoint behind an alias. |
 | `dimension` | (required) | Expected vector width. Responses with a different width are rejected. The OpenAI-compatible client does not send a `dimensions` field or slice returned vectors; configure the server to return the desired width. |
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |

@@ -20,11 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+
       - name: Install ripgrep
         run: |
-          curl -fsSL --retry 3 --max-time 120 \
-            https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz \
-            -o "$RUNNER_TEMP/ripgrep.tar.gz"
+          # workflowretry: allow Cap each attempt so a slow transfer leaves time to retry.
+          kit-retry 4 1 curl -fsSL --max-time 120 https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/ripgrep.tar.gz"
           echo "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e  $RUNNER_TEMP/ripgrep.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/ripgrep.tar.gz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
@@ -35,7 +36,9 @@ jobs:
 
       - name: Install documentation dependencies
         working-directory: docs
-        run: uv sync --frozen --no-dev
+        run: kit-retry 3 5 uv sync --frozen --no-dev
 
       - name: Check documentation
+        env:
+          DOWNLOAD_RETRY: kit-retry 3 5
         run: make docs-check

@@ -68,4 +68,10 @@ credentials.
 The Jev adapter passes a plain http.Client to Docbank's TypeSafe client,
 which refuses redirects on its own copy. Do not flag redirect handling
 in internal/vector/rerank/jev.go.
+
+The hidden-text flag (internal/mime/hidden_html.go) is a best-effort
+heuristic, not a security boundary. It reads only inline styles and
+legacy attributes, so a <style> block already bypasses it. Do not flag
+CSS cascade, value-validation, or color edge cases where inline CSS sets
+or clears the flag differently from a browser.
 """

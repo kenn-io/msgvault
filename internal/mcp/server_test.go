@@ -2018,6 +2018,31 @@ func TestGetMessage(t *testing.T) {
 		assert.False(msg.HasMore, "has_more")
 	})
 
+	t.Run("stored HTML hidden text", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			html   string
+			hidden bool
+		}{
+			{"hidden", `<p>Visible</p><div style="display:none">Hidden text</div>`, true},
+			{"visible", `<p>Visible</p>`, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f := storetest.New(t)
+				messageID := f.CreateMessage("stored-html")
+				require.NoError(t, f.Store.UpsertMessageBody(messageID,
+					sql.NullString{String: "Previously archived text", Valid: true},
+					sql.NullString{String: tc.html, Valid: true}))
+				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, messageID)
+				require.NoError(t, err)
+				handlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
+				msg := runTool[map[string]any](t, "get_message", handlers.getMessage, map[string]any{"id": float64(messageID)})
+				assert.Equal(t, tc.hidden, msg["hidden_text_present"])
+				assert.Equal(t, "Previously archived text", msg["body_text"])
+			})
+		}
+	})
+
 	t.Run("sender-id-only message", func(t *testing.T) {
 		f := storetest.New(t)
 		senderID := f.EnsureParticipant("sender@example.com", "Test Sender", "example.com")
@@ -2993,6 +3018,56 @@ func TestAccountFilter(t *testing.T) {
 		})
 		assert.Len(t, resp.Data, 1, "data")
 	})
+}
+
+func TestSearchInMessageHiddenHTMLText(t *testing.T) {
+	for _, tc := range []struct {
+		name, html, mode string
+		offset, matches  int
+		hidden           bool
+	}{
+		{"hidden keyword", `<div hidden>semantic body</div>`, "keyword", 0, 1, true},
+		{"hidden keyword exhausted", `<div hidden>semantic body</div>`, "keyword", 99, 0, true},
+		{"visible keyword", `<p>semantic body</p>`, "keyword", 0, 1, false},
+		{"hidden vector", `<div hidden>semantic body</div>`, searchModeVector, 0, 1, true},
+		{"hidden vector exhausted", `<div hidden>semantic body</div>`, searchModeVector, 99, 0, true},
+		{"visible vector", `<p>semantic body</p>`, searchModeVector, 0, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := storetest.New(t)
+			id := f.CreateMessage("stored-html")
+			require.NoError(f.Store.UpsertMessageBody(id,
+				sql.NullString{String: "semantic body", Valid: true},
+				sql.NullString{String: tc.html, Valid: true}))
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
+			require.NoError(err)
+			h := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
+			if tc.mode == searchModeVector {
+				h.vectorCfg = testSimilarVectorConfig()
+				backend := &fakeBackend{
+					active: testSimilarActiveGeneration(h.vectorCfg),
+					chunkHits: map[int64][]vector.ChunkHit{
+						id: {{ChunkCharStart: 0, ChunkCharEnd: len("semantic body"), Score: 0.9}},
+					},
+				}
+				h.backend = backend
+				h.hybridEngine = hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+					ExpectedFingerprint: h.vectorCfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
+				})
+			}
+			resp := runTool[struct {
+				paginatedInMessageMatches
+
+				HiddenTextPresent *bool `json:"hidden_text_present"`
+			}](t, "search_in_message", h.searchInMessage, map[string]any{
+				"id": float64(id), "query": "semantic", "mode": tc.mode, "offset": float64(tc.offset),
+			})
+			require.NotNil(resp.HiddenTextPresent)
+			assert.Equal(tc.hidden, *resp.HiddenTextPresent)
+			assert.Len(resp.Data, tc.matches)
+		})
+	}
 }
 
 func TestSearchInMessage(t *testing.T) {

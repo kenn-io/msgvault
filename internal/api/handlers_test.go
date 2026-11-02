@@ -4363,6 +4363,7 @@ func TestHandleGetMessage(t *testing.T) {
 	srv, mock := newTestServerWithMockStore(t)
 	mock.messages[0].RelatedMessageID = new(int64(43))
 	mock.messages[0].ConversationTitle = "Team chat"
+	mock.messages[0].HiddenTextPresent = true
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
@@ -4379,6 +4380,7 @@ func TestHandleGetMessage(t *testing.T) {
 	assert.Equal("Test Subject", resp.Subject, "subject")
 	assert.Equal("Team chat", resp.ConversationTitle, "conversation title")
 	assert.Equal("This is the full message body text.", resp.Body, "body")
+	assert.True(resp.HiddenTextPresent)
 }
 
 func TestHandleGetMessageNotFound(t *testing.T) {
@@ -4412,17 +4414,18 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 	engine := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			42: {
-				ID:               42,
-				RelatedMessageID: new(int64(43)),
-				SourceMessageID:  "source-42",
-				Subject:          "HTML Email",
-				IsFromMe:         true,
-				From:             []query.Address{{Email: "sender@example.com", Name: "Sender"}},
-				To:               []query.Address{{Email: "rcpt@example.com"}},
-				SentAt:           time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
-				Labels:           []string{"INBOX"},
-				BodyText:         "plain fallback",
-				BodyHTML:         "<p>Hello</p>",
+				ID:                42,
+				RelatedMessageID:  new(int64(43)),
+				SourceMessageID:   "source-42",
+				Subject:           "HTML Email",
+				IsFromMe:          true,
+				From:              []query.Address{{Email: "sender@example.com", Name: "Sender"}},
+				To:                []query.Address{{Email: "rcpt@example.com"}},
+				SentAt:            time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+				Labels:            []string{"INBOX"},
+				BodyText:          "plain fallback",
+				BodyHTML:          "<p>Hello</p>",
+				HiddenTextPresent: true,
 			},
 		},
 	}
@@ -4438,6 +4441,7 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
 	assert.Equal("plain fallback", resp["body"], "body")
 	assert.Equal("<p>Hello</p>", resp["body_html"], "body_html")
+	assert.Equal(true, resp["hidden_text_present"])
 	assert.Equal("source-42", resp["source_message_id"], "source_message_id")
 	assert.Equal("HTML Email", resp["subject"], "subject")
 	assert.Equal("Sender <sender@example.com>", resp["from"], "from")
