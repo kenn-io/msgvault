@@ -384,14 +384,15 @@ describe('AttributeDefinitionDialog', () => {
       if (request.method === 'POST') return new Promise<Response>(resolve => { resolvePost = resolve; });
       return Response.json({ definitions: [definition({ id: 99, universal_id: 'decoy-id', slug: 'stream_field' })] });
     });
-    const profile = controller(fetchFn);
+    const client = createAPIClient(fetchFn);
+    const profile = new DirectoryProfileController(client, 7, { definitions: { definitions: [] }, etags: {}, errors: {} });
     const view = render(AttributeDefinitionDialog, { controller: profile, onClose: vi.fn() });
     try {
       await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unidentified field' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
       await waitFor(() => expect(resolvePost).toBeDefined());
       if (shape === 'with an interrupted body') {
-        const concurrentProfile = new DirectoryProfileController(createAPIClient(fetchFn), 8, { definitions: { definitions: [] }, etags: {}, errors: {} });
+        const concurrentProfile = new DirectoryProfileController(client, 8, { definitions: { definitions: [] }, etags: {}, errors: {} });
         try { await concurrentProfile.reloadDefinitions(); }
         finally { concurrentProfile.destroy(); }
         expect(profile.definitionCreationCommit).toBeNull();
