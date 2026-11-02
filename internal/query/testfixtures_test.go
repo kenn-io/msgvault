@@ -1011,7 +1011,7 @@ func escapePath(p string) string {
 // writeTableParquet writes a single table's data to a Parquet file using DuckDB.
 func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, empty bool) {
 	tb.Helper()
-	_, err := db.Exec("CREATE OR REPLACE TABLE fixture_values AS SELECT * FROM (VALUES " + values + ")")
+	_, err := db.Exec("CREATE TABLE fixture_values AS SELECT * FROM (VALUES " + values + ")")
 	require.NoError(tb, err, "parse fixture values for %s", path)
 	valueRows, err := db.Query("SELECT * FROM fixture_values LIMIT 0")
 	require.NoError(tb, err, "read fixture values for %s", path)
