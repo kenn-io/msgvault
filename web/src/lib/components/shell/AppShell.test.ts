@@ -2263,7 +2263,8 @@ describe('AppShell', () => {
       if (path === '/api/v1/relationships/1/calendar') return Response.json({
         participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC',
         annual: [], days: [], cache_revision: 'cache-1', identity_revision: 1, score_version: 1,
-        effective_date: '2026-07-18', scoring_timezone: 'UTC'
+        effective_date: '2026-07-18', scoring_timezone: 'UTC', peak_temperature: 50, peak_year: 2026,
+        current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }
       });
       if (/\/conversations\/[12]$/.test(path)) {
         const id = Number(path.split('/').at(-1));
