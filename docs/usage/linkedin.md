@@ -44,7 +44,9 @@ Connections preambles are skipped. Every message needs a valid date. A DM
 without a conversation ID stays in its own conversation. Malformed CSV or an
 invalid date stops the import with the file type and record number; completed
 rows remain available. Each CSV is limited to 64 MiB, including when compressed.
-ZIP entries are read in place. Directory imports skip symbolic links.
+ZIP entries are read in place. Directory imports skip symbolic links. Recipient
+URL lists retain empty positions. When names and URLs cannot be aligned, a
+record error stops the import instead of dropping recipients.
 
 Message attachment URLs, post links, shared URLs, and media URLs remain link
 attachments. msgvault does not download their content, and the links may
@@ -53,10 +55,11 @@ expire. Unknown export columns are retained in the archived raw row.
 ## Repeat imports and drafts
 
 Run the same command with a newer ZIP or folder. DMs match on conversation ID,
-sender identity, UTC date, and a content hash. Reordered rows and repeated
-exports update existing messages, and new rows are added. A changed message
-body creates a separate message because the export has no stable message ID.
-Posts match by URL when present; comments match by post URL, date, and content.
+sender identity, UTC date, and a hash of the text and attachment links. Without
+a conversation ID, the key also includes the recipients in a stable order.
+Reordered rows and repeated exports update existing messages, and new rows are
+added. A change to the text or attachment links creates a separate message
+because the export has no stable message ID. Posts match by URL when present; comments match by post URL, date, and content.
 Absent rows never delete archived messages.
 
 An interrupted or failed import can be repeated from the start. Existing

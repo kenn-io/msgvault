@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -228,28 +229,66 @@ func (imp *importer) connection(ctx context.Context, r row) error {
 	return err
 }
 
-func splitList(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool { return r == ';' || r == ',' || r == '\n' })
+// splitRecipientList keeps empty positions so a missing profile URL cannot
+// shift the name-to-URL association of the remaining recipients.
+func splitRecipientList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	separator := ","
+	if strings.Contains(value, ";") {
+		separator = ";"
+	} else if strings.Contains(value, "\n") {
+		separator = "\n"
+	}
+	parts := strings.Split(value, separator)
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
 }
 
-func recipients(r row) []actor {
-	urls := splitURLs(r["recipient profile urls"])
-	names := splitList(r["to"])
+func recipients(r row) ([]actor, error) {
+	urls := splitRecipientList(r["recipient profile urls"])
+	names := splitRecipientList(r["to"])
+	if len(urls) > 0 && len(names) > 0 && len(urls) != len(names) {
+		return nil, errors.New("recipient names and profile URL positions differ; cannot align recipients")
+	}
 	var out []actor
-	if len(urls) > 0 {
-		for i, u := range urls {
-			a := actor{URL: strings.TrimSpace(u)}
-			if len(names) == len(urls) {
-				a.Name = strings.TrimSpace(names[i])
-			}
+	for i := range max(len(urls), len(names)) {
+		var a actor
+		if i < len(urls) {
+			a.URL = urls[i]
+		}
+		if i < len(names) {
+			a.Name = names[i]
+		}
+		if a.URL != "" || a.Name != "" {
 			out = append(out, a)
 		}
-	} else {
-		for _, name := range names {
-			out = append(out, actor{Name: strings.TrimSpace(name)})
-		}
 	}
-	return out
+	return out, nil
+}
+
+func actorKey(a actor) (string, error) {
+	if a.URL == "" {
+		return "name:" + strings.TrimSpace(a.Name), nil
+	}
+	profile, err := ProfileURL(a.URL)
+	return "profile:" + profile, err
+}
+
+func recipientKey(people []actor) (string, error) {
+	keys := make([]string, 0, len(people))
+	for _, person := range people {
+		key, err := actorKey(person)
+		if err != nil {
+			return "", err
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return digest(slices.Compact(keys)...), nil
 }
 
 func isTrue(s string) bool {
@@ -295,32 +334,48 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	switch kind {
 	case "messages.csv":
 		sender = actor{URL: strings.TrimSpace(r["sender profile url"]), Name: r["from"]}
-		to = recipients(r)
+		to, err = recipients(r)
+		if err != nil {
+			return err
+		}
 		body, subject, title = r["content"], r["subject"], r["conversation title"]
 		convType = "direct_chat"
 		if len(to) > 1 {
 			convType = "group_chat"
 		}
-		senderKey := sender.URL
-		if senderKey != "" {
-			senderKey, err = ProfileURL(senderKey)
+		senderKey, err := actorKey(sender)
+		if err != nil {
+			return err
+		}
+		attachments := splitURLs(r["attachments"])
+		slices.Sort(attachments)
+		contentKey := body
+		if len(attachments) > 0 {
+			contentKey = digest(body, digest(slices.Compact(attachments)...))
+		} else if body == "" {
+			contentKey = digest(body, subject)
+		}
+		conversation := strings.TrimSpace(r["conversation id"])
+		parts := []string{conversation, senderKey, sent.Format("2006-01-02T15:04:05.999999999Z"), contentKey}
+		if conversation == "" {
+			key, err := recipientKey(to)
 			if err != nil {
 				return err
 			}
-		} else {
-			senderKey = sender.Name
+			parts = append(parts, key)
 		}
-		sourceID = "dm:" + digest(r["conversation id"], senderKey, sent.Format("2006-01-02T15:04:05.999999999Z"), body)
-		thread = "dm:" + strings.TrimSpace(r["conversation id"])
-		if thread == "dm:" {
+		sourceID = "dm:" + digest(parts...)
+		thread = "dm:" + conversation
+		if conversation == "" {
 			thread = sourceID
 		}
+
 	case "shares.csv":
 		body = r["sharecommentary"]
 		post = linkURL(r["sharelink"])
 		sourceID = "post:" + postKey(post)
 		if post == "" {
-			sourceID = "post:" + digest(sent.String(), body)
+			sourceID = "post:" + digest(sent.String(), body, strings.TrimSpace(r["sharedurl"]), strings.TrimSpace(r["mediaurl"]))
 		}
 		thread = sourceID
 		title = snippet(body)
@@ -374,9 +429,10 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	}
 	var labelIDs []int64
 	label := r["folder"]
-	if kind == "comments.csv" {
+	switch kind {
+	case "comments.csv":
 		label = "Comments"
-	} else if kind == "shares.csv" {
+	case "shares.csv":
 		label = "Shares"
 	}
 	if label != "" {
@@ -430,6 +486,14 @@ func (imp *importer) message(ctx context.Context, kind string, r row) error {
 	}
 	if err := imp.st.ReplaceMessageLinkAttachments(id, links); err != nil {
 		return err
+	}
+	if err := imp.st.RecomputeMessageAttachmentStatsContext(ctx, id); err != nil {
+		return err
+	}
+	if reply.Valid {
+		if err := imp.st.SetMessageReplyContext(ctx, id, reply.Int64); err != nil {
+			return err
+		}
 	}
 	if kind == "shares.csv" {
 		imp.roots[thread] = id

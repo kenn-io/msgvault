@@ -26,8 +26,7 @@ Attachment URLs are archived as links; no network requests are made.`,
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 		// Proxied failures have already been rendered by the daemon subprocess.
-		var proxied proxiedChildError
-		if errors.As(err, &proxied) {
+		if _, ok := errors.AsType[proxiedChildError](err); ok {
 			return err
 		}
 		hint := "use 'msgvault import linkedin <identifier> <archive> --me <profile-url>'; repeat an interrupted import to continue"
@@ -100,7 +99,10 @@ func runImportLinkedIn(cmd *cobra.Command, sourcePath string, opts linkedin.Opti
 		return printJSONTo(cmd.OutOrStdout(), summary)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Import complete!\n  Messages: %d added, %d updated\n  Drafts skipped: %d\n  Connections: %d\n", summary.MessagesAdded, summary.MessagesUpdated, summary.DraftsSkipped, summary.ConnectionsProcessed)
-	return err
+	if err != nil {
+		return fmt.Errorf("write LinkedIn import summary: %w", err)
+	}
+	return nil
 }
 
 func init() {
