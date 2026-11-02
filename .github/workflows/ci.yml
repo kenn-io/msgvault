@@ -566,23 +566,28 @@ jobs:
         shell: bash
         run: kit-retry 3 5 C:/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
-      # Run the same custom linter as `make custom-gcl` from PowerShell.
-      - name: Lint
+      # Build the same custom linter as `make custom-gcl` from PowerShell.
+      # Two runs lost their runner inside this work with no log. GitHub still
+      # records when each step starts, so separate steps show whether the
+      # runner went silent while building or while linting.
+      - name: Build custom linter
         shell: pwsh
-        env:
+        env: &windows-lint-env
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
           GOFLAGS: "-buildvcs=false -trimpath"
-          # Uncapped, a cold-cache run peaks near 10 GB of the runner's
-          # 16 GB, and a runner lost contact mid-lint. 6GiB holds the peak
-          # under 7 GB for about 5% more lint time.
-          GOMEMLIMIT: 6GiB
         run: |
           $version = (Select-String -Path .custom-gcl.yml -Pattern '^version: (\S+)').Matches[0].Groups[1].Value
           bash -c 'kit-retry 3 5 go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$1" custom --destination "$2" --name custom-gcl' -- "$version" "$env:RUNNER_TEMP"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$env:RUNNER_TEMP/custom-gcl.exe" run ./...
+
+      - name: Lint
+        shell: pwsh
+        env: *windows-lint-env
+        # -v logs peak memory and lint time, which shows how close a normal
+        # run comes to the runner's 16 GB.
+        run: '& "$env:RUNNER_TEMP/custom-gcl.exe" run -v ./...'
 
   test-windows-slow-packages:
     needs: changes
