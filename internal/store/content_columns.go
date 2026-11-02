@@ -76,6 +76,7 @@ var MessagesNonContentColumns = []string{
 	// attribution provenance migration for no reader-visible difference.
 	"source_is_from_me",
 	"identity_is_from_me",
+	"hidden_text_present", // derived HTML detector result; the body write tracks content
 	// Account attribution is a derived routing projection, absent from
 	// ChangedMessage. The cache journal invalidates account filters.
 	"account_address",

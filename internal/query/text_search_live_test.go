@@ -49,6 +49,7 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 			sent_at DATETIME,
 			size_estimate INTEGER DEFAULT 0,
 			has_attachments INTEGER DEFAULT 0,
+			hidden_text_present BOOLEAN NOT NULL DEFAULT 0,
 			attachment_count INTEGER DEFAULT 0,
 			deleted_at DATETIME,
 			deleted_from_source_at DATETIME,

@@ -2669,6 +2669,14 @@ type SearchPeopleErrorResponse = ErrorResponse
 
 type SearchPeopleErrorResponseJSON = ErrorResponse
 
+type PreviewPersonTiersResponse = PersonTierPreview
+
+type PreviewPersonTiersErrorResponse = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSON = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSONDefault = ErrorResponse
+
 type DeletePersonErrorResponse = ErrorResponse
 
 type DeletePersonErrorResponseJSON = ErrorResponse
@@ -3190,6 +3198,16 @@ type SplitPersonMergeErrorResponseJSON500 = ErrorResponse
 type SplitPersonMergeErrorResponseJSON503 = ErrorResponse
 
 type SplitPersonMergeErrorResponseJSONDefault = ErrorResponse
+
+type ExplainPersonTierResponse = PersonTierExplanation
+
+type ExplainPersonTierErrorResponse = ErrorResponse
+
+type ExplainPersonTierErrorResponseJSON = ErrorResponse
+
+type ExplainPersonTierErrorResponseJSON503 = ErrorResponse
+
+type ExplainPersonTierErrorResponseJSONDefault = ErrorResponse
 
 type GetPersonTrackingResponse = PersonTracking
 
@@ -6425,6 +6443,16 @@ type SearchPeopleResp struct {
 	JSONDefault  *SearchPeopleErrorResponseJSON
 }
 
+type PreviewPersonTiersResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewPersonTiersResponse
+	JSON409      *PreviewPersonTiersErrorResponse
+	JSON503      *PreviewPersonTiersErrorResponseJSON
+	JSONDefault  *PreviewPersonTiersErrorResponseJSONDefault
+}
+
 type DeletePersonResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6936,6 +6964,17 @@ type SplitPersonMergeResp struct {
 	JSON500      *SplitPersonMergeErrorResponseJSON500
 	JSON503      *SplitPersonMergeErrorResponseJSON503
 	JSONDefault  *SplitPersonMergeErrorResponseJSONDefault
+}
+
+type ExplainPersonTierResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ExplainPersonTierResponse
+	JSON404      *ExplainPersonTierErrorResponse
+	JSON409      *ExplainPersonTierErrorResponseJSON
+	JSON503      *ExplainPersonTierErrorResponseJSON503
+	JSONDefault  *ExplainPersonTierErrorResponseJSONDefault
 }
 
 type GetPersonTrackingResp struct {

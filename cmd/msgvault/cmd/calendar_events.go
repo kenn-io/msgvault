@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.26.0"
+const calendarEventsMinAPISchemaVersion = "3.33.0"
 const calendarEventDeletedStatus = "deleted"
 
 type calendarEventsClient interface {
@@ -40,8 +40,18 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print occurrences and attendees as JSON")
 	_ = command.MarkFlagRequired("from")
 	_ = command.MarkFlagRequired("to")
+	// Shadow the live-command flags with hidden local copies so help does not
+	// offer them; RunE still rejects them if passed.
+	liveOnly := []string{"account", "dry-run", "read-only", "send-updates"}
+	command.Flags().String("account", "", "")
+	command.Flags().String("send-updates", "", "")
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().Bool("read-only", false, "")
+	for _, name := range liveOnly {
+		_ = command.Flags().MarkHidden(name)
+	}
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		for _, name := range []string{"account", "dry-run", "read-only", "send-updates"} {
+		for _, name := range liveOnly {
 			if cmd.Flags().Changed(name) {
 				return usageErr(cmd, fmt.Errorf("--%s is only valid for live calendar commands", name))
 			}
@@ -67,7 +77,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			return err
 		}
 		if !daemonclient.APISchemaVersionAtLeast(version, calendarEventsMinAPISchemaVersion) {
-			return errors.New("calendar events require daemon API schema 3.26.0 or newer")
+			return fmt.Errorf("calendar events require daemon API schema %s or newer", calendarEventsMinAPISchemaVersion)
 		}
 		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), bounds[0], bounds[1])
 		if err != nil {

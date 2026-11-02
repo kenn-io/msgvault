@@ -69,6 +69,7 @@ type APIMessage struct {
 	Snippet              string
 	Labels               []string
 	HasAttachments       bool
+	HiddenTextPresent    bool
 	SizeEstimate         int64
 	DeletedAt            *time.Time
 	Body                 string
@@ -149,6 +150,7 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
+			m.hidden_text_present,
 			m.size_estimate
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
@@ -233,6 +235,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
+			m.hidden_text_present,
 			m.size_estimate,
 			m.is_from_me,
 			m.deleted_from_source_at,
@@ -272,6 +275,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&sentAt,
 		&m.Snippet,
 		&m.HasAttachments,
+		&m.HiddenTextPresent,
 		&m.SizeEstimate,
 		&isFromMe,
 		&deletedAt,
@@ -420,6 +424,7 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
+			m.hidden_text_present,
 			m.size_estimate
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
@@ -898,6 +903,7 @@ func (s *Store) searchMessagesQueryImpl(
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
+			m.hidden_text_present,
 			m.size_estimate
 		FROM messages m
 		%s
@@ -994,6 +1000,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
+			m.hidden_text_present,
 			m.size_estimate
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
@@ -1093,7 +1100,7 @@ func (r *requiredTimestamp) Scan(src any) error {
 // scanMessageRows scans the standard message row set
 // (id, source_id, source_message_id, conversation_id, source_conversation_id, subject,
 // message_type, from_display, from_email, from_name, from_phone, sent_at,
-// snippet, has_attachments, size_estimate). All SELECT statements that feed
+// snippet, has_attachments, hidden_text_present, size_estimate). All SELECT statements that feed
 // this scanner must produce the same column order.
 // Timestamps go through nullableTimestamp because the sent_at column
 // is a COALESCE(m.sent_at, m.received_at, m.internal_date) computed
@@ -1121,6 +1128,7 @@ func scanMessageRows(rows *loggedRows) ([]APIMessage, []int64, error) {
 			&sentAt,
 			&m.Snippet,
 			&m.HasAttachments,
+			&m.HiddenTextPresent,
 			&m.SizeEstimate,
 		)
 		if err != nil {

@@ -464,7 +464,7 @@ func (p *Parser) parse(queryStr string, pipeOR bool) *Query {
 	if p.Now != nil {
 		now = p.Now()
 	}
-	tokens, pipes := tokenize(queryStr, pipeOR)
+	tokens, pipes, _ := tokenize(queryStr, pipeOR)
 	if !pipeOR {
 		return parseConjunction(tokens, now)
 	}
@@ -546,6 +546,15 @@ func ParseWithOR(queryStr string, allowOR bool) *Query {
 	return Parse(queryStr)
 }
 
+// LiteralORWarnings reports a likely Gmail-style OR interpreted as a text term.
+func LiteralORWarnings(query string) []string {
+	_, _, found := tokenize(query, true)
+	if found {
+		return []string{`OR was matched as a literal word; use " | " between alternatives.`}
+	}
+	return nil
+}
+
 // splitOperatorToken recognizes Gmail-style operator:value tokens and the
 // message_type=value form used by HTTP callers that mirror the API parameter.
 func splitOperatorToken(token string) (op, value string, ok bool) {
@@ -605,7 +614,8 @@ func IsStandalonePipe(query string, i int) bool {
 
 // tokenize splits a query string, preserving quoted phrases and operator:value pairs.
 // Handles cases like subject:"foo bar" where the operator and quoted value should stay together.
-func tokenize(queryStr string, pipeOR bool) ([]string, []int) {
+func tokenize(queryStr string, pipeOR bool) ([]string, []int, bool) {
+	literalOR := false
 	var tokens []string
 	var pipes []int
 	var current strings.Builder
@@ -632,6 +642,7 @@ func tokenize(queryStr string, pipeOR bool) ([]string, []int) {
 			opQuoted = afterColon
 			// If we just saw a colon, keep building the same token (op:"value" case)
 			if !afterColon && current.Len() > 0 {
+				literalOR = literalOR || current.String() == "OR"
 				tokens = append(tokens, current.String())
 				current.Reset()
 			}
@@ -658,6 +669,7 @@ func tokenize(queryStr string, pipeOR bool) ([]string, []int) {
 			opQuoted = false
 		} else if pipeOR && !inQuotes && IsStandalonePipe(queryStr, i) {
 			if current.Len() > 0 {
+				literalOR = literalOR || current.String() == "OR"
 				tokens = append(tokens, current.String())
 				current.Reset()
 			}
@@ -666,6 +678,7 @@ func tokenize(queryStr string, pipeOR bool) ([]string, []int) {
 			afterColon = false
 		} else if char == ' ' && !inQuotes {
 			if current.Len() > 0 {
+				literalOR = literalOR || current.String() == "OR"
 				tokens = append(tokens, current.String())
 				current.Reset()
 			}
@@ -677,12 +690,13 @@ func tokenize(queryStr string, pipeOR bool) ([]string, []int) {
 	}
 
 	if current.Len() > 0 {
+		literalOR = literalOR || (!inQuotes && current.String() == "OR")
 		// If we're still inside an unterminated quote, emit what we have
 		// as a plain token so the user's input is not silently dropped.
 		tokens = append(tokens, current.String())
 	}
 
-	return tokens, pipes
+	return tokens, pipes, literalOR
 }
 
 // parseDate parses exact RFC3339 timestamps and date-only forms.

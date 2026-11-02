@@ -264,6 +264,8 @@ func TestDirectoryPeopleHTTPMapsEveryQueryParameter(t *testing.T) {
 		path string
 	}{
 		{name: "query", path: peoplePath + "/directory?q=alcie"},
+		{name: "address", path: peoplePath + "/directory?address=ALICE%40example.test"},
+		{name: "combined query and address", path: peoplePath + "/directory?q=alcie&address=alice%40example.test"},
 		{name: "contact state", path: peoplePath + "/directory?contact_state=active"},
 		{name: "category", path: peoplePath + "/directory?category=friend"},
 		{name: "organization", path: peoplePath + "/directory?organization=Acme"},
