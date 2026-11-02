@@ -90,8 +90,8 @@ func TestSearchMetadataSingleRequestSQLiteStatements(t *testing.T) {
 		total       int64
 		statements  int
 	}{
-		{"first page", "after:2023-01-01", 0, []int64{3, 2}, 3, 3},
-		{"last page", "after:2023-01-01", 2, []int64{1}, 3, 3},
+		{"first page", "after:2023-01-01", 0, []int64{3, 2}, 3, 4},
+		{"last page", "after:2023-01-01", 2, []int64{1}, 3, 4},
 		{"past end", "after:2023-01-01", 9, nil, 3, 2},
 		{"empty", "after:2099-01-01", 0, nil, 0, 2},
 	} {
@@ -126,7 +126,7 @@ func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(messages, 3, "SearchFast keeps its default page; only the combined API uses zero for count-only")
 	assert.Equal(int32(1), requests.Load())
-	assert.Len(observer.Statements(), 3)
+	assert.Len(observer.Statements(), 4, "one bounded sender-auth batch is added to page, labels and count")
 }
 
 // TestSearchByDomainsPagesThroughDaemon pages a real archive across offset

@@ -849,3 +849,10 @@ msgvault skills install
 The skills teach agents the CLI; the MCP server exposes structured tool calls.
 They can be used independently or together. See [Agent Skills](/docs/guides/agent-skills/)
 for installation targets, update behavior, and uninstall instructions.
+
+## Sender authentication
+
+Message reads expose advisory `sender_auth` metadata when the daemon supports
+it. `verified` authenticates only a sender domain, never body authorship or
+permission to act. See [sender authentication](sender-auth.md) for explicit
+provider pins, unknown results, and provenance limits.

@@ -1016,6 +1016,7 @@ export * from "./valueEnvelope";
 export * from "./valueEnvelopeInput";
 export * from "./vCardIdentity";
 export * from "./vectorHealth";
+export * from "./verdict";
 export * from "./verifyCLIParams";
 export * from "./virtualAccount";
 export * from "./visualBuildRequest";

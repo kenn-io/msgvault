@@ -924,6 +924,7 @@ type CLIQueryMessageSummary struct {
 	Labels               []string   `json:"labels" validate:"required"`
 	MatchSnippet         *string    `json:"match_snippet,omitzero"`
 	MessageType          *string    `json:"message_type,omitzero"`
+	SenderAuth           *Verdict   `json:"sender_auth,omitempty"`
 	SentAt               time.Time  `json:"sent_at" validate:"required"`
 	SizeEstimate         int64      `json:"size_estimate"`
 	Snippet              string     `json:"snippet" validate:"required"`
@@ -959,6 +960,13 @@ func (c CLIQueryMessageSummary) Validate() error {
 	}
 	if err := typesValidator.Var(c.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	if c.SenderAuth != nil {
+		if v, ok := any(c.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
@@ -2613,6 +2621,7 @@ type CliMessageResponse struct {
 	ReceivedAt           *time.Time             `json:"received_at" validate:"required"`
 	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
+	SenderAuth           *Verdict               `json:"sender_auth,omitempty"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
@@ -2688,6 +2697,13 @@ func (c CliMessageResponse) Validate() error {
 	if c.ReceivedAt != nil {
 		if err := typesValidator.Var(c.ReceivedAt, "required"); err != nil {
 			errors = errors.Append("ReceivedAt", err)
+		}
+	}
+	if c.SenderAuth != nil {
+		if v, ok := any(c.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
@@ -6292,6 +6308,7 @@ type HybridSearchItem struct {
 	MatchesTruncated  *bool               `json:"matches_truncated,omitempty"`
 	MessageType       *string             `json:"message_type,omitzero"`
 	Score             *ScoreBreakdown     `json:"score,omitempty"`
+	SenderAuth        *Verdict            `json:"sender_auth,omitempty"`
 	SentAt            string              `json:"sent_at" validate:"required"`
 	SizeBytes         int64               `json:"size_bytes"`
 	Snippet           string              `json:"snippet" validate:"required"`
@@ -6320,6 +6337,13 @@ func (h HybridSearchItem) Validate() error {
 		if v, ok := any(h.Score).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Score", err)
+			}
+		}
+	}
+	if h.SenderAuth != nil {
+		if v, ok := any(h.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
 			}
 		}
 	}
@@ -7888,6 +7912,7 @@ type MessageDetail struct {
 	Labels            []string `json:"labels" validate:"required"`
 	MessageType       *string  `json:"message_type,omitzero"`
 	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
+	SenderAuth        *Verdict `json:"sender_auth,omitempty"`
 	SentAt            string   `json:"sent_at" validate:"required"`
 	SizeBytes         int64    `json:"size_bytes"`
 	Snippet           string   `json:"snippet" validate:"required"`
@@ -7924,6 +7949,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	if m.SenderAuth != nil {
+		if v, ok := any(m.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
@@ -8061,6 +8093,7 @@ type MessageSummary struct {
 	ID                int64    `json:"id"`
 	Labels            []string `json:"labels" validate:"required"`
 	MessageType       *string  `json:"message_type,omitzero"`
+	SenderAuth        *Verdict `json:"sender_auth,omitempty"`
 	SentAt            string   `json:"sent_at" validate:"required"`
 	SizeBytes         int64    `json:"size_bytes"`
 	Snippet           string   `json:"snippet" validate:"required"`
@@ -8071,7 +8104,36 @@ type MessageSummary struct {
 }
 
 func (m MessageSummary) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.From, "required"); err != nil {
+		errors = errors.Append("From", err)
+	}
+	if err := typesValidator.Var(m.Labels, "required"); err != nil {
+		errors = errors.Append("Labels", err)
+	}
+	if m.SenderAuth != nil {
+		if v, ok := any(m.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
+		errors = errors.Append("SentAt", err)
+	}
+	if err := typesValidator.Var(m.Snippet, "required"); err != nil {
+		errors = errors.Append("Snippet", err)
+	}
+	if err := typesValidator.Var(m.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(m.To, "required"); err != nil {
+		errors = errors.Append("To", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MessageTag struct {
@@ -16269,6 +16331,7 @@ type ThreadMessage struct {
 	From                []Address  `json:"from" validate:"required"`
 	HasRaw              bool       `json:"has_raw"`
 	ID                  int64      `json:"id"`
+	SenderAuth          *Verdict   `json:"sender_auth,omitempty"`
 	SentAt              *time.Time `json:"sent_at,omitempty"`
 	SourceMessageID     string     `json:"source_message_id" validate:"required"`
 	Subject             string     `json:"subject" validate:"required"`
@@ -16294,6 +16357,13 @@ func (t ThreadMessage) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("From[%d]", i), err)
+			}
+		}
+	}
+	if t.SenderAuth != nil {
+		if v, ok := any(t.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
 			}
 		}
 	}
@@ -16553,6 +16623,21 @@ type VectorHealth struct {
 }
 
 func (v VectorHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type Verdict struct {
+	AuthservID     *string `json:"authserv_id,omitzero"`
+	Basis          string  `json:"basis" validate:"required"`
+	Dkim           *string `json:"dkim,omitzero"`
+	Dmarc          *string `json:"dmarc,omitzero"`
+	Kind           string  `json:"kind" validate:"required"`
+	Spf            *string `json:"spf,omitzero"`
+	Verified       bool    `json:"verified"`
+	VerifiedDomain *string `json:"verified_domain,omitzero"`
+}
+
+func (v Verdict) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
