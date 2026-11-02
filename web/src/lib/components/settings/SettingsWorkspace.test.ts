@@ -305,7 +305,7 @@ describe('SettingsWorkspace', () => {
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
     const names = [...window.document.querySelectorAll('.kit-settings__nav-item')].map((item) => item.textContent?.trim());
     expect(names).toEqual([
-      'Overview', 'Server', 'Search & AI', 'People lookups', 'Tasks', 'Contacts', 'Sources', 'Advanced'
+      'Overview', 'Server', 'Search & AI', 'People lookups', 'People', 'Tasks', 'Contacts', 'Sources', 'Advanced'
     ]);
   });
 

@@ -277,18 +277,17 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network list and visualization have no axe violations', async ({ page }) => {
+test('Directory network graph has no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Network' }).click();
-  await expect(page.getByRole('list', { name: 'Directory network connections' })).toContainText('Curated Peer');
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const graph = page.getByRole('region', { name: 'Network graph' });
+  await expect(graph).toBeVisible();
   await assertNoViolations(page, 'Directory network');
 });
 
-const PERSON_SECTIONS = [
-  'Overview', 'Profile', 'Organizations', 'Connections', 'Network', 'Media & files', 'Maintenance'
-];
+const PERSON_SECTIONS = ['Messages', 'Files', 'Details'];
 
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme} Directory filters and every person section have no axe violations`, async ({ page }) => {
@@ -307,11 +306,12 @@ for (const theme of ['light', 'dark'] as const) {
     await assertNoViolations(page, `Directory filters ${theme}`);
 
     await directory.getByRole('row', { name: /Archive Person/ }).click();
-    const detail = page.getByRole('complementary', { name: 'Person detail' });
+    const detail = page.getByRole('group', { name: 'Person page' });
     await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
     for (const section of PERSON_SECTIONS) {
-      await detail.getByRole('tab', { name: section }).click();
-      await expect(detail.getByRole('tabpanel', { name: section })).toBeVisible();
+      const tab = detail.getByRole('radiogroup', { name: 'Person tabs' }).getByRole('radio', { name: section, exact: true });
+      await tab.click();
+      await expect(tab).toBeChecked();
       await assertNoViolations(page, `Person ${section} ${theme}`);
     }
   });
@@ -362,7 +362,8 @@ test('Directory profile maintenance is accessible at desktop and narrow widths',
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryPersonID: 42
     }))}`);
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Keep this profile updated', exact: true }).click();
     const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
     await expect(maintenance.getByRole('switch', {
       name: 'Track this person for profile maintenance'
@@ -420,8 +421,9 @@ test('Directory review, merge, split, and honest Fact gate have no axe violation
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
     workspace: 'directory', directoryPersonID: 7
   }))}`);
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
-  const history = page.getByRole('table', { name: 'Person merge history' });
+  await page.getByRole('button', { name: 'More actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+  const history = page.getByRole('list', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   await history.getByRole('button', { name: 'Inspect merge 41' }).click();
   await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
@@ -537,7 +539,8 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryPersonID: 42
     }))}`);
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Publish to address book', exact: true }).click();
     const publication = page.getByRole('region', { name: 'CardDAV publication' });
     await expect(publication).toContainText('Not published');
     await expect(publication).toContainText('Desired publication: Unpublished');
