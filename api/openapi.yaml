@@ -5422,6 +5422,7 @@ components:
         - kind
         - year
         - month
+        - day
       type: string
     ExploreGroupRow:
       additionalProperties: true
@@ -5438,6 +5439,14 @@ components:
           type: string
         latest_at:
           format: date-time
+          type: string
+        level:
+          enum:
+            - NONE
+            - FIRST_QUARTILE
+            - SECOND_QUARTILE
+            - THIRD_QUARTILE
+            - FOURTH_QUARTILE
           type: string
       required:
         - key
@@ -5477,6 +5486,7 @@ components:
         group_key:
           type: string
         grouping:
+          description: Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
           maxItems: 1
@@ -5501,11 +5511,17 @@ components:
             - semantic
             - hybrid
           type: string
+        sent_only:
+          description: Count sent messages only, excluding drafts and unsent items
+          type: boolean
         sort:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
           type: array
+        timezone:
+          description: IANA timezone for day grouping; defaults to UTC
+          type: string
       required:
         - grouping
       type: object

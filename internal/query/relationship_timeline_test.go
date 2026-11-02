@@ -292,7 +292,7 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 	assert.Equal("message:"+strconv.FormatInt(entryWithX, 10), filtered.Rows[0].Key)
 }
 
-// TestRelationshipTimelineExcludesOwnerAbsentEvents pins the timeline to
+// TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents pins the timeline to
 // the ranking's owner-participation rule for event/meeting rows (see
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality for the ranking
 // side): an event or meeting the archive owner never attended — e.g. a
@@ -303,7 +303,7 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 // only through participant_clusters, proving owner-cluster expansion) and a
 // plain owner-absent email from the counterpart both remain — the timeline
 // scopes emails/chats by counterpart membership only, not owner involvement.
-func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
+func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -368,6 +368,11 @@ func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
 	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[1].Key,
 		"a plain email from the counterpart keeps its current owner-independent scope")
 	assert.Equal("email", result.Rows[1].Kind)
+	activity, err := engine.Explore(context.Background(), ExploreRequest{SentOnly: true, PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{xID}}, Page: PageSpec{Limit: 10}})
+	require.NoError(err)
+	require.Len(activity.Rows, 2, "the replacement person timeline preserves direct-owner eligibility")
+	assert.Equal(attendedEventID, *activity.Rows[0].AnchorMessageID)
+	assert.Equal(emailID, *activity.Rows[1].AnchorMessageID)
 }
 
 // TestResolveCanonicalParticipant covers both the linked case (any member ID

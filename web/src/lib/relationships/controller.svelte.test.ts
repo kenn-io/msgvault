@@ -775,7 +775,7 @@ describe('RelationshipsController.openTarget', () => {
     await expect(calendarRequests[0]!.clone().json()).resolves.toEqual({ year: 2026, timezone: 'UTC' });
   });
 
-  it('reopens the full target once on calendar revision drift while preserving the selected year', async () => {
+  it.each(['once', 'every call'] as const)('reopens the full target at most once when the calendar drifts %s while preserving the selected year', async (drift) => {
     let detailCalls = 0;
     let timelineCalls = 0;
     let calendarCalls = 0;
@@ -804,7 +804,7 @@ describe('RelationshipsController.openTarget', () => {
       if (path === '/api/v1/relationships/12/calendar') {
         calendarCalls += 1;
         const body = await request.clone().json() as { year: number };
-        const revision = calendarCalls === 1 ? 1 : 2;
+        const revision = drift === 'every call' ? calendarCalls : calendarCalls === 1 ? 1 : 2;
         return Response.json(calendar(12, body.year, `cache-rel-${revision}`, revision));
       }
       throw new Error(`unexpected path ${path}`);
@@ -815,7 +815,13 @@ describe('RelationshipsController.openTarget', () => {
     await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
 
     await controller.loadRelationshipYear(2025);
-    await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2025));
+    if (drift === 'every call') {
+      await vi.waitFor(() => expect(controller.relationshipCalendarError).toBe('Relationship activity changed again. Retry when the archive settles.'));
+    } else {
+      await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2025));
+      expect(controller.relationshipCalendar?.cache_revision).toBe('cache-rel-2');
+      expect(controller.relationshipCalendarError).toBeNull();
+    }
 
     expect(detailCalls).toBe(2);
     expect(timelineCalls).toBe(2);
@@ -823,8 +829,25 @@ describe('RelationshipsController.openTarget', () => {
     expect(controller.detail).toMatchObject({ activity_count: 2, cache_revision: 'cache-rel-2' });
     expect(controller.timelineRows).toEqual([timelineRow('timeline-2')]);
     expect(controller.identityRevision).toBe(2);
-    expect(controller.relationshipCalendar?.cache_revision).toBe('cache-rel-2');
-    expect(controller.relationshipCalendarError).toBeNull();
+    controller.destroy();
+  });
+
+  it('skips the timeline when withTimeline is false', async () => {
+    let timelineCalls = 0;
+    const client = createAPIClient(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path.endsWith('/timeline')) timelineCalls += 1;
+      if (path.endsWith('/calendar')) return Response.json(calendar(12, 2026, 'cache-rel'));
+      if (path.endsWith('/participants/12')) return Response.json(person(12));
+      return Response.json({ canonical_id: 12, identity_revision: 3, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+    });
+    const controller = new RelationshipsController(client, () => 'UTC');
+    try {
+      await controller.openTarget('cluster:12', { filters: [] }, false);
+      await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
+      expect(timelineCalls).toBe(0);
+    } finally { controller.destroy(); }
   });
 
   it('clamps a preserved calendar year when revision drift moves first activity later', async () => {
@@ -2071,4 +2094,22 @@ describe('RelationshipsController draft-only targets', () => {
     expect.soft(controller.detailMissing).toBe(true);
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
   });
+});
+
+it('keeps the chosen People order on later pages', async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const controller = new RelationshipsController(createAPIClient(async (input) => {
+    const request = input instanceof Request ? input : new Request(input);
+    expect(new URL(request.url).pathname).toBe('/api/v1/participants/search');
+    bodies.push(await request.json());
+    return Response.json({ rows: [person(bodies.length)], total_count: 2, cache_revision: 'cache-rel',
+      ...(bodies.length === 1 ? { next_cursor: 'next' } : {}) });
+  }), () => 'UTC');
+  controller.sort = { field: 'display_label', direction: 'asc' };
+  await controller.loadList({ filters: [], presentation: 'table' });
+  controller.sort = { field: 'latest_at', direction: 'desc' };
+  await controller.loadMoreList();
+  expect(bodies.map((body) => body.sort)).toEqual([{ field: 'display_label', direction: 'asc' }, { field: 'display_label', direction: 'asc' }]);
+  expect(controller.listRows.map((row) => 'id' in row ? row.id : null)).toEqual([1, 2]);
+  controller.destroy();
 });

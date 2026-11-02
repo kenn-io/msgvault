@@ -592,6 +592,12 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 	})
 	requirements.NoError(err)
 	assertions.Equal(files.TotalCount, grouped.Rows[0].Count, "group count must equal filtered Files rows")
+	request.Dimension = timeGranularityDay
+	days, err := engine.GroupFiles(context.Background(), request)
+	requirements.NoError(err)
+	requirements.Len(days.Rows, 1)
+	assertions.Equal("2026-07-18", days.Rows[0].Key)
+	assertions.Equal(int64(2), days.Rows[0].Count)
 }
 
 func TestGroupFilesByMailingList(t *testing.T) {
