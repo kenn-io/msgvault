@@ -191,6 +191,7 @@ describe('ProfileHistoryDialog', () => {
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
     expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
+    expect(await screen.findByRole('heading', { name: 'Merges' })).toBeDefined();
     expect(screen.getByRole('dialog', { name: 'Profile history' })).toBeDefined();
   });
 
