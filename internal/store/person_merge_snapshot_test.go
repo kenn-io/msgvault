@@ -135,21 +135,23 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		query = `SELECT constraints.table_name, columns.column_name
-			FROM information_schema.table_constraints constraints
-			JOIN information_schema.key_column_usage columns
-			  ON columns.constraint_catalog = constraints.constraint_catalog
-			 AND columns.constraint_schema = constraints.constraint_schema
-			 AND columns.constraint_name = constraints.constraint_name
-			JOIN information_schema.constraint_column_usage target
-			  ON target.constraint_catalog = constraints.constraint_catalog
-			 AND target.constraint_schema = constraints.constraint_schema
-			 AND target.constraint_name = constraints.constraint_name
-			WHERE constraints.constraint_type = 'FOREIGN KEY'
-			  AND constraints.table_schema = current_schema()
-			  AND target.table_schema = current_schema()
-			  AND target.table_name = 'persons'
-			ORDER BY constraints.table_name, columns.column_name`
+		// Join foreign keys by catalog OID, then restrict both relation schemas.
+		// The information_schema constraint-name joins become prohibitively
+		// expensive when parallel fixtures populate many copies of the schema.
+		query = `SELECT child.relname, attribute.attname
+			FROM pg_catalog.pg_constraint foreign_key
+			JOIN pg_catalog.pg_class child ON child.oid = foreign_key.conrelid
+			JOIN pg_catalog.pg_namespace child_schema ON child_schema.oid = child.relnamespace
+			JOIN pg_catalog.pg_class target ON target.oid = foreign_key.confrelid
+			JOIN pg_catalog.pg_namespace target_schema ON target_schema.oid = target.relnamespace
+			CROSS JOIN LATERAL unnest(foreign_key.conkey) AS key_column(attnum)
+			JOIN pg_catalog.pg_attribute attribute
+			  ON attribute.attrelid = child.oid AND attribute.attnum = key_column.attnum
+			WHERE foreign_key.contype = 'f'
+			  AND child_schema.nspname = current_schema()
+			  AND target_schema.nspname = current_schema()
+			  AND target.relname = 'persons'
+			ORDER BY child.relname, attribute.attname`
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)
