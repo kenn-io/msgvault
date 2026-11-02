@@ -642,6 +642,34 @@ it('leaving People aborts its pending Save', async () => {
   expect(pending!.signal.aborted).toBe(true);
 });
 
+it('preserves the unfinished bulk link and selection after retrying a stale identity cache', async () => {
+  const pairs: Array<{ participant_a: number; participant_b: number }> = [];
+  const names = ['Alice Example', 'Bob Example', 'Cara Example'];
+  const client = clientFor({
+    '/api/v1/relationships': () => Response.json({ rows: names.map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
+    '/api/v1/identity/links': async request => {
+      pairs.push(await request.json());
+      if (pairs.length === 2) return Response.json({ error: 'internal_error', message: 'Cara link failed' }, { status: 500 });
+      return Response.json({ identity_revision: 2, cache_state: pairs.length === 1 ? 'stale' : 'ready' });
+    },
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('1 of 2 linked.'));
+    expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry identity cache' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull());
+    expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }, { participant_a: 1, participant_b: 2 }]);
+    for (const name of names) expect.soft(screen.queryByRole('checkbox', { name: `Unselect ${name}` })).not.toBeNull();
+    expect.soft(screen.queryByRole('button', { name: 'Clear selection' })).not.toBeNull();
+    expect.soft(screen.getByRole('status').textContent).toContain('1 of 2 linked.');
+    expect.soft(screen.getByRole('status').textContent).not.toContain('People are now treated as the same person.');
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('blocks a second bulk link while an identity cache retry is in flight', async () => {
   const pairs: unknown[] = [];
   let resolveRetry: ((response: Response) => void) | undefined;
