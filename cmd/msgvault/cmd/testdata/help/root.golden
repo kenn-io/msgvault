@@ -132,6 +132,7 @@ Drafts, calendar, and Kata (write to providers):
   comment-actions  Read action receipts for an archived comment
   comment-moderate Hide, unhide or delete an archived Facebook comment
   comment-queue    List archived comments by triage state
+  comment-reply    Reply publicly or privately to an archived Facebook comment
   comment-triage   Set a comment's local triage state
   draft-compose    Create an email, native Beeper, or local chat draft
   draft-delete     Delete a managed draft

@@ -175,3 +175,18 @@ func (s *Store) MetaCommentTargetContext(ctx context.Context, id int64) (m MetaC
 	}
 	return
 }
+
+// HasRecentPrivateCommentReplyContext compares archived sender identities within
+// one source; the opaque provider recipient ID never participates in linking.
+func (s *Store) HasRecentPrivateCommentReplyContext(ctx context.Context, sourceID, messageID int64, since time.Time) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS (
+ SELECT 1 FROM meta_comment_actions a WHERE a.source_id=? AND a.action='private_reply'
+ AND a.state<>'failed' AND a.created_at>=? AND a.message_id<>?
+ AND EXISTS (SELECT 1 FROM messages m WHERE m.id=a.message_id
+ AND m.source_id=a.source_id AND m.sender_id=(SELECT sender_id FROM messages WHERE id=? AND source_id=?)))`), sourceID, since, messageID, messageID, sourceID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("read recent private comment reply: %w", err)
+	}
+	return exists, nil
+}

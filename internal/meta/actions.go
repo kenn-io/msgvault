@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -197,14 +198,21 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if ctx.Err() != nil {
 		return nil, actionFailure(string(ClassCancelled), nil, ctx.Err())
 	}
-	if req.MessageID <= 0 || req.Body != "" || (req.ResolveUnknown != "" && req.ResolveUnknown != "sent" && req.ResolveUnknown != "not-sent") || (req.DryRun && req.ResolveUnknown != "") {
+	if req.MessageID <= 0 || (req.ResolveUnknown != "" && req.ResolveUnknown != "sent" && req.ResolveUnknown != "not-sent") || (req.DryRun && req.ResolveUnknown != "") {
 		return nil, actionFailure("invalid_request", nil, nil)
 	}
 	switch req.Action {
-	case ActionHide, ActionUnhide, ActionDelete:
-	case ActionPublicReply, ActionPrivateReply, ActionBlock, ActionUnblock:
+	case ActionHide, ActionUnhide, ActionDelete, ActionPublicReply, ActionPrivateReply:
+	case ActionBlock, ActionUnblock:
 		return nil, actionFailure("action_not_enabled", nil, nil)
 	default:
+		return nil, actionFailure("invalid_request", nil, nil)
+	}
+	if isReply(req.Action) {
+		if len(req.Body) == 0 || len(req.Body) > 8000 || strings.ContainsRune(req.Body, 0) || !utf8.ValidString(req.Body) {
+			return nil, actionFailure("invalid_body", nil, nil)
+		}
+	} else if req.Body != "" {
 		return nil, actionFailure("invalid_request", nil, nil)
 	}
 	target, err := resolveActionTarget(ctx, a.st, req.MessageID, req.Action == ActionDelete)
@@ -212,6 +220,19 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 		return nil, err
 	}
 	result := &ActionResult{MessageID: target.MessageID, SourceID: target.SourceID, Action: req.Action, DryRun: req.DryRun, Disclosure: Disclosure{Provider: "facebook", AssetID: target.Asset, AssetName: target.AssetName, CommentID: target.CommentID, AuthorName: target.AuthorName}, Confirm: ConfirmToken(target, req.Action, req.Body)}
+	result.Disclosure.Body = req.Body
+	result.Disclosure.Public = req.Action == ActionPublicReply
+	if isReply(req.Action) {
+		result.Visibility = "public"
+		if req.Action == ActionPrivateReply {
+			result.Visibility = "private"
+		}
+	}
+	if req.Action == ActionPrivateReply {
+		if err = a.privateReplyChecks(ctx, target, req, result); err != nil {
+			return result, err
+		}
+	}
 	keyHash := sha256.Sum256([]byte(actionBinding(target, req.Action, req.Body)))
 	key := hex.EncodeToString(keyHash[:])
 	if req.DryRun {
@@ -227,7 +248,7 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if !allowed {
 		return result, actionFailure("action_not_enabled", result, nil)
 	}
-	if req.Action == ActionDelete && req.Confirm != result.Confirm {
+	if (req.Action == ActionDelete || isReply(req.Action)) && req.Confirm != result.Confirm {
 		return result, actionFailure("confirmation_mismatch", result, nil)
 	}
 	execution, err := a.st.AcquireSyncExecutionContext(ctx, target.SourceID)
@@ -247,7 +268,7 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 		return result, actionFailure("stale_identity", result, nil)
 	}
 	previous, lookupErr := a.st.GetMetaCommentActionByKeyContext(ctx, key)
-	if req.Action != ActionDelete {
+	if req.Action == ActionHide || req.Action == ActionUnhide {
 		rows, e := a.st.ListMetaCommentActionsContext(ctx, target.SourceID, target.CommentID)
 		if e != nil {
 			return result, e
@@ -269,6 +290,9 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if req.ResolveUnknown != "" {
 		return result, actionFailure("invalid_request", result, nil)
 	}
+	if req.Action == ActionPrivateReply && !a.privateReplyWindowOpen(target) {
+		return result, actionFailure("private_reply_window_closed", result, nil)
+	}
 	if target.Deleted {
 		return result, actionFailure("target_deleted", result, nil)
 	}
@@ -286,7 +310,7 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if ctx.Err() != nil {
 		return result, actionFailure(string(ClassCancelled), result, ctx.Err())
 	}
-	if req.Action != ActionDelete {
+	if req.Action == ActionHide || req.Action == ActionUnhide {
 		var nonce [16]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return result, err
@@ -309,6 +333,9 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	}
 	if ctx.Err() != nil {
 		return a.finish(ctx, target, result, row, ctx.Err(), false)
+	}
+	if isReply(req.Action) {
+		return a.dispatchReply(ctx, target, req, result, row, api)
 	}
 	if req.Action == ActionDelete {
 		err = api.DeleteComment(ctx, target.CommentID)
@@ -340,6 +367,9 @@ func (a *Actions) existing(ctx context.Context, t Target, req ActionRequest, res
 		}
 	}
 	result.Receipt = receipt(row)
+	if req.Action == ActionPrivateReply && row.State == "succeeded" && req.ResolveUnknown == "" {
+		return result, actionFailure("already_sent", result, nil)
+	}
 	if row.State == "succeeded" {
 		return a.localEffect(ctx, t, result)
 	}
@@ -348,10 +378,14 @@ func (a *Actions) existing(ctx context.Context, t Target, req ActionRequest, res
 	}
 	return result, actionFailure(string(ClassUnknown), result, nil)
 }
-func (a *Actions) finish(ctx context.Context, t Target, result *ActionResult, row store.MetaCommentAction, remoteErr error, dispatched bool) (*ActionResult, error) {
+func (a *Actions) finish(ctx context.Context, t Target, result *ActionResult, row store.MetaCommentAction, remoteErr error, dispatched bool, accepted ...store.MetaCommentActionOutcome) (*ActionResult, error) {
 	local, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	outcome := store.MetaCommentActionOutcome{State: "succeeded"}
+	if len(accepted) > 0 {
+		outcome = accepted[0]
+		outcome.State = "succeeded"
+	}
 	if remoteErr != nil {
 		outcome.ErrorCode = string(Classify(remoteErr, dispatched))
 		outcome.State = "failed"
@@ -362,6 +396,7 @@ func (a *Actions) finish(ctx context.Context, t Target, result *ActionResult, ro
 	saved, err := a.st.FinishMetaCommentActionContext(local, row.ID, row.RowRevision, outcome)
 	if err != nil {
 		result.Receipt = receipt(row)
+		result.Receipt.RemoteID, result.Receipt.RecipientID = outcome.RemoteID, outcome.RemoteRecipientID
 		code := "remote_accepted_local_failed"
 		if remoteErr != nil {
 			code = "local_failed"

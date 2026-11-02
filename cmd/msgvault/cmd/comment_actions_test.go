@@ -18,6 +18,7 @@ type cliCommentBackend struct {
 	request       meta.ActionRequest
 	filter        api.CommentQueueRequest
 	expect        string
+	warnings      []string
 	fail          bool
 }
 
@@ -28,7 +29,7 @@ func (b *cliCommentBackend) SupportsAPISchemaVersion(context.Context, string) (b
 func (b *cliCommentBackend) RunCommentAction(_ context.Context, id int64, r meta.ActionRequest) (*meta.ActionResult, error) {
 	b.calls++
 	b.request = r
-	result := &meta.ActionResult{MessageID: id, DryRun: r.DryRun, Confirm: "binding", Disclosure: meta.Disclosure{CommentID: "100_200_300"}, Receipt: &meta.Receipt{ID: 3, State: "unknown"}}
+	result := &meta.ActionResult{Warnings: b.warnings, MessageID: id, DryRun: r.DryRun, Confirm: "binding", Disclosure: meta.Disclosure{CommentID: "100_200_300"}, Receipt: &meta.Receipt{ID: 3, State: "unknown"}}
 	if b.fail {
 		return result, &meta.ActionError{Code: "outcome_unknown", Message: "Inspect before resolving", Result: result}
 	}
@@ -118,7 +119,7 @@ func TestCommentActionsOldDaemon(t *testing.T) {
 		}
 		requests++
 	})
-	for name, args := range map[string][]string{"comment-moderate": {"7", "--hide"}, "comment-triage": {"7", "--state", "open"}, "comment-queue": {}, "comment-actions": {"7"}} {
+	for name, args := range map[string][]string{"comment-reply": {"7", "--visibility", "public", "--body", "reply"}, "comment-moderate": {"7", "--hide"}, "comment-triage": {"7", "--state", "open"}, "comment-queue": {}, "comment-actions": {"7"}} {
 		_, err := runCommentCLI(t, client, name, args...)
 		require.ErrorContains(t, err, "this daemon is too old for comment actions; upgrade it to API schema "+commentActionsMinAPISchemaVersion+" or newer")
 	}
@@ -139,4 +140,39 @@ func TestMCPCommentToolsSchemaGate(t *testing.T) {
 			assert.Equal(t, version == commentActionsMinAPISchemaVersion, opts.CommentActions != nil)
 		})
 	}
+}
+
+func TestCommentReplyVisibilityRequired(t *testing.T) {
+	b := &cliCommentBackend{}
+	for _, args := range [][]string{{"7", "--body", "Example reply"}, {"7", "--visibility", "bad", "--body", "Example reply"}, {"7", "--visibility", "public"}} {
+		_, err := runCommentCLI(t, b, "comment-reply", args...)
+		require.Error(t, err)
+	}
+	assert.Zero(t, b.checks)
+	for _, visibility := range []string{"public", "private"} {
+		_, err := runCommentCLI(t, b, "comment-reply", "7", "--visibility", visibility, "--body", "Example reply", "--dry-run", "--json")
+		require.NoError(t, err)
+		assert.Equal(t, meta.ActionKind(visibility+"_reply"), b.request.Action)
+		assert.Equal(t, "Example reply", b.request.Body)
+	}
+}
+func TestCommentReplyResolveUnknownFlags(t *testing.T) {
+	b := &cliCommentBackend{}
+	for _, extra := range [][]string{{"--resolve-unknown", "bad"}, {"--dry-run", "--resolve-unknown", "sent"}} {
+		args := append([]string{"7", "--visibility", "public", "--body", "reply"}, extra...)
+		_, err := runCommentCLI(t, b, "comment-reply", args...)
+		require.Error(t, err)
+	}
+	assert.Zero(t, b.checks)
+	_, err := runCommentCLI(t, b, "comment-reply", "7", "--visibility", "private", "--body", "reply", "--confirm", "binding", "--resolve-unknown", "not-sent")
+	require.NoError(t, err)
+	assert.Equal(t, "not-sent", b.request.ResolveUnknown)
+	assert.Equal(t, "binding", b.request.Confirm)
+}
+
+func TestCommentReplyAuthorWarningVisible(t *testing.T) {
+	b := &cliCommentBackend{warnings: []string{"prior_private_reply_to_author"}}
+	out, err := runCommentCLI(t, b, "comment-reply", "7", "--visibility", "private", "--body", "reply", "--dry-run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Warning: A private reply to this author was already recorded in the past seven days.")
 }

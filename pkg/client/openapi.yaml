@@ -2922,6 +2922,8 @@ components:
             - hide
             - unhide
             - delete
+            - public_reply
+            - private_reply
           type: string
         body:
           type: string

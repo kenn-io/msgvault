@@ -125,6 +125,7 @@ var topLevelCommandGroups = map[string]string{
 	"media":                   helpGroupRead,
 	"meetings":                helpGroupRead,
 	"merge-account":           helpGroupSources,
+	"comment-reply":           helpGroupWrite,
 	"comment-moderate":        helpGroupWrite,
 	"comment-triage":          helpGroupWrite,
 	"comment-queue":           helpGroupWrite,

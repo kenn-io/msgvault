@@ -37,13 +37,3 @@ func (c *Client) DeleteComment(ctx context.Context, id string) error {
 	}
 	return nil
 }
-
-// Reply support is added in the stacked replies slice; moderation cannot call it.
-type PrivateReplyResult struct{ RecipientID, MessageID string }
-
-func (c *Client) ReplyToComment(context.Context, string, string) (Object, error) {
-	return Object{}, errors.New("comment replies are not enabled")
-}
-func (c *Client) PrivateReply(context.Context, string, string, string) (PrivateReplyResult, error) {
-	return PrivateReplyResult{}, errors.New("comment replies are not enabled")
-}
