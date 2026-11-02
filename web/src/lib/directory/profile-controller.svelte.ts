@@ -173,12 +173,12 @@ export class DirectoryProfileController {
       const definitionsReady = definitions.data !== undefined;
       const errors = { ...this.bundle.errors };
       let refreshed = false;
-      if (personReady && person.data) {
+      if (personReady && person.data && (resolveDraft || !personRequiresFreshETag)) {
         this.person = person.data; delete errors.person;
         this.personETag = person.response?.headers.get('ETag') ?? null;
         refreshed = true;
       }
-      if (structuredProfileReady && structuredProfile.data) {
+      if (structuredProfileReady && structuredProfile.data && (resolveDraft || !profileRequiresFreshETag)) {
         this.structuredProfile = structuredProfile.data; delete errors.structuredProfile;
         this.structuredProfileETag = structuredProfile.response?.headers.get('ETag') ?? null;
         refreshed = true;
