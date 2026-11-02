@@ -240,6 +240,7 @@ it('preserves a birthday draft across a refresh that introduces a birthday', asy
     await act(async () => { await controller.reload(); });
     expect(screen.getByText('1990-05-06')).toBeDefined();
     expect(screen.getByRole('textbox', { name: 'Date' })).toHaveProperty('value', '1985-04-12');
+    expect(screen.getByLabelText('Date kind')).toHaveProperty('value', 'birthday');
   } finally { view.unmount(); controller.destroy(); }
 });
 

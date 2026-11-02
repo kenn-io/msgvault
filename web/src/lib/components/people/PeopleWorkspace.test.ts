@@ -216,7 +216,7 @@ it('reads a saved profile once before Details opens', async () => {
     await screen.findByRole('heading', { name: 'Saved Example' });
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     expect(paths.filter(path => path === '/api/v1/people/91')).toHaveLength(1);
-    expect(paths).toContain('/api/v1/people/91/profile');
+    expect(paths.filter(path => path === '/api/v1/people/91/profile')).toHaveLength(1);
     expect(paths.filter(path => /attribute-definitions|agenda|brief/.test(path))).toEqual([]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

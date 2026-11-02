@@ -299,7 +299,7 @@ describe('DirectoryController', () => {
     expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]);
   });
 
-  it('requests each person detail section once and rereads relationships when reopening', async () => {
+  it('requests each detail section once per selection, including relationships when reopening the same person', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
