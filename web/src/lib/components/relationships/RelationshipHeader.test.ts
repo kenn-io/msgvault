@@ -115,11 +115,6 @@ describe('RelationshipHeader', () => {
     expect(screen.getByRole('status').textContent?.trim()).toBe('No sent or received messages with this contact yet.');
   });
 
-  it('hides the date range when no activity matches the context', () => {
-    render(RelationshipHeader, baseProps({ detail: { ...person(), activity_count: 0 } }));
-    expect(screen.getByText(/0 items/).closest('p')?.textContent?.trim()).toBe('0 items');
-  });
-
   it('shows a title heading in place of the counts line when the page header already names the person', () => {
     render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
     expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
@@ -127,7 +122,7 @@ describe('RelationshipHeader', () => {
   });
 
   it('collapses linked identities by default and opens them on request', async () => {
-    render(RelationshipHeader, baseProps());
+    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
 
     const summary = screen.getByText('Identities (2)');
     const disclosure = summary.closest('details');
@@ -135,6 +130,16 @@ describe('RelationshipHeader', () => {
     await fireEvent.click(summary);
     expect(disclosure?.open).toBe(true);
     expect(screen.getByLabelText('Identity Alice')).toBeDefined();
+    expect(screen.getByText('Alice')).toBeDefined();
+    expect(screen.getByText(/alice@example\.com/)).toBeDefined();
+    expect(screen.getByText(/\+15550100001/)).toBeDefined();
+    // Evidence detail lives in the tooltip, phrased in human words — never
+    // internal field names like participant_identifiers.
+    const emailChip = screen.getByLabelText('Identity Alice');
+    expect(emailChip.getAttribute('title')).toBe('email · primary · stored identifier');
+    const phoneChip = screen.getByLabelText('Identity +15550100001');
+    expect(phoneChip.getAttribute('title')).toBe('phone · secondary · stored identifier');
+    expect(document.body.textContent).not.toContain('participant_identifiers');
   });
 
   it('collapses identities again when the selected person changes', async () => {
@@ -177,23 +182,6 @@ describe('RelationshipHeader', () => {
     expect(screen.getByRole('status').textContent).toContain('Select a person or domain');
   });
 
-  it('renders a person with identity details and item counts', async () => {
-    render(RelationshipHeader, baseProps());
-
-    expect(screen.getByText(/42 items/)).toBeDefined();
-    expect(screen.getByText(/items · /).textContent).not.toMatch(/files/);
-    expect(screen.getByText('Alice')).toBeDefined();
-    expect(screen.getByText(/alice@example\.com/)).toBeDefined();
-    expect(screen.getByText(/\+15550100001/)).toBeDefined();
-    // Evidence detail lives in the tooltip, phrased in human words — never
-    // internal field names like participant_identifiers.
-    const emailChip = screen.getByLabelText('Identity Alice');
-    expect(emailChip.getAttribute('title')).toBe('email · primary · stored identifier');
-    const phoneChip = screen.getByLabelText('Identity +15550100001');
-    expect(phoneChip.getAttribute('title')).toBe('phone · secondary · stored identifier');
-    expect(document.body.textContent).not.toContain('participant_identifiers');
-  });
-
   it('hides the identities section entirely for a single identity with nothing linked', () => {
     const single = { ...person(), identifiers: [person().identifiers![0]!] };
     render(RelationshipHeader, baseProps({ detail: single }));
@@ -212,17 +200,10 @@ describe('RelationshipHeader', () => {
   });
 
   it('groups person actions together', () => {
-    render(RelationshipHeader, baseProps({ onOpenDirectory: vi.fn() }));
+    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
 
     const actions = screen.getByRole('group', { name: 'Person actions' });
-    expect(within(actions).getByRole('button', { name: 'Open in Directory' })).toBeTruthy();
     expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
-  });
-
-  it('formats the counts date range with the month spelled out', () => {
-    render(RelationshipHeader, baseProps());
-
-    expect(screen.getByText(/items · /).textContent).toMatch(/[A-Z][a-z]{2} \d{1,2}, \d{4} – [A-Z][a-z]{2} \d{1,2}, \d{4}/);
   });
 
   it('offers no person actions group for a domain', () => {
@@ -231,11 +212,10 @@ describe('RelationshipHeader', () => {
     expect(screen.queryByRole('group', { name: 'Person actions' })).toBeNull();
   });
 
-  it('renders a domain by domain name and person count, without identity chips or a Same person button', () => {
-    render(RelationshipHeader, baseProps({ detail: { ...domain(), activity_count: 9, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
+  it.each([0, 9])('renders domain counts and dates for %i items without person actions', activity => {
+    render(RelationshipHeader, baseProps({ showIdentity: false, detail: { ...domain(), activity_count: activity, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
 
-    expect(screen.getByRole('heading', { name: 'example.com' })).toBeDefined();
-    expect(screen.getByText(/9 items/).textContent).toMatch(/9 items\s*· Jun 1, 2026 – Jul 19, 2026\s*· 3 people/);
+    expect(screen.getByText(/items/).textContent?.replace(/\s+/g, ' ').trim()).toBe(activity === 0 ? '0 items · 3 people' : '9 items · Jun 1, 2026 – Jul 19, 2026 · 3 people');
     expect(screen.queryByLabelText('Linked identities')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
   });

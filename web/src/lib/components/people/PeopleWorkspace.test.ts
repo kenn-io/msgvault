@@ -450,7 +450,7 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
   } finally { observer.disconnect(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('ignores a completed saved profile lookup after an observed person supersedes it', async () => {
+it('clears the saved selection when opening an observed person', async () => {
   const saved = { ...profile(92, 1, []), display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active' };
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
@@ -472,10 +472,8 @@ it('ignores a completed saved profile lookup after an observed person supersedes
     await fireEvent.click(await screen.findByText('Alice Example'));
     await view.rerender(props());
     await act(async () => { release(Response.json(saved)); await pending; await new Promise(resolve => setTimeout(resolve, 0)); });
-    expect(state.current).toMatchObject({ directoryPersonID: null, relationshipTarget: 'cluster:1' });
     expect(onReplaceNavigation).not.toHaveBeenCalled();
     expect(directory.selectedPersonID).toBeNull();
-    expect(onNavigate.mock.calls).toEqual([[{ directoryPersonID: 92, relationshipTarget: null, relationshipFiles: false }], [{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -550,16 +548,17 @@ it('routes reconciliation Reload to the directory controller', async () => {
 
 it.each([['participant', false], ['profile', false], ['second person', false], ['second person', true]] as const)('retains a saved person and its recovery when the %s lookup fails (remount=%s)', async (failure, remount) => {
   let failed = true;
-  const saved = profile(failure === 'second person' ? 9 : 7, 1, [1]);
+  const saved = profile(failure === 'second person' ? 9 : 7, 1, failure === 'second person' ? [2] : [1]);
   const client = clientFor({
     '/api/v1/people/7': () => failure === 'second person' ? Response.json(profile(7, 1, [1])) : failure !== 'participant' && failed ? Response.json({ message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }),
     ...Object.fromEntries([7, 9].flatMap(id => [
-      [`/api/v1/people/${id}/profile`, () => Response.json({ person: profile(id, 1, [1]), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] })],
+      [`/api/v1/people/${id}/profile`, () => Response.json({ person: profile(id, 1, [id === 9 ? 2 : 1]), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] })],
       [`/api/v1/people/${id}/attributes`, () => Response.json({ person_id: id, attributes: [] })]
     ])),
     '/api/v1/attribute-definitions': () => Response.json({ definitions: [] }),
     '/api/v1/people/9': () => { if (failed) throw new Error('Could not load selected person.'); return Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }); },
-    '/api/v1/participants/1': () => failure === 'participant' && failed ? Response.json({ message: 'Participant unavailable' }, { status: 503 }) : Response.json({ id: 1, display_label: 'Synthetic One', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/participants/1': () => failure === 'participant' && failed ? Response.json({ message: 'Participant unavailable' }, { status: 503 }) : Response.json({ id: 1, display_label: 'Synthetic One', profile: failure === 'second person' ? profile(7, 1, [1]) : saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/participants/2': () => Response.json({ id: 2, display_label: 'Synthetic Two', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);

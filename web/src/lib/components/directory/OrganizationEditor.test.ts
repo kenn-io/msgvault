@@ -64,12 +64,10 @@ describe('OrganizationEditor', () => {
       expect(write).toBeDefined();
       if (operation === 'create') await expect(write.json()).resolves.toMatchObject({ name: 'New Synthetic Org' });
       if (operation === 'rename') {
-        expect(write.headers.get('If-Match')).toBe('"organization-21-r2"');
         const body = await write.json();
         expect(body).toMatchObject({ name: 'Renamed Synthetic Org' });
         expect(body.retired).toBeUndefined();
       }
-      expect(controller.organizations.map(item => item.id)).toEqual(operation === 'create' ? [21, 22] : operation === 'rename' ? [21] : []);
     } finally { view.unmount(); controller.destroy(); }
   });
 

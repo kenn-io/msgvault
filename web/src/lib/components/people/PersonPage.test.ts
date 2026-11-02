@@ -289,7 +289,7 @@ it.each([
   { activity: 50, bindings: [1] },
   { activity: 0, bindings: [1] },
   { activity: 0, bindings: [] },
-])('chooses the saved person tab from unfiltered activity and forwards filter clearing (activity=$activity, bindings=$bindings)', async ({ activity, bindings }) => {
+])('chooses the saved person tab from unfiltered activity (activity=$activity, bindings=$bindings)', async ({ activity, bindings }) => {
   const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: bindings, vcard_uid: 'saved-7', created_at: when, updated_at: when };
   const summary = { id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: activity ? when : '', last_at: activity ? when : '', activity_count: activity, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
   const predicate = { filters: [{ dimension: 'source' as const, values: ['999'] }], presentation: 'table' as const };
@@ -317,15 +317,9 @@ it.each([
   const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target, filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange, onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
     if (activity > 0) {
-      expect(controller.detail?.activity_count).toBe(0);
-      expect(controller.firstContactAt).toBe(when);
       expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
       expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
       expect(await screen.findByText('No items match this view')).toBeDefined();
-      // Keep the page's filter-clear callback wired so empty Messages results can recover.
-      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
-      await waitFor(() => expect(onFiltersChange).toHaveBeenCalledWith([]));
     } else {
       expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
       expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();

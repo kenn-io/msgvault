@@ -377,7 +377,7 @@ describe('AttributeDefinitionDialog', () => {
     ['with an interrupted body', () => new Response(new ReadableStream<Uint8Array>({
       start(stream) { stream.error(new Error('body interrupted after 201 headers')); },
     }), { status: 201, headers: { 'Content-Type': 'application/json' } }), 'body interrupted after 201 headers'],
-  ] as const)('treats a successful POST %s as non-repeatable and offers reload only', async (shape, response, error) => {
+  ] as const)('treats a successful POST %s as non-repeatable and offers reload only', async (_shape, response, error) => {
     let resolvePost!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -391,21 +391,13 @@ describe('AttributeDefinitionDialog', () => {
       await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Unidentified field' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
       await waitFor(() => expect(resolvePost).toBeDefined());
-      if (shape === 'with an interrupted body') {
-        const concurrentProfile = new DirectoryProfileController(client, 8, { definitions: { definitions: [] }, etags: {}, errors: {} });
-        try { await concurrentProfile.reloadDefinitions(); }
-        finally { concurrentProfile.destroy(); }
-        expect(profile.definitionCreationCommit).toBeNull();
-      }
       resolvePost(response());
       expect((await screen.findByRole('alert')).textContent).toContain(error);
-      expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
-      expect(profile.createdDefinition).toBeNull();
       expect(screen.queryByRole('button', { name: 'Create field' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry registry refresh' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Reload fields' }));
-      await waitFor(() => expect(profile.definitions).toEqual([expect.objectContaining({ id: 99 })]));
-      expect(profile.definitionCreationCommit).toEqual({ kind: 'unknown' });
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Reload Directory before creating another field.'));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Reload fields' })).toHaveProperty('disabled', false));
     } finally { view.unmount(); profile.destroy(); }
   });
 

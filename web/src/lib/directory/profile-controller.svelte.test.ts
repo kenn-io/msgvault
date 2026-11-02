@@ -555,6 +555,7 @@ describe('DirectoryProfileController', () => {
       const request = input instanceof Request ? input : new Request(input);
       if (pathOf(request) === '/api/v1/people/7') return new Promise<Response>((resolve) => { resolvePerson = resolve; });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request).endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-08-20T00:00:00Z', stale: false });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       return Response.json({ definitions: [] });
     });
@@ -582,6 +583,7 @@ describe('DirectoryProfileController', () => {
       if (pathOf(request) === '/api/v1/people/7' || pathOf(request).endsWith('/profile')) {
         return Response.json({ error: 'unavailable', message: 'reload unavailable' }, { status: 503 });
       }
+      if (pathOf(request).endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-08-20T00:00:00Z', stale: false });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       return Response.json({ definitions: [] });
     });
