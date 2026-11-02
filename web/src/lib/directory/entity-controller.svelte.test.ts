@@ -347,6 +347,7 @@ describe('DirectoryEntityController', () => {
     let postCount = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
+      if (resource === 'organizations' && request.method === 'GET' && pathOf(request) === path) return defaultResponse(request);
       if (pathOf(request) !== path || request.method !== 'POST') throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
       postCount += 1;
       return Response.json({ error: 'unavailable', message: 'commit result unavailable' }, { status: 503 });
@@ -357,6 +358,10 @@ describe('DirectoryEntityController', () => {
     expect(controller.createBlocked[resource]).toBe(true);
     await expect(create(controller)).resolves.toMatchObject({ ok: false, kind: 'blocked' });
     expect(postCount).toBe(1);
+    if (resource === 'organizations') {
+      await controller.refreshOrganizations();
+      expect(controller.createBlocked.organizations).toBe(false);
+    }
   });
 
   it('reconciles sibling primary flags and projection from the selected-person collection after making primary', async () => {

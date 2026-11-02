@@ -127,11 +127,10 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
-  it.each([false, true])('refreshes structured history after split reconciliation (initial history pending=%s)', async initialPending => {
+  it.each([false, true])('loads history before offering splits and refreshes after reconciliation (initial history pending=%s)', async initialPending => {
     let reconciled = false;
     let historyReads = 0;
     let initialResponse: Response | undefined;
-    let initialBody: Promise<string> | undefined;
     let releaseInitial!: (response: Response) => void;
     const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
     const source = { ...person(), participant_ids: [1, 2] };
@@ -150,8 +149,6 @@ describe('ProfileHistoryDialog', () => {
           addresses: [], dates: [], categories: [], media: [],
         });
         if (++historyReads === 1 && initialPending) {
-          const readBody = response.text.bind(response);
-          response.text = () => initialBody = readBody();
           initialResponse = response;
           return pendingInitial;
         }
@@ -166,17 +163,15 @@ describe('ProfileHistoryDialog', () => {
     const onSplitCommitted = vi.fn(async () => { reconciled = true; });
     const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
     try {
-      let splitOfferedWhileLoading = false;
       if (initialPending) {
         await act(async () => { await vi.waitFor(() => expect(initialResponse).toBeDefined()); });
         expect(screen.getByText('Loading profile history…')).toBeDefined();
-        if (screen.queryByRole('heading', { name: 'Merges' })) await screen.findByRole('button', { name: 'Inspect merge 41' });
-        splitOfferedWhileLoading = screen.queryByRole('button', { name: 'Inspect merge 41' }) !== null;
-        if (!splitOfferedWhileLoading) await act(async () => { releaseInitial(initialResponse!); });
+        expect(screen.queryByRole('button', { name: 'Inspect merge 41' })).toBeNull();
+        await act(async () => { releaseInitial(initialResponse!); });
+        expect(await screen.findByRole('button', { name: 'Inspect merge 41' })).toBeDefined();
+        return;
       }
-      if (!initialPending || !splitOfferedWhileLoading) {
-        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
-      }
+      for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
       await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Split merged profile' }));
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'Participant 1' }));
@@ -187,14 +182,6 @@ describe('ProfileHistoryDialog', () => {
         expect(screen.getByText('Retained name')).toBeDefined();
         for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
       });
-      if (initialPending) {
-        await act(async () => { releaseInitial(initialResponse!); });
-        await vi.waitFor(() => expect(initialBody).toBeDefined());
-        await act(async () => { await initialBody; });
-        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
-        expect(splitOfferedWhileLoading).toBe(false);
-        expect(screen.getByRole('heading', { name: 'Split completed' })).toBeDefined();
-      }
     } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });
 
