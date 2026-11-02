@@ -774,3 +774,24 @@ test('People list keys stay in that grid while Messages is open', async ({ page 
   expect(await messages.getAttribute('aria-activedescendant')).toBe(active);
   await expect(messages.getByRole('row', { selected: true })).toHaveCount(0);
 });
+
+test('closes the reader on Back to a same-person entry with no reader', async ({ page }) => {
+  await prepare(page);
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid.getByText('Team Chat')).toBeVisible();
+  expect(await page.evaluate(() => history.state.relationshipReader)).toBeUndefined();
+  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(true);
+  await grid.focus();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
+  await expect(reading.getByText('Latest chat message')).toBeVisible();
+  await page.goBack();
+  await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(false);
+  await expect(reading).toBeHidden();
+});
