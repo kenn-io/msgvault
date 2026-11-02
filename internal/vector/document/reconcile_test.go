@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -92,17 +93,42 @@ func TestReconcilerRunContinuesSafeWorkAfterWorkerErrorWithoutActivation(t *test
 	backend := &fakeDocumentVectorBackend{}
 	reconciler := NewReconciler(ReconcilerDeps{Ledger: ledger, Worker: worker, Backend: backend, Now: func() time.Time { return workerNow }})
 
-	result, err := reconciler.Run(t.Context(), 1, 10)
+	ctx := jobctx.WithProgress(t.Context())
+	result, err := reconciler.Run(ctx, 1, 10)
 	requirements.ErrorIs(err, workerErr)
 	assertions.Equal(1, worker.calls)
 	assertions.Equal(1, result.CleanupDeleted)
 	assertions.Equal(1, result.CleanupFinalized)
+	assertions.True(jobctx.HasProgress(ctx), "finalized cleanup is committed progress")
 	assertions.Equal(1, ledger.statusCalls)
 	assertions.Equal(1, ledger.coverageCalls)
 	assertions.Zero(ledger.activateCalls)
 	assertions.False(result.Activated)
 	assertions.False(result.Converged)
 	assertions.Equal([][]string{{ledger.obsolete[0].Token}}, backend.deletes)
+}
+
+func TestReconcilerRunShutdownKeepsWorkerFailure(t *testing.T) {
+	requirements := require.New(t)
+	workerErr := errors.New("provider unavailable")
+	ledger := newFakeDocumentVectorReconcileLedger(store.DocumentVectorGenerationBuilding)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	worker := &fakeDocumentVectorWorkerRunner{run: func(ctx context.Context, _ GenerationID, _ int) (RunResult, error) {
+		requirements.NoError(ctx.Err())
+		cancel()
+		return RunResult{}, workerErr
+	}}
+	reconciler := NewReconciler(ReconcilerDeps{
+		Ledger: ledger, Worker: worker,
+		Backend: &fakeDocumentVectorBackend{}, Now: func() time.Time { return workerNow },
+	})
+
+	_, err := reconciler.Run(ctx, 1, 10)
+	requirements.ErrorIs(err, workerErr)
+	requirements.ErrorIs(err, context.Canceled)
+	requirements.Equal(1, worker.calls)
+	requirements.Zero(ledger.activateCalls)
 }
 
 func TestReconcilerRunReportsTerminalGenerationAsBlocked(t *testing.T) {
@@ -284,11 +310,15 @@ type fakeDocumentVectorWorkerRunner struct {
 	err    error
 	calls  int
 	limits []int
+	run    func(context.Context, GenerationID, int) (RunResult, error)
 }
 
-func (w *fakeDocumentVectorWorkerRunner) Run(_ context.Context, _ GenerationID, limit int) (RunResult, error) {
+func (w *fakeDocumentVectorWorkerRunner) Run(ctx context.Context, generationID GenerationID, limit int) (RunResult, error) {
 	w.calls++
 	w.limits = append(w.limits, limit)
+	if w.run != nil {
+		return w.run(ctx, generationID, limit)
+	}
 	return w.result, w.err
 }
 

@@ -133,6 +133,13 @@ func scanPersonSemanticEmbeddingProfile(row scanner) (
 	if err := json.Unmarshal([]byte(disclosed), &profile.DisclosedFieldClasses); err != nil {
 		return vector.SemanticPersonEmbeddingProfile{}, fmt.Errorf("decode disclosed fields: %w", err)
 	}
+	var mode struct {
+		LocalOnly bool `json:"local_only"`
+	}
+	if err := json.Unmarshal([]byte(policy), &mode); err != nil {
+		return vector.SemanticPersonEmbeddingProfile{}, fmt.Errorf("decode semantic person embedding mode: %w", err)
+	}
+	profile.LocalOnly = mode.LocalOnly
 	profile.PolicyJSON = jsontext.Value(policy)
 	canonical, err := profile.Canonical()
 	if err != nil {

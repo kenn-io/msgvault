@@ -151,9 +151,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Drafts are owner-authored messages that never made it out, but
-	// they still belong on the owner's side of the conversation. Without
-	// SMSTypeDraft here a draft imports as if it came from the contact.
+	// Unsent texts are owner-authored and stay on the owner's side.
 	fromMe := SMSFromOwner(sms.Type)
 	senderID := remoteID
 	recipientIDs := []int64{ownerID}
@@ -172,8 +170,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe,
-		synctechstate.SMSWasSent(int(sms.Type)), sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
@@ -185,7 +182,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	// Drafts belong to the owner — see the matching note in importSMS.
+	// Unsent messages belong to the owner, as in importSMS.
 	fromMe := MMSFromOwner(mms.MessageBox)
 	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
 	if err != nil {
@@ -203,8 +200,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	}
 	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
 	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
-	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe,
-		synctechstate.MMSWasSent(int(mms.MessageBox)), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, !MMSUnsent(mms.MessageBox), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -244,11 +240,23 @@ func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
-	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe,
-		true, call.Timestamp, body, body, 0, call)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, store.MessageTypeSynctechCall, senderID, recipientIDs, fromMe, true, call.Timestamp, body, body, 0, call)
+	if err != nil {
+		return 0, err
+	}
+	// Only incoming and outgoing calls connected; a voicemail's duration is
+	// the recording, not a conversation.
+	connected := 0
+	if call.Type == CallIncoming || call.Type == CallOutgoing {
+		connected = call.DurationSeconds
+	}
+	if err := i.store.SetMessageMetadata(messageID, store.CallConnectedMetadata(connected)); err != nil {
+		return 0, fmt.Errorf("record call length: %w", err)
+	}
+	return messageID, nil
 }
 
-func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe, isSent bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {
+func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe, sent bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {
 	msgID, err := i.store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        sourceID,
@@ -257,6 +265,7 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 		SentAt:          sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
 		SenderID:        sql.NullInt64{Int64: senderID, Valid: senderID != 0},
 		IsFromMe:        fromMe,
+		IsSent:          sql.NullBool{Bool: sent, Valid: true},
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},
 		Snippet:         sql.NullString{String: body, Valid: body != ""},
 		SizeEstimate:    int64(len(body)),
@@ -265,9 +274,6 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 	})
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
-	}
-	if err := i.store.SetMessageSentState(msgID, isSent); err != nil {
-		return 0, fmt.Errorf("record message send state: %w", err)
 	}
 	if body != "" {
 		if err := i.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
@@ -311,7 +317,7 @@ func (i *Importer) ensureConversation(sourceID int64, sourceConversationID, titl
 func (i *Importer) mmsParticipants(mms MMS, ownerID int64) ([]int64, int64, []int64, error) {
 	ids := []int64{ownerID}
 	senderID := ownerID
-	// Drafts belong to the owner — see the matching note in importSMS.
+	// Unsent messages belong to the owner, as in importSMS.
 	fromMe := MMSFromOwner(mms.MessageBox)
 	var recipients []int64
 	for _, addr := range mms.Addresses {

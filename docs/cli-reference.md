@@ -34,7 +34,7 @@ appear in full under Inherited Flags.
 
 Read day activity, relationship history, or the context around an archived
 message or meeting through the selected daemon. This is unreleased and requires
-API schema 3.33.0 or newer. See [Timeline](usage/timeline.md) for the workflow
+API schema 3.36.0 or newer. See [Timeline](usage/timeline.md) for the workflow
 and output conventions.
 
 ```bash
@@ -69,7 +69,7 @@ schema version and ask you to upgrade and restart.
 ## calls
 
 Import and inspect supplied call evidence through the selected daemon. Requires
-owner authentication and API schema 3.29.0 or newer. Output is JSON.
+owner authentication and API schema 3.35.0 or newer. Output is JSON.
 
 ```bash
 msgvault calls import observation.json   # omit the file or use - for stdin
@@ -98,7 +98,7 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 
 ### meetings link, unlink, links, and suggest
 
-See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.27.0 or newer.
+See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.35.0 or newer.
 
 ```bash
 msgvault meetings suggest msg:42
@@ -2077,11 +2077,11 @@ msgvault calendar events --from 2027-03-01 --to 2027-04-01 --limit 100 --json
 msgvault calendar event evt:123@20270302T170000Z --json
 ```
 
-`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id` and an event `ref` for `meetings link`, `meetings unlink`, and `calendar event`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.29.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id` and an event `ref` for `meetings link`, `meetings unlink`, and `calendar event`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
 
 `--limit` defaults to 100 and accepts 1–500. Pass the returned `next_cursor` with `--cursor` and keep the window unchanged. Windows allow at most 400 days. The table adds `REF` after `ID` and prints the next cursor on its own line.
 
-`calendar event <ref>` opens an occurrence and prints its attendees, roles, and RSVPs. `--json` includes the archived location, description, and join URL when present. Paging, detail, and delegated reads require daemon API schema 3.29.0. Agents need `calendar.event.read` or `message.read` on the source. Both archive commands reject the live-calendar flags listed above.
+`calendar event <ref>` opens an occurrence and prints its attendees, roles, and RSVPs. `--json` includes the archived location, description, and join URL when present. Paging, detail, and delegated reads require daemon API schema 3.35.0. Agents need `calendar.event.read` or `message.read` on the source. Both archive commands reject the live-calendar flags listed above.
 
 For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
@@ -3398,7 +3398,7 @@ grant consent to a provider or enroll a person in briefs.
 
 | Command | Purpose |
 |---|---|
-| `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person track <person-id>...` / `person untrack <person-id>...` | Enable or stop future profile maintenance for one or more people, in order. Stops at the first person the daemon rejects; `--json` prints one object per person per line |
 | `person tiers preview [--json]` | List saved people in tier 1 or 2 (two-way contact or meetings), whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
 | `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
@@ -4189,7 +4189,7 @@ Use this if `verify` reports FTS5 shadow-table corruption such as a malformed in
 
 ## embeddings
 
-Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and a configured `[vector.embeddings]` endpoint. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
+Manage the vector embedding index used by `--mode vector` and `--mode hybrid` search. Requires a build with a vector backend (`sqlite_vec` for SQLite archives, `pgvector` for PostgreSQL archives) and configured `[vector.embeddings]` settings. See [Vector Search](/docs/usage/vector-search/) for prerequisites, model rotation, and troubleshooting.
 
 ```bash
 msgvault embeddings <subcommand> [flags]
@@ -4283,13 +4283,12 @@ generation, and a size rejection the worker recovers from by splitting or
 truncating a document. Messages can change while the sample is read.
 
 The job state is `idle`, `queued`, or `running`. `queued` means a scheduled run is
-waiting for the slot. A post-sync pass uses the sync's slot and goes straight
-to `running`; a manual build waiting for the slot shows as `idle` with the
-current holder. Scheduler state shows the
+waiting for the slot, including a post-sync pass after the sync releases it;
+a manual build waiting for the slot shows as `idle` with the current holder. Scheduler state shows the
 configured schedule, whether embeddings run after sync, and the current slot
 holder (`none`, `sync`, `embeddings`, or `other`). `sync` covers account syncs
-and scheduled source syncs such as Slack or CardDAV. A post-sync embedding pass
-holds the sync slot until it completes. No source names appear in slot labels.
+and scheduled source syncs such as Slack or CardDAV. No source names appear in
+slot labels.
 
 The latest 20 finished batches and current batch report attempted and newly
 covered messages, input characters the provider accepted, provider-call time, HTTP request time,
@@ -4777,7 +4776,7 @@ Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
 configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
-available loopback Ollama model at `[chat].server`. Hosted people inference
+available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
 select it. Without an OpenAI key or explicit provider choice, setup can offer
 the configured local Ollama chat model. The running daemon does not fall back
@@ -4807,7 +4806,9 @@ search requires both `documents vectors consent --yes` and
 `documents vectors consent --purpose queries --yes`; the latter authorizes
 query-text uploads. The status report tracks the two purposes separately.
 
-An existing text model or endpoint is preserved even if the feature is disabled.
+`--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
+
+Without that flag, an existing text model or endpoint is preserved even if the feature is disabled.
 Setup does not replace it when a different key appears. Explicit text and visual
 schedule keys, including an empty cron and `run_after_sync = false`, are also
 preserved. Setup does not configure source syncs, track people, enroll briefs,

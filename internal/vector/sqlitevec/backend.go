@@ -199,6 +199,10 @@ func (b *Backend) Close() error { return b.db.Close() }
 // that need to share the pool (e.g. the embed worker's VectorsDB field).
 func (b *Backend) DB() *sql.DB { return b.db }
 
+func (b *Backend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{DB: b.db, Rebind: func(query string) string { return query }}
+}
+
 // Path returns the filesystem path of vectors.db.
 func (b *Backend) Path() string { return b.path }
 

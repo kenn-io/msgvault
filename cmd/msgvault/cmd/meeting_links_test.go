@@ -54,16 +54,16 @@ func TestMeetingLinkCommands(t *testing.T) {
 	}{
 		{"links", []string{"links", "42"}, "", "", "Planning", false, false},
 		{"links json", []string{"links", "42", "--json"}, "", "", `"ref":"evt:81"`, false, false},
-		{"old daemon links", []string{"links", "42"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"old daemon links", []string{"links", "42"}, "3.34.0", "upgrade the daemon", "", false, false},
 		{"invalid links ID", []string{"links", "0"}, "", "positive message ID", "", false, false},
 		{"link", []string{"link", "42", "--event", "evt:81@20270314T100000Z"}, "", "", "", false, false},
 		{"unlink", []string{"unlink", "42", "--event", "evt:81@20270314T100000Z"}, "", "", "", false, false},
 		{"suggest note", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", false, false},
 		{"suggest warning", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", true, true},
 		{"suggest event", []string{"suggest", "evt:81@20270314T100000Z", "--json"}, "", "", `"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]`, true, false},
-		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
-		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
-		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.34.0", "upgrade the daemon", "", false, false},
+		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.34.0", "upgrade the daemon", "", false, false},
+		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.34.0", "upgrade the daemon", "", false, false},
 		{"invalid note", []string{"link", "0", "--event", "evt:81"}, "", "positive message ID", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
