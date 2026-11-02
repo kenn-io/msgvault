@@ -75,6 +75,14 @@ func TestSubscribedFieldsMissingAppIDRefuses(t *testing.T) {
 	_, _, err := c.SubscribedFields(t.Context(), "100", "9")
 	require.ErrorContains(t, err, "cannot identify the app")
 }
+
+func TestSubscribedFieldsPartialListingRefuses(t *testing.T) {
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"8","subscribed_fields":["feed"]}],"paging":{"next":"https://graph.facebook.com/v26.0/100/subscribed_apps?after=example"}}`)
+	})
+	_, _, err := c.SubscribedFields(t.Context(), "100", "9")
+	require.ErrorContains(t, err, "incomplete subscription listing")
+}
 func TestSubscribePostsFields(t *testing.T) {
 	for _, body := range []string{`{"success":true}`, `{"success":false}`, `{}`} {
 		c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {

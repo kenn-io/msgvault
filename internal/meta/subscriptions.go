@@ -35,6 +35,9 @@ func (c *Client) SubscribedFields(ctx context.Context, pageID, appID string) (bo
 			ID     string   `json:"id"`
 			Fields []string `json:"subscribed_fields"`
 		} `json:"data"`
+		Paging struct {
+			Next string `json:"next"`
+		} `json:"paging"`
 	}
 	if err := c.get(ctx, pageID+"/subscribed_apps", url.Values{"fields": {"id,subscribed_fields"}}, &wire); err != nil {
 		return false, nil, err
@@ -51,6 +54,9 @@ func (c *Client) SubscribedFields(ctx context.Context, pageID, appID string) (bo
 		if app.ID == appID {
 			found, fields = true, app.Fields
 		}
+	}
+	if !found && wire.Paging.Next != "" {
+		return false, nil, errors.New("cannot identify the app in an incomplete subscription listing")
 	}
 	return found, fields, nil
 }

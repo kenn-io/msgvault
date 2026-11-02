@@ -10,9 +10,9 @@ its original bytes before acknowledging it. A worker then archives Page
 
 Comments keep their conversation, parent, and participant links. Edits update
 the body; hide and unhide update metadata; removal leaves a tombstone and
-preserves the archived row. Older events cannot undo newer body or state
-changes. Polling remains the backfill and reconciliation path, with its own
-checkpoints.
+preserves the archived row. Older webhook events cannot undo newer webhook
+body or state changes. Equal timestamps apply in arrival order. Polling remains
+the backfill and reconciliation path, with its own checkpoints.
 
 ## Connect the receiver
 
@@ -55,8 +55,9 @@ Subscription needs a Page token issued to the configured app, with
 task on the Page. The command verifies the token's app first and refuses any
 mismatch or unverifiable result. It reads existing fields, installs their
 union with your request, and reads them again to confirm. It never removes
-an existing field. `--check` changes nothing and fails if the app is absent
-or any requested field is missing.
+an existing field. If a partial app listing omits the selected app, the command
+refuses to change subscriptions. `--check` changes nothing and fails if the app
+is absent or any requested field is missing.
 
 App mode, access levels, Page tasks, and grants still determine live delivery
 and ancestor reads. Configuration alone does not grant access. Instagram
@@ -67,8 +68,10 @@ fields are selected in the dashboard; this command manages Page fields only.
 Only Page `feed` comments are applied in this release. Messenger messages,
 Instagram comments and messages, and mentions are **held for a future release**.
 The whole delivery is retained when it includes an unhandled item, even if its
-comments were applied. Replay can therefore apply those comments again;
-archive identity and ordering checks make that safe.
+comments were applied. Replay can therefore apply those comments again without
+duplicating archive rows. An equal-time replay can temporarily replace a body
+refreshed by polling; the next poll reconciles it. The ordering guard compares
+webhook times, so it does not preserve the latest polled body in every replay.
 
 Messenger fields require explicit `--fields` selection and `pages_messaging`.
 Before subscribing, confirm which app is the primary receiver and how

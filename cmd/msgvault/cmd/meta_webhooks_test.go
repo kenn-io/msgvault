@@ -118,6 +118,7 @@ func TestSubscribeRefusals(t *testing.T) {
 		{"CheckNotInstalled", `{"id":"9"}`, `{"data":[]}`, "not installed", 200, true},
 		{"CheckMissingField", `{"id":"9"}`, `{"data":[{"id":"9","subscribed_fields":["messages"]}]}`, "missing requested", 200, true},
 		{"UnidentifiableSubscription", `{"id":"9"}`, `{"data":[{"subscribed_fields":["feed"]}]}`, "cannot identify", 200, false},
+		{"PartialSubscriptionListing", `{"id":"9"}`, `{"data":[{"id":"8","subscribed_fields":["feed"]}],"paging":{"next":"https://graph.facebook.com/v26.0/100/subscribed_apps?after=example"}}`, "incomplete subscription listing", 200, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := webhookTestConfig(t)

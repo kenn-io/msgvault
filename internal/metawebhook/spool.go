@@ -154,6 +154,20 @@ func OpenSpool(dir string, maxBytes int64, now func() time.Time) (*Spool, error)
 	if err := mkdir(dir); err != nil {
 		return nil, err
 	}
+	// MkdirAll may have created several directory entries. Persist their
+	// parents at startup before any delivery can be acknowledged.
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	for parent := filepath.Dir(root); ; parent = filepath.Dir(parent) {
+		if err := syncDir(parent); err != nil {
+			return nil, err
+		}
+		if parent == filepath.Dir(parent) {
+			break
+		}
+	}
 	if err := mkdir(filepath.Join(dir, "requests")); err != nil {
 		return nil, err
 	}

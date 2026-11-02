@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -63,6 +64,20 @@ func TestSpoolAcceptDurableLayout(t *testing.T) {
 	assert.Error(t, err)
 	_, err = s.Body("9", "../body")
 	assert.Error(t, err)
+}
+
+func TestSpoolRefusesUnsyncableRootParent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix directory read permission enforcement")
+	}
+	parent := filepath.Join(t.TempDir(), "parent")
+	require.NoError(t, os.Mkdir(parent, 0300))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(parent, 0700)) })
+	// Creation is permitted, but the parent cannot be opened for fsync. The
+	// receiver must refuse startup rather than acknowledge a non-durable root.
+	_, err := OpenSpool(filepath.Join(parent, "meta-webhooks"), 1<<20, time.Now)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrPermission)
 }
 func TestSpoolAcceptDuplicate(t *testing.T) {
 	for _, state := range []State{StatePending, StateHeld, StateFailed, StateDone} {
