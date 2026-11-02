@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
 )
 
-const replyRetryKey = "123e4567-e89b-42d3-a456-426614174000"
+const replyRetryKey = "00000000-0000-4000-8000-000000000001"
 const replyUser = "U00000000000000000000000000000002"
 
 func TestPushTextReceiptAndDedupe(t *testing.T) {

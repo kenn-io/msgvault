@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: 2026-11-02
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---

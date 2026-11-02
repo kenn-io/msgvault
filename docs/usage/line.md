@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: 2026-11-02
 title: LINE Official Account
 description: Archive LINE Official Account chats and send reviewed text replies from local drafts.
 ---

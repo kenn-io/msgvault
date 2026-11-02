@@ -153,9 +153,6 @@ func (c *Client) send(ctx context.Context, method, base, path string, body []byt
 }
 
 func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path string, body []byte, contentType, token string, client *http.Client, retryKey string) (*http.Response, error) {
-	if !validBase(base) {
-		return nil, errors.New("line: invalid API base URL")
-	}
 	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("line: cannot create request")
