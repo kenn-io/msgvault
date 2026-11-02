@@ -232,6 +232,7 @@ describe('OrganizationEmploymentTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit employment' }));
     const title = await screen.findByRole('textbox', { name: 'Employment title' }) as HTMLInputElement;
+    expect(screen.queryByRole('button', { name: 'New organization' })).toBeNull();
     await fireEvent.input(title, { target: { value: 'Draft title' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save employment' }));
 
