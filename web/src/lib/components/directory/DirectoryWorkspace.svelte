@@ -1,14 +1,13 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, Chip, DetailDrawer, IconButton, Modal, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { Button, Chip, IconButton, Modal, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { onDestroy, untrack } from 'svelte';
 
-  import type { MeetingRef } from '../../api/generated/models';
   import { deletePerson as generatedDeletePerson } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import type { DirectoryURLState } from '../../directory/models';
   import { DirectoryController } from '../../directory/controller.svelte';
-  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatContactDate, formatDay } from '../../directory/labels';
+  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
@@ -20,14 +19,7 @@
     state: DirectoryURLState;
     /** A caller may offer promotion only with an actual participant/cluster context. */
     promotionParticipantID?: number;
-    onOpenCardDAVConflict?: (conflictID: number) => void;
-    onOpenCardDAVSettings?: () => void;
-    onAnnounce?: (message: string) => void;
-    onConfigureVisualSearch?: () => void;
-    onOpenMeeting?: (meeting: MeetingRef) => void;
-    onOpenRelationship?: (participantID: number) => void;
     onOpenPerson?: (id: number) => void;
-    onReviewFacts?: (personID: number) => void;
   }
 
   let {
@@ -35,18 +27,8 @@
     controller,
     state: urlState,
     promotionParticipantID = undefined,
-    onOpenCardDAVConflict = () => undefined,
-    onOpenCardDAVSettings = () => undefined,
-    onAnnounce = () => undefined,
-    onConfigureVisualSearch = undefined,
-    onOpenMeeting = undefined,
-    onOpenRelationship = undefined,
-    onReviewFacts = undefined,
     onOpenPerson = undefined
   }: Props = $props();
-  let root = $state<HTMLElement>();
-  let narrow = $state(false);
-  let mediaQuery: MediaQueryList | undefined;
   const listSelection = new ExploreSelectionState();
   let bulkDeletePending = $state(false);
   let bulkMessage = $state<string | null>(null);
@@ -172,25 +154,6 @@
     confirmBulkDelete = false;
   });
 
-  onMount(() => {
-    if (!window.matchMedia) return;
-    mediaQuery = window.matchMedia('(max-width: 760px)');
-    const update = () => { narrow = mediaQuery?.matches ?? false; };
-    update();
-    mediaQuery.addEventListener('change', update);
-    return () => mediaQuery?.removeEventListener('change', update);
-  });
-
-  async function closeDetail(): Promise<void> {
-    await controller.selectPerson(null);
-    await tick();
-    // DetailDrawer's focus trap restores its previous element during
-    // teardown. Yield one task so that cleanup finishes before placing focus
-    // on Directory's roving row.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    root?.querySelector<HTMLElement>('[role="row"][tabindex="0"]')?.focus();
-  }
-
   async function promote(): Promise<void> {
     if (promotionParticipantID === undefined) return;
     await controller.promote(promotionParticipantID);
@@ -251,7 +214,7 @@
   }
 </script>
 
-<main class="directory-workspace" bind:this={root} aria-label="Directory">
+<main class="directory-workspace" aria-label="Directory">
   <PageHeader title="Directory" description="People you've saved, with profiles and contact details.">
     {#snippet actions()}
       {#if promotionParticipantID !== undefined}

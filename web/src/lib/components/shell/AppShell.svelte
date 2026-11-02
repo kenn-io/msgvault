@@ -1354,10 +1354,8 @@
         />
       {:else if exploreState.current.workspace === 'directory'}
         <DirectoryWorkspace
-          onConfigureVisualSearch={openVisualAttachmentSettings}
           {client}
           controller={directoryController}
-          onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           promotionParticipantID={directoryPromotionParticipantID}
           onOpenPerson={openDirectoryPerson}
           state={{
@@ -1371,12 +1369,6 @@
             directorySort: exploreState.current.directorySort,
             directoryPersonID: exploreState.current.directoryPersonID,
           }}
-          onOpenCardDAVConflict={openCardDAVConflict}
-          onOpenCardDAVSettings={openCardDAVSettings}
-          onAnnounce={announceOperation}
-          onOpenRelationship={openRelationship}
-          onReviewFacts={(personID) =>
-            commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
         />
       {:else if exploreState.current.workspace === 'directory_review'}
         <DirectoryReviewWorkspace
