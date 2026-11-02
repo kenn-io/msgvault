@@ -152,8 +152,11 @@ func TestUnlisted(t *testing.T) {}
 --- PASS: TestD (1.00s)
 --- PASS: TestRemoved (100.00s)
 `), 0o600))
-	for _, backend := range []string{"postgres", "sqlite"} {
+	for _, backend := range []string{"postgres", "sqlite", "postgres-stale"} {
 		t.Run(backend, func(t *testing.T) {
+			if backend == "postgres-stale" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "testdata", "shard-weights-postgres.txt"), []byte("--- PASS: TestRemoved (100.00s)\n"), 0o600))
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, bash, script, ".", "2", "fts5 sqlite_vec", "30s")
@@ -164,7 +167,7 @@ func TestUnlisted(t *testing.T) {}
 				}
 			}
 			cmd.Env = append(cmd.Env, "GOWORK=off")
-			if backend == "postgres" {
+			if backend != "sqlite" {
 				cmd.Env = append(cmd.Env, "MSGVAULT_TEST_DB=unused")
 			}
 			output, err := cmd.CombinedOutput()
@@ -173,7 +176,7 @@ func TestUnlisted(t *testing.T) {}
 			blocks := regexp.MustCompile(`(?m)^ok  \texample\.com/shardfixture\t\d+\.\d{3}s\n`).Split(result, -1)
 			require.Len(t, blocks, 3, result)
 			want := [][]string{{"TestHeavy", "TestUnlisted"}, {"TestA", "TestB", "TestC", "TestD"}}
-			if backend == "sqlite" {
+			if backend != "postgres" {
 				want = [][]string{{"TestHeavy", "TestB", "TestD"}, {"TestA", "TestC", "TestUnlisted"}}
 			}
 			for i, names := range want {

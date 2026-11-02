@@ -89,7 +89,7 @@ if [ -f "$weights_file" ]; then
 			lightest = 0
 			for (i = 1; i < shards; i++) if (total[i] < total[lightest]) lightest = i
 			print $3 >> (prefix lightest ".names")
-			total[lightest] += $1
+			total[lightest] += $1 + 0.01
 		}'
 else
 	for ((i = 0; i < ${#test_names[@]}; i++)); do
