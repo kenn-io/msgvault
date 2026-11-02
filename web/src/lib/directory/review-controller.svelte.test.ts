@@ -470,7 +470,7 @@ it('returns to the first page when deciding the last later-page row empties that
 it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination after settling its queued decision', async direction => {
   const decision = deferredResponse(), destination = deferredResponse();
   const start = 0;
-  const target = direction === 'invalidate' ? 0 : 10;
+  const target = direction === 'invalidate' ? 0 : direction === 'next' ? 9 : 10;
   const order: string[] = [];
   let reads = 0;
   let moving = false, decided = false, posted = false, destinationRead = false;

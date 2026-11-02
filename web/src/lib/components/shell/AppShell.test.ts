@@ -3009,11 +3009,13 @@ it.each(['before returning', 'after returning'])('shows a saved profile rename c
   let releaseSave!: () => void;
   const saveStarted = vi.fn();
   let renamed = false;
+  const decisions: Array<{ review_token: string }> = [];
   const saved = () => ({ ...person(7, renamed ? 5 : 4, []), display_name: renamed ? 'Renamed saved person' : 'Original saved person' });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, left_kind: 'person', left_id: 7, actionable: false, blocker: 'endpoint_unsupported' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, left_kind: 'person', left_id: 7, actionable: false, blocker: 'endpoint_unsupported', review_token: renamed ? 'profile-r5' : 'profile-r4' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/17/review/reject')) { const body = await request.json(); decisions.push(body); return body.review_token === 'profile-r5' ? Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }) : Response.json({ error: 'identity_match_review_stale', message: 'Read the refreshed profile' }, { status: 409 }); }
     if (path.endsWith('/people/directory')) return Response.json({ people: [directoryPerson(7, { display_name: saved().display_name, revision: saved().revision })] });
     if (path === '/api/v1/people/7') {
       if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); saveStarted(); if (timing === 'after returning') await new Promise<void>(resolve => { releaseSave = resolve; }); renamed = true; }
@@ -3053,6 +3055,11 @@ it.each(['before returning', 'after returning'])('shows a saved profile rename c
       await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
     }
     await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Renamed saved person'));
+    if (timing === 'after returning') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
+      await fireEvent(window, new Event('pagehide'));
+      await waitFor(() => expect(decisions).toEqual([{ review_token: 'profile-r5' }]));
+    }
   } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
 });
 

@@ -46,6 +46,7 @@
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
   let confirmDelete = $state(false);
+  $effect(() => { if (confirmDelete) return appShortcuts.pushScope('people-bulk-delete'); });
   const selectedSaved = $derived([...selection.explicitKeys].filter(key => key.startsWith('person:')).map(key => Number(key.slice(7))));
   let bulkPending = $state(false);
   let bulkMessage = $state<string | null>(null);

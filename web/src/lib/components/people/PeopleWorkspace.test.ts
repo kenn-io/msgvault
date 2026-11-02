@@ -585,3 +585,24 @@ it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %
     expect(within(grid).queryByText('Before sync')).toBeNull();
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });
+
+it('Escape dismisses bulk Delete while retaining the selected saved person', async () => {
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7)] }),
+    '/api/v1/people/7': () => Response.json(profile(7, 4, []), { headers: { ETag: '"person-7-r4"' } }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7 });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: patch => { state.commitNavigation(patch); void view.rerender({ urlState: state.current }); }, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await screen.findByRole('heading', { name: 'Synthetic One' });
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Synthetic One' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByRole('button', { name: 'Confirm delete' });
+    confirm.focus();
+    await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect.soft(state.current.directoryPersonID).toBe(7);
+    expect.soft(screen.queryByRole('heading', { name: 'Synthetic One' })).not.toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete people' })).toBeNull());
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
