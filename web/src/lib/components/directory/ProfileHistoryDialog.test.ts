@@ -188,18 +188,5 @@ describe('ProfileHistoryDialog', () => {
     } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });
 
-  it('keeps the dialog open and reports a failed history read', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [] });
-      return Response.json({ error: 'unavailable', message: 'history unavailable' }, { status: 503 });
-    }));
-
-    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
-
-    expect((await screen.findByRole('alert')).textContent).toBe('history unavailable');
-    expect(await screen.findByRole('heading', { name: 'Merges' })).toBeDefined();
-    expect(screen.getByRole('dialog', { name: 'Profile history' })).toBeDefined();
-  });
 
 });

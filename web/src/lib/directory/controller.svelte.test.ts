@@ -500,25 +500,27 @@ describe('DirectoryController', () => {
     return { controller, commits, directoryRequests, category };
   }
 
-  it('reconciles filtered Unicode category membership after add and close', async () => {
-    const { controller, commits, directoryRequests, category } = categoryHarness(true);
+  it.each([true, false])('reconciles Unicode categories after add and close (filtered=%s)', async filtered => {
+    const { controller, commits, directoryRequests, category } = categoryHarness(filtered);
     await controller.loadFirstPage();
-    await controller.loadNextPage();
+    if (filtered) await controller.loadNextPage();
     await controller.loadSelection(7, true);
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
-    expect(controller.rows.map((row) => row.id)).toEqual([7, 8, 9]);
+    expect(controller.rows.map((row) => row.id)).toEqual(filtered ? [7, 8, 9] : [7]);
     expect(controller.rows[0]?.categories).toEqual(['Straße']);
-    expect(controller.cursor).toBe('added-page-3');
+    expect(controller.cursor).toBe(filtered ? 'added-page-3' : null);
     expect(controller.selectedPersonID).toBe(7);
     expect(controller.detail?.structuredProfile?.categories).toEqual([category]);
     expect(commits).toEqual([{ directoryPersonID: 7 }]);
 
     await controller.profile?.patchProfile({ categories: { supersede: [31] } });
 
-    expect(controller.rows.map((row) => row.id)).toEqual([8, 9]);
-    expect(controller.cursor).toBe('closed-page-3');
+    expect(controller.rows.map((row) => row.id)).toEqual(filtered ? [8, 9] : [7]);
+    if (!filtered) expect(controller.rows[0]?.categories).toEqual([]);
+    expect(controller.cursor).toBe(filtered ? 'closed-page-3' : null);
     expect(controller.selectedPersonID).toBe(7);
     expect(controller.detail?.structuredProfile?.categories).toEqual([]);
+    if (!filtered) expect(directoryRequests).toHaveLength(1);
     for (const request of directoryRequests.slice(2)) {
       const parameters = new URL(request.url).searchParams;
       expect(parameters.get('q')).toBe('synthetic person');
@@ -527,17 +529,6 @@ describe('DirectoryController', () => {
       expect(parameters.get('organization')).toBe('Example Org');
       expect(parameters.get('primary_channel')).toBe('email');
     }
-  });
-
-  it('updates unfiltered Unicode categories locally after add and close', async () => {
-    const { controller, directoryRequests } = categoryHarness(false);
-    await controller.loadFirstPage();
-    await controller.loadSelection(7, true);
-    await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
-    expect(controller.rows[0]?.categories).toEqual(['Straße']);
-    await controller.profile?.patchProfile({ categories: { supersede: [31] } });
-    expect(controller.rows[0]?.categories).toEqual([]);
-    expect(directoryRequests).toHaveLength(1);
   });
 
   it('keeps the observed Directory channel after a preferred-channel set and clear', async () => {
@@ -1141,39 +1132,38 @@ describe('DirectoryController', () => {
     } finally { controller.destroy(); }
   });
 
-  it('refreshes the selected profile and entity sections after a split', async () => {
+  it.each(['selected', 'unselected'])('reconciles a split with its source profile %s', async selection => {
+    const selected = selection === 'selected';
     const requests: Request[] = [];
     const controller = new DirectoryController(createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
+      if (path === '/api/v1/people/directory') return Response.json({ people: selected ? [directoryPerson(7)] : requests.length === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
       return detailResponse(path);
     }));
     try {
-      await controller.loadSelection(7);
-      await controller.entity!.loadNetwork(1);
-      requests.length = 0;
-      await controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
-      expect(requests.filter(request => request.method === 'GET').map(pathOf)).toEqual(expect.arrayContaining(['/api/v1/people/7/profile', '/api/v1/people/7/employments', '/api/v1/people/7/network']));
+      if (selected) {
+        await controller.loadSelection(7);
+        await controller.entity!.loadNetwork(1);
+        requests.length = 0;
+      } else await controller.loadFirstPage();
+      await controller.reconcilePersonSplit({ sourcePersonID: selected ? 7 : 12, newPersonID: selected ? 9 : 19 });
+      if (selected) {
+        expect(requests.filter(request => request.method === 'GET').map(pathOf)).toEqual(expect.arrayContaining(['/api/v1/people/7/profile', '/api/v1/people/7/employments', '/api/v1/people/7/network']));
+      } else {
+        expect(controller.rows.map(row => row.id)).toEqual([12, 19]);
+        expect(requests.map(pathOf)).toEqual(['/api/v1/people/directory', '/api/v1/people/directory']);
+        expect(controller.detail).toBeNull();
+      }
     } finally { controller.destroy(); }
   });
 
-  it('reconciles a committed split without fetching an unselected profile', async () => {
-    const requests: Request[] = [];
-    const controller = new DirectoryController(createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return Response.json({ people: requests.length === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
-    }));
-    await controller.loadFirstPage();
-    await controller.reconcilePersonSplit({ sourcePersonID: 12, newPersonID: 19 });
-    expect(controller.rows.map(row => row.id)).toEqual([12, 19]);
-    expect(requests.map(pathOf)).toEqual(['/api/v1/people/directory', '/api/v1/people/directory']);
-    expect(controller.detail).toBeNull();
-  });
-
-  it.each(['relationship candidate', 'saved selection'])('ignores a late promotion success after opening a new %s', async destination => {
+  it.each([
+    { destination: 'relationship candidate', status: 201 },
+    { destination: 'saved selection', status: 201 },
+    { destination: 'relationship candidate', status: 409 }
+  ])('ignores a late promotion $status after opening a new $destination', async ({ destination, status }) => {
     const commits: Array<Record<string, unknown>> = [];
     let resolvePromotion: ((response: Response) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1189,29 +1179,13 @@ describe('DirectoryController', () => {
     const promotion = controller.promote(11);
     await vi.waitFor(() => expect(resolvePromotion).toBeDefined());
     if (destination === 'saved selection') await controller.loadSelection(7); else controller.resetForPromotion();
-    resolvePromotion?.(Response.json({ id: 42, revision: 1 }, { status: 201 }));
+    resolvePromotion?.(Response.json(status === 409 ? { error: 'person_binding_conflict', message: 'bound elsewhere' } : { id: 42, revision: 1 }, { status }));
     await promotion;
 
     expect(controller.selectedPersonID).toBe(destination === 'saved selection' ? 7 : null);
     expect(controller.promotionResult).toBeNull();
     expect(controller.promotionError).toBeNull();
     expect(commits).not.toContainEqual({ directoryPersonID: 42 });
-  });
-
-  it('ignores a late promotion conflict after resetting for a new relationship candidate', async () => {
-    let resolvePromotion: ((response: Response) => void) | undefined;
-    const fetchFn = vi.fn<typeof fetch>(async () => new Promise<Response>((resolve) => { resolvePromotion = resolve; }));
-    const controller = new DirectoryController(createAPIClient(fetchFn));
-
-    const promotion = controller.promote(11);
-    await vi.waitFor(() => expect(resolvePromotion).toBeDefined());
-    controller.resetForPromotion();
-    resolvePromotion?.(Response.json({ error: 'person_binding_conflict', message: 'bound elsewhere' }, { status: 409 }));
-    await promotion;
-
-    expect(controller.selectedPersonID).toBeNull();
-    expect(controller.promotionResult).toBeNull();
-    expect(controller.promotionError).toBeNull();
   });
 
   it.each([false, true])('removes a deleted person and preserves a later selection (reselect=%s)', async reselect => {
