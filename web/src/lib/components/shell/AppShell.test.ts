@@ -3116,3 +3116,45 @@ it('retains the survivor choice in People after a duplicate decision settles in 
     await screen.findByRole('dialog', { name: 'Resolve person merge' });
   } finally { rendered.unmount(); state.destroy(); vi.useRealTimers(); }
 });
+
+it('refreshes duplicate evidence when saving an observed person finishes after leaving the profile', async () => {
+  let finish!: () => void;
+  let promoted = false;
+  const decisions: Array<{ review_token: string }> = [];
+  const saved = person(7, 1, [1]);
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: promoted ? 'promoted-token' : 'observed-token' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/17/review/reject')) { decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path === '/api/v1/people' && request.method === 'POST') {
+      expect(await request.json()).toEqual({ participant_id: 1 });
+      return new Promise<Response>(resolve => { finish = () => { promoted = true; resolve(Response.json(saved, { status: 201 })); }; });
+    }
+    if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: `Observed ${id}`, identifiers: [], activity_count: 1, first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z', ...(promoted && id === 1 ? { profile: saved } : {}) }); }
+    if (path === '/api/v1/people/7') return Response.json(saved);
+    if (path === '/api/v1/people/7/profile') return Response.json(emptyProfile(saved));
+    if (path.endsWith('/people/directory')) return Response.json({ people: promoted ? [directoryPerson(7, { revision: 1 })] : [] });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save', exact: true }));
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
+    await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
+    await screen.findByRole('button', { name: 'Keep separate' });
+    expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull();
+    vi.useFakeTimers();
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
+    await fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(decisions).toEqual([{ review_token: 'promoted-token' }]));
+  } finally { rendered.unmount(); state.destroy(); vi.useRealTimers(); }
+});
