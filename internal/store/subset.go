@@ -242,19 +242,11 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
-	// The empty destination applied this before any source rows were copied.
-	// Re-run it after copy so transferred Synctech records from older archives
-	// receive the same send-state repair as rows already in the source.
+	// Re-run the send-state repair after copying older source rows.
 	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationSynctechUnsentMessages); err != nil {
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied Synctech send-state migration: %w", err)
-	}
-
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
-		_ = tx.Rollback()
-		closeAndCleanup()
-		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV2); err != nil {
 		_ = tx.Rollback()

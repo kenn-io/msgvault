@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-26"
+last_edited: "2026-10-30"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -120,14 +120,17 @@ endpoints.
 `msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
 only to change which saved people it lists. Tier 1 is sustained two-way contact
 in the short window. Tier 2 is two-way contact in the long window, or meetings.
-Counts cover meetings and the email and chat messages that were sent or
-received. Drafts, texts that never left your phone, and call or voicemail
-records don't count. Archives imported before this change keep counting
-unsent texts until you import the Synctech backup again with
-`msgvault import-synctech-sms <path> --owner-phone <number>`. A Drive source
-doesn't re-download files it already imported, so download the backup from your
-Drive folder and import it locally with the source's owner phone. The import
-updates the existing messages in place. A group chat at or under `[activity]
+Counts cover meetings, the email and chat messages that were sent or received,
+and Synctech and Google Voice calls that stayed connected for at least
+`min_call_seconds`. A call counts as one message each way, whoever dialed.
+Drafts, texts that never left your phone, missed calls, voicemail, and shorter
+calls don't count. Archives imported before this change keep counting unsent
+texts, and count no calls, until you import the backup again: run
+`msgvault import-synctech-sms <path> --owner-phone <number>` for Synctech, and
+run the Google Voice Takeout import again for Google Voice. A Drive source
+doesn't re-download files it already imported, so download the Synctech backup
+from your Drive folder and run the import locally with the source's owner
+phone. The import updates the existing messages in place. A group chat at or under `[activity]
 max_direct_counterparts` counts for each member. By default, newsletter and
 list messages are left out (`exclude_list_messages = false` counts them), and so
 are messages sent to more people than that limit. A person whose address is one
@@ -138,6 +141,7 @@ of your own in any account is never listed.
 short_window_days = 90
 long_window_days = 365
 exclude_list_messages = true
+min_call_seconds = 120
 
 [people.tiers.tier1]
 min_outbound_short = 2
@@ -161,12 +165,13 @@ min_meeting_days_long = 2
 | `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
 | `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
 | `exclude_domain_patterns` | `resource.calendar.google.com`, `*.resource.calendar.google.com` | Lower-case domains of rooms and resources. A trailing `*` matches a prefix; a leading `*.` matches subdomains only, at a dot boundary. A person whose addresses all match is never listed. |
-| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window. Both are required, so one-way mail never qualifies. |
+| `min_call_seconds` | `120` | How long an answered Synctech or Google Voice call must stay connected to count. Each counted call adds one to the outbound and inbound counts and is its own channel. `0` stops calls from counting. |
+| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window, plus counted calls. Both are required, so one-way mail never qualifies. |
 | `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
 | `tier1.breadth_min_active_days_short` | `3` | Days needed for the breadth path to tier 1. |
-| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
+| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat, calls) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
 | `tier1.breadth_min_meeting_days_long` | `2` | Meeting days in the long window for the breadth path. `0` turns it off. |
-| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window. |
+| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window, plus counted calls. |
 | `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
 | `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
 
@@ -1233,6 +1238,10 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `query_threads` | min(CPUs, 4) | DuckDB threads for daemon aggregate queries; zero keeps the default |
 | `query_temp_limit` | `2GB` | Maximum spill-to-disk size for daemon aggregate queries; a query that spills past it fails with a DuckDB out-of-memory error |
 
+On unreleased `main`, each thread setting limits both DuckDB's query worker
+pool and its separate asynchronous I/O pool from database creation. It is a
+limit per pool, not a cap on all threads in the process.
+
 If a Web UI query runs out of memory or temporary disk space, its error names
 the query-limit settings above. Try filters that narrow the results. On the
 machine running msgvault, check available memory and free disk space before
@@ -2177,12 +2186,13 @@ Top-level toggle and backend marker for semantic/hybrid search. SQLite vector se
 
 #### `[vector.embeddings]`
 
-External OpenAI-compatible embedding endpoint used to convert message text into vectors. msgvault does not host a model; it calls the endpoint you configure. Use a local or self-hosted endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) when message text must stay on your machine or network. Hosted endpoints also work but receive the text being embedded.
+Text embeddings use a configured endpoint or the shared local `kennembed` server. Run `msgvault setup providers --local-embeddings` to install the local server after confirming any missing downloads. Local requests ignore saved and environment API keys. Local and self-hosted endpoints keep text on your machine or network. Hosted endpoints receive the text being embedded.
 
 | Key | Default | Description |
 |---|---|---|
 | `api_format` | `openai` | Request contract: `openai` (OpenAI-compatible `/embeddings`, one vector per message chunk) or `voyage-contextual` (Voyage `/contextualizedembeddings`; pins `model = "voyage-context-4"` and embeds chat conversation windows and turn-aware meeting chunks as contextual documents). |
-| `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
+| `local_only` | `false` | Use the shared local server, even while Ollama is running. Setup installs its model and runtime; subsequent commands reuse them. |
+| `endpoint` | (required unless `local_only = true`) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
 | `model` | (required) | Model name or serving alias to pass in each request (e.g., `nomic-embed-text`). Use a new alias when the served weights or vector recipe change; msgvault does not verify the checkpoint behind an alias. |
 | `dimension` | (required) | Expected vector width. Responses with a different width are rejected. The OpenAI-compatible client does not send a `dimensions` field or slice returned vectors; configure the server to return the desired width. |
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
@@ -2330,6 +2340,10 @@ Empty config disables scheduled embedding; you can still run
 when explicitly set, including `false` and `""`. Already enabled text lanes keep
 their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
+
+Automatic message, person, and document indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
+
+Completed provider responses are saved in the vector store before the next request, so a resumed pass or restarted daemon does not repeat them; unfinished requests run again. See [scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
 
 #### `[vector.people]`
 
