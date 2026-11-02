@@ -157,6 +157,7 @@ func IsTextMessageType(mt string) bool {
 // flag validates against this set so a typo fails fast with the allowed
 // values instead of silently returning no results.
 var KnownMessageTypes = []string{
+	"tiktok_comments",
 	messageTypeEmail,
 	"google_chat",
 	messageTypeCalendar,

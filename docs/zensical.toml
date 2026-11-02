@@ -35,6 +35,7 @@ nav = [
     {"Local Email" = "usage/importing.md"},
     {"Remote Email Images" = "usage/remote-images.md"},
     {"Text Messages" = "usage/text-messages.md"},
+    {"TikTok Comments" = "usage/tiktok-comments.md"},
     {"Google Calendar" = "usage/calendar.md"},
     {"Microsoft Teams" = "usage/teams.md"},
     {"Discord" = "usage/discord.md"},

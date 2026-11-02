@@ -617,6 +617,7 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	TikTok             []TikTokSource                  `toml:"tiktok"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1327,6 +1328,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateTikTokSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()

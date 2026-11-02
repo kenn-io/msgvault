@@ -686,6 +686,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 				"hint", `set a cron schedule on the [[chatwoot]] profile`)
 		}
 	}
+	registerTikTokCommentJobs(sched, state, s, attachmentMaint)
 	for _, source := range cfg.ScheduledChatwootSources() {
 		if err := registerScheduledChatwootJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
 			return runConfiguredChatwootSync(ctx, s, source)
