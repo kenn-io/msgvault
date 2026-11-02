@@ -5,13 +5,18 @@ import "strings"
 // Signals counts only events already filtered by the activity rules. Owner,
 // Emails and HasPhoneOrChat feed the exclusions and stay out of the output.
 type Signals struct {
-	OutboundShort              int `json:"outbound_short"`
-	OutboundLong               int `json:"outbound_long"`
-	InboundShort               int `json:"inbound_short"`
-	InboundLong                int `json:"inbound_long"`
-	ActiveDaysShort            int `json:"active_days_short"`
-	ActiveDaysLong             int `json:"active_days_long"`
-	MeetingDaysLong            int `json:"meeting_days_long"`
+	OutboundShort   int `json:"outbound_short"`
+	OutboundLong    int `json:"outbound_long"`
+	InboundShort    int `json:"inbound_short"`
+	InboundLong     int `json:"inbound_long"`
+	ActiveDaysShort int `json:"active_days_short"`
+	ActiveDaysLong  int `json:"active_days_long"`
+	MeetingDaysLong int `json:"meeting_days_long"`
+	// CallsShort and CallsLong count answered calls at least MinCallSeconds
+	// long. A call is two-way, so each one also counts toward the outbound and
+	// inbound thresholds.
+	CallsShort                 int `json:"calls_short"`
+	CallsLong                  int `json:"calls_long"`
 	ChannelsLong               int `json:"channels_long"`
 	ExcludedListEvents         int `json:"excluded_list_events"`
 	LargeAudienceInboundEvents int `json:"large_audience_inbound_events"`
@@ -52,14 +57,14 @@ func Evaluate(s Signals, c Config) Decision {
 		d.Thresholds = append(d.Thresholds, ThresholdCheck{name, got, want, enabled, met})
 		return met
 	}
-	shortOut := check("tier1.min_outbound_short", s.OutboundShort, c.Tier1.MinOutboundShort)
-	shortIn := check("tier1.min_inbound_short", s.InboundShort, c.Tier1.MinInboundShort)
+	shortOut := check("tier1.min_outbound_short", s.OutboundShort+s.CallsShort, c.Tier1.MinOutboundShort)
+	shortIn := check("tier1.min_inbound_short", s.InboundShort+s.CallsShort, c.Tier1.MinInboundShort)
 	intensity := check("tier1.min_active_days_short", s.ActiveDaysShort, c.Tier1.MinActiveDaysShort)
 	breadthDays := check("tier1.breadth_min_active_days_short", s.ActiveDaysShort, c.Tier1.BreadthMinActiveDaysShort)
 	breadthChannels := check("tier1.breadth_min_channels_long", s.ChannelsLong, c.Tier1.BreadthMinChannelsLong)
 	breadthMeetings := check("tier1.breadth_min_meeting_days_long", s.MeetingDaysLong, c.Tier1.BreadthMinMeetingDaysLong)
-	longOut := check("tier2.min_outbound_long", s.OutboundLong, c.Tier2.MinOutboundLong)
-	longIn := check("tier2.min_inbound_long", s.InboundLong, c.Tier2.MinInboundLong)
+	longOut := check("tier2.min_outbound_long", s.OutboundLong+s.CallsLong, c.Tier2.MinOutboundLong)
+	longIn := check("tier2.min_inbound_long", s.InboundLong+s.CallsLong, c.Tier2.MinInboundLong)
 	longDays := check("tier2.min_active_days_long", s.ActiveDaysLong, c.Tier2.MinActiveDaysLong)
 	meetings := check("tier2.min_meeting_days_long", s.MeetingDaysLong, c.Tier2.MinMeetingDaysLong)
 	switch {

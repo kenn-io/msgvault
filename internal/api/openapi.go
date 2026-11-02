@@ -382,11 +382,15 @@ import (
 // 3.28.0 adds the typed calendar projection to calendar event message details.
 // 3.29.0 adds literal address filtering to the durable people Directory.
 // 3.30.0 adds the stored hidden_text_present flag to message details and search rows.
-// 3.31.0 adds exact sender and To participant identities to conversation windows.
-// 3.32.0 adds the optional account to staged deletion list summaries.
-// 3.35.0 adds timezone-aware daily message grouping and sent_only group filtering.
+// 3.31.0 adds literal OR warnings to full-text search responses.
+// 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
+// 3.33.0 adds the read-only person tier preview and explanation routes.
+// 3.34.0 adds answered-call counts to person tier signals.
+// 3.36.0 adds exact sender and To participant identities to conversation windows.
+// 3.37.0 adds the optional account to staged deletion list summaries.
+// 3.38.0 adds timezone-aware daily message grouping and sent_only group filtering.
 // It also filters participant timelines to events and meetings attended by the owner.
-const APISchemaVersion = "3.35.0"
+const APISchemaVersion = "3.38.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

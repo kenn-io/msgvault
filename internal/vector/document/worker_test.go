@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -17,11 +18,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	docbankdocument "go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
-var _ Provider = (embed.SemanticClient)(nil)
+var _ vector.DocumentEmbedder = (embed.SemanticClient)(nil)
 
 func TestPrepareDocbankClaimInputsUsesValidatedRawPlan(t *testing.T) {
 	assert := assert.New(t)
@@ -608,43 +611,166 @@ func TestWorkerRunDeletesOnlySourceChangedTokens(t *testing.T) {
 	assertions.NotContains(backend.deletes[0], "token-lost")
 }
 
-func TestWorkerRunContextInterruptionLeavesClaimsLeasedForTakeover(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
-	started := make(chan struct{})
-	provider := &fakeDocumentVectorProvider{call: func(ctx context.Context, _ []embed.DocumentInput) ([][][]float32, error) {
-		close(started)
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}}
-	backend := &fakeDocumentVectorBackend{}
-	worker := newFakeWorker(ledger, provider, backend)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, err := worker.Run(ctx, 1, 1)
-		done <- err
-	}()
-	<-started
-	cancel()
-	requirements.ErrorIs(<-done, context.Canceled)
-	assertions.Empty(ledger.failures)
-	assertions.Empty(ledger.committed)
-	assertions.Empty(backend.puts)
+func TestWorkerRunReleasesInterruptedClaims(t *testing.T) {
+	for _, mode := range []string{"unsent", "submitted", "published prefix"} {
+		t.Run(mode, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			ledger := newFakeDocumentVectorLedger(
+				workerClaim("extract-a", 1, "first", "token-a"),
+				workerClaim("extract-b", 2, "second", "token-b"),
+				workerClaim("extract-c", 3, "third", "token-c"),
+			)
+			provider := &fakeDocumentVectorProvider{call: func(context.Context, []embed.DocumentInput) ([][][]float32, error) {
+				if mode == "submitted" {
+					cancel()
+					return nil, ctx.Err()
+				}
+				return [][][]float32{{{1, 2, 3}}, {{1, 2, 3}}, {{1, 2, 3}}}, nil
+			}}
+			worker := newFakeWorker(ledger, provider, &fakeDocumentVectorBackend{})
+			worker.deps.ContextualDocuments = true
+			if mode == "unsent" {
+				prepare := worker.deps.prepareInputs
+				worker.deps.prepareInputs = func(ctx context.Context, ledger Ledger, recipe Recipe, claims []*store.DocumentVectorChunkClaim) (map[string]string, error) {
+					texts, err := prepare(ctx, ledger, recipe, claims)
+					cancel()
+					return texts, err
+				}
+			}
+			if mode == "published prefix" {
+				ledger.afterCommit = func(string) { cancel() }
+			}
+			result, err := worker.Run(ctx, 1, 3)
+			require.ErrorIs(err, context.Canceled)
+			unfinished := []string{"token-a", "token-b", "token-c"}
+			if mode == "published prefix" {
+				assert.Equal([]string{"token-a"}, ledger.committed)
+				unfinished = unfinished[1:]
+			} else {
+				assert.Empty(ledger.committed)
+			}
+			assert.Equal(unfinished, ledger.released, "release uses a fresh context after cancellation")
+			if mode == "unsent" {
+				assert.Empty(ledger.submitted, "unsent claims keep their attempt budget")
+			} else {
+				assert.Equal(unfinished, ledger.submitted)
+			}
+			if mode == "submitted" {
+				assert.Equal(1, result.ProviderCalls)
+				assert.Equal(16, result.ProviderInputChars, "first, second, and third are counted when dispatch starts")
+			}
+			assert.False(result.Exhausted)
+			assert.Zero(result.AfterChunkID)
+			assert.Empty(ledger.failures, "cancellation leaves content failures unstamped")
+		})
+	}
+}
 
-	takeover := workerClaim("extract-a", 1, "first", "token-a")
-	takeover.LeaseOwner = "worker-b"
-	takeover.LeaseFence = 2
-	takeover.AttemptCount = 2
-	ledger.claims = append(ledger.claims, takeover)
-	resumeProvider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
-	resumer := newFakeWorker(ledger, resumeProvider, backend)
-	resumer.deps.Owner = "worker-b"
-	result, err := resumer.Run(t.Context(), 1, 1)
-	requirements.NoError(err)
-	assertions.Equal(1, result.Published)
-	assertions.Equal([]string{"token-a"}, ledger.committed)
+// A yield requested while a provider request is in flight lets that request
+// finish and publish, and releases the documents never sent without counting
+// an attempt.
+func TestWorkerRunPublishesCompletedRequestBeforeYielding(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx, requestYield := jobctx.WithPreemption(t.Context())
+	client := &fakeDocumentRequestProvider{request: func(ctx context.Context, inputs []embed.DocumentInput, started func(int, int), completed vector.DocumentRequestFunc) error {
+		require.Len(inputs, 3)
+		started(0, 2)
+		requestYield()
+		if err := completed(0, [][][]float32{{{1, 2, 3}}, {{1, 2, 3}}}); err != nil {
+			return err
+		}
+		return jobctx.ErrYieldedToWaiter
+	}}
+	ledger := newFakeDocumentVectorLedger(
+		workerClaim("extract-a", 1, "first", "token-a"),
+		workerClaim("extract-b", 2, "second", "token-b"),
+		workerClaim("extract-c", 3, "third", "token-c"),
+	)
+	worker := newFakeWorker(ledger, client, &fakeDocumentVectorBackend{})
+	worker.deps.ContextualDocuments = true
+
+	result, err := worker.Run(ctx, 1, 3)
+	require.NoError(err, "a yield is scheduling control, not a failure")
+	assert.Equal([]string{"token-a", "token-b"}, ledger.committed, "the in-flight request publishes")
+	assert.Equal([]string{"token-c"}, ledger.released)
+	assert.Empty(ledger.submitted, "an unsent document keeps its attempt budget")
+	assert.Empty(ledger.failures)
+	assert.Equal(1, result.ProviderCalls)
+}
+
+func TestWorkerDoesNotDispatchWhenSavedVectorLookupFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	lookupErr := errors.New("saved vector lookup unavailable")
+	provider := &fakeDocumentVectorProvider{}
+	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+	worker := newFakeWorker(ledger, provider, &fakeDocumentVectorBackend{unpublishedErr: lookupErr})
+
+	result, err := worker.Run(t.Context(), 1, 1)
+	require.ErrorIs(err, lookupErr)
+	assert.Empty(provider.calls, "checkpoint lookup failure must defer provider work")
+	assert.Zero(result.ProviderCalls)
+	assert.Empty(ledger.committed)
+	assert.Equal([]string{"token-a"}, ledger.released)
+	assert.Empty(ledger.submitted, "a request that was not dispatched keeps its attempt")
+}
+
+// A response that returns after its pass is canceled is still saved, so a
+// rebuilt worker publishes it without another provider request.
+func TestWorkerRunPublishesSavedVectorsWithoutAnotherRequest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	backend := &fakeDocumentVectorBackend{}
+	claim := workerClaim("extract-a", 1, "first", "token-a")
+	ledger := newFakeDocumentVectorLedger(claim)
+	provider := &fakeDocumentVectorProvider{call: func(context.Context, []embed.DocumentInput) ([][][]float32, error) {
+		cancel()
+		return [][][]float32{{{1, 2, 3}}}, nil
+	}}
+	_, err := newFakeWorker(ledger, provider, backend).Run(ctx, 1, 1)
+	require.ErrorIs(err, context.Canceled)
+	require.Empty(ledger.committed)
+	require.Equal([]string{"token-a"}, ledger.released)
+
+	resumed := *claim
+	resumed.LeaseFence = 2
+	ledger.claims = []*store.DocumentVectorChunkClaim{&resumed}
+	rebuiltProvider := &fakeDocumentVectorProvider{}
+	result, err := newFakeWorker(ledger, rebuiltProvider, backend).Run(t.Context(), 1, 1)
+	require.NoError(err)
+	assert.Empty(rebuiltProvider.calls, "the saved vector is not requested again")
+	assert.Equal([]string{"token-a"}, ledger.committed)
+	assert.Equal(1, result.Published)
+	assert.Zero(result.ProviderCalls)
+}
+
+func TestWorkerRunShutdownKeepsIndependentFailures(t *testing.T) {
+	failure := errors.New("independent failure")
+	for _, stage := range []string{"provider", "backend"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			provider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
+			backend := &fakeDocumentVectorBackend{}
+			fail := func() error { cancel(); return failure }
+			if stage == "provider" {
+				provider.call = func(context.Context, []embed.DocumentInput) ([][][]float32, error) { return nil, fail() }
+			} else {
+				backend.put = func(context.Context, []Embedding) error { return fail() }
+			}
+			ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+			_, err := newFakeWorker(ledger, provider, backend).Run(ctx, 1, 1)
+			require.ErrorIs(t, err, failure)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Empty(t, ledger.committed)
+		})
+	}
 }
 
 func TestWorkerRunReplayDoesNotRepublishReadyWork(t *testing.T) {
@@ -937,11 +1063,14 @@ type fakeDocumentVectorLedger struct {
 	claims             []*store.DocumentVectorChunkClaim
 	claimCalls         int
 	committed          []string
+	released           []string
+	submitted          []string
 	failures           []fakeDocumentVectorFailure
 	commitErr          map[string]error
 	commit             func(context.Context, string) error
 	fail               func(context.Context, string) error
 	beforeCommit       func(string)
+	afterCommit        func(string)
 	renewErr           error
 	renewErrByToken    map[string]error
 	renewCalls         int
@@ -1029,6 +1158,17 @@ func (l *fakeDocumentVectorLedger) renewCallCount() int {
 	return l.renewCalls
 }
 
+func (l *fakeDocumentVectorLedger) ReleaseDocumentVectorChunkClaim(ctx context.Context, _ int64, token, _ string, _ int64, submitted bool, _ time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l.released = append(l.released, token)
+	if submitted {
+		l.submitted = append(l.submitted, token)
+	}
+	return nil
+}
+
 func (l *fakeDocumentVectorLedger) CommitDocumentVectorPublication(ctx context.Context, _ int64, token, _ string, _ int64, _ time.Time) error {
 	if l.beforeCommit != nil {
 		l.beforeCommit(token)
@@ -1042,6 +1182,9 @@ func (l *fakeDocumentVectorLedger) CommitDocumentVectorPublication(ctx context.C
 		return err
 	}
 	l.committed = append(l.committed, token)
+	if l.afterCommit != nil {
+		l.afterCommit(token)
+	}
 	return nil
 }
 
@@ -1076,24 +1219,56 @@ func (p *fakeDocumentVectorProvider) EmbedDocuments(ctx context.Context, inputs 
 	return p.vectors, p.err
 }
 
+type fakeDocumentRequestProvider struct {
+	fakeDocumentVectorProvider
+
+	request func(context.Context, []embed.DocumentInput, func(int, int), vector.DocumentRequestFunc) error
+}
+
+func (p *fakeDocumentRequestProvider) EmbedDocumentRequests(ctx context.Context, inputs []embed.DocumentInput, started func(int, int), completed vector.DocumentRequestFunc) error {
+	return p.request(ctx, inputs, started, completed)
+}
+
 type fakeDocumentVectorBackend struct {
-	puts      [][]Embedding
-	deletes   [][]string
-	putErr    error
-	deleteErr error
-	put       func(context.Context, []Embedding) error
+	puts           [][]Embedding
+	deletes        [][]string
+	putErr         error
+	deleteErr      error
+	unpublishedErr error
+	put            func(context.Context, []Embedding) error
+	saved          map[string]bool
 }
 
 func (b *fakeDocumentVectorBackend) PutUnpublished(ctx context.Context, _ GenerationID, _ int, embeddings []Embedding) error {
 	b.puts = append(b.puts, append([]Embedding(nil), embeddings...))
+	err := b.putErr
 	if b.put != nil {
-		return b.put(ctx, embeddings)
+		err = b.put(ctx, embeddings)
 	}
-	return b.putErr
+	if err == nil {
+		// Like the real backends, a canceled put saves nothing.
+		err = ctx.Err()
+	}
+	if err == nil {
+		if b.saved == nil {
+			b.saved = make(map[string]bool)
+		}
+		for _, embedding := range embeddings {
+			b.saved[embedding.Token] = true
+		}
+	}
+	return err
+}
+
+func (b *fakeDocumentVectorBackend) UnpublishedTokens(context.Context, GenerationID, int, []string) (map[string]bool, error) {
+	return maps.Clone(b.saved), b.unpublishedErr
 }
 
 func (b *fakeDocumentVectorBackend) DeleteTokens(_ context.Context, _ GenerationID, tokens []string) error {
 	b.deletes = append(b.deletes, append([]string(nil), tokens...))
+	for _, token := range tokens {
+		delete(b.saved, token)
+	}
 	return b.deleteErr
 }
 
@@ -1103,7 +1278,7 @@ func (*fakeDocumentVectorBackend) Search(context.Context, GenerationID, int, []f
 
 var workerNow = time.Date(2026, 8, 20, 22, 0, 0, 0, time.UTC)
 
-func newFakeWorker(ledger *fakeDocumentVectorLedger, provider Provider, backend Backend) *Worker {
+func newFakeWorker(ledger *fakeDocumentVectorLedger, provider vector.DocumentEmbedder, backend Backend) *Worker {
 	return NewWorker(WorkerDeps{
 		Ledger: ledger, Provider: provider, Backend: backend,
 		Owner: "worker-a", Dimension: 3, MaxInputChars: 1000, LeaseDuration: time.Minute,
@@ -1138,4 +1313,38 @@ func embeddingTokens(embeddings []Embedding) []string {
 		tokens[index] = embeddings[index].Token
 	}
 	return tokens
+}
+
+func TestWorkerRunStopsPackedRequestsAfterSaveFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"data":[{"index":0,"data":[{"index":0,"embedding":[1,2,3]}]}]}`))
+		assert.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	client := embed.NewVoyageClient(embed.VoyageConfig{
+		Endpoint: server.URL, Model: "voyage-context-4", Dimension: 3,
+		Limits: embed.RequestLimits{MaxDocuments: 1},
+	})
+	ledger := newFakeDocumentVectorLedger(
+		workerClaim("extract-a", 1, "first", "token-a"),
+		workerClaim("extract-b", 2, "second", "token-b"),
+		workerClaim("extract-c", 3, "third", "token-c"),
+	)
+	failure := errors.New("checkpoint disk full")
+	worker := newFakeWorker(ledger, client, &fakeDocumentVectorBackend{putErr: failure})
+	worker.deps.ContextualDocuments = true
+	result, err := worker.Run(t.Context(), 1, 3)
+	require.ErrorIs(err, failure)
+	assert.Equal(1, requests, "storage failure stops the next packed request")
+	assert.Equal(1, result.ProviderCalls)
+	assert.Empty(ledger.committed)
+	require.Len(ledger.failures, 1)
+	assert.Equal("token-a", ledger.failures[0].token)
+	assert.Equal([]string{"token-b", "token-c"}, ledger.released)
+	assert.Empty(ledger.submitted, "unsent claims keep their attempt budget")
 }

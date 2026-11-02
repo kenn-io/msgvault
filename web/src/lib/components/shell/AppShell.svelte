@@ -291,10 +291,16 @@
   }
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
+  // Past runs links to another workspace drop the reader selection, as a workspace
+  // switch does, so a meeting under the dialog does not reappear over the destination.
+  function leaveRunHistory(patch: Partial<ExploreURLState>): void {
+    commitNavigation({ ...defaultOperationsState(), operationHistory: false, selectedRow: null, conversationAnchor: null, ...patch });
+  }
+
   function openOperationAuthority(target: RelatedOperationStatus): void {
     if (target === 'listSourceStatus' || target === 'getCardDAVStatus') {
       announceOperation(target === 'listSourceStatus' ? 'Opening source status.' : 'Opening CardDAV settings.');
-      commitNavigation({ ...defaultOperationsState(), operationHistory: false, workspace: target === 'listSourceStatus' ? 'sources' : 'settings',
+      leaveRunHistory({ workspace: target === 'listSourceStatus' ? 'sources' : 'settings',
         ...(target === 'getCardDAVStatus' ? { settingsCategory: 'carddav', settingsAuthority: '' } : {}) });
       if (target === 'listSourceStatus') sourcesPage?.refresh();
       return;
@@ -312,14 +318,11 @@
   }
 
   function openVisualAttachmentSettings(): void {
-    commitNavigation({
-      ...defaultOperationsState(), operationHistory: false,
-      workspace: 'settings', settingsCategory: 'search', settingsAuthority: 'visual_attachments'
-    });
+    leaveRunHistory({ workspace: 'settings', settingsCategory: 'search', settingsAuthority: 'visual_attachments' });
   }
 
   function setUpOperation(target: OperationSettingsTarget): void {
-    commitNavigation({ ...defaultOperationsState(), operationHistory: false, workspace: 'settings', ...target });
+    leaveRunHistory({ workspace: 'settings', ...target });
   }
 
   setContext('msgvault:open-carddav-operations', () => openOperations('carddav_sync'));
@@ -807,13 +810,28 @@
     if (archiveMeetingID === undefined) archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const message = await archivedMeeting.load(meeting.message_id, meeting.conversation_id);
     if (!message || origin !== navigationFingerprint(exploreState.current)) return;
-    archiveReturnSelection = returnSelectedRow;
-    commitRestorableNavigation({ selectedRow: archiveMeetingSelection(message.id), conversationAnchor: null });
-    window.history.replaceState({
-      ...window.history.state,
-      [ARCHIVE_MEETING_HISTORY_KEY]: { id: message.id, returnSelectedRow }
-    }, '', window.location.href);
+    const open = () => {
+      archiveReturnSelection = returnSelectedRow;
+      commitRestorableNavigation({ selectedRow: archiveMeetingSelection(message.id), conversationAnchor: null });
+      window.history.replaceState({
+        ...window.history.state,
+        [ARCHIVE_MEETING_HISTORY_KEY]: { id: message.id, returnSelectedRow }
+      }, '', window.location.href);
+    };
+    // Past runs owns the history entries above where it opened, and closing it
+    // rewinds past them, so a meeting that loads behind it opens after it closes.
+    if (exploreState.current.operationHistory) meetingBehindRunHistory = { origin, open };
+    else open();
   }
+  let meetingBehindRunHistory: { origin: string; open: () => void } | undefined;
+  $effect(() => {
+    if (exploreState.current.operationHistory) return;
+    untrack(() => {
+      const pending = meetingBehindRunHistory;
+      meetingBehindRunHistory = undefined;
+      if (pending?.origin === navigationFingerprint(exploreState.current)) pending.open();
+    });
+  });
 
   async function restoreArchiveFocus(fallback: HTMLElement | undefined = undefined): Promise<void> {
     await tick();
