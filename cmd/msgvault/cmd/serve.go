@@ -2578,6 +2578,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if len(req.Args) > 0 && req.Args[0] == "beeper" {
+		return a.runCLIBeeper(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}

@@ -83,14 +83,18 @@ func classifyAssetError(body []byte) error {
 // TokenFunc returns a bearer token for a Beeper Desktop API request.
 type TokenFunc func(context.Context) (string, error)
 
-// Client is a Beeper Desktop API client. Archive reads use only GET; SetDraft
-// is the one write, reached only from an explicit draft command.
+// Client is a Beeper Desktop API client. Import reads use only GET; SetDraft
+// and ArchiveChat are writes reached through explicit owner commands.
 type Client struct {
 	baseURL       string
 	token         TokenFunc
 	http          *http.Client
 	limiter       *rate.Limiter
 	retryAfterMax time.Duration
+	// readAttempts is set to one on bounded triage/context copies only.
+	readAttempts  int
+	readMaxBytes  int64
+	requestBudget *requestBudget
 }
 
 // NewClient creates a Client. baseURL is injected so tests can point at
@@ -114,7 +118,7 @@ func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
 // get fetches path, respecting the rate limiter and retrying on 429/5xx with
 // Retry-After or exponential back-off.
 func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
-	return c.fetch(ctx, path, 0, false)
+	return c.fetch(ctx, path, c.readMaxBytes, false)
 }
 
 // fetch is get with an optional response-size cap (0 = unlimited). Bodies are
@@ -138,7 +142,11 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 	// clean miss, so it resets the importer's confirmation streak like any
 	// other intervening error.
 	sawTransientAssetFailure := false
-	for attempt := range maxRetries {
+	attempts := c.readAttempts
+	if attempts == 0 {
+		attempts = maxRetries
+	}
+	for attempt := range attempts {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for beeper rate limit: %w", err)
 		}
@@ -222,7 +230,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			}
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
 		}
-		if attempt == maxRetries-1 {
+		if attempt == attempts-1 {
 			break
 		}
 		wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, c.retryAfterMax)
@@ -234,7 +242,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 		case <-timer.C:
 		}
 	}
-	return nil, fmt.Errorf("beeper GET %s: exhausted %d retries", reqURL, maxRetries)
+	return nil, fmt.Errorf("beeper GET %s: exhausted %d attempts", reqURL, attempts)
 }
 
 // errorSnippet returns a short single-line excerpt of an error body for logs.

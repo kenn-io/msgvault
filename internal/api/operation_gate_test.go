@@ -255,6 +255,9 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 		body string
 	}{
 		{"import", `{"args":["import-mbox","archive.mbox"]}`},
+		{"beeper classify", `{"args":["beeper","classify","--conversation","7","--apply"]}`},
+		{"beeper archive", `{"args":["beeper","archive","--conversation","7","--apply"]}`},
+		{"beeper reconcile", `{"args":["beeper","archive","--conversation","7","--reconcile","--apply"]}`},
 		{"flag value matches status", `{"args":["embeddings","--config","status","build"]}`},
 		{"unknown flag", `{"args":["embeddings","--account","status","build"]}`},
 	} {
@@ -695,6 +698,10 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		body string
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
+		{"beeper labels", `{"args":["beeper","labels","--source-id","42"]}`},
+		{"beeper triage refresh", `{"args":["beeper","triage","--source-id","42","--refresh"]}`},
+		{"beeper context", `{"args":["beeper","context","--conversation","7"]}`},
+		{"beeper parent logging", `{"args":["beeper","--log-level","warn","triage","--source-id","42"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},
 		{"person tiers preview", `{"args":["person","tiers","preview","--json"]}`},
