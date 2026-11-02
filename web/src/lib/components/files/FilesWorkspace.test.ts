@@ -242,7 +242,7 @@ describe('FilesWorkspace', () => {
     const result = response();
     const first = result.files[0]!;
     first.source_type = 'imap';
-    first.source_identifier = 'imap://work@example.com@imap.example.com';
+    first.source_identifier = 'imaps://work@example.com@imap.example.com:993';
     result.files.push({ ...first, id: 8, key: 'file:8', source_type: 'slack', source_identifier: 'https://chat.example.com/archive' });
     result.total_count = 2;
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(result));
@@ -265,7 +265,9 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     expect(screen.getAllByRole('grid')).toHaveLength(1);
     expect(grid.contains(screen.getByRole('columnheader', { name: 'Filename' }))).toBe(true);
-    expect((await screen.findAllByRole('row', { name: /fixture.pdf/ })).every(row => grid.contains(row))).toBe(true);
+    const rows = await screen.findAllByRole('row', { name: /fixture.pdf/ });
+    expect(rows).toHaveLength(1);
+    expect(grid.contains(rows[0])).toBe(true);
   });
 
   it('retries a building analytical cache and renders files when it becomes ready', async () => {

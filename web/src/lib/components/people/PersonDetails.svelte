@@ -27,8 +27,8 @@
 <div class="details">
   {#if directory.detailLoading}<p role="status">Loading details…</p>{/if}
   {#if bundle}
-    {#each Object.entries(bundle.errors) as [section, message]}
-      <div role="alert">{section}: {message}<Button label="Retry" onclick={() => void (profile ? profile.reload() : directory.loadSelection(personID))} /></div>
+    {#each Object.entries(bundle.errors).filter(([section]) => section !== 'attributes' || !profile) as [, message]}
+      <div role="alert">{message}<Button label="Retry" onclick={() => void (profile ? profile.reload() : directory.loadSelection(personID))} /></div>
     {/each}
   {/if}
   {#if profile}

@@ -237,12 +237,12 @@ describe('DirectoryController', () => {
     });
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
 
-    await controller.selectPerson(8);
+    await controller.loadSelection(8, true);
     expect(controller.selectedPersonID).toBeNull();
     expect(controller.entity).toBeNull();
     expect(commits).toContainEqual({ directoryPersonID: null });
 
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     expect(controller.detail?.person).toEqual({ id: 7, revision: 3 });
     expect(controller.detail?.errors.structuredProfile).toBe('structured down');
     expect(controller.detail?.etags).toMatchObject({ person: '"person-etag"', attributes: '"attributes-etag"' });
@@ -261,7 +261,7 @@ describe('DirectoryController', () => {
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
 
     expect(controller.detail?.person).toEqual({ id: 7, revision: 3 });
     expect(controller.detail?.attributes).toEqual({ person_id: 7, attributes: [] });
@@ -283,10 +283,10 @@ describe('DirectoryController', () => {
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     const oldEntity = controller.entity!;
     const oldRequest = requests.find((request) => pathOf(request) === '/api/v1/people/7/employments')!;
-    await controller.selectPerson(8);
+    await controller.loadSelection(8, true);
 
     expect(oldRequest.signal.aborted).toBe(true);
     expect(controller.entity?.personID).toBe(8);
@@ -309,7 +309,7 @@ describe('DirectoryController', () => {
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await vi.waitFor(() => expect(controller.entity?.relationshipTypesLoading).toBe(false));
 
     const paths = requests.map(pathOf).sort();
@@ -357,7 +357,7 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await controller.entity?.loadNetwork();
     await controller.profile?.rename('Zed Example');
     expect(controller.entity?.network?.nodes[0]?.label).toBe('Zed Example');
@@ -388,7 +388,7 @@ describe('DirectoryController', () => {
     controller.query = 'person';
 
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await controller.profile?.rename('Zed Example');
 
     expect(controller.rows).toEqual([]);
@@ -416,7 +416,7 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await controller.profile?.rename(null);
 
     expect(controller.rows).toEqual([{ ...directoryPerson(7), revision: 4, display_name: undefined }]);
@@ -449,7 +449,7 @@ describe('DirectoryController', () => {
     controller.organization = 'Old Org';
 
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await vi.waitFor(() => expect(controller.entity?.employmentsLoading).toBe(false));
     await controller.entity?.createEmployment({ person_id: 7, organization_id: 21, source: 'user' });
 
@@ -507,7 +507,7 @@ describe('DirectoryController', () => {
     const { controller, commits, directoryRequests, category } = categoryHarness(true);
     await controller.loadFirstPage();
     await controller.loadNextPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
     expect(controller.rows.map((row) => row.id)).toEqual([7, 8, 9]);
     expect(controller.rows[0]?.categories).toEqual(['Straße']);
@@ -535,7 +535,7 @@ describe('DirectoryController', () => {
   it('updates unfiltered Unicode categories locally after add and close', async () => {
     const { controller, directoryRequests } = categoryHarness(false);
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     await controller.profile?.patchProfile({ categories: { add: [{ original_value: 'Straße', envelope: { source: 'user' } }] } });
     expect(controller.rows[0]?.categories).toEqual(['Straße']);
     await controller.profile?.patchProfile({ categories: { supersede: [31] } });
@@ -587,7 +587,7 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn));
     controller.primaryChannel = 'email';
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
 
     await controller.profile?.setAttribute('primary_channel', { value: { type: 'text', text: 'chat' } });
     expect(controller.profile?.attributes?.attributes?.[0]?.current).toEqual([current]);
@@ -626,7 +626,7 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
     controller.category = 'vip';
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     const oldProfile = controller.profile!;
 
     const write = oldProfile.patchProfile({ categories: { add: [{ original_value: 'VIP', envelope: { source: 'user' } }] } });
@@ -634,7 +634,7 @@ describe('DirectoryController', () => {
       const request = input instanceof Request ? input : new Request(input);
       return request.method === 'PATCH';
     })).toBe(true));
-    await controller.selectPerson(8);
+    await controller.loadSelection(8, true);
     const selectedProfile = controller.profile;
     const selectedDetail = controller.detail;
 
@@ -680,11 +680,11 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
     controller.category = 'vip';
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
 
     const write = controller.profile!.patchProfile({ categories: { add: [{ original_value: 'VIP', envelope: { source: 'user' } }] } });
     await vi.waitFor(() => expect(directoryRequests).toHaveLength(2));
-    await controller.selectPerson(8);
+    await controller.loadSelection(8, true);
     const selectedProfile = controller.profile;
     const selectedDetail = controller.detail;
 
@@ -737,11 +737,11 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn));
     controller.category = 'vip';
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
 
     const firstWrite = controller.profile!.patchProfile({ categories: { add: [{ original_value: 'VIP Seven', envelope: { source: 'user' } }] } });
     await vi.waitFor(() => expect(directoryRequests).toHaveLength(2));
-    await controller.selectPerson(8);
+    await controller.loadSelection(8, true);
     const selectedProfile = controller.profile;
     const secondWrite = controller.profile!.patchProfile({ categories: { add: [{ original_value: 'VIP Eight', envelope: { source: 'user' } }] } });
     await vi.waitFor(() => expect(directoryRequests).toHaveLength(3));
@@ -802,7 +802,7 @@ describe('DirectoryController', () => {
     controller.query = 'synthetic';
     controller.category = 'vip';
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     const selectedProfile = controller.profile;
 
     const loadMore = controller.loadNextPage();
@@ -873,7 +873,7 @@ describe('DirectoryController', () => {
     controller.category = 'vip';
     await controller.loadFirstPage();
     await controller.loadNextPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     const selectedProfile = controller.profile;
 
     const write = controller.profile!.patchProfile({ categories: { add: [{ original_value: 'VIP', envelope: { source: 'user' } }] } });
@@ -954,7 +954,7 @@ describe('DirectoryController', () => {
     controller.primaryChannel = 'email';
     await controller.loadFirstPage();
     await controller.loadNextPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
     const selectedProfile = controller.profile;
 
     await expect(controller.profile!.patchProfile({ categories: { add: [{ original_value: 'VIP', envelope: { source: 'user' } }] } })).resolves.toBeUndefined();
@@ -1026,7 +1026,7 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn));
     controller.category = 'vip';
     await controller.loadFirstPage();
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
 
     const write = controller.profile!.patchProfile({ categories: { add: [{ original_value: 'VIP', envelope: { source: 'user' } }] } });
     await vi.waitFor(() => expect(directoryRequests).toHaveLength(2));
@@ -1058,7 +1058,7 @@ describe('DirectoryController', () => {
     });
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
-    await controller.selectPerson(7);
+    await controller.loadSelection(7, true);
 
     const attributesRequest = requests.find((request) => pathOf(request).endsWith('/attributes'))!;
     expect(new URL(attributesRequest.url).searchParams.get('history')).toBe('true');
@@ -1137,7 +1137,7 @@ describe('DirectoryController', () => {
       await expect(controller.promote(11)).resolves.toMatchObject({ ok: false });
       expect(controller.promotionError).toBe('Save unavailable');
       expect(controller.promotionResult).toMatchObject({ ok: false });
-      if (destination === 'saved person') await controller.selectPerson(7); else controller.resetForPromotion();
+      if (destination === 'saved person') await controller.loadSelection(7, true); else controller.resetForPromotion();
       expect(controller.selectedPersonID).toBe(destination === 'saved person' ? 7 : null);
       expect(controller.promotionError).toBeNull();
       expect(controller.promotionResult).toBeNull();
@@ -1284,9 +1284,9 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(client, commit, onWrite);
     try {
       await controller.loadFirstPage();
-      await controller.selectPerson(7);
+      await controller.loadSelection(7, true);
       const deletion = controller.profile!.deletePerson();
-      if (reselect) await controller.selectPerson(9);
+      if (reselect) await controller.loadSelection(9, true);
       const selected = reselect ? controller.profile : null;
       commit.mockClear();
       pending.resolve(new Response(null, { status: 204 }));

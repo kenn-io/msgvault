@@ -50,6 +50,11 @@ test('Directory lists durable people, opens People Files, and scopes files to th
   await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
+  await expect(personTabs.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
+  await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
+  await page.reload();
+  await expect(personTabs.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
+  await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
   await personTabs.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
   expect(requests).toContain('/api/v1/people/42/files/search');
@@ -138,7 +143,7 @@ test('Directory opens an accessible narrow People page and returns to its list',
   await row.click();
   const drawer = page.getByRole('group', { name: 'Person page' });
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole('radio', { name: 'Details', exact: true })).toBeChecked();
+  await expect(drawer.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
   await expectNoAxeViolations(page, 'Directory narrow drawer');
   await drawer.getByRole('button', { name: 'Back to People', exact: true }).click();
   await expect(drawer).toBeHidden();

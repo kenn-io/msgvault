@@ -126,6 +126,7 @@
       {#snippet header()}
         <TableHeaderCell label="Date" />
         <TableHeaderCell label="Messages" />
+        <TableHeaderCell label="Account" />
         <TableHeaderCell label="Status" />
       {/snippet}
       {#each rows as batch (batch.id)}
@@ -143,6 +144,7 @@
             >
           </td>
           <td>{count(batch.message_count)}</td>
+          <td>{batch.account || 'Account unavailable'}</td>
           <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
         </tr>
       {/each}

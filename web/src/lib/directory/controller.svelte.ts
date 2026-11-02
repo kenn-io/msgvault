@@ -205,9 +205,6 @@ export class DirectoryController {
       if (generation === this.pageGeneration) this.loadingMore = false;
     }
   }
-  async selectPerson(personID: number | null): Promise<void> {
-    await this.loadSelection(personID, true);
-  }
   /** Bulk deletion can empty the loaded page or remove the next-page cursor
    * anchor, so reload page one instead of only dropping rows. */
   async removeDeletedPeople(personIDs: readonly number[]): Promise<void> {

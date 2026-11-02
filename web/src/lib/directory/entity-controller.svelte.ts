@@ -276,8 +276,7 @@ export class DirectoryEntityController {
       (signal) => generatedGetOrganization({ id: id }, { ...this.client, signal }),
       owner,
     );
-    this.organizationRecords.set(id, response.data);
-    this.organizationETags.set(id, response.etag);
+    if (!owner || !this.organizationRecords.has(id)) { this.organizationRecords.set(id, response.data); this.organizationETags.set(id, response.etag); }
     return response.data;
   }
   async prepareEmploymentMutation(id: number): Promise<Employment> {
@@ -410,7 +409,7 @@ export class DirectoryEntityController {
         this.applyEmploymentEntity(entity, response);
       },
     );
-    return this.afterDirectoryMutation(result);
+    return this.afterDirectoryMutation(result, true);
   }
   async updateEmployment(
     id: number,
@@ -464,7 +463,7 @@ export class DirectoryEntityController {
         this.employmentETags.delete(id);
       },
     );
-    return this.afterDirectoryMutation(result);
+    return this.afterDirectoryMutation(result, true);
   }
   async createRelationship(
     body: CreatePersonRelationshipRequest,
@@ -638,15 +637,15 @@ export class DirectoryEntityController {
         this.applyEmploymentEntity(entity, response);
       },
     );
-    return this.afterDirectoryMutation(result);
+    return this.afterDirectoryMutation(result, true);
   }
   async refreshNetwork(): Promise<void> {
     if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth, this.networkIncludeEnded);
   }
   private async afterDirectoryMutation<T, C>(
-    result: DirectoryEntityMutationResult<T, C>,
+    result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false,
   ): Promise<DirectoryEntityMutationResult<T, C>> {
-    if (result.ok) await Promise.all([this.loadEmployments(false), this.options.onDirectoryChange?.(), this.refreshNetwork()]);
+    if (result.ok) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.options.onDirectoryChange?.(), this.refreshNetwork()]);
     return result;
   }
   private applyEmploymentEntity(entity: Employment, response: Response): void {

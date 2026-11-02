@@ -37,7 +37,7 @@ describe('ProfileHistoryDialog', () => {
       }] });
       if (url.pathname.endsWith('/attributes')) {
         if (failing && failedSection === 'attributes') return Response.json({ message: 'attributes unavailable' }, { status: 503 });
-        return Response.json({ person_id: 7, attributes: [{ definition, current: [], history: [{
+        return Response.json({ person_id: 7, attributes: [{ definition, current: [{ id: 10, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'Imported note' }, source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8, active_from: when, created_at: when }], history: [{
           id: 9, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: note },
           source: 'user', active_from: when, active_until: '2026-08-02T00:00:00Z', created_at: when,
         }] }] });
@@ -51,7 +51,7 @@ describe('ProfileHistoryDialog', () => {
     const controller = new DirectoryProfileController(client, 7, { person: person(), etags: {}, errors: { attributes: 'initial request failed' } });
     const props = { client, controller, personID: 7, onClose: vi.fn() };
     const dialog = render(ProfileHistoryDialog, props);
-    expect((await screen.findByRole('alert')).textContent).toBe(`${failedSection} unavailable`);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(`${failedSection} unavailable`));
     expect(await screen.findByText('Current Name')).toBeDefined();
     failing = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attribute history' }));

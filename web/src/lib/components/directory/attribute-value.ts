@@ -93,8 +93,7 @@ export function canAddAttribute(field: JoinedAttribute, controller: DirectoryPro
       (definition.cardinality === 'multi' || field.current.length === 0) &&
       !controller.mutationPending &&
       !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !attributeNeedsReload(definition, controller)
+      !controller.hasUnresolvedConflict
     );
   }
 
@@ -106,8 +105,7 @@ export function canEditAttribute(definition: AttributeDefinition, controller: Di
       supportedAttribute(definition) &&
       !controller.mutationPending &&
       !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !attributeNeedsReload(definition, controller)
+      !controller.hasUnresolvedConflict
     );
   }
 
@@ -120,14 +118,6 @@ export function canCloseAttribute(definition: AttributeDefinition, controller: D
       definition.ui_editable &&
       !controller.mutationPending &&
       !controller.reloadPending &&
-      !controller.hasUnresolvedConflict &&
-      !attributeNeedsReload(definition, controller)
+      !controller.hasUnresolvedConflict
     );
   }
-
-
-function attributeNeedsReload(definition: AttributeDefinition, controller: DirectoryProfileController): boolean {
-  const draft = controller.draft;
-  if ((draft?.kind !== 'setAttribute' && draft?.kind !== 'clearAttribute') || draft.slug !== definition.slug) return false;
-  return controller.conflict?.code === 'attribute_conflict' || controller.conflict?.code === 'precondition_required';
-}

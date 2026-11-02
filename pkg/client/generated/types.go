@@ -3487,6 +3487,7 @@ func (d DeletionManifestDetail) Validate() error {
 }
 
 type DeletionManifestSummary struct {
+	Account      *string   `json:"account,omitzero"`
 	CreatedAt    time.Time `json:"created_at" validate:"required"`
 	CreatedBy    string    `json:"created_by" validate:"required"`
 	Description  string    `json:"description" validate:"required"`
