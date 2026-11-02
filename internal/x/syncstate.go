@@ -123,15 +123,14 @@ func replayWalk(walk *store.XWalk) *store.XWalk {
 }
 
 func resolveWalkItems(walk *store.XWalk, ids []string, posts ...Post) (*store.XWalk, error) {
-	if walk.UnresolvedPage {
-		return nil, ErrUnresolvedPage
-	}
 	for _, id := range ids {
 		if ValidateID(id) != nil || !slices.Contains(walk.UnresolvedIDs, id) {
 			return nil, errors.New("x item is not an outstanding obligation")
 		}
 	}
 	result := cloneWalk(walk)
+	// Identified obligations can be repaired while an unidentified result
+	// still pins the page token. finishWalk keeps that page incomplete.
 	if err := observeWalkPosts(result, posts); err != nil {
 		return nil, err
 	}

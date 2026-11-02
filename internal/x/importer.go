@@ -368,9 +368,6 @@ func (imp *Importer) persistPage(ctx context.Context, summary *ImportSummary, ow
 }
 
 func (imp *Importer) resolveWalkObligations(ctx context.Context, api API, summary *ImportSummary, owner, segment string, walk *store.XWalk) (*store.XWalk, error) {
-	if walk.UnresolvedPage {
-		return walk, ErrUnresolvedPage
-	}
 	var err error
 	walk, err = imp.resolveCleanedWalk(ctx, summary, owner, segment, walk)
 	if err != nil {

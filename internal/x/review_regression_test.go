@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +17,85 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestXFullObligationCheckpointRecoversUnidentifiedPage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := importTestSource(t, st)
+	now := time.Now().UTC().Truncate(time.Second)
+	walk, err := prepareTimelineWalk("1001", "timeline", nil, time.Time{}, now)
+	require.NoError(err)
+	walk.Token, walk.SeenTokens, walk.UnresolvedPage = "retry-page", []string{""}, true
+	// A prior run has completed cleanup for 900 identified results. One
+	// identified result and an unidentified page error still need provider I/O.
+	tx, err := st.DB().Begin()
+	require.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	stmt, err := tx.Prepare(st.Rebind(`INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position,availability,suppressed_at,cleanup_pending) VALUES(?,?,?,0,'deleted',?,0)`))
+	require.NoError(err)
+	for i := range 901 {
+		id := strconv.Itoa(10000 + i)
+		walk.UnresolvedIDs = append(walk.UnresolvedIDs, id)
+		if i < 900 {
+			_, err = stmt.Exec(source.ID, id, id, now)
+			require.NoError(err)
+		}
+	}
+	require.NoError(stmt.Close())
+	require.NoError(tx.Commit())
+	state, err := st.LoadXControlContext(t.Context(), source.ID)
+	require.NoError(err)
+	_, err = st.UpdateXControlContext(t.Context(), source.ID, state.Revision, store.XControlPatch{OwnerID: "1001", Own: walk})
+	require.NoError(err)
+	var lookups, pageCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tweets" {
+			lookups.Add(1)
+			assert.Equal("10900", r.URL.Query().Get("ids"))
+			current, err := st.LoadXControlContext(r.Context(), source.ID)
+			if assert.NoError(err) {
+				assert.True(current.Own.UnresolvedPage)
+				assert.Equal("retry-page", current.Own.Token)
+				assert.False(current.Own.Complete)
+			}
+			wireImportPage(w, []string{wireOwnPost("10900", now.Add(-time.Minute))}, "")
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/mentions") || r.URL.Query().Get("start_time") != "" {
+			wireImportPage(w, nil, "")
+			return
+		}
+		assert.Equal("retry-page", r.URL.Query().Get("pagination_token"))
+		if pageCalls.Add(1) == 1 {
+			_, _ = fmt.Fprint(w, `{"errors":[{"title":"Synthetic unidentified result"}],"meta":{"next_token":"unsafe-next"}}`)
+			return
+		}
+		wireImportPage(w, []string{wireOwnPost("10901", now.Add(-time.Minute))}, "")
+	}))
+	defer server.Close()
+	credentials := &importCredentials{snapshot: CredentialSnapshot{OwnerID: "1001", Generation: 1, GrantedScopes: []string{"tweet.read", "users.read"}}}
+	makeImporter := func() *Importer {
+		imp := NewImporter(st, NewClient(server.URL, server.Client()), importTestPolicy(t), credentials)
+		imp.now = func() time.Time { return now }
+		return imp
+	}
+	_, err = makeImporter().Import(t.Context(), ImportOptions{SourceID: source.ID, OwnerID: "1001"})
+	require.ErrorIs(err, ErrUnresolvedPage)
+	state, err = st.LoadXControlContext(t.Context(), source.ID)
+	require.NoError(err)
+	assert.Empty(state.Own.UnresolvedIDs)
+	assert.True(state.Own.UnresolvedPage)
+	assert.Equal("retry-page", state.Own.Token)
+	assert.Empty(state.Own.Watermark)
+	summary, err := makeImporter().Import(t.Context(), ImportOptions{SourceID: source.ID, OwnerID: "1001"})
+	require.NoError(err)
+	assert.True(summary.OwnComplete)
+	assert.Equal("10901", summary.OwnWatermark)
+	assert.Equal([]string{"10900", "10901"}, archivedXIDs(t, st, source.ID))
+	assert.Equal(int32(1), lookups.Load())
+	assert.Equal(int32(2), pageCalls.Load())
+}
 
 func TestXExpandedAuthorErrorCannotRemoveCollidingPost(t *testing.T) {
 	for _, endpoint := range []string{"timeline", "search", "lookup"} {

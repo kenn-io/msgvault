@@ -353,9 +353,6 @@ func queueUnavailablePageResults(ctx context.Context, st *store.Store, sourceID 
 	return nil
 }
 func (imp *Importer) resolveCleanedWalk(ctx context.Context, summary *ImportSummary, owner, segment string, walk *store.XWalk) (*store.XWalk, error) {
-	if walk.UnresolvedPage {
-		return walk, nil
-	}
 	completed, err := imp.store.CompletedXRemovalsContext(ctx, summary.SourceID, walk.UnresolvedIDs)
 	if err != nil || len(completed) == 0 {
 		return walk, err

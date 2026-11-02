@@ -205,6 +205,15 @@ func (s *Store) persistXPostTx(ctx context.Context, tx *loggedTx, p XPersistPost
 		plan.SuppressedAt = suppressed
 		plan.CleanupPending = plan.CleanupPending || foreignPending
 	}
+	if plan.SuppressedAt.Valid {
+		for _, a := range plan.Rows {
+			if a.MessageID.Valid && !a.SuppressedAt.Valid {
+				// Completed ID-only removal, including another source's
+				// evidence, becomes new work when linked to retained content.
+				plan.CleanupPending = true
+			}
+		}
+	}
 	prior, err := s.loadXStoredPostTx(ctx, tx, p.SourceID, plan.MessageID)
 	if err != nil {
 		return XPersistPostResult{}, err
@@ -564,7 +573,7 @@ func (s *Store) xAliasTx(ctx context.Context, tx *loggedTx, source int64, id str
 
 func (s *Store) planXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPostInput) (xAliasPlan, error) {
 	plan := xAliasPlan{Canonical: p.EditHistory[0], Rows: make(map[string]xAlias)}
-	var oldCanonical string
+	var canonicals []string
 	for _, id := range p.EditHistory {
 		a, err := s.xAliasTx(ctx, tx, p.SourceID, id)
 		if errors.Is(err, ErrXPostNotFound) {
@@ -573,17 +582,19 @@ func (s *Store) planXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPost
 		if err != nil {
 			return plan, err
 		}
-		if oldCanonical != "" && oldCanonical != a.Canonical {
-			return plan, ErrXPostConflict
+		if !slices.Contains(canonicals, a.Canonical) {
+			canonicals = append(canonicals, a.Canonical)
 		}
-		oldCanonical = a.Canonical
 	}
-	var oldIDs []string
-	if oldCanonical != "" {
-		rows, err := tx.QueryContext(ctx, `SELECT post_id,canonical_id,message_id,version_position,author_id,source_conversation_id,availability,suppressed_at,last_checked_at,fetched_at,version_created_at,cleanup_pending FROM x_post_versions WHERE source_id=? AND canonical_id=? ORDER BY version_position,post_id`, p.SourceID, oldCanonical)
+	var oldCanonical string
+	var oldIDs, fallbackIDs []string
+	for _, canonical := range canonicals {
+		rows, err := tx.QueryContext(ctx, `SELECT post_id,canonical_id,message_id,version_position,author_id,source_conversation_id,availability,suppressed_at,last_checked_at,fetched_at,version_created_at,cleanup_pending FROM x_post_versions WHERE source_id=? AND canonical_id=? ORDER BY version_position,post_id`, p.SourceID, canonical)
 		if err != nil {
 			return plan, err
 		}
+		idOnlySuppression := true
+		var groupIDs []string
 		for rows.Next() {
 			var a xAlias
 			if err := rows.Scan(&a.ID, &a.Canonical, &a.MessageID, &a.Position, &a.AuthorID, &a.NativeConversation, &a.Availability, &a.SuppressedAt, &a.CheckedAt, &a.FetchedAt, &a.CreatedAt, &a.CleanupPending); err != nil {
@@ -591,7 +602,8 @@ func (s *Store) planXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPost
 				return plan, err
 			}
 			plan.Rows[a.ID] = a
-			oldIDs = append(oldIDs, a.ID)
+			groupIDs = append(groupIDs, a.ID)
+			idOnlySuppression = idOnlySuppression && !a.MessageID.Valid && a.SuppressedAt.Valid
 			if a.AuthorID.Valid && a.AuthorID.String != p.AuthorID {
 				_ = rows.Close()
 				return plan, ErrXPostConflict
@@ -616,6 +628,22 @@ func (s *Store) planXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPost
 		if closeErr != nil {
 			return plan, closeErr
 		}
+		if canonical == canonicals[0] {
+			fallbackIDs = groupIDs
+		}
+		if !idOnlySuppression {
+			// Only content-free suppression evidence may join another chain.
+			// Two independently archived chains remain conflicting evidence.
+			if oldCanonical != "" {
+				return plan, ErrXPostConflict
+			}
+			oldCanonical, oldIDs = canonical, groupIDs
+		}
+	}
+	if oldCanonical == "" && len(canonicals) > 0 {
+		oldCanonical, oldIDs = canonicals[0], fallbackIDs
+	}
+	if oldCanonical != "" {
 		if oldCanonical != plan.Canonical {
 			switch {
 			case plan.SuppressedAt.Valid:
@@ -636,8 +664,8 @@ func (s *Store) planXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPost
 			}
 		}
 	}
-	ids := make(map[string]bool, len(oldIDs)+len(p.EditHistory))
-	for _, id := range oldIDs {
+	ids := make(map[string]bool, len(plan.Rows)+len(p.EditHistory))
+	for id := range plan.Rows {
 		ids[id] = true
 	}
 	for _, id := range p.EditHistory {

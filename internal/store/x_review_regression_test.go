@@ -2,12 +2,110 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestXIDOnlyRemovalJoinsArchivedEditChain(t *testing.T) {
+	for _, archived := range []string{"100", "102"} {
+		for _, completed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/completed=%t", archived, completed), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				st, source := xPostFixture(t)
+				saved, err := st.PersistXPostContext(t.Context(), xPostInput(source, archived, archived, "retained edit text"))
+				require.NoError(err)
+				removed := "102"
+				if archived == removed {
+					removed = "100"
+				}
+				work, err := st.RemoveXPostContentContext(t.Context(), source, removed, "deleted")
+				require.NoError(err)
+				if completed {
+					work.DerivedComplete = true
+					require.NoError(st.FinishXRemovalContext(t.Context(), source, work))
+				}
+				input := xPostInput(source, "102", "100", "must stay suppressed", "100", "102")
+				result, err := st.PersistXPostContext(t.Context(), input)
+				require.NoError(err)
+				assert.True(result.Skipped)
+				assert.Equal(saved.MessageID, result.MessageID)
+				for _, id := range input.EditHistory {
+					target, err := st.ResolveXPostContext(t.Context(), source, id)
+					require.NoError(err)
+					assert.Equal(archived, target.CanonicalID)
+					assert.Equal("removed", target.Availability)
+				}
+				pending, err := st.PendingXRemovalsContext(t.Context(), source)
+				require.NoError(err)
+				require.Len(pending, 1, "joining a completed ID-only removal must queue retained content too")
+				assert.Equal([]int64{saved.MessageID}, pending[0].MessageIDs)
+				work, err = st.RemoveXPostContentContext(t.Context(), source, pending[0].CanonicalID, pending[0].Reason)
+				require.NoError(err)
+				work.DerivedComplete = true
+				require.NoError(st.FinishXRemovalContext(t.Context(), source, work))
+				body, err := st.GetMessageBodyText(saved.MessageID)
+				require.NoError(err)
+				assert.Empty(body)
+				_, err = st.GetMessageRaw(saved.MessageID)
+				require.ErrorIs(err, sql.ErrNoRows)
+				input.PostID, input.EditHistory = "104", []string{"100", "102", "104"}
+				result, err = st.PersistXPostContext(t.Context(), input)
+				require.NoError(err)
+				assert.True(result.Skipped)
+			})
+		}
+	}
+}
+
+func TestXRemovalDoesNotPermitJoiningIndependentArchivedChains(t *testing.T) {
+	require := require.New(t)
+	st, source := xPostFixture(t)
+	for _, id := range []string{"100", "102"} {
+		_, err := st.PersistXPostContext(t.Context(), xPostInput(source, id, id, "independent message"))
+		require.NoError(err)
+	}
+	_, err := st.RemoveXPostContentContext(t.Context(), source, "102", "deleted")
+	require.NoError(err)
+	_, err = st.PersistXPostContext(t.Context(), xPostInput(source, "102", "100", "conflicting chain", "100", "102"))
+	require.ErrorIs(err, store.ErrXPostConflict)
+}
+
+func TestXCompletedForeignRemovalQueuesNewlyLinkedEdit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source := xPostFixture(t)
+	saved, err := st.PersistXPostContext(t.Context(), xPostInput(source, "100", "100", "retained edit text"))
+	require.NoError(err)
+	other, err := st.GetOrCreateSource("x", "1003")
+	require.NoError(err)
+	work, err := st.RemoveXPostContentContext(t.Context(), other.ID, "102", "deleted")
+	require.NoError(err)
+	work.DerivedComplete = true
+	require.NoError(st.FinishXRemovalContext(t.Context(), other.ID, work))
+	pending, err := st.XCleanupPendingContext(t.Context())
+	require.NoError(err)
+	assert.False(pending)
+	result, err := st.PersistXPostContext(t.Context(), xPostInput(source, "102", "100", "must stay suppressed", "100", "102"))
+	require.NoError(err)
+	assert.True(result.Skipped)
+	workItems, err := st.PendingXRemovalsContext(t.Context(), source)
+	require.NoError(err)
+	require.Len(workItems, 1, "completed foreign evidence must queue newly connected retained content")
+	assert.Equal([]int64{saved.MessageID}, workItems[0].MessageIDs)
+	work, err = st.RemoveXPostContentContext(t.Context(), source, workItems[0].CanonicalID, workItems[0].Reason)
+	require.NoError(err)
+	work.DerivedComplete = true
+	require.NoError(st.FinishXRemovalContext(t.Context(), source, work))
+	body, err := st.GetMessageBodyText(saved.MessageID)
+	require.NoError(err)
+	assert.Empty(body)
+}
 
 func TestXSuppressedReplayCannotRecreateErasedAuthorProfile(t *testing.T) {
 	for _, mode := range []string{"same alias", "new edit", "other source"} {
