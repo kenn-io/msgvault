@@ -1869,6 +1869,32 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type MailKindConsentResponseJSON = MailKindConsentResponse
+
+type MailKindConsentErrorResponse = ErrorResponse
+
+type MailKindConsentErrorResponseJSON = ErrorResponse
+
+type MailKindConsentErrorResponseJSON503 = ErrorResponse
+
+type MailKindConsentErrorResponseJSONDefault = ErrorResponse
+
+type MailKindRevokeResponse = MailKindConsentResponse
+
+type MailKindRevokeErrorResponse = ErrorResponse
+
+type MailKindRevokeErrorResponseJSON = ErrorResponse
+
+type MailKindRevokeErrorResponseJSON503 = ErrorResponse
+
+type MailKindRevokeErrorResponseJSONDefault = ErrorResponse
+
+type GetMailKindStatusResponse = MailKindStatus
+
+type GetMailKindStatusErrorResponse = ErrorResponse
+
+type GetMailKindStatusErrorResponseJSON = ErrorResponse
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -5726,6 +5752,37 @@ type TestTaskIntegrationResp struct {
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
 	JSONDefault  *TestTaskIntegrationErrorResponse
+}
+
+type MailKindConsentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MailKindConsentResponseJSON
+	JSON400      *MailKindConsentErrorResponse
+	JSON409      *MailKindConsentErrorResponseJSON
+	JSON503      *MailKindConsentErrorResponseJSON503
+	JSONDefault  *MailKindConsentErrorResponseJSONDefault
+}
+
+type MailKindRevokeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MailKindRevokeResponse
+	JSON400      *MailKindRevokeErrorResponse
+	JSON409      *MailKindRevokeErrorResponseJSON
+	JSON503      *MailKindRevokeErrorResponseJSON503
+	JSONDefault  *MailKindRevokeErrorResponseJSONDefault
+}
+
+type GetMailKindStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMailKindStatusResponse
+	JSON503      *GetMailKindStatusErrorResponse
+	JSONDefault  *GetMailKindStatusErrorResponseJSON
 }
 
 type GetMCPCapabilitiesResp struct {

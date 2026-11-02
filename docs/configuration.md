@@ -28,7 +28,7 @@ daemon reads does not. These are `[server]` and `MSGVAULT_API_PORT` and
 `MSGVAULT_CORS_CREDENTIALS` (but not `daemon_auto_start`,
 `daemon_auto_restart`, or the other `MSGVAULT_*` overrides), `[web]`,
 `[integrations.*]`, `[carddav]`, `[carddav_connections]`,
-`[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
+`[people.identity_scoring]`, `[mail.kind_classification]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
 `[[beeper.drafts]]`, and `[[fastmail]]`.
 
 A command that hits one still runs, and prints
@@ -114,6 +114,49 @@ Set `enabled = false` to disable scoring in the configuration. See
 [identity scoring](usage/people.md#optional-identity-scoring) for the workflow
 and [the API reference](api-server.md#identity-match-review-and-scoring) for
 endpoints.
+
+## Mail kind consent
+
+Optional mail kind classification has its own disclosure and consent purpose,
+`mail_kind_decision`. It is disabled by default. Identity scoring, people
+inference, document processing, and other grants do not authorize it.
+
+```toml
+[mail.kind_classification]
+enabled = false
+provider = "jev"
+credential_env = "TYPESAFE_API_KEY"
+retention_declaration = "provider retention policy reviewed by the operator"
+batch_size = 20
+minimum_transactional = 0.9
+minimum_choice_probability = 0.8
+```
+
+The endpoint is fixed at `https://api.typesafe.ai/v1/systemone` and the model
+at `jev-1.13.0`. The credential value is read from the daemon environment;
+inline keys and endpoint overrides are rejected. Batch size is 1–100. The
+transactional threshold is at least 0.9 and the choice threshold at least 0.8;
+both must be finite and no greater than 1.
+
+`msgvault mail kind status --json` shows the exact disclosure and fingerprint.
+The disclosed packet contains sender domain, a subject of at most 256
+characters, an authored excerpt of at most 1,500 characters with long digit
+runs and email local parts masked, attachment counts by MIME type, and
+deterministic record types. It excludes recipients, raw HTML, and attachment
+bytes. The retention declaration records the operator's reviewed policy; it
+is not a provider retention guarantee.
+
+After reviewing the disclosure, run `msgvault mail kind consent <fingerprint>`.
+A change to the endpoint, model, credential reference, packet fields, policy,
+questions, retention declaration, or thresholds requires a new grant.
+`msgvault mail kind revoke <fingerprint>` also accepts an older fingerprint
+after configuration changes. It waits for an in-flight request guarded by
+that purpose; later attempts recheck consent. Grant and revoke are idempotent
+and preserve the consent audit history.
+
+These commands manage authorization and do not send classification requests.
+Nothing runs during sync or on a schedule. See the
+[CLI reference](cli-reference.md#mail-kind) for command output.
 
 ## People tiers
 

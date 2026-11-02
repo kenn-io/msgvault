@@ -7326,6 +7326,72 @@ func (m MCPRouteDescriptor) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
+type MailKindConsentRequest struct {
+	DisclosureFingerprint string `json:"disclosure_fingerprint" validate:"required"`
+}
+
+func (m MailKindConsentRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MailKindConsentResponse struct {
+	Changed               bool   `json:"changed"`
+	ConsentActive         bool   `json:"consent_active"`
+	DisclosureFingerprint string `json:"disclosure_fingerprint" validate:"required"`
+}
+
+func (m MailKindConsentResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MailKindDisclosure struct {
+	CredentialEnv            string  `json:"credential_env" validate:"required"`
+	DataFields               string  `json:"data_fields" validate:"required"`
+	Endpoint                 string  `json:"endpoint" validate:"required"`
+	MinimumChoiceProbability float64 `json:"minimum_choice_probability"`
+	MinimumTransactional     float64 `json:"minimum_transactional"`
+	ModelID                  string  `json:"model_id" validate:"required"`
+	PacketSchema             string  `json:"packet_schema" validate:"required"`
+	PolicyVersion            string  `json:"policy_version" validate:"required"`
+	Provider                 string  `json:"provider" validate:"required"`
+	QuestionVersion          string  `json:"question_version" validate:"required"`
+	RetentionDeclaration     string  `json:"retention_declaration" validate:"required"`
+}
+
+func (m MailKindDisclosure) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MailKindStatus struct {
+	BatchSize             int64               `json:"batch_size"`
+	Blocker               *string             `json:"blocker,omitzero"`
+	ConsentActive         bool                `json:"consent_active"`
+	CredentialAvailable   bool                `json:"credential_available"`
+	DataFields            string              `json:"data_fields" validate:"required"`
+	Disclosure            *MailKindDisclosure `json:"disclosure,omitempty"`
+	DisclosureFingerprint *string             `json:"disclosure_fingerprint,omitzero"`
+	Enabled               bool                `json:"enabled"`
+	Ready                 bool                `json:"ready"`
+}
+
+func (m MailKindStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.DataFields, "required"); err != nil {
+		errors = errors.Append("DataFields", err)
+	}
+	if m.Disclosure != nil {
+		if v, ok := any(m.Disclosure).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Disclosure", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Manifest struct {
 	CreatedAt   time.Time        `json:"created_at" validate:"required"`
 	CreatedBy   string           `json:"created_by" validate:"required"`

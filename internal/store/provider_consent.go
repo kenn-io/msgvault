@@ -17,12 +17,14 @@ const (
 	ConsentPeopleInference         ConsentPurpose = "people_inference"
 	ConsentPersonEnrichment        ConsentPurpose = "person_enrichment"
 	ConsentPersonSemanticEmbedding ConsentPurpose = "person_semantic_embedding"
+	ConsentMailKindDecision        ConsentPurpose = "mail_kind_decision"
 )
 
 var consentPurposes = map[ConsentPurpose]struct{ profileTable, label string }{
 	ConsentPeopleInference:         {"person_inference_profiles", "people inference"},
 	ConsentPersonEnrichment:        {"person_enrichment_profiles", "person enrichment"},
 	ConsentPersonSemanticEmbedding: {"person_semantic_embedding_profiles", "semantic person embedding"},
+	ConsentMailKindDecision:        {"mail_kind_profiles", "mail kind decision"},
 }
 
 var errConsentChangedConcurrent = errors.New("provider consent changed concurrently")

@@ -278,6 +278,9 @@ import type {
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
   MCPCapabilities,
+  MailKindConsentRequest,
+  MailKindConsentResponse,
+  MailKindStatus,
   Manifest,
   MediaSearchResponse,
   MediaSearchStatusResponse,
@@ -2206,6 +2209,51 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Record mail kind consent for an exact disclosure
+ */
+export const mailKindConsent = (
+  mailKindConsentRequest: MailKindConsentRequest,
+  options?: SecondParameter<typeof orvalFetch<MailKindConsentResponse>>,
+) => {
+  return orvalFetch<MailKindConsentResponse>(
+    {
+      url: `/api/v1/mail/kind/consent`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mailKindConsentRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Record mail kind revoke for an exact disclosure
+ */
+export const mailKindRevoke = (
+  mailKindConsentRequest: MailKindConsentRequest,
+  options?: SecondParameter<typeof orvalFetch<MailKindConsentResponse>>,
+) => {
+  return orvalFetch<MailKindConsentResponse>(
+    {
+      url: `/api/v1/mail/kind/revoke`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mailKindConsentRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get optional mail kind configuration and exact disclosure
+ */
+export const getMailKindStatus = (
+  options?: SecondParameter<typeof orvalFetch<MailKindStatus>>,
+) => {
+  return orvalFetch<MailKindStatus>(
+    { url: `/api/v1/mail/kind/status`, method: "GET" },
     options,
   );
 };

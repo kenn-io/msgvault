@@ -116,6 +116,7 @@ var topLevelCommandGroups = map[string]string{
 	"list-labels":            helpGroupRead,
 	"list-senders":           helpGroupRead,
 	"logs":                   helpGroupOperations,
+	"mail":                   helpGroupOperations,
 	"mcp":                    helpGroupOperations,
 	"media":                  helpGroupRead,
 	"meetings":               helpGroupRead,

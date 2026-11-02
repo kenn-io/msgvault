@@ -75,6 +75,7 @@ type Store struct {
 	// The daemon owns one Store. Consent changes wait for in-flight provider
 	// requests, without holding an archive transaction during network I/O.
 	personMatchConsentMu sync.RWMutex
+	mailKindConsentMu    sync.RWMutex
 
 	sqliteOptimizeMu sync.Mutex
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
