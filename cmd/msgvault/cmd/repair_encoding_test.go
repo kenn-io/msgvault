@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -130,6 +131,50 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	assert.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
+}
+
+func TestRepairEncodingKeepsHTMLOnlyCanonicalBodyTextEmpty(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t,
+		"inserts invalid UTF-8 bytes into a TEXT column; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	_, err := db.Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, 'test', 'repair@example.test', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert source")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'repair-html', 'email_thread', 'HTML repair', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert conversation")
+	_, err = db.Exec(`INSERT INTO messages
+		(id, conversation_id, source_id, source_message_id, message_type, sent_at, size_estimate)
+		VALUES (1, 1, 1, 'repair-html', 'email', datetime('now'), 1000)`)
+	require.NoError(err, "insert message")
+
+	htmlBody := `<html><body><p>Synthetic HTML-only body</p></body></html>`
+	raw := []byte("Message-ID: <repair-html@example.test>\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" + htmlBody)
+	require.NoError(st.UpsertMessageRaw(1, raw), "store raw HTML-only MIME")
+	_, err = db.Exec(`INSERT INTO message_bodies (message_id, body_text, body_html)
+		VALUES (?, ?, ?)`, 1, "invalid\xfftext", htmlBody)
+	require.NoError(err, "insert invalid canonical body text")
+
+	stats := &repairStats{}
+	reembedIDs, err := repairMessageFields(st, stats, testDiscardLogger())
+	require.NoError(err, "repairMessageFields")
+	assert.Equal(1, stats.bodyTexts)
+	assert.Equal([]int64{1}, reembedIDs)
+
+	var bodyText, bodyHTML sql.NullString
+	require.NoError(db.QueryRow(`SELECT body_text, body_html FROM message_bodies WHERE message_id = ?`, 1).
+		Scan(&bodyText, &bodyHTML))
+	assert.True(bodyText.Valid, "HTML-only mail keeps canonical plain text as an empty value")
+	assert.Empty(bodyText.String)
+	assert.True(bodyHTML.Valid)
+	assert.Equal(htmlBody, bodyHTML.String)
 }
 
 func TestRepairEncodingPreservesAndReportsInvalidMessageIDs(t *testing.T) {

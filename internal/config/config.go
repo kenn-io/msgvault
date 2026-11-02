@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/mailkind"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -562,7 +563,12 @@ func (b *BackupConfig) Validate() error {
 	return fmt.Errorf("invalid [backup] zstd_level %d (want 0 or 1-19)", b.ZstdLevel)
 }
 
+type MailConfig struct {
+	KindClassification mailkind.Config `toml:"kind_classification"`
+}
+
 type Config struct {
+	Mail               MailConfig                      `toml:"mail"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
@@ -961,6 +967,7 @@ func NewDefaultConfig() *Config {
 	cfg.Activity.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
+	cfg.Mail.KindClassification.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
 	cfg.People.Tiers = persontiers.DefaultConfig()
 	return cfg
@@ -1120,8 +1127,21 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.People.IdentityScoring.BatchSize == 0 {
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
+	for _, key := range []string{"batch_size", "minimum_transactional", "minimum_choice_probability"} {
+		if metadata.IsDefined("mail", "kind_classification", key) {
+			invalidZero := key == "batch_size" && cfg.Mail.KindClassification.BatchSize == 0 ||
+				key == "minimum_transactional" && cfg.Mail.KindClassification.MinimumTransactional == 0 ||
+				key == "minimum_choice_probability" && cfg.Mail.KindClassification.MinimumChoiceProbability == 0
+			if invalidZero {
+				cfg.deferDaemonError(fmt.Errorf("mail.kind_classification.%s must not be zero", key))
+			}
+		}
+	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if strings.HasPrefix(key.String(), "mail.") {
+			cfg.deferDaemonError(fmt.Errorf("unknown mail config key %q", key.String()))
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1259,7 +1279,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.People.Enrichment.Validate(); err != nil {
 		return nil, err
 	}
+	cfg.Mail.KindClassification.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
+	cfg.deferDaemonError(cfg.Mail.KindClassification.Validate())
 	cfg.deferDaemonError(cfg.People.IdentityScoring.Validate())
 	cfg.deferDaemonError(cfg.People.Tiers.Validate())
 	if err := cfg.Backup.Validate(); err != nil {

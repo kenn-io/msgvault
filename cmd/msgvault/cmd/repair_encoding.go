@@ -461,8 +461,8 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 			if parsed == nil {
 				parsed = tryParseMIME(rawData, compression)
 			}
-			if parsed != nil && utf8.ValidString(parsed.GetBodyText()) {
-				repair.newBody = sql.NullString{String: parsed.GetBodyText(), Valid: true}
+			if parsed != nil && utf8.ValidString(parsed.BodyText) {
+				repair.newBody = sql.NullString{String: parsed.BodyText, Valid: true}
 			} else {
 				repair.newBody = sql.NullString{String: textutil.EnsureUTF8(bodyText.String), Valid: true}
 			}

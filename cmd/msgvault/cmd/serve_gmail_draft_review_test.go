@@ -191,6 +191,13 @@ func gmailDraftTestRaw(body, messageID string) []byte {
 	))
 }
 
+func gmailDraftHTMLTestRaw(bodyHTML, messageID string) []byte {
+	return []byte(fmt.Sprintf(
+		"From: owner@example.test\r\nTo: sender@example.test\r\nSubject: Re: Question\r\nMessage-ID: <%s>\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s\r\n",
+		messageID, bodyHTML,
+	))
+}
+
 func gmailDraftTestRawWithAttachment(messageID string) []byte {
 	return testemail.NewMessage().
 		From("owner@example.test").
@@ -1001,6 +1008,53 @@ func TestGmailDraftExternalAdoptionReturnsFailure(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(2), adopted.Revision)
 	assert.Equal("gmail-message-external", adopted.CurrentReceipt.GmailMessageID)
+}
+
+func TestGmailDraftHTMLOnlyExternalAdoptionKeepsSearchableAndReadableBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newSQLiteGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	const content = "HTML-only adopted draft searchable phrase"
+	raw := gmailDraftHTMLTestRaw("<html><body><p>"+content+".</p></body></html>", "gmail-html-only@example.test")
+	fixture.client.getDraft = &gmail.Draft{
+		ID: "gmail-draft-managed",
+		Message: gmail.RawMessage{
+			ID: "gmail-message-html-only", ThreadID: "gmail-thread-1", Raw: raw,
+		},
+	}
+
+	_, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate")
+	require.Error(err)
+	assert.Equal("changed_externally", err.Error())
+	adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	message, err := fixture.store.GetMessageContext(t.Context(), adopted.CurrentMessageID)
+	require.NoError(err)
+	assert.Empty(message.BodyText, "HTML-only archives keep canonical plain text empty")
+	assert.Equal(content+".", message.Snippet)
+
+	body, archivedRaw, err := fixture.store.GetMessageBodyAndRawContext(t.Context(), adopted.CurrentMessageID)
+	require.NoError(err)
+	assert.Equal(content+".", body, "draft-get should display readable text derived from HTML")
+	assert.Equal(raw, archivedRaw)
+
+	var ftsMatches int64
+	err = fixture.store.DB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, "searchable").Scan(&ftsMatches)
+	require.NoError(err)
+	assert.Equal(int64(1), ftsMatches, "the adopted HTML-only body is searchable immediately")
+
+	var events []api.CLIRunEvent
+	err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{api.CLIRunDraftGetCommand, adopted.DraftID, "--json"},
+	}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.NoError(err)
+	require.Len(events, 1)
+	assert.Contains(events[0].Data, content)
 }
 
 func TestGmailDraftDelegatedExternalAdoptionChecksSender(t *testing.T) {

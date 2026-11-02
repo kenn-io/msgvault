@@ -184,6 +184,7 @@ Setup, daemon, and integrations:
   export-token Export OAuth token to a remote msgvault instance
   help         Help about any command
   logs         View and tail msgvault's structured log files
+  mail         Inspect optional transactional-mail classification
   mcp          Run MCP server for Claude Desktop integration
   openapi      Print the msgvault OpenAPI schema
   quickstart   Print a quickstart guide for AI agents

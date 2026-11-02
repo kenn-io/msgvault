@@ -154,3 +154,29 @@ func TestMailRecordsCachePinsBodySnapshot(t *testing.T) {
 	assertions.Equal("OLD", result.Rows[0][0])
 	assertions.True(cacheNeedsBuild(dbPath, analytics).FullRebuild, "a later body cannot be acknowledged by the older snapshot marker")
 }
+
+func TestMailRecordsCacheKeepsReceiptWithGenericSignInNavigation(t *testing.T) {
+	root := t.TempDir()
+	dbPath, analytics := filepath.Join(root, "archive.db"), filepath.Join(root, "analytics")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversation(source.ID, "orders", "Orders")
+	require.NoError(t, err)
+	bodyHTML := `<p>Your order B-43 is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders</p><script type="application/ld+json">{"@context":"https://schema.org","@type":"Order","orderNumber":"B-43"}</script>`
+	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "navigation",
+		MessageType: "email", Subject: sql.NullString{String: "Your order is confirmed", Valid: true},
+		SentAt: sql.NullTime{Time: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Your order B-43 is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders", Valid: true}, sql.NullString{String: bodyHTML, Valid: true}))
+
+	_, err = buildCache(dbPath, analytics, true)
+	require.NoError(t, err)
+	engine, err := query.NewArchiveDuckDBEngine(t.Context(), analytics)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	result, err := engine.QuerySQL(t.Context(), "SELECT message_id, kind, order_number FROM message_records")
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, []any{id, "order", "B-43"}, result.Rows[0])
+}

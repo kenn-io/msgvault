@@ -341,6 +341,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerIdentityLinkRoutes(apiV1)
 	s.registerIdentityMatchRoutes(apiV1)
 	s.registerPersonMatchScoringRoutes(apiV1)
+	s.registerMailKindRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
