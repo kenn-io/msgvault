@@ -79,6 +79,7 @@ export class DirectoryProfileController {
   private readonly options: DirectoryProfileControllerOptions;
   private reloadAbort: AbortController | undefined;
   private generation = 0;
+  private definitionsGeneration = 0;
   private draftGeneration = 0;
   private activeMutationGeneration: number | null = null;
   private disposed = false;
@@ -144,6 +145,7 @@ export class DirectoryProfileController {
     const abort = new AbortController();
     this.reloadAbort = abort;
     const generation = ++this.generation;
+    const definitionsGeneration = ++this.definitionsGeneration;
     const personETagBeforeReload = this.personETag;
     const profileETagBeforeReload = this.structuredProfileETag;
     const personRequiresFreshETag = this.requiresReload('rename') || this.requiresReload('delete');
@@ -170,40 +172,36 @@ export class DirectoryProfileController {
         hasETag(profileResponseETag) &&
         (!profileRequiresFreshETag || profileResponseETag !== profileETagBeforeReload);
       const attributesReady = attributes.data !== undefined;
-      const definitionsReady = definitions.data !== undefined;
+      const definitionsReady = definitionsGeneration === this.definitionsGeneration && definitions.data !== undefined;
       const errors = { ...this.bundle.errors };
-      let refreshed = false;
       if (personReady && person.data && (resolveDraft || !personRequiresFreshETag)) {
         this.person = person.data; delete errors.person;
         this.personETag = person.response?.headers.get('ETag') ?? null;
-        refreshed = true;
-      }
+      } else if (!person.data) errors.person = failureMessage(person.error, person.response?.status ?? 0);
       if (structuredProfileReady && structuredProfile.data && (resolveDraft || !profileRequiresFreshETag)) {
         this.structuredProfile = structuredProfile.data; delete errors.structuredProfile;
         this.structuredProfileETag = structuredProfile.response?.headers.get('ETag') ?? null;
-        refreshed = true;
-      }
+      } else if (!structuredProfile.data) errors.structuredProfile = failureMessage(structuredProfile.error, structuredProfile.response?.status ?? 0);
       if (attributes.data) {
         this.attributes = attributes.data;
         this.attributesError = null; delete errors.attributes;
-        refreshed = true;
       } else this.attributesError = failureMessage(attributes.error, attributes.response?.status ?? 0);
-      if (definitions.data) {
-        this.definitions = definitions.data.definitions ?? [];
-        this.definitionsError = null;
-        refreshed = true;
-      } else this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
+      if (definitionsGeneration === this.definitionsGeneration) {
+        if (definitions.data) {
+          this.definitions = definitions.data.definitions ?? [];
+          this.definitionsError = null;
+        } else this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
+      }
       if (contactState.data) {
         this.bundle = { ...this.bundle, contactState: contactState.data };
         delete errors.contactState;
-        refreshed = true;
       } else errors.contactState = failureMessage(contactState.error, contactState.response?.status ?? 0);
       this.bundle = { ...this.bundle, errors };
-      if (resolveDraft) this.resolveReloadDraft(
+      if (resolveDraft && (this.draft?.kind !== 'createDefinition' || definitionsGeneration === this.definitionsGeneration)) this.resolveReloadDraft(
         { person, structuredProfile, attributes, definitions },
         { personReady, structuredProfileReady, attributesReady, definitionsReady },
       );
-      if (refreshed) this.publish();
+      this.publish();
       return { ok: true };
     } finally {
       if (generation === this.generation) this.reloadPending = false;
@@ -318,8 +316,9 @@ export class DirectoryProfileController {
     }
   }
   async reloadDefinitions(expectedDraftGeneration = this.draftGeneration): Promise<boolean> {
+    const generation = ++this.definitionsGeneration;
     const response = await settle(generatedListAttributeDefinitions({ object_type: 'person', include_hidden: true }, this.client));
-    if (this.disposed || this.draftGeneration !== expectedDraftGeneration) return false;
+    if (this.disposed || generation !== this.definitionsGeneration || this.draftGeneration !== expectedDraftGeneration) return false;
     if (response.data) {
       this.definitions = response.data.definitions ?? [];
       this.definitionsError = null;
