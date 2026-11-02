@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
+import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import MeetingPanel from '../meetings/MeetingPanel.svelte';
 
 vi.mock('../meetings/MeetingPanel.svelte', { spy: true });
@@ -21,7 +22,7 @@ it('shows one alert for an attributes failure', async () => {
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
-    return Response.json({});
+    return meetingFixtureResponse(path) ?? Response.json({});
   });
   const directory = new DirectoryController(client);
   await directory.loadSelection(7);
@@ -32,9 +33,11 @@ it('shows one alert for an attributes failure', async () => {
   } finally { view.unmount(); directory.destroy(); }
 });
 
-it('forwards the refreshed meeting revision', async () => {
+it.each([{ participantIDs: [] }, { participantIDs: [5] }])('forwards meeting revisions only for resolved identities ($participantIDs)', async ({ participantIDs }) => {
+  vi.mocked(MeetingPanel).mockClear();
+  const meetingRequests: Request[] = [];
   const when = '2026-08-01T00:00:00Z';
-  const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
+  const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
@@ -45,14 +48,19 @@ it('forwards the refreshed meeting revision', async () => {
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
-    if (path.endsWith('/meetings/metrics') || path.endsWith('/meetings/actions')) return Response.json({ error: 'person_scope_empty', message: 'Person has no resolved identities' }, { status: 422 });
+    if (path.endsWith('/meetings/metrics') || path.endsWith('/meetings/actions')) meetingRequests.push(request);
     if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
-    return Response.json({});
+    return meetingFixtureResponse(path) ?? Response.json({});
   });
   const directory = new DirectoryController(client);
   await directory.loadSelection(7);
   const view = render(PersonDetails, { client, directory, personID: 7 });
   try {
+    if (participantIDs.length === 0) {
+      expect(MeetingPanel).not.toHaveBeenCalled();
+      expect(meetingRequests).toHaveLength(0);
+      return;
+    }
     expect(vi.mocked(MeetingPanel).mock.calls.at(-1)?.[1].refreshKey).toBe('1');
     person.revision = 2;
     await directory.profile!.reload();
