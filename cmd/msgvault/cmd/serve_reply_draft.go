@@ -466,6 +466,22 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return err
 	}
+	parentSource, sourceErr := a.store.GetMessageSourceContext(ctx, intent.MessageID)
+	if sourceErr == nil && parentSource.SourceType == sourceTypeThreads {
+		if err := authorizeDelegatedDraftSource(req.Grant, parentSource); err != nil {
+			return err
+		}
+		if intent.From != "" || intent.ReplyAll || intent.Account != "" || intent.SourceIDSet {
+			return draftReplyError("invalid_args", errors.New("a Threads reply draft infers its source from the archived parent and accepts no email destination flags"))
+		}
+		parent, err := a.store.GetMessageContext(ctx, intent.MessageID)
+		if err != nil {
+			return chatDraftStoreError(err, req.Grant)
+		}
+		return a.runCLIChatDraftCreate(ctx, draftComposeIntent{
+			ConversationID: parent.ConversationID, ReplyTo: parent.ID, Body: intent.Body, JSON: intent.JSON,
+		}, req.Grant, emit)
+	}
 	target, from, selfAddresses, err := a.resolveDraftTarget(
 		ctx, &intent.MessageID, intent.Account, intent.SourceID, intent.SourceIDSet,
 		intent.From, req.Grant, true,

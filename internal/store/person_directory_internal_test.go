@@ -17,6 +17,40 @@ import (
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
+func TestDirectoryPeopleAddressLookupBoundsInput(t *testing.T) {
+	_, err := normalizeDirectoryPeopleQuery(DirectoryPeopleQuery{Address: strings.Repeat("é", maxDirectoryQueryRunes)})
+	require.NoError(t, err, "the boundary counts Unicode runes, not UTF-8 bytes")
+	_, err = normalizeDirectoryPeopleQuery(DirectoryPeopleQuery{Address: strings.Repeat("é", maxDirectoryQueryRunes+1)})
+	assert.ErrorIs(t, err, ErrInvalidDirectoryQuery)
+}
+
+// This checks that the address query receives ctx and surfaces cancellation
+// from its row stream.
+func TestDirectoryPeopleAddressLookupPropagatesContextAndSurfacesStreamCancellation(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "directory-address-cancel.db")
+	writer, err := OpenForTest(path)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, writer.Close()) })
+	require.NoError(writer.InitSchema())
+	_, err = writer.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('cancel-address-person', 'Cancel Example')`)
+	require.NoError(err)
+	_, err = writer.AddPersonContactPointContext(t.Context(), 1, PersonContactPointInput{
+		AddressKind: ContactAddressUsername, OriginalValue: "cancel-handle",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	require.NoError(writer.RefreshDirectoryProjectionContext(t.Context()))
+	gate := newDirectorySnapshotGate("FROM person_contact_points cp")
+	gate.release()
+	reader := newDirectorySnapshotGateStore(t, path, gate, true)
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), directorySnapshotGateKey{}, gate))
+	defer cancel()
+	gate.onNext = cancel
+	_, err = reader.DirectoryPeoplePageContext(ctx, DirectoryPeopleQuery{Address: "cancel-handle"})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 // This catches a decoder that allocates the caller-controlled base64 payload
 // before enforcing the Directory cursor's encoded-size boundary.
 func TestDecodeDirectoryPeopleCursorRejectsOversizedInputBeforeAllocation(t *testing.T) {
@@ -359,6 +393,7 @@ type directorySnapshotGate struct {
 	releaseRead chan struct{}
 	pauseOnce   sync.Once
 	releaseOnce sync.Once
+	onNext      func()
 }
 
 func (g *directorySnapshotGate) pause(ctx context.Context) {
@@ -475,6 +510,14 @@ type directorySnapshotRows struct {
 
 	ctx  context.Context
 	gate *directorySnapshotGate
+}
+
+func (r *directorySnapshotRows) Next(values []driver.Value) error {
+	err := r.Rows.Next(values)
+	if err == nil && r.gate.onNext != nil {
+		r.gate.onNext()
+	}
+	return err
 }
 
 func (r *directorySnapshotRows) Close() error {

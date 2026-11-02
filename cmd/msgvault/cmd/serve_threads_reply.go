@@ -243,6 +243,17 @@ func emitSendReplyJSON(emit func(api.CLIRunEvent) error, value any) error {
 	return emit(api.CLIRunEvent{Type: "stdout", Data: string(data) + "\n"})
 }
 
+// Reserve stale configured IDs before the daemon starts any source writers.
+// Missing rows cannot supply historical identity, but their configured numeric
+// permissions must never be inherited by a replacement account.
+func reserveThreadsSendSourceIDs(ctx context.Context, st *store.Store, cfg *config.Config) error {
+	ids := make([]int64, 0, len(cfg.Threads.Sends))
+	for _, entry := range cfg.Threads.Sends {
+		ids = append(ids, entry.SourceID)
+	}
+	return st.ReserveSourceIDsContext(ctx, ids)
+}
+
 func threadsSourceSendEnabled(cfg *config.Config, sourceID int64) bool {
 	if cfg == nil {
 		return false

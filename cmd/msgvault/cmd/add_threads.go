@@ -89,7 +89,7 @@ func newAddThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 	var appID, redirectURI string
 	var allowSend bool
 	cmd := &cobra.Command{
-		Use: "add-threads", Short: "Connect your Threads account for archiving posts and replies", Args: cobra.NoArgs,
+		Use: "add-threads", Short: "Connect Threads", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if isAgentMode(invocationFromCommand(cmd)) {
 				return errors.New("Threads connection requires the owner")

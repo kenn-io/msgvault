@@ -64,10 +64,11 @@ Add and sync sources:
   add-o365               Add a Microsoft 365 account via OAuth
   add-omi                Register an Omi account and validate its API key
   add-plaud              Authorize and register a Plaud cloud account
+  add-pocket             Verify and register a personal Pocket account
   add-slack              Add a Slack workspace as an archive source
   add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
   add-teams              Authorize Microsoft Teams (delegated Graph) for an account
-  add-threads            Connect your Threads account for archiving posts and replies
+  add-threads            Connect Threads
   add-twenty             Register and validate a Twenty Call Recorder source
   add-twilio             Register and validate a Twilio call source
   archive-remote-images  Download remote images in archived email (needs consent)
@@ -95,10 +96,11 @@ Add and sync sources:
   sync-notion-meetings   Sync Notion AI Meeting Notes
   sync-omi               Sync Omi meeting conversations and transcripts
   sync-plaud             Sync Plaud recordings, transcripts, and notes
+  sync-pocket            Sync Pocket transcripts, summaries, and actions
   sync-slack             Sync Slack conversations (channels, group DMs, DMs)
   sync-synctech-sms      Run one configured synctech-sms source now
   sync-teams             Sync Microsoft Teams chats and channels
-  sync-threads           Archive available Threads posts and replies
+  sync-threads           Archive Threads posts and replies
   sync-twenty            Sync Twenty Call Recorder meetings
   sync-twilio            Sync Twilio calls and recordings
   update-account         Update account settings
@@ -126,11 +128,11 @@ Drafts, calendar, and Kata (write to providers):
   draft-forward Create an IMAP draft forwarding an archived message
   draft-get     Read a managed draft or list a chat's local drafts
   draft-recover Recover an interrupted managed IMAP draft edit or delete
-  draft-reply   Create an IMAP or Gmail reply draft from an archived message
+  draft-reply   Create an email or Threads reply draft
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
-  send-reply    Send a reply to an archived message or reviewed draft
+  send-reply    Send a reviewed reply
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

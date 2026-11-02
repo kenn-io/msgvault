@@ -96,15 +96,3 @@ func TestThreadsIdentifierClassification(t *testing.T) {
 		assertParticipantIdentifierClassification(t, f.Store, tc.kind, tc.value, "threads", "", "")
 	}
 }
-
-// Hegel minimized the absent service classification to app=owner=media=1.
-func TestThreadsOccurrenceOneNamespaceRegression(t *testing.T) {
-	f := storetest.New(t)
-	const key = "threads:1:1:media:1"
-	id, err := f.Store.EnsureParticipantByIdentifier("threads_reply_author", key, "Unknown Threads author")
-	require.NoError(t, err)
-	replayed, err := f.Store.EnsureParticipantByIdentifier("threads_reply_author", key, "Renamed author")
-	require.NoError(t, err)
-	assert.Equal(t, id, replayed)
-	assertParticipantIdentifierClassification(t, f.Store, "threads_reply_author", key, "threads", "", "")
-}

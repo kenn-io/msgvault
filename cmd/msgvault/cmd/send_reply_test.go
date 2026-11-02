@@ -98,9 +98,7 @@ func TestThreadsDocumentedWorkflow(t *testing.T) {
 	require.Len(matches, 1)
 	var nested int64
 	require.NoError(f.adapter.store.DB().QueryRow(f.adapter.store.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id='102'`), f.source.ID).Scan(&nested))
-	parent, err := f.adapter.store.GetMessageRelationTarget(nested)
-	require.NoError(err)
-	output, err = run("draft-compose", "--conversation="+fmt.Sprint(parent.ConversationID), "--reply-to="+fmt.Sprint(nested), "--body=reviewed daemon reply", "--json")
+	output, err = run("draft-reply", fmt.Sprint(nested), "--body=reviewed daemon reply", "--json")
 	require.NoError(err)
 	var draft chatDraftOutput
 	require.NoError(json.Unmarshal([]byte(output), &draft))
@@ -128,7 +126,7 @@ func TestThreadsDocumentedWorkflow(t *testing.T) {
 	assert.Equal("complete", result.Status)
 	assert.Equal("sent", result.RemoteStatus)
 	// A second, intentionally separate draft exercises lost-response adoption.
-	output, err = run("draft-compose", "--conversation="+fmt.Sprint(parent.ConversationID), "--reply-to="+fmt.Sprint(nested), "--body=reviewed daemon reply", "--json")
+	output, err = run("draft-reply", fmt.Sprint(nested), "--body=reviewed daemon reply", "--json")
 	require.NoError(err)
 	require.NoError(json.Unmarshal([]byte(output), &draft))
 	f.draft.DraftID = draft.DraftID

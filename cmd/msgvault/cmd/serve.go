@@ -47,6 +47,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -320,6 +321,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// leaves the migration unmarked so the next start resumes.
 	if err := s.InitSchemaContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
+	}
+	if err := reserveThreadsSendSourceIDs(cmd.Context(), s, cfg); err != nil {
+		return fmt.Errorf("reserve Threads send source IDs: %w", err)
 	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
 	if err != nil {
@@ -653,6 +657,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule Chatwoot", "profile", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled Chatwoot", "profile", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
+	for _, src := range cfg.Pocket {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("pocket source is enabled but has no schedule; the daemon will not sync it", "source", src.Identifier)
+		}
+	}
+	for _, src := range cfg.ScheduledPocketSources() {
+		source := src
+		jobName, _ := api.SchedulerJobNameForSource(pocket.SourceType, source.Identifier)
+		if err := sched.AddJob(scheduler.Job{
+			Name: jobName, Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredPocketSync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule pocket source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled pocket source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 
@@ -3184,6 +3208,18 @@ func (a *storeAPIAdapter) SetPersonTrackingContext(
 	ctx context.Context, id int64, tracked bool,
 ) (*store.PersonTracking, error) {
 	return a.store.SetPersonTrackingContext(ctx, id, tracked)
+}
+
+func (a *storeAPIAdapter) PreviewPersonTiersContext(
+	ctx context.Context, options store.PersonTierOptions,
+) (*store.PersonTierPreview, error) {
+	return a.store.PreviewPersonTiersContext(ctx, options)
+}
+
+func (a *storeAPIAdapter) ExplainPersonTierContext(
+	ctx context.Context, personID int64, options store.PersonTierOptions,
+) (*store.PersonTierExplanation, error) {
+	return a.store.ExplainPersonTierContext(ctx, personID, options)
 }
 
 func (a *storeAPIAdapter) GetPersonBriefContext(

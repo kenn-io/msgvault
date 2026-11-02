@@ -183,7 +183,9 @@ const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
-const sendReplyMinAPISchemaVersion = "3.28.0"
+
+// sendReplyMinAPISchemaVersion adds owner-only source-dispatched send_reply.
+const sendReplyMinAPISchemaVersion = "3.35.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
@@ -222,6 +224,9 @@ const messageTagsMinAPISchemaVersion = "3.15.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
+
+// personTierMinAPISchemaVersion adds read-only person tier previews.
+const personTierMinAPISchemaVersion = "3.30.0"
 
 const contactRoutesMinAPISchemaVersion = "3.20.0"
 
@@ -333,6 +338,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personTierMinAPISchemaVersion) {
+		opts.PersonTierBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, kataIssuesMinAPISchemaVersion) {
 		opts.Kata = st

@@ -882,28 +882,30 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
-	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
-	ID                   int64                  `json:"id"`
-	SourceMessageID      string                 `json:"source_message_id"`
-	RFC822MessageID      string                 `json:"rfc822_message_id,omitempty"`
-	ConversationID       int64                  `json:"conversation_id"`
-	SourceConversationID string                 `json:"source_conversation_id"`
-	Subject              string                 `json:"subject"`
-	MessageType          string                 `json:"message_type,omitempty"`
-	Snippet              string                 `json:"snippet"`
-	SentAt               time.Time              `json:"sent_at"`
-	ReceivedAt           *time.Time             `json:"received_at"`
-	DeletedAt            *time.Time             `json:"deleted_at"`
-	SizeEstimate         int64                  `json:"size_estimate"`
-	HasAttachments       bool                   `json:"has_attachments"`
-	From                 []cliMessageAddress    `json:"from"`
-	To                   []cliMessageAddress    `json:"to"`
-	Cc                   []cliMessageAddress    `json:"cc"`
-	Bcc                  []cliMessageAddress    `json:"bcc"`
-	Labels               []string               `json:"labels"`
-	Attachments          []cliMessageAttachment `json:"attachments"`
-	BodyText             string                 `json:"body_text"`
-	BodyHTML             string                 `json:"body_html"`
+	RelatedMessageID     *int64                    `json:"related_message_id,omitempty"`
+	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
+	ID                   int64                     `json:"id"`
+	SourceMessageID      string                    `json:"source_message_id"`
+	RFC822MessageID      string                    `json:"rfc822_message_id,omitempty"`
+	ConversationID       int64                     `json:"conversation_id"`
+	SourceConversationID string                    `json:"source_conversation_id"`
+	Subject              string                    `json:"subject"`
+	MessageType          string                    `json:"message_type,omitempty"`
+	Snippet              string                    `json:"snippet"`
+	SentAt               time.Time                 `json:"sent_at"`
+	ReceivedAt           *time.Time                `json:"received_at"`
+	DeletedAt            *time.Time                `json:"deleted_at"`
+	SizeEstimate         int64                     `json:"size_estimate"`
+	HasAttachments       bool                      `json:"has_attachments"`
+	HiddenTextPresent    bool                      `json:"hidden_text_present"`
+	From                 []cliMessageAddress       `json:"from"`
+	To                   []cliMessageAddress       `json:"to"`
+	Cc                   []cliMessageAddress       `json:"cc"`
+	Bcc                  []cliMessageAddress       `json:"bcc"`
+	Labels               []string                  `json:"labels"`
+	Attachments          []cliMessageAttachment    `json:"attachments"`
+	BodyText             string                    `json:"body_text"`
+	BodyHTML             string                    `json:"body_html"`
 }
 
 type cliMessageAddress struct {
@@ -1431,6 +1433,10 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
+		} else if IsCLIRunSendReply(req.Args) {
+			// Replies carry private --body text. Output can fail even after a
+			// successful send, so uncoded reply failures must omit arguments too.
+			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error", err)
 		} else {
 			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
 		}
@@ -1754,6 +1760,11 @@ func cliRunCommandAllowed(args []string) bool {
 			case "run", "status", "history":
 				return true
 			}
+		case "tiers":
+			switch args[2] {
+			case "preview", "explain":
+				return true
+			}
 		}
 		return false
 	}
@@ -1768,6 +1779,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-chatwoot",
 		"add-plaud",
 		"add-twenty",
+		"add-pocket",
 		"add-discord",
 		"add-threads",
 		"add-granola",
@@ -1830,7 +1842,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-chatwoot",
 		"sync-plaud",
 		"sync-twenty",
-		"sync-discord", "sync-threads",
+		"sync-discord", "sync-threads", "sync-pocket",
 		"sync-granola",
 		"sync-inline",
 		"sync-muesli",
@@ -3731,6 +3743,7 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 
 func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
+		Calendar:             msg.Calendar,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,
 		RFC822MessageID:      msg.RFC822MessageID,
@@ -3745,6 +3758,7 @@ func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 		DeletedAt:            msg.DeletedAt,
 		SizeEstimate:         msg.SizeEstimate,
 		HasAttachments:       msg.HasAttachments,
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		From:                 cliMessageAddresses(msg.From),
 		To:                   cliMessageAddresses(msg.To),
 		Cc:                   cliMessageAddresses(msg.Cc),

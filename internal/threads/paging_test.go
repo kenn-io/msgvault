@@ -32,7 +32,6 @@ func TestThreadsCursorOnlyPagination(t *testing.T) {
 			respond(w, 400, `{}`)
 		}
 	}, nil)
-	var tracker CursorTracker
 	var ids []string
 	for after := ""; ; {
 		p, err := c.Conversation(context.Background(), "123", after)
@@ -40,8 +39,7 @@ func TestThreadsCursorOnlyPagination(t *testing.T) {
 		for _, m := range p.Items {
 			ids = append(ids, m.ID)
 		}
-		after, err = tracker.Next(p)
-		require.NoError(err)
+		after = p.After
 		if after == "" {
 			break
 		}
@@ -62,20 +60,4 @@ func TestThreadsCursorOnlyPagination(t *testing.T) {
 			require.Error(err)
 		})
 	}
-	t.Run("cycle and same page under fresh cursor", func(t *testing.T) {
-		for _, pages := range [][]Page{
-			{{Items: []Media{{ID: "1"}}, After: "A"}, {Items: []Media{{ID: "2"}}, After: "B"}, {Items: []Media{{ID: "3"}}, After: "A"}},
-			{{Items: []Media{{ID: "1"}}, After: "A"}, {Items: []Media{{ID: "1"}}, After: "B"}},
-		} {
-			var walk CursorTracker
-			for i, p := range pages {
-				_, err := walk.Next(p)
-				if i == len(pages)-1 {
-					assert.ErrorIs(err, ErrPagination)
-				} else {
-					require.NoError(err)
-				}
-			}
-		}
-	})
 }

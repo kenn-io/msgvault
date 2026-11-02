@@ -378,7 +378,14 @@ func (s *Store) RecoverSyncRunsContext(ctx context.Context, recoveredAt time.Tim
 
 // Checkpoint represents sync progress for resumption.
 type Checkpoint struct {
-	PageToken         string
+	PageToken string
+	// HandoffCursor, when set, is saved atomically with the checkpoint. Gmail
+	// recovery keeps this baseline until its final source-cursor publication.
+	HandoffCursor string
+	// InheritFromSyncID carries the predecessor's people-sweep lower sequence
+	// into this run so final publication covers mutations from earlier recovery
+	// phases. It is applied atomically with the inherited checkpoint.
+	InheritFromSyncID int64
 	MessagesProcessed int64
 	MessagesAdded     int64
 	MessagesUpdated   int64
@@ -876,16 +883,32 @@ func (s *Store) UpdateSyncCheckpoint(syncID int64, cp *Checkpoint) error {
 // UpdateSyncCheckpointContext is the request-aware form of
 // UpdateSyncCheckpoint.
 func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, cp *Checkpoint) error {
+	if (cp.HandoffCursor != "" || cp.InheritFromSyncID != 0) && s.syncGeneration == nil {
+		return errors.New("checkpoint handoff cursor: sync-scoped store required")
+	}
 	write := func(q querier) error {
+		if cp.InheritFromSyncID != 0 {
+			if _, err := q.Exec(`
+				UPDATE person_sweep_sync_publications
+				SET lower_sequence = COALESCE((
+					SELECT prior.lower_sequence FROM person_sweep_sync_publications prior
+					WHERE prior.sync_run_id = ?
+					  AND prior.source_id = person_sweep_sync_publications.source_id
+				), lower_sequence)
+				WHERE sync_run_id = ?`, cp.InheritFromSyncID, syncID); err != nil {
+				return fmt.Errorf("inherit sync publication range: %w", err)
+			}
+		}
 		_, err := q.Exec(`
 		UPDATE sync_runs
 		SET cursor_before = ?,
+		    cursor_after = COALESCE(NULLIF(?, ''), cursor_after),
 		    messages_processed = ?,
 		    messages_added = ?,
 		    messages_updated = ?,
 		    errors_count = ?
 		WHERE id = ?
-		`, cp.PageToken, cp.MessagesProcessed, cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID)
+		`, cp.PageToken, cp.HandoffCursor, cp.MessagesProcessed, cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID)
 		return err
 	}
 	if s.syncGeneration != nil {
@@ -901,8 +924,8 @@ func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, c
 }
 
 // PinSyncHandoffCursorContext records the history cursor a resumable recovery
-// must catch up from after its full enumeration. A completed sync overwrites
-// cursor_after with the same value when it publishes the source cursor.
+// must catch up from after its full enumeration. Completion replaces cursor_after
+// with the final published cursor, which can be newer than this baseline.
 func (s *Store) PinSyncHandoffCursorContext(ctx context.Context, syncID int64, cursor string) error {
 	if cursor == "" {
 		return errors.New("pin sync handoff cursor: empty cursor")
@@ -1439,10 +1462,10 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 	return run, err
 }
 
-// GetLatestCheckpointedSync returns the newest running, failed, or cancelled checkpoint
-// since the source's last completed run. A newer uncheckpointed interruption
-// does not hide recoverable state, while completion remains authoritative and
-// makes every preceding checkpoint stale.
+// GetLatestCheckpointedSync returns the newest running, paused, failed or
+// cancelled checkpoint since the source's last completed run. A newer
+// uncheckpointed interruption does not hide recoverable state, while completion
+// remains authoritative and makes every preceding checkpoint stale.
 func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 	return s.GetLatestCheckpointedSyncContext(context.Background(), sourceID)
 }
@@ -1670,6 +1693,64 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 	return s.GetOrCreateSourceContext(context.Background(), sourceType, identifier)
 }
 
+// ReserveSourceIDsContext keeps configured source-ID permissions from moving to
+// newly allocated sources, even if their former rows predate the archive's
+// ID high-water mark. It reserves numbers, never infers a missing identity.
+func (s *Store) ReserveSourceIDsContext(ctx context.Context, ids []int64) error {
+	var ceiling int64
+	for _, id := range ids {
+		if id <= 0 {
+			return errors.New("reserved source IDs must be positive")
+		}
+		ceiling = max(ceiling, id)
+	}
+	if ceiling == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := lockSourceMaintenance(ctx, tx); err != nil {
+			return err
+		}
+		if s.IsPostgreSQL() {
+			// Serialize with every source INSERT, including restored explicit IDs.
+			// RESTART also discards cached sequence values on other connections;
+			// setval alone would leave those values available for later inserts.
+			if _, err := tx.ExecContext(ctx, `LOCK TABLE sources IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+				return err
+			}
+			var sequence string
+			if err := tx.QueryRowContext(ctx, `SELECT quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE c.oid=pg_get_serial_sequence('sources', 'id')::regclass`).Scan(&sequence); err != nil {
+				return fmt.Errorf("resolve source identity sequence: %w", err)
+			}
+			var allocated, existing int64
+			// sequence is identifier-quoted by PostgreSQL, never supplied by config.
+			if err := tx.QueryRowContext(ctx, `SELECT last_value FROM `+sequence).Scan(&allocated); err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sources`).Scan(&existing); err != nil {
+				return err
+			}
+			ceiling = max(ceiling, allocated, existing)
+			if ceiling == 1<<63-1 {
+				return errors.New("source ID space is exhausted")
+			}
+			_, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER SEQUENCE %s RESTART WITH %d`, sequence, ceiling+1))
+			return err
+		}
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO source_id_reservations(source_id) VALUES(?)`, id); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key, value)
+VALUES ('source_id_high_water', CAST(? AS TEXT)) ON CONFLICT(key) DO UPDATE
+SET value = CAST(MAX(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT)`, ceiling)
+		return err
+	})
+}
+
 // GetOrCreateSourceContext carries cancellation through source creation and
 // default collection membership. A retry reuses an already committed source.
 func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
@@ -1700,9 +1781,17 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
 		}
 		now := s.dialect.Now()
-		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
-   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
-   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
+		columns, values := "source_type, identifier, created_at, updated_at", fmt.Sprintf("?, ?, %s, %s", now, now)
+		if !s.IsPostgreSQL() {
+			// SQLite otherwise reuses a removed highest row ID, transferring any
+			// source-ID permission in daemon configuration to the replacement.
+			columns = "id, " + columns
+			values = `(SELECT MAX(COALESCE((SELECT MAX(id) FROM sources), 0),
+   COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key='source_id_high_water'), 0)) + 1), ` + values
+		}
+		row := tx.QueryRowContext(ctx, `INSERT INTO sources (`+columns+`)
+   VALUES (`+values+`) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
+   RETURNING `+sourceCatalogColumns, sourceType, identifier)
 		var err error
 		source, err = scanSource(row)
 		if err != nil {

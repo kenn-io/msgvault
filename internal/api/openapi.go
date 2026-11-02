@@ -379,9 +379,15 @@ import (
 // 3.26.0 adds bounded search-aware deletion resolution with an explicit
 // max_results cap and matched_count for skipped matches.
 // 3.27.0 adds optional attachment text results and recording errors in media search.
-// 3.28.0 adds the owner-only send-reply CLI and send_reply MCP surface for
-// source-dispatched Threads replies.
-const APISchemaVersion = "3.28.0"
+// 3.28.0 adds the typed calendar projection to calendar event message details.
+// 3.29.0 adds literal address filtering to the durable people Directory.
+// 3.30.0 adds the stored hidden_text_present flag to message details and search rows.
+// 3.31.0 adds literal OR warnings to full-text search responses.
+// 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
+// 3.33.0 adds the read-only person tier preview and explanation routes.
+// 3.34.0 adds answered-call counts to person tier signals.
+// 3.35.0 adds owner-only source-dispatched send-reply CLI and send_reply MCP for Threads.
+const APISchemaVersion = "3.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1018,6 +1024,19 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	const emailProperty = "email"
+	if calendar := schemas["CalendarProjection"]; calendar != nil {
+		for name, goType := range map[string]string{"all_day": "*bool", "sequence": "*int64"} {
+			if property := calendar.Properties[name]; property != nil {
+				setCodegenGoType(property, goType)
+			}
+		}
+		// Fields the stored event does not carry are present as null, including
+		// zero-capable scalars. Keep every field nullable through parsing and
+		// encoding.
+		for _, name := range []string{statusFieldName, "sequence", "start", "end", "all_day", "time_zone", "ical_uid"} {
+			nullableSchemaProperty(calendar, name)
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {

@@ -103,6 +103,30 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
+-- Source IDs bind permissions in daemon configuration. Preserve their high-water
+-- mark when rows disappear, including archives upgraded from reusable row IDs.
+CREATE TABLE IF NOT EXISTS source_id_reservations (
+    source_id INTEGER PRIMARY KEY
+);
+INSERT OR IGNORE INTO source_id_reservations(source_id) SELECT id FROM sources;
+INSERT INTO archive_metadata(key, value)
+SELECT 'source_id_high_water', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM sources WHERE TRUE
+ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT);
+CREATE TRIGGER IF NOT EXISTS sources_id_high_water_insert AFTER INSERT ON sources
+BEGIN
+    SELECT CASE WHEN EXISTS (SELECT 1 FROM source_id_reservations WHERE source_id=NEW.id)
+        THEN RAISE(ABORT, 'source ID has already been allocated or reserved') END;
+    INSERT INTO source_id_reservations(source_id) VALUES(NEW.id);
+    INSERT INTO archive_metadata(key, value) VALUES ('source_id_high_water', CAST(NEW.id AS TEXT))
+    ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), NEW.id) AS TEXT);
+END;
+CREATE TRIGGER IF NOT EXISTS sources_id_high_water_delete BEFORE DELETE ON sources
+BEGIN
+    INSERT OR IGNORE INTO source_id_reservations(source_id) VALUES(OLD.id);
+    INSERT INTO archive_metadata(key, value) VALUES ('source_id_high_water', CAST(OLD.id AS TEXT))
+    ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), OLD.id) AS TEXT);
+END;
+
 -- Account-level route proof failures apply to every archived chat, including
 -- quiet chats that an incremental sync does not revisit.
 CREATE TABLE IF NOT EXISTS source_messaging_route_failures (
@@ -1417,6 +1441,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
     -- RFC 2919 List-Id for email list membership
     list_id TEXT,
+    hidden_text_present BOOLEAN NOT NULL DEFAULT 0,
 
     -- Message classification
     message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger', 'teams'

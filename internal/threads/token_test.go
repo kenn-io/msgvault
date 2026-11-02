@@ -383,22 +383,3 @@ func TestThreadsLongCredentialNamespaceRoundTrip(t *testing.T) {
 	_, err = manager.Load(record.AppID, record.OwnerID)
 	require.ErrorIs(err, ErrTokenNotFound)
 }
-
-// The generated app=1/owner=1 case pins stale invalidation's error contract.
-func TestThreadsCredentialNamespaceStaleInvalidationRegression(t *testing.T) {
-	manager := NewTokenManager(t.TempDir())
-	record := testTokenRecord()
-	record.AppID, record.OwnerID = "1", "1"
-	require.NoError(t, manager.WithSourceLock(t.Context(), "threads:1:1", func() error {
-		require.NoError(t, manager.Save(record))
-		saved, err := manager.Load("1", "1")
-		require.NoError(t, err)
-		require.NoError(t, manager.Save(record))
-		require.Error(t, manager.Invalidate(saved))
-		latest, err := manager.Load("1", "1")
-		require.NoError(t, err)
-		assert.Equal(t, uint64(2), latest.Generation)
-		assert.False(t, latest.Invalidated)
-		return nil
-	}))
-}

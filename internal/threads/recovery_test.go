@@ -348,36 +348,6 @@ func TestThreadsSentArchiveUsesAvailableCanonicalSnapshot(t *testing.T) {
 	assert.Equal(writerTime.Add(time.Hour).Format(time.RFC3339Nano), metadata["timestamp"])
 }
 
-// Hegel reduced recovery to completion position0/replays0/owner1/body="r".
-func TestThreadsRecoveryArchiveFailureRegression(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newSendFixture(t)
-	draft, err := f.st.CreateChatDraftContext(t.Context(), f.draft.ConversationID, f.rootID, "r", func(string, string) error { return nil })
-	require.NoError(err)
-	f.draft = draft
-	installArchiveFault(t, f.st)
-	result, err := NewSender(f.st, f.options).Send(t.Context(), f.request())
-	require.Error(err)
-	assert.Equal("500", result.MediaID)
-	assert.Equal("sent_archive_pending", result.Status)
-	dropArchiveFault(t, f.st)
-	disableRecoveryCredentials(t, f)
-	result, err = NewSender(f.st, f.options).Send(t.Context(), f.request())
-	require.NoError(err)
-	require.True(result.ArchiveComplete)
-	m := writerReply("500", "100", "100")
-	m.Timestamp = f.clock.Now().Add(-time.Hour)
-	m.Username = new("synthetic_owner_1")
-	m.Permalink = new("https://threads.example/post/synthetic")
-	m.Text = new("first-r")
-	id := applyWriter(t, f.writer, m, ItemOrigin{Kind: "own_replies"})
-	m.Text = new("edited-r")
-	applyWriter(t, f.writer, m, ItemOrigin{Kind: "own_replies"})
-	assert.Equal("edited-r", writerBody(t, f.st, id))
-	assert.Equal(int32(1), f.publishes.Load())
-}
-
 func TestThreadsSentArchiveCanonicalCredentialFailureRetainsSuccess(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

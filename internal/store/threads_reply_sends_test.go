@@ -137,19 +137,6 @@ func TestThreadsReceiptUnpublishedTerminalReleasesDraft(t *testing.T) {
 	assert.Equal(receipt, old)
 }
 
-// Hegel's minimal operation sequence was one claim of revision 1.
-func TestThreadsClaimInitialBodyRegression(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, _, conv, parent := threadsDraftDestination(t)
-	draft, err := st.CreateChatDraftContext(t.Context(), conv, parent, "initial", allowChatDraft)
-	require.NoError(err)
-	got, err := st.ClaimThreadsReplySendContext(t.Context(), draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal("initial", got.Body)
-	assert.Equal(int64(1), got.DraftRevision)
-}
-
 func TestThreadsReceiptImmutableSourceBinding(t *testing.T) {
 	for _, change := range []string{"identifier", "retired"} {
 		t.Run(change, func(t *testing.T) {

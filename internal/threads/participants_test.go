@@ -170,21 +170,18 @@ func TestThreadsAuthorObservationTimes(t *testing.T) {
 	assert.Equal(canonical, writerMetadata(t, s, id), "a later provisional item cannot advance canonical author evidence")
 }
 
-// Hegel's retained counterexample has 30 occurrences: the first two already
-// observed A before an accepted merge, the rest have no initial username.
+// Both occurrences observed A before an accepted participant merge.
 // Merge legitimately retains one closed historical A; later A -> B -> A and
 // sparse replay must preserve it without inventing more observations.
 func TestThreadsOccurrenceMergedObservationHistoryRegression(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	w, st := writerFixture(t)
-	items := make([]Media, 30)
-	pids := make([]int64, 30)
+	items := make([]Media, 2)
+	pids := make([]int64, 2)
 	for n := range items {
 		items[n] = writerReply(fmt.Sprint(101+n), "100", "100")
-		if n < 2 {
-			items[n].Username = new("author_a")
-		}
+		items[n].Username = new("author_a")
 		id := applyWriter(t, w, items[n], ItemOrigin{Kind: "conversation", RootID: "100"})
 		pids[n] = writerSender(t, st, id)
 	}

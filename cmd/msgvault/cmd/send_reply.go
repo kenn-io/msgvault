@@ -10,7 +10,7 @@ func init() { rootCmd.AddCommand(newSendReplyCommand()) }
 func newSendReplyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "send-reply [archived-message-id]",
-		Short: "Send a reply to an archived message or reviewed draft",
+		Short: "Send a reviewed reply",
 		Long:  "Send a reply using the source of the archived message or reviewed local draft. The source owner must enable sending.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

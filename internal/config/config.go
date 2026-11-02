@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/recordingref"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -599,6 +600,7 @@ type Config struct {
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
+	Pocket             []PocketSource                  `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
@@ -635,6 +637,18 @@ func (c *Config) deferDaemonError(err error) {
 // recorded by LoadClientWithOverrides, or returns nil when there are none.
 func (c *Config) DaemonConfigError() error {
 	return errors.Join(c.daemonErrs...)
+}
+
+// PeopleTiersError returns the recorded [people.tiers] errors, or nil. Tier
+// previews refuse to run on them instead of falling back to defaults.
+func (c *Config) PeopleTiersError() error {
+	var errs []error
+	for _, err := range c.daemonErrs {
+		if errors.Is(err, persontiers.ErrInvalidConfig) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // requireDaemonValid returns the config, or the recorded daemon errors.
@@ -681,6 +695,7 @@ type PeopleConfig struct {
 	Sweep           peoplesweep.Config      `toml:"sweep"`
 	Enrichment      personenrichment.Config `toml:"enrichment"`
 	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
+	Tiers           persontiers.Config      `toml:"tiers"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -956,6 +971,7 @@ func NewDefaultConfig() *Config {
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
+	cfg.People.Tiers = persontiers.DefaultConfig()
 	return cfg
 }
 
@@ -1127,6 +1143,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown people.identity_scoring config key %q", key.String()))
 		}
+		if strings.HasPrefix(key.String(), "people.tiers.") {
+			cfg.deferDaemonError(fmt.Errorf("%w: unknown people.tiers config key %q", persontiers.ErrInvalidConfig, key.String()))
+		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			cfg.deferDaemonError(fmt.Errorf("unknown IMAP draft config key %q", key.String()))
 		}
@@ -1252,6 +1271,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.IdentityScoring.ApplyDefaults()
 	cfg.deferDaemonError(cfg.People.IdentityScoring.Validate())
+	cfg.deferDaemonError(cfg.People.Tiers.Validate())
 	if err := cfg.Backup.Validate(); err != nil {
 		return nil, err
 	}
@@ -2218,33 +2238,47 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 	return email, true
 }
 
+// defaultMeetingSourceIdentifier names the single unlabeled meeting source.
+const defaultMeetingSourceIdentifier = "default"
+
 // applyMeetingSourceDefaults normalizes native meeting-source entries: a
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
-		c.Omi[0].Identifier = "default"
+		c.Omi[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
-		c.Plaud[0].Identifier = "default"
+		c.Plaud[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
-		c.Twenty[0].Identifier = "default"
+		c.Twenty[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
+	}
+	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
+		c.Pocket[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	for i := range c.Pocket {
+		if c.Pocket[i].APIKeyEnv == "" {
+			c.Pocket[i].APIKeyEnv = "POCKET_API_KEY"
+		}
 	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
-		c.Granola[0].Identifier = "default"
+		c.Granola[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
-		c.Circleback[0].Identifier = "default"
+		c.Circleback[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
-		c.NotionMeetings[0].Identifier = "default"
+		c.NotionMeetings[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
-		c.Muesli[0].Identifier = "default"
+		c.Muesli[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
-		c.Twilio[0].Identifier = "default"
+		c.Twilio[0].Identifier = defaultMeetingSourceIdentifier
 	}
 }
 
@@ -2265,6 +2299,27 @@ func (c *Config) validateMeetingSources() error {
 			seen[key] = true
 		}
 		return nil
+	}
+	pocketIDs := make([]string, len(c.Pocket))
+	for i, src := range c.Pocket {
+		pocketIDs[i] = src.Identifier
+	}
+	if err := check("pocket", pocketIDs); err != nil {
+		return err
+	}
+	for i := range c.Pocket {
+		src := &c.Pocket[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		for j, char := range src.APIKeyEnv {
+			valid := char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || j > 0 && char >= '0' && char <= '9'
+			if !valid {
+				return fmt.Errorf("[[pocket]] identifier %q has invalid api_key_env", src.Identifier)
+			}
+		}
 	}
 	twentyIDs := make([]string, len(c.Twenty))
 	for i, s := range c.Twenty {

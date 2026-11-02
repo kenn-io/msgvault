@@ -561,6 +561,10 @@ type searchBackend struct {
 	searches []searchBackendCall
 }
 
+func (*searchBackend) UnpublishedTokens(context.Context, GenerationID, int, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
 func (*searchBackend) PutUnpublished(context.Context, GenerationID, int, []Embedding) error {
 	return nil
 }

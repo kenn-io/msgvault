@@ -126,6 +126,9 @@ source_id = 42
 ```
 
 The default is empty. Scopes and this opt-in are both required for a new send.
+Changes to `threads.sends` take effect after a daemon restart. Startup reserves
+configured source IDs even when their source has been removed, so a replacement
+account receives a new ID and needs its own explicit opt-in.
 Create a local draft against an archived parent in your own post's conversation:
 
 ```bash
@@ -137,8 +140,9 @@ msgvault send-reply 123 --quota --json
 ```
 
 Replace the example message and draft IDs and revision with the values you
-reviewed. `draft-compose --conversation <id> --reply-to <message-id> --body
-<text>` is another way to prepare the same kind of draft. Draft creation and
+reviewed. `draft-reply` prepares a managed local draft for an archived Threads
+parent. `draft-compose --conversation <id> --reply-to <message-id> --body <text>`
+can also prepare that draft. Draft creation and
 editing never publish. The archived message or local draft determines the
 source for the shared `send-reply` command. This release registers the Threads
 sender. Use a positional archived message ID with `--body` for a direct send,

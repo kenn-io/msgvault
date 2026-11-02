@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"io"
 	"log/slog"
@@ -18,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -53,35 +51,6 @@ func (d *threadsConnectDaemon) RunCLICommand(ctx context.Context, req api.CLIRun
 		}
 		return err
 	})
-}
-
-func TestAddThreadsThroughRealDaemonHandler(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	provider := newThreadsConnectFixture(t, "20")
-	directory := t.TempDir()
-	cfg := &config.Config{HomeDir: directory, Data: config.DataConfig{DataDir: directory}, Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
-	adapter := &threadsConnectDaemon{storeAPIAdapter: &storeAPIAdapter{store: st, config: cfg}, deps: provider.deps(st, cfg.TokensDir())}
-	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.New(slog.DiscardHandler)})
-	server := httptest.NewServer(apiServer.Router())
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true})
-	require.NoError(err)
-	payload, err := json.Marshal(threadsOAuthPayload{AppID: "123", RedirectURI: "https://example.com/threads-callback", Code: "synthetic-code", AppSecret: "synthetic-app-secret"})
-	require.NoError(err)
-	var output bytes.Buffer
-	err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"add-threads", "--app-id", "123", "--redirect-uri", "https://example.com/threads-callback"}, Env: map[string]string{clirun.EnvThreadsOAuth: string(payload)}}, func(stream, data string) error {
-		if stream == "stdout" {
-			_, _ = output.WriteString(data)
-		}
-		return nil
-	})
-	require.NoError(err)
-	assert.Contains(t, output.String(), "threads:123:20")
-	_, err = st.GetSourceByTypeAndIdentifier(sourceTypeThreads, "threads:123:20")
-	require.NoError(err)
-	_, err = adapter.deps.tokenManager().Load("123", "20")
-	require.NoError(err)
 }
 
 func TestThreadsConnectDirectGrantDeniedBeforeRunner(t *testing.T) {

@@ -78,7 +78,7 @@ func EmbeddingRecipe(cfg vector.Config) (Recipe, error) {
 func vectorSpaceIdentity(cfg vector.Config) (docembedding.VectorSpaceIdentity, error) {
 	deploymentFingerprint, err := (docembedding.EgressIdentity{
 		Purpose: docembedding.EgressDocumentEmbedding, Provider: string(cfg.Embeddings.EffectiveAPIFormat()),
-		Endpoint: cfg.Embeddings.Endpoint, Model: cfg.Embeddings.Model, ModelRevision: cfg.Embeddings.Model,
+		Endpoint: cfg.Embeddings.IdentityDestination(), Model: cfg.Embeddings.Model, ModelRevision: cfg.Embeddings.Model,
 	}).Fingerprint()
 	if err != nil {
 		return docembedding.VectorSpaceIdentity{}, fmt.Errorf("fingerprint document embedding deployment: %w", err)
@@ -140,7 +140,7 @@ func QueryEgressFingerprint(extractionProfileID string, cfg vector.Config) (stri
 func egressFingerprint(extractionProfileID string, purpose docembedding.EgressPurpose, cfg vector.Config) (string, error) {
 	destination, err := (docembedding.EgressIdentity{
 		Purpose: purpose, Provider: string(cfg.Embeddings.EffectiveAPIFormat()),
-		Endpoint: cfg.Embeddings.Endpoint, Model: cfg.Embeddings.Model,
+		Endpoint: cfg.Embeddings.IdentityDestination(), Model: cfg.Embeddings.Model,
 		ModelRevision: cfg.Embeddings.Model,
 	}).Fingerprint()
 	if err != nil {

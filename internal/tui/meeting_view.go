@@ -64,6 +64,8 @@ func (m Model) meetingSourceLabel(sourceID int64) string {
 			return "Circleback"
 		case meetingSourcePlaud:
 			return "Plaud"
+		case meetingSourcePocket:
+			return "Pocket"
 		case meetingSourceNotion:
 			return "Notion"
 		case meetingSourceMuesli:
