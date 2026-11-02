@@ -473,6 +473,11 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return err
 	}
+	if req.Grant != nil && target.parent != nil && draftContentNeedsVerificationRead(target.raw) {
+		if target.parentSource == nil || !req.Grant.Allows(agentgrant.PermissionVerificationRead, draftSourceRef(target.parentSource)) {
+			return draftReplyNotPermitted(errors.New("verification.read is required to reply to a verification message"))
+		}
+	}
 	reply, err := imaplib.BuildReplyWithOptions(target.raw, from, intent.Body, imaplib.ReplyOptions{
 		ReplyAll: intent.ReplyAll, SelfAddresses: selfAddresses,
 	}, time.Now(), "")

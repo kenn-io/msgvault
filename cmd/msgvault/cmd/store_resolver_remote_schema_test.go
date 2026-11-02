@@ -238,8 +238,10 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 	}{
 		{"3.0.0", daemonclient.AgentReadMinAPISchemaVersion, true},
 		{"3.8.0", daemonclient.AgentReadMinAPISchemaVersion, true},
+		{"3.37.0", daemonclient.AgentReadMinAPISchemaVersion, true},
+		{"3.38.0", daemonclient.AgentReadMinAPISchemaVersion, false},
 		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
-		{"3.0.0", "", false},
+		{"3.0.0", "", true},
 	} {
 		t.Run(tc.version+"/"+tc.minimum, func(t *testing.T) {
 			require := require.New(t)
@@ -252,7 +254,7 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 			checks.Equal(int32(1), healthRequests.Load(), "one authenticated health probe")
 			if tc.refused {
 				require.ErrorContains(err, "upgrade the daemon and issue a read grant")
-				checks.Contains(err.Error(), daemonclient.AgentReadMinAPISchemaVersion)
+				checks.Contains(err.Error(), daemonclient.VerificationMinAPISchemaVersion)
 				checks.Nil(client)
 				return
 			}

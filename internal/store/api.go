@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 // participantDisplaySQL formats a participant joined as `p` (with the
@@ -48,6 +49,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	Verification         *verification.Metadata
 	RelatedMessageID     *int64
 	ConversationTitle    string
 	Calendar             *CalendarProjection

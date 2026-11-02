@@ -850,7 +850,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			return draftReplyError("draft_read_failed", err)
 		}
 		if grant != nil {
-			if err := a.authorizeDelegatedDraftOutput(ctx, intent, grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+			if err := a.authorizeDelegatedDraftOutput(ctx, &intent, grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
 				return err
 			}
 		}
@@ -866,7 +866,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 				return draftReplyError("draft_read_failed", err)
 			}
 			if grant != nil {
-				if err := a.authorizeDelegatedDraftOutput(ctx, intent, grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+				if err := a.authorizeDelegatedDraftOutput(ctx, &intent, grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
 					return err
 				}
 			}
@@ -1014,7 +1014,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		// A provider edit can change From. Check the exact snapshot returned.
 		if grant != nil {
-			if err := a.authorizeDelegatedDraftOutput(evidenceCtx, intent, grant, adopted.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+			if err := a.authorizeDelegatedDraftOutput(evidenceCtx, &intent, grant, adopted.SourceID, output.RawMIME, output.CandidateContent); err != nil {
 				return err
 			}
 		}

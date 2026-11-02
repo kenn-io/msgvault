@@ -156,7 +156,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
+func TestMCPDelegatedModeRejectsDaemonBeforeVerificationSchema(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -165,12 +165,9 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	mcpHTTPAddr = ""
 	remoteAPISchemaCheckEnabled = true
 	var serveCalled bool
-	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
+	serveMCPStdioWithOptions = func(_ context.Context, _ mcpserver.ServeOptions) error {
 		serveCalled = true
-		assertions.True(options.DelegatedOnly)
-		assertions.Nil(options.Calendar)
-		assertions.NotEmpty(options.DraftCommands)
-		return errors.New("stop after capture")
+		return nil
 	}
 	t.Cleanup(func() {
 		mcpHTTPAddr = previousHTTPAddr
@@ -184,10 +181,7 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 		case "/api/v1/health":
 			healthRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.0.0"})
-		case "/api/session":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"auth_mode": "delegated"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.37.0"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -204,9 +198,9 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 
 	err := mcpCmd.RunE(cmd, nil)
 
-	requirements.ErrorContains(err, "stop after capture")
-	assertions.True(serveCalled)
-	assertions.Equal(int32(2), healthRequests.Load())
+	requirements.ErrorContains(err, "agent archive reads require daemon API schema "+daemonclient.VerificationMinAPISchemaVersion)
+	assertions.False(serveCalled)
+	assertions.Equal(int32(1), healthRequests.Load())
 }
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
@@ -564,6 +558,26 @@ func newMCPDaemonClient(t *testing.T, handler http.HandlerFunc) *daemonclient.Cl
 	})
 	require.NoError(t, err)
 	return client
+}
+
+func TestDelegatedMCPServeOptionsWithholdsReadsBeforeVerificationSchema(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.37.0"}`))
+	})
+
+	options, err := delegatedMCPServeOptions(t.Context(), client)
+	requirements.NoError(err)
+	assertions.NotNil(options.Drafts)
+	assertions.Nil(options.Engine)
+	assertions.Nil(options.AttachmentReader)
+	assertions.Empty(options.GrantPermissions)
 }
 
 func TestNormalizeMCPHTTPAddr(t *testing.T) {

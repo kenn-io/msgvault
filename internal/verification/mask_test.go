@@ -27,10 +27,14 @@ func TestMaskVariants(t *testing.T) {
 		strings.ReplaceAll(html.EscapeString(link), "&amp;", "&#38;"),
 		"&#52;82&#x39;13",
 		"%34%38%32%39%31%33",
+		"<b>482</b><span>913</span>",
+		"&#52;82 <span>9&#x31;3</span>",
 		"界 " + link + " 482913 ü",
 	} {
 		masked := m.Text(text)
 		assert.NotContains(masked, "482913")
+		assert.NotContains(masked, "482")
+		assert.NotContains(masked, "913")
 		assert.NotContains(masked, "482 913")
 		assert.NotContains(masked, "482-913")
 		assert.NotContains(masked, "abcdEFGH12345678")
@@ -136,19 +140,6 @@ func TestMaskLongLinkPayloadFailsClosed(t *testing.T) {
 	assert.Empty(masker.Text(""))
 }
 
-func TestMaskLongGroupedNumericLinkFailsClosedForEncodedVariants(t *testing.T) {
-	for _, length := range []int{33, 40} {
-		t.Run(strconv.Itoa(length), func(t *testing.T) {
-			token := strings.Repeat("4", length)
-			link := "https://example.com/login?code=" + token
-			masker := NewMasker(&Finding{Kind: "magic_link", Values: []Secret{{Kind: "link", Value: link}}})
-
-			partiallyEncoded := "%34" + token[1:]
-			assert.Equal(t, ContentPlaceholder, masker.Text("credential="+partiallyEncoded))
-		})
-	}
-}
-
 func FuzzMaskLongGroupedNumericLinkEncodedVariants(f *testing.F) {
 	f.Add(uint8(0), byte('4'))
 	f.Add(uint8(7), byte('9'))
@@ -168,7 +159,11 @@ func FuzzMaskLongGroupedNumericLinkEncodedVariants(f *testing.F) {
 
 func TestMaskLongCredentialFailsClosedForEncodedVariants(t *testing.T) {
 	token := strings.Repeat("Jk2M", 80)
-	masker := NewMasker(&Finding{Kind: "magic_link", Values: []Secret{{Kind: "link", Value: token}}})
+	link := "https://example.com/verify?token=" + token
+	finding := Detect(Input{BodyText: link})
+	require.NotNil(t, finding)
+	require.Contains(t, finding.Values, Secret{Kind: "link", Value: link, Host: "example.com"})
+	masker := NewMasker(finding)
 
 	for name, value := range map[string]string{
 		"partially percent encoded":  "%4A" + token[1:],

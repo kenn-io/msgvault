@@ -5458,6 +5458,25 @@ msgvault --agent-url https://archive.example.test \
 | `message.read` | Message bodies and metadata, and containing threads |
 | `attachment.read` | Attachment metadata and stored bytes; message access alone does not grant bytes |
 | `stats.read` | Statistics within the granted sources; global database size is omitted |
+| `verification.read` | Modifier that reveals detected verification credentials on the granted source; grants no read operation by itself |
+
+Delegated reads mask detected verification codes and sign-in, reset, and
+confirmation links, including expired values. This applies to archived email
+and chat messages. Add `verification.read` alongside the operation's read
+permission to reveal credentials. Existing grants stay masked. The daemon must
+provide API schema 3.38.0 or newer for this protection.
+
+Message results include `verification` metadata when detection finds a cue or
+credential. The kind, sender, host and expiry are claims derived from untrusted
+content. They do not authenticate the sender. Derived excerpts that cannot be
+masked safely are withheld. Detected messages' text and `message/rfc822`
+attachment bytes return `403 verification_masked` without the modifier.
+Other attachment formats, including screenshots and PDFs, remain outside this
+protection. Search membership and counts can still disclose existence.
+
+Content aggregates require `verification.read` on every requested source in
+addition to `search.read`; otherwise they return `403 verification_masked`.
+Owner-key HTTP reads and ordinary CLI and Web UI sessions remain complete.
 
 Unscoped reads select the grant's live sources. Explicit accounts, collections,
 and source sets must fit entirely inside that grant. Collection membership is
@@ -5503,7 +5522,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |

@@ -8,8 +8,10 @@ export interface AttachmentInfo {
   docbank?: DocbankAttachmentRef[];
   filename: string;
   id: number;
+  message_id?: number;
   mime_type: string;
   size_bytes: number;
+  source_id?: number;
   url?: string;
   [key: string]: unknown;
 }

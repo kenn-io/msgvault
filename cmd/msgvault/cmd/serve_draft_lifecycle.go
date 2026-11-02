@@ -17,6 +17,7 @@ import (
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 type draftLifecycleIntent struct {
@@ -344,6 +345,24 @@ func emitDraftLifecycleOutput(
 	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
 }
 
+func (a *storeAPIAdapter) emitAuthorizedDraftLifecycleOutput(
+	ctx context.Context,
+	emit func(api.CLIRunEvent) error,
+	stream string,
+	intent draftLifecycleIntent,
+	grant *agentgrant.Grant,
+	output draftLifecycleOutput,
+) error {
+	if grant != nil {
+		if output.RawMIME == "" {
+			intent.MetadataOnly = true
+		} else if err := a.authorizeDelegatedDraftOutput(ctx, &intent, grant, output.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+			return err
+		}
+	}
+	return emitDraftLifecycleOutput(emit, stream, intent, output)
+}
+
 func formatDraftLifecycleReceipt(receipt draftLifecycleReceipt) string {
 	return fmt.Sprintf("%s uidvalidity=%d uid=%d", receipt.Mailbox, receipt.UIDValidity, receipt.UID)
 }
@@ -458,7 +477,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 			return draftReplyError("draft_read_failed", err)
 		}
 		if req.Grant != nil {
-			if err := a.authorizeDelegatedDraftOutput(ctx, intent, req.Grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+			if err := a.authorizeDelegatedDraftOutput(ctx, &intent, req.Grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
 				return err
 			}
 		}
@@ -477,7 +496,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 				return draftReplyError("draft_read_failed", err)
 			}
 			if req.Grant != nil {
-				if err := a.authorizeDelegatedDraftOutput(ctx, intent, req.Grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+				if err := a.authorizeDelegatedDraftOutput(ctx, &intent, req.Grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
 					return err
 				}
 			}
@@ -506,9 +525,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	}
 	// Sync can replace the archived sender without advancing the draft revision.
 	if req.Grant != nil {
-		if _, err := a.authorizeDelegatedDraftLifecycle(ctx, intent, req.Grant, draft.SourceID, draft.CurrentMessageID); err != nil {
+		canReadContent, err := a.authorizeDelegatedDraftLifecycle(ctx, intent, req.Grant, draft.SourceID, draft.CurrentMessageID)
+		if err != nil {
 			return err
 		}
+		intent.MetadataOnly = !canReadContent
 	}
 	if draft.Revision != intent.Revision {
 		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))
@@ -554,7 +575,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if err != nil {
 			return draftReplyError("draft_read_failed", err)
 		}
-		if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent, output); err != nil {
+		if err := a.emitAuthorizedDraftLifecycleOutput(ctx, emit, cliStreamStdout, intent, req.Grant, output); err != nil {
 			return draftReplyError("output_failed", err)
 		}
 		return nil
@@ -586,7 +607,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		provider := draftLifecycleObservationOutput(inspection)
 		output, outputErr := a.draftLifecycleOutput(ctx, draft, "refused", provider, nil)
 		if outputErr == nil {
-			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+			_ = a.emitAuthorizedDraftLifecycleOutput(ctx, emit, cliStreamStderr, intent, req.Grant, output)
 		}
 		if err != nil {
 			code := inspection.Code
@@ -602,9 +623,9 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		return draftReplyError(code, errors.New("provider draft inspection refused mutation"))
 	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
-		return a.runDraftEdit(ctx, intent, draft, source, client, currentRaw, replacement, attachmentWrites, inspection, execution, emit)
+		return a.runDraftEdit(ctx, intent, draft, source, client, currentRaw, replacement, attachmentWrites, inspection, execution, req.Grant, emit)
 	}
-	return a.runDraftDelete(ctx, intent, draft, source, client, inspection, execution, emit)
+	return a.runDraftDelete(ctx, intent, draft, source, client, inspection, execution, req.Grant, emit)
 }
 
 func (a *storeAPIAdapter) runDraftEdit(
@@ -618,6 +639,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 	attachmentWrites []store.AttachmentWrite,
 	inspection imaplib.DraftObservation,
 	execution *store.SyncExecution,
+	grant *agentgrant.Grant,
 	emit func(api.CLIRunEvent) error,
 ) error {
 	claimed, err := a.store.ClaimIMAPDraftContext(ctx, intent.DraftID, intent.Revision, store.IMAPDraftOperationEdit, replacement.Raw)
@@ -663,7 +685,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 		}
 		output.PendingCode = code
 		output.ManualReconciliation = latest.Pending != nil || persistenceErr != nil
-		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+		_ = a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStderr, intent, grant, output)
 		if persistenceErr != nil {
 			return draftReplyError("local_persistence_failed", errors.Join(err, persistenceErr))
 		}
@@ -683,7 +705,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 		output, outputErr := a.draftLifecycleOutput(evidenceCtx, claimed, "accepted_local_failed", appendObservation, nil)
 		if outputErr == nil {
 			output.ManualReconciliation = true
-			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+			_ = a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStderr, intent, grant, output)
 		}
 		return draftReplyError("accepted_local_failed", err)
 	}
@@ -702,7 +724,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 		output.ManualReconciliation = true
 		pendingReceipt := draftLifecycleReceiptOutput(receipt)
 		output.PendingReceipt = &pendingReceipt
-		_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+		_ = a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStderr, intent, grant, output)
 		return draftReplyError("accepted_local_failed", cause)
 	}
 	currentMessage, currentMessageErr := a.store.GetMessageContext(evidenceCtx, draft.CurrentMessageID)
@@ -723,7 +745,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 		output, outputErr := a.draftLifecycleOutput(evidenceCtx, published, laneStatePending, nil, nil)
 		if outputErr == nil {
 			output.ManualReconciliation = true
-			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+			_ = a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStderr, intent, grant, output)
 		}
 		return draftReplyError("cancelled", ctx.Err())
 	}
@@ -733,7 +755,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 	if err != nil || !removed.Complete {
 		code := draftLifecycleObservationCode(removed, "cleanup_incomplete")
 		recordErr := a.store.RecordIMAPDraftOutcomeContext(evidenceCtx, intent.DraftID, published.Revision, code, nil)
-		a.emitDraftLifecyclePending(evidenceCtx, intent, published, nil, nil, removed, emit)
+		a.emitDraftLifecyclePending(evidenceCtx, intent, published, grant, nil, removed, emit)
 		if err == nil {
 			err = errors.New("provider cleanup is incomplete")
 		}
@@ -745,19 +767,19 @@ func (a *storeAPIAdapter) runDraftEdit(
 	if err := a.store.RecordIMAPDraftOutcomeContext(
 		evidenceCtx, intent.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil,
 	); err != nil {
-		a.emitDraftLifecyclePending(evidenceCtx, intent, published, nil, nil, removed, emit)
+		a.emitDraftLifecyclePending(evidenceCtx, intent, published, grant, nil, removed, emit)
 		return draftReplyError("local_persistence_failed", err)
 	}
 	finished, err := a.store.FinishIMAPDraftRemovalContext(evidenceCtx, intent.DraftID, published.Revision)
 	if err != nil {
-		a.emitDraftLifecyclePending(evidenceCtx, intent, published, nil, nil, removed, emit)
+		a.emitDraftLifecyclePending(evidenceCtx, intent, published, grant, nil, removed, emit)
 		return draftReplyError("cleanup_local_failed", err)
 	}
 	output, err := a.draftLifecycleOutput(evidenceCtx, finished, "edited", nil, draftLifecycleObservationOutput(removed))
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
 	}
-	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent, output); err != nil {
+	if err := a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStdout, intent, grant, output); err != nil {
 		return draftReplyError("output_failed", err)
 	}
 	return nil
@@ -783,7 +805,7 @@ func (a *storeAPIAdapter) emitDraftLifecyclePending(
 		}
 	}
 	output.ManualReconciliation = true
-	_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+	_ = a.emitAuthorizedDraftLifecycleOutput(ctx, emit, cliStreamStderr, intent, grant, output)
 }
 
 func (a *storeAPIAdapter) runDraftDelete(
@@ -794,6 +816,7 @@ func (a *storeAPIAdapter) runDraftDelete(
 	client *imaplib.Client,
 	inspection imaplib.DraftObservation,
 	execution *store.SyncExecution,
+	grant *agentgrant.Grant,
 	emit func(api.CLIRunEvent) error,
 ) error {
 	claimed, err := a.store.ClaimIMAPDraftContext(ctx, intent.DraftID, intent.Revision, store.IMAPDraftOperationDelete, nil)
@@ -808,18 +831,18 @@ func (a *storeAPIAdapter) runDraftDelete(
 		if !removed.WriteAttempted {
 			active, abortErr := a.store.AbortIMAPDraftContext(evidenceCtx, intent.DraftID, intent.Revision, "not_attempted")
 			if abortErr != nil {
-				a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, nil, draftLifecycleObservationOutput(inspection), removed, emit)
+				a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, grant, draftLifecycleObservationOutput(inspection), removed, emit)
 				return draftReplyError("local_persistence_failed", errors.Join(err, abortErr))
 			}
 			output, outputErr := a.draftLifecycleOutput(evidenceCtx, active, draftLifecycleActive, draftLifecycleObservationOutput(inspection), draftLifecycleObservationOutput(removed))
 			if outputErr != nil {
 				return draftReplyError("draft_read_failed", outputErr)
 			}
-			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
+			_ = a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStderr, intent, grant, output)
 			return draftReplyError(code, err)
 		}
 		recordErr := a.store.RecordIMAPDraftOutcomeContext(evidenceCtx, intent.DraftID, intent.Revision, code, nil)
-		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, nil, draftLifecycleObservationOutput(inspection), removed, emit)
+		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, grant, draftLifecycleObservationOutput(inspection), removed, emit)
 		if err == nil {
 			err = errors.New("provider cleanup is incomplete")
 		}
@@ -833,12 +856,12 @@ func (a *storeAPIAdapter) runDraftDelete(
 	if err := a.store.RecordIMAPDraftOutcomeContext(
 		evidenceCtx, intent.DraftID, intent.Revision, store.IMAPDraftCodeRemoved, nil,
 	); err != nil {
-		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, nil, draftLifecycleObservationOutput(inspection), removed, emit)
+		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, grant, draftLifecycleObservationOutput(inspection), removed, emit)
 		return draftReplyError("local_persistence_failed", err)
 	}
 	finished, err := a.store.FinishIMAPDraftRemovalContext(evidenceCtx, intent.DraftID, intent.Revision)
 	if err != nil {
-		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, nil, draftLifecycleObservationOutput(inspection), removed, emit)
+		a.emitDraftLifecyclePending(evidenceCtx, intent, claimed, grant, draftLifecycleObservationOutput(inspection), removed, emit)
 		return draftReplyError("cleanup_local_failed", err)
 	}
 	defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
@@ -846,7 +869,7 @@ func (a *storeAPIAdapter) runDraftDelete(
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
 	}
-	if err := emitDraftLifecycleOutput(emit, cliStreamStdout, intent, output); err != nil {
+	if err := a.emitAuthorizedDraftLifecycleOutput(evidenceCtx, emit, cliStreamStdout, intent, grant, output); err != nil {
 		return draftReplyError("output_failed", err)
 	}
 	return nil
@@ -887,24 +910,38 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftLifecycle(
 	if err != nil {
 		return false, draftReplyNotPermitted(fmt.Errorf("load managed draft sender: %w", err))
 	}
-	return a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, raw)
+	canReadContent, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, raw)
+	if err != nil {
+		return false, err
+	}
+	if intent.Operation == api.CLIRunDraftEditCommand && !canReadContent {
+		return false, draftReplyNotPermitted(errors.New("verification.read is required to edit a protected draft"))
+	}
+	return canReadContent, nil
 }
 
 // authorizeDelegatedDraftOutput checks the snapshots actually returned. Sync
 // may replace current MIME while a pending edit still holds a different sender.
 func (a *storeAPIAdapter) authorizeDelegatedDraftOutput(
 	ctx context.Context,
-	intent draftLifecycleIntent,
+	intent *draftLifecycleIntent,
 	grant *agentgrant.Grant,
 	sourceID int64,
 	raw, candidate string,
 ) error {
-	canReadContent, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, []byte(raw))
+	canReadContent, err := a.authorizeDelegatedDraftContent(ctx, *intent, grant, sourceID, []byte(raw))
 	if err != nil {
 		return err
 	}
-	if canReadContent && candidate != "" {
-		_, err = a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, []byte(candidate))
+	if !canReadContent {
+		intent.MetadataOnly = true
+		return nil
+	}
+	if candidate != "" {
+		canReadContent, err = a.authorizeDelegatedDraftContent(ctx, *intent, grant, sourceID, []byte(candidate))
+		if err == nil && !canReadContent {
+			intent.MetadataOnly = true
+		}
 	}
 	return err
 }
@@ -930,11 +967,37 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftContent(
 			return false, draftReplyNotPermitted(fmt.Errorf("load managed draft sender: %w", err))
 		}
 		if grant.AllowsSender(permission, ref, senderKey) {
-			return grant.AllowsSender(agentgrant.PermissionDraftCreate, ref, senderKey) ||
-				grant.AllowsSender(agentgrant.PermissionDraftEdit, ref, senderKey), nil
+			canReadContent := grant.AllowsSender(agentgrant.PermissionDraftCreate, ref, senderKey) ||
+				grant.AllowsSender(agentgrant.PermissionDraftEdit, ref, senderKey)
+			if canReadContent && !grant.Allows(agentgrant.PermissionVerificationRead, ref) && draftContentNeedsVerificationRead(raw) {
+				return false, nil
+			}
+			return canReadContent, nil
 		}
 	}
 	return false, draftReplyNotPermitted(fmt.Errorf("source %d or sender is not in grant %s for %s", source.ID, grant.ID, intent.Operation))
+}
+
+// draftContentNeedsVerificationRead fails closed when MIME cannot be parsed:
+// delegated draft output without verification.read must not expose content
+// that the verifier could not inspect.
+func draftContentNeedsVerificationRead(raw []byte) bool {
+	message, err := msgmime.Parse(raw)
+	if err != nil {
+		return true
+	}
+	var sender string
+	if len(message.From) > 0 {
+		sender = message.From[0].Email
+	}
+	return verification.Detect(verification.Input{
+		MessageType: store.MessageTypeEmail,
+		Subject:     message.Subject,
+		BodyText:    message.BodyText,
+		BodyHTML:    message.BodyHTML,
+		SenderEmail: sender,
+		SentAt:      message.Date,
+	}) != nil
 }
 
 func managedDraftSenderKey(raw []byte) (string, error) {

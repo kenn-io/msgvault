@@ -385,7 +385,7 @@ func fetchAttachmentsShared(ctx context.Context, db store.SQLReader, rebind rebi
 	var hashes []string
 
 	for rows.Next() {
-		var att AttachmentInfo
+		att := AttachmentInfo{MessageID: msg.ID, SourceID: msg.SourceID}
 		var storagePath, sourceAttachmentID string
 		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath, &sourceAttachmentID); err != nil {
 			return err

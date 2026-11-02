@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/internal/verification"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -982,6 +983,9 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	for _, r := range results {
 		item := searchMessageItem{MessageSummary: r}
 		switch {
+		case r.Verification != nil && r.Verification.Masked:
+			// Canonical protection deliberately withholds unmappable excerpts.
+			item.Matches = nil
 		case len(r.BodyContextSnippets) > 0:
 			item.Matches, item.MatchesTruncated = bodyContextSnippetsToMatches(r.BodyContextSnippets, r.BodyContextSnippetsTruncated)
 		case r.BodyContextSnippetsTruncated:
@@ -1632,6 +1636,7 @@ func lineNumberAt(body string, byteOffset int) int {
 }
 
 type getMessageResponse struct {
+	Verification         *verification.Metadata    `json:"verification,omitempty"`
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
 	SourceMessageID      string                    `json:"source_message_id"`
@@ -1730,6 +1735,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	}
 
 	return jsonResult(getMessageResponse{
+		Verification:         msg.Verification,
 		Calendar:             msg.Calendar,
 		WebURL:               msg.WebURL,
 		ID:                   msg.ID,

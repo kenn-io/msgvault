@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 // CLIStore exposes archive operations needed by CLI-compatible HTTP routes.
@@ -882,6 +883,8 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
+	SourceID             int64                     `json:"source_id,omitzero"`
+	Verification         *verification.Metadata    `json:"verification,omitempty"`
 	RelatedMessageID     *int64                    `json:"related_message_id,omitempty"`
 	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
 	ID                   int64                     `json:"id"`
@@ -2513,7 +2516,11 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	resp.Results = results
+	protected, allowed := s.prepareAgentSummaries(w, r, results)
+	if !allowed {
+		return
+	}
+	resp.Results = protected
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
@@ -3550,6 +3557,11 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	msg, err = s.prepareAgentDetail(r, msg)
+	if err != nil {
+		verificationUnavailable(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(msg))
 }
 
@@ -3733,6 +3745,8 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 
 func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
+		SourceID:             msg.SourceID,
+		Verification:         msg.Verification,
 		Calendar:             msg.Calendar,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,

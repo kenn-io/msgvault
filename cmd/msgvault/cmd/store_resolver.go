@@ -164,7 +164,11 @@ func openAgentDelegatedStore(ctx context.Context, state *invocation, minimumSche
 		return nil, HTTPStoreInfo{}, err
 	}
 	st.SetBusyNotifier(reportDaemonBusyWait)
-	if err := verifyRemoteAPISchemaVersion(ctx, st, minimumSchema...); err != nil {
+	minimum := daemonclient.VerificationMinAPISchemaVersion
+	if len(minimumSchema) > 0 && daemonclient.APISchemaVersionAtLeast(minimumSchema[0], minimum) {
+		minimum = minimumSchema[0]
+	}
+	if err := verifyRemoteAPISchemaVersion(ctx, st, minimum); err != nil {
 		_ = st.Close()
 		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status == http.StatusUnauthorized {
 			return nil, HTTPStoreInfo{}, fmt.Errorf("agent authentication failed: token is invalid, expired, revoked, or agent access is disabled: %w", apiErr)

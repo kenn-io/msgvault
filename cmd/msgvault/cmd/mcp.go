@@ -189,7 +189,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	opts := mcpserver.ServeOptions{
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
 	}
-	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.VerificationMinAPISchemaVersion) {
 		grant, err := st.AgentTokenSelf(ctx)
 		if err != nil {
 			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)

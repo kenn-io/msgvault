@@ -370,6 +370,7 @@ func queryAddressesFromStrings(addresses []string) []query.Address {
 
 func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) query.MessageSummary {
 	return query.MessageSummary{
+		Verification:         verificationFromGenerated(msg.Verification),
 		ID:                   msg.ID,
 		SourceID:             int64Value(msg.SourceID),
 		SourceMessageID:      msg.SourceMessageID,
@@ -417,6 +418,8 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 		return &query.MessageDetail{}
 	}
 	return &query.MessageDetail{
+		Verification:         verificationFromGenerated(resp.Verification),
+		SourceID:             int64Value(resp.SourceID),
 		RelatedMessageID:     resp.RelatedMessageID,
 		ID:                   resp.ID,
 		Calendar:             calendarProjectionFromGenerated(resp.Calendar),

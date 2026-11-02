@@ -181,6 +181,205 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 	assertions.Equal(2, providerCalls)
 }
 
+func TestDraftLifecycleDelegatedVerificationOutputRequiresPermission(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		verificationInRaw bool
+	}{
+		{name: "current raw MIME", verificationInRaw: true},
+		{name: "pending candidate MIME"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			fixture := newDraftReplyFixture(t)
+			if tc.verificationInRaw {
+				parentRaw, err := fixture.store.GetMessageRaw(fixture.parentID)
+				requirements.NoError(err)
+				verificationRaw := bytes.Replace(parentRaw, []byte("Subject: Question\r\n"), []byte("Subject: Your verification code is 482913\r\n"), 1)
+				requirements.NotEqual(parentRaw, verificationRaw)
+				requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, verificationRaw))
+			}
+
+			adapter := fixture.grantedAdapter()
+			var created draftReplyOutput
+			err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: []string{
+				api.CLIRunDraftReplyCommand, strconv.FormatInt(fixture.parentID, 10),
+				"--from", testutil.IMAPTestUsername, "--body", "synthetic reply", "--json",
+			}}, func(event api.CLIRunEvent) error {
+				return json.Unmarshal([]byte(event.Data), &created)
+			})
+			requirements.NoError(err)
+			requirements.NotEmpty(created.DraftID)
+
+			if !tc.verificationInRaw {
+				candidate := []byte("From: " + testutil.IMAPTestUsername + "\r\n" +
+					"To: recipient@example.test\r\n" +
+					"Subject: Your verification code is 482913\r\n\r\n" +
+					"Your verification code is 482913\r\n")
+				_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, created.Revision, store.IMAPDraftOperationEdit, candidate)
+				requirements.NoError(err)
+			}
+
+			_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+			requirements.NoError(err)
+			sourceRef := draftSourceRef(fixture.source)
+			sourceRef.SenderKeys = []string{senderKey}
+			grantFor := func(reveal bool) *agentgrant.Grant {
+				permissions := []agentgrant.Permission{agentgrant.PermissionDraftCreate}
+				if reveal {
+					permissions = append(permissions, agentgrant.PermissionVerificationRead)
+				}
+				return &agentgrant.Grant{
+					ID: "verification-draft-grant", Permissions: permissions,
+					Sources: []agentgrant.SourceRef{sourceRef},
+				}
+			}
+			run := func(grant *agentgrant.Grant) (string, error) {
+				var output strings.Builder
+				err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+					Args: []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}, Grant: grant,
+				}, func(event api.CLIRunEvent) error {
+					output.WriteString(event.Data)
+					return nil
+				})
+				return output.String(), err
+			}
+
+			withheld, err := run(grantFor(false))
+			requirements.NoError(err)
+			var output draftLifecycleOutput
+			requirements.NoError(json.Unmarshal([]byte(withheld), &output))
+			assertions.Empty(output.Content)
+			assertions.Empty(output.RawMIME)
+			assertions.Empty(output.CandidateContent)
+			assertions.NotContains(withheld, "482913")
+			assertions.NotContains(withheld, `"raw_mime"`)
+
+			revealed, err := run(grantFor(true))
+			requirements.NoError(err)
+			assertions.Contains(revealed, "482913")
+		})
+	}
+}
+
+func TestDraftLifecycleDelegatedEditRequiresVerificationRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	var created draftReplyOutput
+	err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		api.CLIRunDraftReplyCommand, strconv.FormatInt(fixture.parentID, 10),
+		"--from", testutil.IMAPTestUsername, "--body", "initial body", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		return json.Unmarshal([]byte(event.Data), &created)
+	})
+	require.NoError(err)
+	require.NotEmpty(created.DraftID)
+
+	protectedRaw := []byte("From: " + testutil.IMAPTestUsername + "\r\n" +
+		"To: recipient@example.test\r\nSubject: 482913\r\n\r\n" +
+		"Your verification code is 482913\r\n")
+	require.NoError(fixture.store.UpsertMessageRaw(created.MessageID, protectedRaw))
+	_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+	require.NoError(err)
+	sourceRef := draftSourceRef(fixture.source)
+	sourceRef.SenderKeys = []string{senderKey}
+	grant := &agentgrant.Grant{
+		ID: "verification-draft-edit-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit},
+		Sources: []agentgrant.SourceRef{sourceRef},
+	}
+	providerCalls := 0
+	clientFactory := adapter.draftClientFactory
+	adapter.draftClientFactory = func(ctx context.Context, source *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return clientFactory(ctx, source)
+	}
+	run := func(args ...string) ([]api.CLIRunEvent, error) {
+		var events []api.CLIRunEvent
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+		return events, err
+	}
+
+	events, err := run(api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "ordinary text", "--json")
+	require.Error(err)
+	assert.Equal("not_permitted", err.Error())
+	assert.Empty(events)
+	assert.Zero(providerCalls)
+
+	updated, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+	require.NoError(err)
+	assert.Equal(created.Revision, updated.Revision)
+	currentRaw, err := fixture.store.GetMessageRawContext(t.Context(), updated.CurrentMessageID)
+	require.NoError(err)
+	assert.Contains(string(currentRaw), "482913")
+
+	events, err = run(api.CLIRunDraftGetCommand, created.DraftID, "--json")
+	require.NoError(err)
+	require.Len(events, 1)
+	var output draftLifecycleOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+	assert.Empty(output.Content)
+	assert.Empty(output.RawMIME)
+	assert.Empty(output.CandidateContent)
+	assert.NotContains(events[0].Data, "482913")
+}
+
+func TestDraftLifecycleMutationOutputsReauthorizeSnapshots(t *testing.T) {
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+	requirements.NoError(err)
+	sourceRef := draftSourceRef(fixture.source)
+	sourceRef.SenderKeys = []string{senderKey}
+	grant := &agentgrant.Grant{
+		ID: "verification-lifecycle-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit},
+		Sources: []agentgrant.SourceRef{sourceRef},
+	}
+
+	safeRaw := []byte("From: " + testutil.IMAPTestUsername + "\r\n" +
+		"To: recipient@example.test\r\nSubject: Reply\r\n\r\nsafe body\r\n")
+	protectedRaw := []byte("From: " + testutil.IMAPTestUsername + "\r\n" +
+		"To: recipient@example.test\r\nSubject: Your verification code is 482913\r\n\r\n" +
+		"Your verification code is 482913\r\n")
+	for _, tc := range []struct {
+		name      string
+		raw       string
+		candidate string
+		content   string
+	}{
+		{name: "current snapshot", raw: string(protectedRaw), content: "Your verification code is 482913"},
+		{name: "candidate snapshot", raw: string(safeRaw), candidate: string(protectedRaw), content: "safe body"},
+		{name: "unavailable snapshot", content: "Your verification code is 482913"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			var events []api.CLIRunEvent
+			err := adapter.emitAuthorizedDraftLifecycleOutput(t.Context(), func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			}, cliStreamStderr, draftLifecycleIntent{Operation: api.CLIRunDraftEditCommand, JSON: true}, grant, draftLifecycleOutput{
+				Status: "refused", DraftID: "draft-synthetic", Revision: 1, SourceID: fixture.source.ID,
+				Content: tc.content, RawMIME: tc.raw, CandidateContent: tc.candidate,
+			})
+			requirements.NoError(err)
+			requirements.Len(events, 1)
+			var output draftLifecycleOutput
+			requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+			assertions.Empty(output.Content)
+			assertions.Empty(output.RawMIME)
+			assertions.Empty(output.CandidateContent)
+			assertions.NotContains(events[0].Data, "482913")
+		})
+	}
+}
+
 func TestDraftLifecycleReplacementIndexesCc(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

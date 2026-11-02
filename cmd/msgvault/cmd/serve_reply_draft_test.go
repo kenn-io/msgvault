@@ -639,6 +639,37 @@ func (f draftReplyFixture) runAs(t *testing.T, adapter *storeAPIAdapter, grant *
 	return events, err
 }
 
+func TestDelegatedDraftReplyRequiresVerificationPermission(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	parentRaw, err := fixture.store.GetMessageRaw(fixture.parentID)
+	requirements.NoError(err)
+	parentRaw = bytes.Replace(parentRaw, []byte("Subject: Question\r\n"), []byte("Subject: 482913\r\n"), 1)
+	parentRaw = bytes.Replace(parentRaw, []byte("Parent body\r\n"), []byte("Your verification code is 482913\r\n"), 1)
+	requirements.Contains(string(parentRaw), "Your verification code is 482913")
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, parentRaw))
+
+	adapter := fixture.grantedAdapter()
+	providerCalls := 0
+	adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return nil, errors.New("unexpected provider request")
+	}
+	_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+	requirements.NoError(err)
+	sourceRef := draftSourceRef(fixture.source)
+	sourceRef.SenderKeys = []string{senderKey}
+	grant := &agentgrant.Grant{
+		ID: "verification-reply-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources: []agentgrant.SourceRef{sourceRef},
+	}
+
+	events, err := fixture.runAs(t, adapter, grant, "--body", "synthetic reply", "--json")
+	requirements.EqualError(err, "not_permitted")
+	assertions.Empty(events)
+	assertions.Zero(providerCalls)
+}
+
 // TestDelegatedDraftReplyCreatesDraft drives the allow branch of
 // authorizeDelegatedDraftSource through to the user-facing outcome. Without it
 // an inverted predicate would leave every deny test green while no delegated

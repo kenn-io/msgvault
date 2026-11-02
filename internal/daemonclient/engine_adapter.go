@@ -574,7 +574,8 @@ func bodySearchSummariesFromGenerated(
 		if bodyContext.ContextSnippetsTruncated != nil {
 			truncated = *bodyContext.ContextSnippetsTruncated
 		}
-		if len(bodyContext.ContextSnippets) == 0 && !truncated {
+		masked := result[index].Verification != nil && result[index].Verification.Masked
+		if len(bodyContext.ContextSnippets) == 0 && !truncated && !masked {
 			return nil, fmt.Errorf("daemon returned empty untruncated body context for message %d", bodyContext.MessageID)
 		}
 		result[index].BodyContextSnippetsTruncated = truncated
@@ -592,6 +593,8 @@ func queryAttachmentFromGenerated(att *generated.AttachmentInfo) *query.Attachme
 		return nil
 	}
 	return &query.AttachmentInfo{
+		MessageID:   int64Value(att.MessageID),
+		SourceID:    int64Value(att.SourceID),
 		ID:          att.ID,
 		Filename:    att.Filename,
 		MimeType:    att.MimeType,
@@ -608,6 +611,7 @@ func querySummaryFromAPIMessage(msg store.APIMessage) query.MessageSummary {
 		fromEmail = msg.From
 	}
 	return query.MessageSummary{
+		Verification:         msg.Verification,
 		ID:                   msg.ID,
 		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
@@ -825,6 +829,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		return nil
 	}
 	detail := &query.MessageDetail{
+		Verification:         msg.Verification,
 		RelatedMessageID:     msg.RelatedMessageID,
 		ID:                   msg.ID,
 		IsFromMe:             msg.IsFromMe,
@@ -851,6 +856,8 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 	}
 	for _, att := range msg.Attachments {
 		detail.Attachments = append(detail.Attachments, query.AttachmentInfo{
+			MessageID:   msg.ID,
+			SourceID:    msg.SourceID,
 			ID:          att.ID,
 			Filename:    att.Filename,
 			MimeType:    att.MimeType,
@@ -917,6 +924,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 			continue
 		}
 		summary := query.MessageSummary{
+			Verification:         md.Verification,
 			ID:                   md.ID,
 			WebURL:               md.WebURL,
 			SourceID:             md.SourceID,

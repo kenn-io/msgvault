@@ -163,6 +163,7 @@ func threadPageFromGenerated(page *generated.ThreadPage) *query.ThreadPage {
 	}
 	for _, msg := range page.Messages {
 		out.Messages = append(out.Messages, query.ThreadMessage{
+			Verification:        verificationFromGenerated(msg.Verification),
 			ID:                  msg.ID,
 			SourceMessageID:     msg.SourceMessageID,
 			Subject:             msg.Subject,

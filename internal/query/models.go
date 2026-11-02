@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 // AggregateRow represents a single row in an aggregate view.
@@ -26,9 +27,10 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
-	AttachmentNames   []string `json:"attachment_names,omitzero"`
-	MatchSnippet      string   `json:"match_snippet,omitempty"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
+	Verification      *verification.Metadata `json:"verification,omitempty"`
+	AttachmentNames   []string               `json:"attachment_names,omitzero"`
+	MatchSnippet      string                 `json:"match_snippet,omitempty"`
+	HiddenTextPresent bool                   `json:"hidden_text_present"`
 	// WebURL is derived by the daemon client for browser navigation.
 	WebURL                       string     `json:"web_url,omitempty"`
 	ID                           int64      `json:"id"`
@@ -69,6 +71,7 @@ type DeletionTarget struct {
 
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
+	Verification      *verification.Metadata    `json:"verification,omitempty"`
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty"`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty"`
@@ -114,6 +117,7 @@ type Address struct {
 
 // AttachmentInfo represents attachment metadata.
 type AttachmentInfo struct {
+	MessageID   int64                        `json:"message_id,omitempty"`
 	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
 	ID          int64
 	SourceID    int64 `json:"-"`

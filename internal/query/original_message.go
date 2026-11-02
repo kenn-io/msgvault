@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 var (
@@ -289,16 +290,17 @@ type ThreadQuery struct {
 
 // ThreadMessage is one archived message in a conversation listing.
 type ThreadMessage struct {
-	ID                  int64      `json:"id"`
-	SourceMessageID     string     `json:"source_message_id"`
-	Subject             string     `json:"subject"`
-	SentAt              *time.Time `json:"sent_at,omitzero"`
-	From                []Address  `json:"from"`
-	To                  []Address  `json:"to"`
-	Cc                  []Address  `json:"cc"`
-	HasRaw              bool       `json:"has_raw"`
-	AttachmentCount     int        `json:"attachment_count"`
-	DeletedFromSourceAt *time.Time `json:"deleted_from_source_at,omitzero"`
+	Verification        *verification.Metadata `json:"verification,omitempty"`
+	ID                  int64                  `json:"id"`
+	SourceMessageID     string                 `json:"source_message_id"`
+	Subject             string                 `json:"subject"`
+	SentAt              *time.Time             `json:"sent_at,omitzero"`
+	From                []Address              `json:"from"`
+	To                  []Address              `json:"to"`
+	Cc                  []Address              `json:"cc"`
+	HasRaw              bool                   `json:"has_raw"`
+	AttachmentCount     int                    `json:"attachment_count"`
+	DeletedFromSourceAt *time.Time             `json:"deleted_from_source_at,omitzero"`
 }
 
 // ThreadPage is one page of a conversation in chronological order. The

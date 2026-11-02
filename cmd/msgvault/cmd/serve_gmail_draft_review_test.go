@@ -568,6 +568,52 @@ func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
 	}
 }
 
+func TestGmailDraftDelegatedEditRequiresVerificationRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	protectedRaw := []byte("From: owner@example.test\r\n" +
+		"To: recipient@example.test\r\nSubject: 482913\r\n\r\n" +
+		"Your verification code is 482913\r\n")
+	require.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, protectedRaw))
+	grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, fixture.source.SourceType, fixture.source.Identifier)
+
+	args := []string{
+		api.CLIRunDraftEditCommand, draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10),
+		"--body", "ordinary text", "--json",
+	}
+	var events []api.CLIRunEvent
+	err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.Error(err)
+	assert.Equal("not_permitted", err.Error())
+	assert.Empty(events)
+	assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+
+	updated, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(draft.Revision, updated.Revision)
+
+	var getEvents []api.CLIRunEvent
+	err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+		Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, Grant: grant,
+	}, func(event api.CLIRunEvent) error {
+		getEvents = append(getEvents, event)
+		return nil
+	})
+	require.NoError(err)
+	require.Len(getEvents, 1)
+	var output gmailDraftLifecycleOutput
+	require.NoError(json.Unmarshal([]byte(getEvents[0].Data), &output))
+	assert.Empty(output.Content)
+	assert.Empty(output.RawMIME)
+	assert.Empty(output.CandidateContent)
+	assert.NotContains(getEvents[0].Data, "482913")
+}
+
 func TestGmailDraftLifecycleDelegatedSenderScopeFailsClosed(t *testing.T) {
 	for _, access := range []struct {
 		operation  string

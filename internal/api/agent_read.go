@@ -137,6 +137,14 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	if err != nil {
 		return newAPIHTTPError(503, "source_scope_unavailable", "Source authorization is unavailable")
 	}
+	// Keep the exact source identities authorized in this snapshot. Masking
+	// must not resolve them again after source replacement or reacquire a pool
+	// connection during a scoped read.
+	verificationState := &verificationRequest{sources: make(map[int64]agentgrant.SourceRef, len(sources)), details: make(map[int64]*query.MessageDetail)}
+	for _, src := range sources {
+		verificationState.sources[src.ID] = agentgrant.SourceRef{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}
+	}
+	*r = *r.WithContext(context.WithValue(r.Context(), verificationRequestKey{}, verificationState))
 	allowed := make([]int64, 0)
 	account := r.URL.Query().Get("account")
 	accountGranted := false
