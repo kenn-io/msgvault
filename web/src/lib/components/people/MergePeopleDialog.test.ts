@@ -15,7 +15,7 @@ it.each([
   { savedAnchor: true, promote: true, outcome: 'retry and merge' },
   { savedAnchor: true, promote: true, outcome: 'cancel' },
   { savedAnchor: false, promote: true, outcome: 'read failure' }
-])('merges profiles with saved anchor=$savedAnchor, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
+])('handles merge and promotion outcomes with saved anchor=$savedAnchor, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
   const requests: Request[] = [];
   let failProfile = outcome === 'retry and merge' || outcome === 'read failure';
   const client = createAPIClient(async input => {

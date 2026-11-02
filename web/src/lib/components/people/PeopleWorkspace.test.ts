@@ -139,7 +139,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
 
 it.each([
   { outcome: 'is cancelled', selectedID: null },
-  { outcome: 'refreshes the cache', selectedID: null },
+  { outcome: 'clears the stale warning', selectedID: null },
   { outcome: 'merges', selectedID: null },
   { outcome: 'merges', selectedID: 7 },
   { outcome: 'merges', selectedID: 42 },
@@ -169,7 +169,7 @@ it.each([
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
-      return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
+      return calls === 1 || outcome === 'clears the stale warning' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'clears the stale warning' ? 'stale' : 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-9-r3"' } }); },
   });
@@ -677,32 +677,47 @@ it('leaving People aborts its pending Save', async () => {
   expect(pending!.signal.aborted).toBe(true);
 });
 
-it('preserves the unfinished bulk link and selection after retrying a stale identity cache', async () => {
+it.each(['settled', 'pending'] as const)('preserves bulk-link work while the stale-cache retry is %s', async phase => {
   const pairs: Array<{ participant_a: number; participant_b: number }> = [];
-  const names = ['Alice Example', 'Bob Example', 'Cara Example'];
+  const names = phase === 'settled' ? ['Alice Example', 'Bob Example', 'Cara Example'] : ['Alice Example', 'Bob Example'];
+  let resolveRetry: ((response: Response) => void) | undefined;
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: names.map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
     '/api/v1/identity/links': async request => {
       pairs.push(await request.json());
-      if (pairs.length === 2) return Response.json({ error: 'internal_error', message: 'Cara link failed' }, { status: 500 });
+      if (phase === 'pending' && pairs.length === 2) return new Promise<Response>(resolve => { resolveRetry = resolve; });
+      if (phase === 'settled' && pairs.length === 2) return Response.json({ error: 'internal_error', message: 'Cara link failed' }, { status: 500 });
       return Response.json({ identity_revision: 2, cache_state: pairs.length === 1 ? 'stale' : 'ready' });
     },
   });
-  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
   const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('1 of 2 linked.'));
-    expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry identity cache' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull());
-    expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }, { participant_a: 1, participant_b: 2 }]);
-    for (const name of names) expect.soft(screen.queryByRole('checkbox', { name: `Unselect ${name}` })).not.toBeNull();
-    expect.soft(screen.queryByRole('button', { name: 'Clear selection' })).not.toBeNull();
-    expect.soft(screen.getByRole('status').textContent).toContain('1 of 2 linked.');
-    expect.soft(screen.getByRole('status').textContent).not.toContain('People are now treated as the same person.');
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+    const retry = await screen.findByRole('button', { name: 'Retry identity cache' });
+    if (phase === 'pending') for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    else {
+      await waitFor(() => expect(screen.getByRole('status').textContent).toContain('1 of 2 linked.'));
+      expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+    }
+    await fireEvent.click(retry);
+    if (phase === 'pending') {
+      await waitFor(() => expect(pairs).toHaveLength(2));
+      await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+      expect(pairs).toHaveLength(2);
+    } else {
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull());
+      expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }, { participant_a: 1, participant_b: 2 }]);
+      for (const name of names) expect.soft(screen.queryByRole('checkbox', { name: `Unselect ${name}` })).not.toBeNull();
+      expect.soft(screen.queryByRole('button', { name: 'Clear selection' })).not.toBeNull();
+      expect.soft(screen.getByRole('status').textContent).toContain('1 of 2 linked.');
+      expect.soft(screen.getByRole('status').textContent).not.toContain('People are now treated as the same person.');
+    }
+  } finally {
+    resolveRetry?.(Response.json({ identity_revision: 2, cache_state: 'ready' }));
+    view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
+  }
 });
 
 it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %s', async entry => {
@@ -780,37 +795,6 @@ it('keeps the survivor choice open after promoting the observed person during Me
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     expect(await screen.findByRole('dialog', { name: 'Resolve person merge' })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
-it('blocks a second bulk link while an identity cache retry is in flight', async () => {
-  const pairs: unknown[] = [];
-  let resolveRetry: ((response: Response) => void) | undefined;
-  const client = clientFor({
-    '/api/v1/participants/search': () => Response.json({ rows: ['Alice Example', 'Bob Example'].map((display_label, index) => ({ id: index + 1, display_label, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })), total_count: 2, cache_revision: 'cache-1', search_provenance: {} }),
-    '/api/v1/identity/links': async request => {
-      pairs.push(await request.json());
-      if (pairs.length === 2) return new Promise<Response>(resolve => { resolveRetry = resolve; });
-      return Response.json({ identity_revision: 2, cache_state: 'stale' });
-    },
-  });
-  const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipSort: 'name' });
-  const directory = new DirectoryController(client);
-  const controller = new RelationshipsController(client, () => 'UTC');
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    for (const name of ['Alice Example', 'Bob Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    const retry = await screen.findByRole('button', { name: 'Retry identity cache' });
-    for (const name of ['Alice Example', 'Bob Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(retry);
-    await waitFor(() => expect(pairs).toHaveLength(2));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    expect(pairs).toHaveLength(2);
-  } finally {
-    resolveRetry?.(Response.json({ identity_revision: 2, cache_state: 'ready' }));
-    view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
-  }
 });
 
 it('counts only loaded saved profiles for deletion after Details unlinks an identity', async () => {

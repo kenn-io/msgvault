@@ -383,14 +383,22 @@ test('Directory profile maintenance is accessible at desktop and narrow widths',
 
 test('People duplicates, merge, split, and Fact gate have no axe violations', async ({ page }) => {
   test.slow();
-  await installDirectoryReviewArchive(page);
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true })));
-  await expect(page.locator('#duplicate-17')).toBeVisible();
-  await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
-  await page.getByRole('button', { name: 'Back to People' }).click();
+  const fixture = await installDirectoryReviewArchive(page);
   const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
-  await expect(merge).toBeVisible();
+  async function openMerge() {
+    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true })));
+    await expect(page.locator('#duplicate-17')).toBeVisible();
+    await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to People' }).click();
+    await expect(merge).toBeVisible();
+  }
+  await openMerge();
   await assertNoViolations(page, 'Directory person merge');
+  await merge.getByRole('button', { name: 'Open Synthetic Two profile' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/directoryPersonID%22%3A9/);
+  expect(fixture.requests.filter(request => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
+  await openMerge();
   await merge.getByRole('radio', { name: 'Synthetic One (Person 7)' }).check();
   await merge.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }).check();
   await merge.getByRole('button', { name: 'Merge into selected survivor' }).click();

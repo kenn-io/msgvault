@@ -2940,22 +2940,26 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
   } finally { view.unmount(); state.destroy(); }
 });
 
-it('keeps duplicate and saved-view Undo actions independent', async () => {
-  const writes: Request[] = [];
-  let deleted = false;
+function duplicateReviewArchive(savedViews: ReturnType<typeof view>[] = []) {
+  const server = { changed: false, deleted: false, decisions: [] as unknown[] };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (request.method === 'POST' && path.includes('/review/')) { writes.push(request); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
-    if (path.endsWith('/saved-views/3') && request.method === 'DELETE') { deleted = true; return new Response(null, { status: 204 }); }
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: deleted ? [] : [view(3, 'Project notes')] });
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/saved-views/3') && request.method === 'DELETE') { server.deleted = true; return new Response(null, { status: 204 }); }
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: server.deleted ? [] : savedViews });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: server.changed ? 'fresh-17' : pair.review_token }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
     return Response.json(exploreResponse());
   });
+  return { client, server };
+}
+
+it('keeps duplicate and saved-view Undo actions independent', async () => {
+  const { client, server } = duplicateReviewArchive([view(3, 'Project notes')]);
   const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
   const rendered = render(AppShell, { client, state });
@@ -2967,12 +2971,12 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
     const duplicateFlash = screen.getByText('Keep separate queued').closest('[role="status"]') as HTMLElement;
     await fireEvent.click(within(duplicateFlash).getByRole('button', { name: 'Undo' }));
     const restored = await screen.findByRole('button', { name: 'Keep separate' });
-    expect(writes).toHaveLength(0);
+    expect(server.decisions).toHaveLength(0);
     expect(screen.getAllByRole('button', { name: 'Undo' })).toHaveLength(1);
     expect(restored.closest('li')).toBe(document.activeElement);
     await fireEvent(window, new Event('pagehide'));
-    await waitFor(() => expect(deleted).toBe(true));
-    expect(writes).toHaveLength(0);
+    await waitFor(() => expect(server.deleted).toBe(true));
+    expect(server.decisions).toHaveLength(0);
   } finally { rendered.unmount(); state.destroy(); }
 });
 
@@ -3073,42 +3077,24 @@ it.each([
 });
 
 it('refreshes cached duplicate cards after explicit reentry', async () => {
-  let changed = false;
-  const decisions: Array<{ review_token: string }> = [];
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/17/review/reject')) { decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: changed ? 'fresh-17' : 'review-17' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
-    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return Response.json(exploreResponse());
-  });
+  const { client, server } = duplicateReviewArchive();
   const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
   const rendered = render(AppShell, { client, state });
   try {
     await screen.findByRole('button', { name: 'Keep separate' });
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
-    changed = true;
+    server.changed = true;
     await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
     await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
     await fireEvent(window, new Event('pagehide'));
-    await waitFor(() => expect(decisions).toEqual([{ review_token: 'fresh-17' }]));
+    await waitFor(() => expect(server.decisions).toEqual([{ review_token: 'fresh-17' }]));
   } finally { rendered.unmount(); state.destroy(); }
 });
 
 it.each([false, true])('preserves focus when Undo settles, navigating away=%s', async navigate => {
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/17/review/reject')) return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' });
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
-    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
-    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
-    return Response.json(exploreResponse());
-  });
+  const { client } = duplicateReviewArchive();
   const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
   const rendered = render(AppShell, { client, state });

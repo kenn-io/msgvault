@@ -132,30 +132,31 @@ describe('DirectoryReviewController', () => {
     expect(controller.rows).toEqual([candidate(1, entry === 'History' ? 'accepted' : 'candidate')]);
   });
 
-  it('keeps a failed reject note and never automatically retries the decision', async () => {
-    const status = 503;
-    const message = 'Decision unavailable';
+  it.each(['failed', 'pending'] as const)('keeps the reject note while the decision is %s without retrying it', async phase => {
+    const pending = deferredResponse();
     const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const failure = () => Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status: 503 });
+    const controller = new DirectoryReviewController(createAPIClient(async input => {
       const request = requestOf(input);
       requests.push(request);
       if (request.method === 'GET') return page([candidate(17)]);
-      return Response.json({ error: 'unavailable', message }, { status });
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-
-    await expect(settle(controller, 17, 'reject', 'Different people')).resolves.toEqual({
-      ok: false,
-      kind: 'error',
-      status,
-      message
-    });
-
-    expect(controller.decisionError).toBe(message);
-    expect(controller.getDecisionDraft(17)).toBe('Different people');
-    expect(controller.rows).toEqual([candidate(17)]);
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+      return phase === 'pending' ? pending.promise : failure();
+    }));
+    try {
+      await controller.loadIdentityPage();
+      const decision = settle(controller, 17, 'reject', 'Original note');
+      if (phase === 'pending') {
+        await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
+        controller.setDecisionDraft(17, 'Overwrite attempt');
+        expect(controller.getDecisionDraft(17)).toBe('Original note');
+        pending.resolve(failure());
+      }
+      await expect(decision).resolves.toEqual({ ok: false, kind: 'error', status: 503, message: 'Decision unavailable' });
+      expect(controller.decisionError).toBe('Decision unavailable');
+      expect(controller.getDecisionDraft(17)).toBe('Original note');
+      expect(controller.rows).toEqual([candidate(17)]);
+      expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    } finally { pending.resolve(failure()); controller.destroy(); }
   });
 
   it('refreshes endpoint evidence with the new review token after history restoration', async () => {
@@ -274,7 +275,9 @@ describe('DirectoryReviewController', () => {
   it('blocks decisions during merge refresh and records the completed merge', async () => {
     const reload = deferredResponse();
     const fetchFn = vi.fn<typeof fetch>(async input => {
-      const path = new URL(requestOf(input).url).pathname;
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST') return Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: person(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) }, { status: 409 });
       if (path.includes('/participants/')) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Updated Example', identifiers: [], activity_count: 9 });
       return reload.promise;
     });
@@ -287,6 +290,8 @@ describe('DirectoryReviewController', () => {
       responseETag: '"person-7-r5"'
     };
 
+    await settle(controller, 17, 'accept');
+    expect(controller.mergeRequired?.candidateID).toBe(17);
     const completion = controller.completePersonMerge(17, success);
     expect(controller.submitting).toBe(true);
     await controller.queueDecision(controller.rows[0]!, 'accept');
@@ -365,26 +370,6 @@ describe('DirectoryReviewController', () => {
       expect(controller.isDecisionPending(17)).toBe(false);
       expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
     } finally { controller.destroy(); }
-  });
-
-  it("keeps a pending decision's row draft", async () => {
-    const pending = deferredResponse();
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (request.method === 'GET') return page([candidate(17)]);
-      return pending.promise;
-    });
-    const controller = new DirectoryReviewController(createAPIClient(fetchFn));
-    await controller.loadIdentityPage();
-
-    const first = settle(controller, 17, 'reject', 'Original note');
-    await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
-    controller.setDecisionDraft(17, 'Overwrite attempt');
-
-    expect(controller.getDecisionDraft(17)).toBe('Original note');
-    pending.resolve(Response.json({ error: 'unavailable', message: 'Decision failed' }, { status: 503 }));
-    await first;
-    controller.destroy();
   });
 
   it('aborts page and decision requests when destroyed', async () => {
