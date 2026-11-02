@@ -22,7 +22,7 @@ test('People Filter opens duplicate cards and browser-restored History', async (
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('refreshes cached duplicate tokens and the badge after Unlink', async ({ page }) => {
+test('refreshes the duplicate queue and badge after Unlink', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
   let unlinked = false;
   await page.route(/\/api\/v1\/participants\/701$/, route => route.fulfill({ json: {
