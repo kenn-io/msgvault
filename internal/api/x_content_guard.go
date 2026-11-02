@@ -7,6 +7,23 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 )
 
+// The generic runner includes exports, backups, and derived-content builders.
+// Fence by default so adding a command cannot silently add a content-read bypass.
+// Typed X operations emit only control/receipt metadata and own their cleanup;
+// retaining a read lease there would deadlock their exclusive cleanup fence.
+func cliRunNeedsContentLease(args []string) bool {
+	if IsCLIRunXSync(args) || IsCLIRunXRegister(args) || IsCLIRunSendReply(args) {
+		return false
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "remove-account", "gc", "purge-excluded-media":
+			return false // Content removal emits metadata and must remain available.
+		}
+	}
+	return true
+}
+
 // contentReadMiddleware retains the cleanup read lease until the response has
 // finished, including cached/inline bytes loaded before a destructive mutation.
 func (s *Server) contentReadMiddleware(next http.Handler) http.Handler {

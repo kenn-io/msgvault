@@ -1448,6 +1448,14 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.contentReadGuard != nil && cliRunNeedsContentLease(req.Args) {
+		release, err := s.contentReadGuard(r.Context())
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "x_content_cleanup_pending", "X content cleanup is incomplete")
+			return
+		}
+		defer release()
+	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
 	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {

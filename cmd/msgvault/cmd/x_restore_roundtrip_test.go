@@ -118,6 +118,12 @@ func (f *xRestoreFixture) record(t *testing.T) (string, string) {
 
 func (f *xRestoreFixture) restore(t *testing.T, snapshot, record, head string, overwrite ...bool) (string, error) {
 	t.Helper()
+	target := filepath.Join(t.TempDir(), "isolated")
+	return target, f.restoreInto(t, snapshot, record, head, target, len(overwrite) > 0 && overwrite[0])
+}
+
+func (f *xRestoreFixture) restoreInto(t *testing.T, snapshot, record, head, target string, overwrite bool) error {
+	t.Helper()
 	savedRepo, savedTarget := backupRestoreRepo, backupRestoreTarget
 	savedOverwrite, savedForce := backupRestoreOverwrite, backupRestoreForceUnlock
 	savedJobs, savedLoose, savedIntegrity := backupRestoreJobs, backupRestoreLooseAttachments, backupRestoreIntegrityCheck
@@ -129,16 +135,15 @@ func (f *xRestoreFixture) restore(t *testing.T, snapshot, record, head string, o
 		backupRestoreXRemovals, backupRestoreXRemovalsHead = savedRecord, savedHead
 	})
 	backupRestoreRepo = f.repoPath
-	target := filepath.Join(t.TempDir(), "isolated")
 	backupRestoreTarget = target
-	backupRestoreOverwrite, backupRestoreForceUnlock = len(overwrite) > 0 && overwrite[0], false
+	backupRestoreOverwrite, backupRestoreForceUnlock = overwrite, false
 	backupRestoreJobs, backupRestoreLooseAttachments, backupRestoreIntegrityCheck = 1, false, true
 	backupRestoreXRemovals, backupRestoreXRemovalsHead = record, head
 	command := &cobra.Command{Use: "restore"}
 	command.SetContext(testInvocationContext(t.Context(), f.cfg, invocationOptions{}))
 	var output bytes.Buffer
 	command.SetOut(&output)
-	return target, runBackupRestore(command, []string{snapshot})
+	return runBackupRestore(command, []string{snapshot})
 }
 
 func TestXRestoreAcceptsCompleteCurrentEmptyRemovalRecord(t *testing.T) {

@@ -21,6 +21,60 @@ type xRestoreOptions struct {
 	Isolated   bool
 }
 
+// Called under Kit's pinned target lease and, for configured archives, both
+// daemon and direct-writer ownership. Snapshot contents cannot establish that
+// overwriting the current target is safe: a pre-X snapshot has no X authority.
+func refuseRestoreOverXArchive(ctx context.Context, root *os.Root) error {
+	name := backupapp.New(Version).DBFileName()
+	info, err := root.Stat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect existing restore database: %w", err)
+	}
+	dbPath := filepath.Join(root.Name(), name)
+	// SQLite takes a pathname. Verify it names the pinned directory/database
+	// both before and after the read, so a renamed target cannot redirect it.
+	verify := func() error {
+		pinnedRoot, err := root.Stat(".")
+		if err != nil {
+			return err
+		}
+		namedRoot, err := os.Stat(root.Name())
+		if err != nil {
+			return err
+		}
+		pinnedDB, err := root.Stat(name)
+		if err != nil {
+			return err
+		}
+		namedDB, err := os.Stat(dbPath)
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(pinnedRoot, namedRoot) || !os.SameFile(info, pinnedDB) || !os.SameFile(info, namedDB) {
+			return errors.New("restore target changed during existing archive inspection")
+		}
+		return nil
+	}
+	if err := verify(); err != nil {
+		return err
+	}
+	st, err := store.OpenReadOnlyContext(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("inspect existing archive before restore: %w", err)
+	}
+	hasX, inspectErr := st.HasXSourcesContext(ctx)
+	if err := errors.Join(inspectErr, st.Close(), verify()); err != nil {
+		return fmt.Errorf("inspect existing X authority before restore: %w", err)
+	}
+	if hasX {
+		return errors.New("existing X archive requires a fresh isolated restore target; overwriting would discard current spending, receipts, and suppressions")
+	}
+	return nil
+}
+
 // prepareRestoredArchive operates only on Kit's unpublished private scratch
 // DB. Freshness comes from an independently retained authenticated head, never
 // from the snapshot or a hash supplied inside the record.

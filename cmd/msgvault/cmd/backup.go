@@ -432,6 +432,9 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 		if err := c.validateRestoreTargetContents(root, false); err != nil {
 			return nil, err
 		}
+		if err := refuseRestoreOverXArchive(ctx, root); err != nil {
+			return nil, err
+		}
 		return lease, nil
 	}
 
@@ -507,6 +510,9 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 		closeLockRoot = false
 	}
 	if err := c.validateRestoreTargetContents(root, targetKind == pinnedRestoreTargetDataDir); err != nil {
+		return nil, err
+	}
+	if err := refuseRestoreOverXArchive(ctx, root); err != nil {
 		return nil, err
 	}
 	success = true
