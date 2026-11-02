@@ -16709,7 +16709,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.35.0
+  version: 3.36.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
