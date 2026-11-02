@@ -606,7 +606,7 @@ test('list filters clear hidden selections and each mode offers only supported c
 });
 
 for (const previous of ['Alice', 'no person']) {
-  test(`opening a saved person selection shows its messages after ${previous}`, async ({ page }) => {
+  test(`opening a saved person shows its messages after ${previous}`, async ({ page }) => {
     await prepare(page);
     const profiles = [
       { id: 91, display_name: 'Alice Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [1], carddav_bindings: [], vcard_uid: 'example-91' },

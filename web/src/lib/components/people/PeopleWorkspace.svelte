@@ -20,7 +20,7 @@
   import { RELATIONSHIP_DAY_HISTORY_KEY, relationshipDayHistory } from '../../relationships/reader-history';
   import type { ComponentProps } from 'svelte';
 
-  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChanged' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
+  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChange' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
   let { reviews, onDuplicatesChanged, directory, urlState, restorationEpoch = 0, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
     PageProps & { reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; restorationEpoch?: number; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
@@ -246,9 +246,9 @@
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => void peopleDeleted([deletedID])}
-    onIdentityChanged={onDuplicatesChanged}
     onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
-    onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
+    onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)}
+    onIdentityChange={() => { onDuplicatesChanged(); return directory.reloadFirstPage(); }} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
