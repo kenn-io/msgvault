@@ -231,7 +231,7 @@ export class DirectoryProfileController {
         },
       );
       if (response.response.status === 204) {
-        this.completeMutation(draftGeneration, true);
+        await this.completeMutation(draftGeneration, true);
         deleted = true;
       } else {
         this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -259,7 +259,6 @@ export class DirectoryProfileController {
         this.structuredProfileETag = etag;
         this.person = response.data.person;
         this.personETag = etag;
-        this.completeMutation(draftGeneration, true);
         this.publish();
         await this.invalidateRow(
           body.categories
@@ -269,6 +268,7 @@ export class DirectoryProfileController {
             : undefined,
           body.names !== undefined || body.contact_points !== undefined,
         );
+        await this.completeMutation(draftGeneration, true);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -423,9 +423,9 @@ export class DirectoryProfileController {
         this.personETag = etag;
         this.structuredProfileETag = etag;
         if (this.structuredProfile) this.structuredProfile = { ...this.structuredProfile, person: response.data };
-        this.completeMutation(draftGeneration, true);
         this.publish();
         await this.invalidateRow(undefined, true);
+        await this.completeMutation(draftGeneration, true);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -458,9 +458,7 @@ export class DirectoryProfileController {
   private async completeAttributeWrite(slug: string, response: { value?: PersonAttributeValue; superseded?: PersonAttributeValue }, draftGeneration: number): Promise<void> {
     this.applyAttributeWrite(slug, response.value, response.superseded);
     if (slug !== 'primary_channel') await this.invalidateRow();
-    this.completeMutation(draftGeneration, true);
-    this.finishMutation(draftGeneration);
-    await this.reload(false);
+    await this.completeMutation(draftGeneration, true);
   }
   private prepareMutation(draft: DirectoryProfileDraft): number | DirectoryProfileOperationBlocked {
     if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
@@ -483,10 +481,10 @@ export class DirectoryProfileController {
     this.mutationPending = true;
     this.activeMutationGeneration = draftGeneration;
   }
-  private completeMutation(draftGeneration: number, succeeded: boolean): void {
-    if (!succeeded || this.draftGeneration !== draftGeneration) return;
-    this.draft = null;
-    this.conflict = null;
+  private async completeMutation(draftGeneration: number, succeeded: boolean): Promise<void> {
+    if (!succeeded) return;
+    if (this.draftGeneration === draftGeneration) { this.draft = null; this.conflict = null; }
+    this.finishMutation(draftGeneration); await this.reload(false);
   }
   private finishMutation(draftGeneration: number): void {
     if (this.activeMutationGeneration !== draftGeneration) return;
