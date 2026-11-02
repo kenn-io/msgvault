@@ -12,6 +12,13 @@ func (s *Server) fillStoreSenderAuth(ctx context.Context, messages []APIMessage)
 		ids[i] = m.ID
 	}
 	reader, ok := s.queryEngineForContext(ctx).(query.SenderAuthReader)
+	if !ok {
+		if archive, available := s.store.(agentReadSnapshotStore); available {
+			engine := query.NewEngine(archive.DB(), archive.IsPostgreSQL())
+			query.ConfigureSenderAuth(engine, s.senderAuthPins)
+			reader, ok = engine.(query.SenderAuthReader)
+		}
+	}
 	var results map[int64]*senderauth.Verdict
 	if ok {
 		results = reader.ReadSenderAuth(ctx, ids)
