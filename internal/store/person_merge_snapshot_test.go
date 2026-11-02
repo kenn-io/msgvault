@@ -135,18 +135,19 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		// Read pg_catalog by the persons OID. The information_schema views
-		// join constraint names across every schema in the shared test
-		// database, which exceeded statement_timeout under CI load.
-		query = `SELECT child.relname, attribute.attname
-			FROM pg_constraint foreign_key
-			JOIN pg_class child ON child.oid = foreign_key.conrelid
-			JOIN pg_attribute attribute
-			  ON attribute.attrelid = foreign_key.conrelid
-			 AND attribute.attnum = ANY (foreign_key.conkey)
-			WHERE foreign_key.contype = 'f'
-			  AND foreign_key.confrelid = to_regclass('persons')
-			ORDER BY child.relname, attribute.attname`
+		query = `SELECT child.relname, columns.attname
+			FROM pg_catalog.pg_constraint constraints
+			JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
+			JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
+			JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+			CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
+			JOIN pg_catalog.pg_attribute columns
+			  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
+			WHERE constraints.contype = 'f'
+			  AND namespace.nspname = current_schema()
+			  AND target.relnamespace = namespace.oid
+			  AND target.relname = 'persons'
+			ORDER BY child.relname, columns.attname`
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)
