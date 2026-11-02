@@ -32,7 +32,7 @@ Queries allow up to 2,000 recurring series and 500,000 candidate steps across th
 
 Lists default to 100 occurrences, with a maximum of 500. Pass `next_cursor` as `--cursor` with the same window and offsets to continue. Each page re-runs the window's expansion within the request limits, and `unexpandable` is returned on the first page only. Table output labels the next cursor on its own line. Expansion warnings appear on the first page. Windows must be positive and at most 400 days.
 
-Archived calendar reads require daemon API schema 3.33.0. Agents need `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
+Archived calendar reads require daemon API schema 3.35.0. Agents need `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
 
 ## CalDAV calendars, unreleased
 

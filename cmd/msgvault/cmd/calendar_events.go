@@ -16,7 +16,9 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.33.0"
+// This client uses paging and detail introduced in API 3.35.
+// The upstream basic occurrence list alone starts at API 3.33.
+const calendarEventsMinAPISchemaVersion = "3.35.0"
 const calendarEventDeletedStatus = "deleted"
 const calendarArchiveAccountFlag = "account"
 
