@@ -12,6 +12,7 @@ import (
 // as `<`, `>`, `=`, `#`, `$`) ever survives into the to_tsquery argument. A
 // stray `<` would open tsquery's phrase operator and raise SQLSTATE 42601.
 func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	d := PostgreSQLQueryDialect{}
 
@@ -31,6 +32,7 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 // any character outside the allowed set: Unicode letters/digits plus the join
 // punctuation ":*" and " & " that SanitizeFTSQuery itself adds.
 func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
+	t.Parallel()
 	d := PostgreSQLQueryDialect{}
 	for _, in := range []string{"foo<3bar", "a=b", "c#d", "x$y", "user@example.com", "---", "a.b.c"} {
 		got := d.SanitizeFTSQuery(in)

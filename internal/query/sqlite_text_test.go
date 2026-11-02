@@ -10,6 +10,7 @@ import (
 )
 
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -86,6 +87,7 @@ func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.
 }
 
 func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -160,6 +162,7 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 }
 
 func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -227,6 +230,7 @@ func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) 
 // In particular, an owner-authored latest message must not hide a conversation
 // that contains a selected cluster member.
 func TestSQLiteListConversationsParticipantMembership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -288,6 +292,7 @@ func TestSQLiteListConversationsParticipantMembership(t *testing.T) {
 }
 
 func TestSQLiteListConversationMessagesWithoutBodies(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -310,6 +315,7 @@ func TestSQLiteListConversationMessagesWithoutBodies(t *testing.T) {
 }
 
 func TestSQLiteListConversationMessagesSearchesFullBodyWithinConversation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -344,6 +350,7 @@ func TestSQLiteListConversationMessagesSearchesFullBodyWithinConversation(t *tes
 }
 
 func TestSQLiteListConversationMessagesUsesIDTiebreakerForEqualTimestamps(t *testing.T) {
+	t.Parallel()
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'chat');

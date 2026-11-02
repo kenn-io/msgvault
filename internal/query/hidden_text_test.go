@@ -14,6 +14,7 @@ import (
 )
 
 func TestSearchRowsHiddenTextPresent(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	for _, tc := range []struct {
 		name, html string
@@ -64,6 +65,7 @@ func TestSearchRowsHiddenTextPresent(t *testing.T) {
 }
 
 func TestSQLiteTextHiddenTextRows(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite timeline snapshots and FTS5 text search")
 	f := storetest.New(t)
 	hiddenID := f.CreateMessage("hidden")

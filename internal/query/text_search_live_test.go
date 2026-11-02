@@ -74,6 +74,7 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 }
 
 func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	db, msgID := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
@@ -94,6 +95,7 @@ func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
 }
 
 func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
+	t.Parallel()
 	db, msgID := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
 	ctx := context.Background()
@@ -113,6 +115,7 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 // matches. Covers both the SQLite and DuckDB text engines, which share the
 // sanitizer and run the same messages_fts MATCH against SQLite.
 func TestTextSearch_SanitizesFTSInput(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		query     string
@@ -168,6 +171,7 @@ func TestTextSearch_SanitizesFTSInput(t *testing.T) {
 }
 
 func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db, _ := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
@@ -199,6 +203,7 @@ func insertTextSearchMessage(t *testing.T, db *sql.DB, id int64, messageType, bo
 }
 
 func TestTextSearchScopesBeforePagination(t *testing.T) {
+	t.Parallel()
 	db, _ := openTextSearchDB(t)
 	insertTextSearchMessage(t, db, 2, "imessage", "hello second")
 	_, err := db.Exec(`

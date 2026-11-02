@@ -12,6 +12,7 @@ import (
 // Native DuckDB tables exercise the production sqlite_scan SQL reader without
 // requiring extension downloads. Their text/blob types match scanned SQLite.
 func TestBoundedDuckDBMessageDetails(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 
 	db, err := sql.Open("duckdb", "")

@@ -10,6 +10,7 @@ import (
 )
 
 func TestDuckDBHiddenTextRows(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("reader@example.com", "teams")
 	hiddenID := b.AddMessage(MessageOpt{SourceID: sourceID, ConversationID: 10, MessageType: "teams", Snippet: "hiddenneedle", HiddenTextPresent: true})

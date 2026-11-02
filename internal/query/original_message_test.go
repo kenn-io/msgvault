@@ -37,6 +37,7 @@ func originalEngine(f *storetest.Fixture) *query.SQLiteEngine {
 }
 
 func TestReadOriginalMessage(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	ctx := context.Background()
 	f := storetest.New(t)
@@ -126,6 +127,7 @@ func TestReadOriginalMessage(t *testing.T) {
 }
 
 func TestReadOriginalMessageBounded(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	engine := originalEngine(f)
 	incompressible := make([]byte, 4096)
@@ -170,6 +172,7 @@ func TestReadOriginalMessageBounded(t *testing.T) {
 }
 
 func TestReadOriginalMessageBoundedCorruption(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -198,6 +201,7 @@ func TestReadOriginalMessageBoundedCorruption(t *testing.T) {
 }
 
 func TestReadOriginalMessageAllowsNullSourceMessageID(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -213,6 +217,7 @@ func TestReadOriginalMessageAllowsNullSourceMessageID(t *testing.T) {
 }
 
 func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	ctx := context.Background()
@@ -241,6 +246,7 @@ func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
 }
 
 func TestListThread(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	ctx := context.Background()
 	f := storetest.New(t)
@@ -354,6 +360,7 @@ func TestListThread(t *testing.T) {
 }
 
 func TestListThreadAllowsNullSourceMessageID(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -369,6 +376,7 @@ func TestListThreadAllowsNullSourceMessageID(t *testing.T) {
 }
 
 func TestListThreadRequiresVisibleMessages(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := storetest.New(t)
@@ -399,6 +407,7 @@ func TestListThreadRequiresVisibleMessages(t *testing.T) {
 }
 
 func TestListThreadAll(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	f := storetest.New(t)
@@ -439,6 +448,7 @@ func TestListThreadAll(t *testing.T) {
 }
 
 func TestResolveMessageID(t *testing.T) {
+	t.Parallel()
 	must := require.New(t)
 	f := storetest.New(t)
 	engine := originalEngine(f)
@@ -483,6 +493,7 @@ func TestResolveMessageID(t *testing.T) {
 }
 
 func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

@@ -34,6 +34,7 @@ import (
 // to. The test never asserts on dialect-specific error text; a bug
 // would surface as a generic Scan/Exec failure on PG.
 func TestQueryEngine_PostgresPortability(t *testing.T) {
+	t.Parallel()
 	setupRequire := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "pgcompat@example.com")
@@ -152,6 +153,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 }
 
 func TestNewEnginePostgresSatisfiesMessageBodySearcher(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	eng := query.NewEngine(st.DB(), true)
 
@@ -167,6 +169,7 @@ func TestNewEnginePostgresSatisfiesMessageBodySearcher(t *testing.T) {
 // rows that the equivalent store API path (which lowercases) returns.
 // Bare-LIKE divergence was H3 in the codex review.
 func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "case-search@example.com")
@@ -213,6 +216,7 @@ func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
 // MSGVAULT_TEST_DB to a postgres:// DSN exercises the PG path too, since
 // NewPostgreSQLEngine wraps the same dialect-parameterized builder.
 func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "multifrom@example.com")
@@ -319,6 +323,7 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 // MSGVAULT_TEST_DB selects PostgreSQL, while the default SQLite path provides
 // the same behavior check without requiring a local PostgreSQL service.
 func TestQueryEngine_ListIDCaseInsensitiveParity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "list-parity@example.test")
@@ -384,6 +389,7 @@ func TestQueryEngine_ListIDCaseInsensitiveParity(t *testing.T) {
 // testutil.NewTestStore selects, so it doubles as a SQLite<->PG parity test:
 // both backends must return the body-only hit.
 func TestQueryEngine_FTSBodySearch(t *testing.T) {
+	t.Parallel()
 	assert :=
 		assert.
 			New(t)
@@ -452,6 +458,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 // connection's search_path is scoped to the one WITHOUT it; the probe must
 // return 0 (FTS not available here) even though a sibling has the column.
 func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") && !strings.HasPrefix(dbURL, "postgresql://") {
@@ -517,6 +524,7 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 // read as 07:00 UTC and exclude the message. With time.Time binding it is
 // included regardless of session TimeZone.
 func TestQueryEngine_SearchDateRange_TimezoneStable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
@@ -585,6 +593,7 @@ func subjectFor(i int) string {
 }
 
 func TestAggregatePipeOREmailDefault(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	eng := newPipeORAggregateEngine(t)
 	runPipeORAggregateCases(t, eng)
@@ -601,6 +610,7 @@ func TestAggregatePipeOREmailDefault(t *testing.T) {
 }
 
 func TestDuckDBAggregatePipeOREmailDefault(t *testing.T) {
+	t.Parallel()
 	runPipeORAggregateCases(t, newDuckDBPipeORAggregateEngine(t))
 }
 

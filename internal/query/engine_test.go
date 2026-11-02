@@ -7,6 +7,7 @@ import (
 )
 
 func TestSemanticMessageSearchSupportsFilter_RejectsListID(t *testing.T) {
+	t.Parallel()
 	assert.False(t, SemanticMessageSearchSupportsFilter(MessageFilter{
 		ListID: "<dev_1@example.test>",
 	}), "the hybrid API does not transport a List-Id scope")

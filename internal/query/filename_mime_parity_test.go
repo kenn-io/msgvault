@@ -11,6 +11,7 @@ import (
 // Freeze the existing analytical classifier on its real DuckDB runtime before
 // extracting it for transactional suggestions; whitespace/parameters stay literal.
 func TestFilenameMIMEFamilyParity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	db, err := sql.Open("duckdb", "")

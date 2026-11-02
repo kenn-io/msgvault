@@ -38,6 +38,7 @@ import (
 // (timezone(<zone>, <thatTIMESTAMPTZ>) => naive TIMESTAMP). Getting this
 // backwards was the exact off-by-one-day failure mode flagged for this task.
 func TestDuckDBTimezoneConversionUsesBundledICU(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -142,6 +143,7 @@ func buildTimelineFixture(t *testing.T) (engine *DuckDBEngine, canonicalID, emai
 // boundary into two bursts. The email and meeting are untouched, one row
 // each, and rows are ordered (occurred_at DESC, key ASC).
 func TestRelationshipTimelineBurstsChatByLocalDay(t *testing.T) {
+	t.Parallel()
 	engine, canonicalID, emailID, meetingID := buildTimelineFixture(t)
 	ctx := context.Background()
 
@@ -219,6 +221,7 @@ func TestRelationshipTimelineBurstsChatByLocalDay(t *testing.T) {
 // DuckDB query runs, mapped to ErrInvalidExploreRequest like other explore
 // validation failures.
 func TestRelationshipTimelineRejectsInvalidTimezone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	engine, canonicalID, _, _ := buildTimelineFixture(t)
@@ -235,6 +238,7 @@ func TestRelationshipTimelineRejectsInvalidTimezone(t *testing.T) {
 // ResolveCanonicalParticipant for the alias-to-canonical resolution used by
 // the API layer) but must include every member's messages.
 func TestRelationshipTimelineResolvesAnyMemberID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -255,6 +259,7 @@ func TestRelationshipTimelineResolvesAnyMemberID(t *testing.T) {
 // the caller's filter. Pat has two entries with the owner; only one also
 // involves X (cc'd). Filtering by X must return only that one entry.
 func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -304,6 +309,7 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 // plain owner-absent email from the counterpart both remain — the timeline
 // scopes emails/chats by counterpart membership only, not owner involvement.
 func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -374,6 +380,7 @@ func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
 // resolves to the shared canonical ID) and the miss case (an unlinked
 // participant is its own single-member cluster).
 func TestResolveCanonicalParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -407,6 +414,7 @@ func TestResolveCanonicalParticipant(t *testing.T) {
 // the canonical ID and by the alias ID agree and both include alias-owned
 // entries, matching Explore/Files.
 func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -453,6 +461,7 @@ func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testin
 // attachment rows: upgraded or partially extracted archives can carry the
 // flag with a zero attachment_count, and the indicator must still show.
 func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -500,6 +509,7 @@ func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
 // an address pick keeps none of them, and an Unattributed pick keeps the
 // email and calendar rows but not the chat burst, which no account covers.
 func TestRelationshipTimelineHonorsAccountScopes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

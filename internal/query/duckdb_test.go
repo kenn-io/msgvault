@@ -207,6 +207,7 @@ func buildStandardTestData(t *testing.T) *TestDataBuilder {
 // and case-insensitive search are tested in sqlite_test.go since the same
 // SQLiteEngine code handles both direct SQLite and DuckDB-delegated calls.
 func TestDuckDBEngine_SQLiteEngineReuse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	// Set up test SQLite database
@@ -260,6 +261,7 @@ func TestDuckDBEngine_SQLiteEngineReuse(t *testing.T) {
 // TestDuckDBEngine_SearchFromAddrs verifies address-based search filtering
 // through the shared sqliteEngine path.
 func TestDuckDBEngine_SearchFromAddrs(t *testing.T) {
+	t.Parallel()
 	engine := newSQLiteEngine(t)
 	ctx := context.Background()
 
@@ -281,6 +283,7 @@ func TestDuckDBEngine_SearchFromAddrs(t *testing.T) {
 // TestDuckDBEngine_SearchListIDFallback catches the sqlite_scan fallback
 // silently ignoring List-Id predicates before it ranks result rows.
 func TestDuckDBEngine_SearchListIDFallback(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -361,6 +364,7 @@ func TestDuckDBEngine_SearchListIDFallback(t *testing.T) {
 // - If Search created per-call engines, ftsChecked on sharedEngine would stay false
 // - The pointer check ensures engine.sqliteEngine wasn't swapped.
 func TestDuckDBEngine_SQLiteEngineFTSCacheReuse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -415,6 +419,7 @@ func TestDuckDBEngine_SQLiteEngineFTSCacheReuse(t *testing.T) {
 
 // TestDuckDBEngine_NoSQLiteDB verifies behavior when sqliteDB is nil.
 func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
+	t.Parallel()
 	require := require.
 		New(t)
 
@@ -448,6 +453,7 @@ func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
 // TestDuckDBEngine_GetMessageWithAttachments verifies attachment retrieval
 // through the shared sqliteEngine path.
 func TestDuckDBEngine_GetMessageWithAttachments(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	engine := newSQLiteEngine(t)
 	ctx := context.Background()
@@ -472,6 +478,7 @@ func TestDuckDBEngine_GetMessageWithAttachments(t *testing.T) {
 // TestDuckDBEngine_DeletedMessagesExcluded verifies that deleted messages
 // are excluded when using the sqliteEngine path.
 func TestDuckDBEngine_DeletedMessagesIncluded(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -500,6 +507,7 @@ func TestDuckDBEngine_DeletedMessagesIncluded(t *testing.T) {
 // TestDuckDBEngine_SearchDeletionScope verifies the sqliteEngine delegation
 // applies the same source-deletion scope as the native SQLite engine.
 func TestDuckDBEngine_SearchDeletionScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 
@@ -519,6 +527,7 @@ func TestDuckDBEngine_SearchDeletionScope(t *testing.T) {
 // TestDuckDBEngine_SearchDeletionScopeSQLiteScanner exercises the alternate
 // DuckDB sqlite_scanner path instead of the direct SQLite delegation.
 func TestDuckDBEngine_SearchDeletionScopeSQLiteScanner(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "scope.db")
 	db, err := sql.Open("sqlite3", dbPath)
@@ -587,6 +596,7 @@ func assertSearchDeletionScopes(t *testing.T, engine Engine, activeIDs, deletedI
 // TestDuckDBEngine_AggregateByRecipient verifies that recipient aggregation
 // includes both to and cc recipients using list_concat.
 func TestDuckDBEngine_AggregateByRecipient(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewRecipients, DefaultAggregateOptions())
@@ -606,6 +616,7 @@ func TestDuckDBEngine_AggregateByRecipient(t *testing.T) {
 // recipient key column, then shows the recipient breakdown of all matching
 // messages.
 func TestDuckDBEngine_AggregateByRecipient_SearchFiltersOnKey(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newParquetEngine(t)
@@ -656,6 +667,7 @@ func TestDuckDBEngine_AggregateByRecipient_SearchFiltersOnKey(t *testing.T) {
 // TestDuckDBEngine_AggregateByLabel_SearchFiltersOnKey verifies that
 // searching in Labels view filters on label name, not subject/sender.
 func TestDuckDBEngine_AggregateByLabel_SearchFiltersOnKey(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -672,6 +684,7 @@ func TestDuckDBEngine_AggregateByLabel_SearchFiltersOnKey(t *testing.T) {
 // TestDuckDBEngine_AggregateByDomain_SearchFiltersOnKey verifies that
 // searching in Domains view filters on domain, not subject/sender.
 func TestDuckDBEngine_AggregateByDomain_SearchFiltersOnKey(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -687,6 +700,7 @@ func TestDuckDBEngine_AggregateByDomain_SearchFiltersOnKey(t *testing.T) {
 
 // TestDuckDBEngine_AggregateBySender verifies sender aggregation from Parquet.
 func TestDuckDBEngine_AggregateBySender(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
@@ -702,6 +716,7 @@ func TestDuckDBEngine_AggregateBySender(t *testing.T) {
 }
 
 func TestDuckDBEngine_AggregateBySenderName(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
@@ -718,6 +733,7 @@ func TestDuckDBEngine_AggregateBySenderName(t *testing.T) {
 // display name (message_recipients.display_name), not the sticky
 // participants.display_name (see break-test F4).
 func TestDuckDBEngine_AggregateBySenderName_PerMessageNames(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	// Sticky participant name that must NOT absorb all traffic.
@@ -748,6 +764,7 @@ func TestDuckDBEngine_AggregateBySenderName_PerMessageNames(t *testing.T) {
 }
 
 func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -764,6 +781,7 @@ func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
 }
 
 func TestDuckDBEngine_SubAggregateSourceIDsTakePrecedence(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceOne := b.AddSource("one@example.com")
 	sourceTwo := b.AddSource("two@example.com")
@@ -788,6 +806,7 @@ func TestDuckDBEngine_SubAggregateSourceIDsTakePrecedence(t *testing.T) {
 }
 
 func TestDuckDBEngine_SubAggregateSourceScopePrecedence(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceOne := b.AddSource("one@example.com")
 	sourceTwo := b.AddSource("two@example.com")
@@ -857,6 +876,7 @@ func TestDuckDBEngine_SubAggregateSourceScopePrecedence(t *testing.T) {
 }
 
 func TestDuckDBEngine_ListMessages_SenderNameFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -876,6 +896,7 @@ func TestDuckDBEngine_ListMessages_SenderNameFilter(t *testing.T) {
 // same-row case still does. Covers both buildFilterConditions (ListMessages)
 // and GetDeletionTargetsByFilter.
 func TestDuckDBEngine_SenderEmailAndName_SameFromRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -939,6 +960,7 @@ func TestDuckDBEngine_SenderEmailAndName_SameFromRow(t *testing.T) {
 // while the same-row case still does. Covers both buildFilterConditions
 // (ListMessages) and GetDeletionTargetsByFilter.
 func TestDuckDBEngine_RecipientEmailAndName_SameToRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := context.Background()
@@ -995,6 +1017,7 @@ func TestDuckDBEngine_RecipientEmailAndName_SameToRow(t *testing.T) {
 }
 
 func TestDuckDBEngine_RecipientPhoneFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	ctx := context.Background()
 
@@ -1026,6 +1049,7 @@ func TestDuckDBEngine_RecipientPhoneFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByFilter_SenderName(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -1037,6 +1061,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_SenderName(t *testing.T) {
 }
 
 func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// Build Parquet data with an empty-string and whitespace display_name
 	b := NewTestDataBuilder(t)
@@ -1077,6 +1102,7 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 // phone_number set). The DuckDB engine reads participants.parquet, where
 // phone_number is COALESCEd to ” on export — NULLIF squashes it correctly.
 func TestDuckDBEngine_AggregateBySenderName_PhoneFallback(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
@@ -1100,6 +1126,7 @@ func TestDuckDBEngine_AggregateBySenderName_PhoneFallback(t *testing.T) {
 // keyColumns, a phone-only participant would appear in the unfiltered
 // aggregate but disappear when the user searches for that same phone.
 func TestDuckDBEngine_AggregateBySenderName_SearchByPhone(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
@@ -1121,6 +1148,7 @@ func TestDuckDBEngine_AggregateBySenderName_SearchByPhone(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFast_MessageTypeConflictReturnsNoMatches(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	b.AddMessage(MessageOpt{
@@ -1150,6 +1178,7 @@ func TestDuckDBEngine_SearchFast_MessageTypeConflictReturnsNoMatches(t *testing.
 }
 
 func TestDuckDBEngine_SearchFast_MessageTypeFilterReturnsScopedType(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	b.AddMessage(MessageOpt{
@@ -1179,6 +1208,7 @@ func TestDuckDBEngine_SearchFast_MessageTypeFilterReturnsScopedType(t *testing.T
 }
 
 func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
+	t.Parallel()
 	// Build Parquet data with a message that has no sender
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
@@ -1207,6 +1237,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 // participants.display_name. The fix NULLIF-trims the recipient column
 // so backfilled contact names show up in message lists.
 func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	// Phone-only participant with a vCard-backfilled display name.
@@ -1226,6 +1257,7 @@ func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *t
 }
 
 func TestDuckDBEngine_ListMessages_PhoneBackedSMSParticipants(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1252,6 +1284,7 @@ func TestDuckDBEngine_ListMessages_PhoneBackedSMSParticipants(t *testing.T) {
 // TestDuckDBEngine_AggregateAttachmentFields verifies attachment_count and attachment_size
 // are correctly scanned from aggregate queries (attachment_size is DOUBLE, attachment_count is INT).
 func TestDuckDBEngine_AggregateAttachmentFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newParquetEngine(t)
@@ -1279,6 +1312,7 @@ func TestDuckDBEngine_AggregateAttachmentFields(t *testing.T) {
 
 // TestDuckDBEngine_AggregateByLabel verifies label aggregation from Parquet.
 func TestDuckDBEngine_AggregateByLabel(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewLabels, DefaultAggregateOptions())
@@ -1296,6 +1330,7 @@ func TestDuckDBEngine_AggregateByLabel(t *testing.T) {
 
 // TestDuckDBEngine_SubAggregateByRecipient verifies sub-aggregation includes cc.
 func TestDuckDBEngine_SubAggregateByRecipient(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -1325,6 +1360,7 @@ func TestDuckDBEngine_SubAggregateByRecipient(t *testing.T) {
 
 // TestDuckDBEngine_AggregateByTime verifies time-based aggregation from Parquet.
 func TestDuckDBEngine_AggregateByTime(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -1353,6 +1389,7 @@ func TestDuckDBEngine_AggregateByTime(t *testing.T) {
 }
 
 func TestDuckDBEngine_ListsAggregateAndDrill(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	announce := "<dev_1@example.test>"
@@ -1467,6 +1504,7 @@ func TestDuckDBEngine_ListsAggregateAndDrill(t *testing.T) {
 // TestDuckDBEngine_SearchFast verifies SearchFast with various query types,
 // filters, and context filters using table-driven subtests.
 func TestDuckDBEngine_SearchFast(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 
 	tests := []struct {
@@ -1536,6 +1574,7 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFastRecipientOperatorParity(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	ctx := t.Context()
 
@@ -1612,6 +1651,7 @@ func TestDuckDBEngine_SearchFastRecipientOperatorParity(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1637,6 +1677,7 @@ func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
 }
 
 func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1681,6 +1722,7 @@ func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFastWithStats_MessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1717,6 +1759,7 @@ func TestDuckDBEngine_SearchFastWithStats_MessageTypeFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1744,6 +1787,7 @@ func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1799,6 +1843,7 @@ func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_SearchScopeUsesDeepSearchEngine(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1847,6 +1892,7 @@ func TestDuckDBEngine_GetTotalStats_SearchScopeUsesDeepSearchEngine(t *testing.T
 }
 
 func TestDuckDBEngine_DefaultAnalyticsExcludeNonEmailMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1951,6 +1997,7 @@ func TestDuckDBEngine_DefaultAnalyticsExcludeNonEmailMessages(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFastMessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newMessageTypeParquetEngine(t)
@@ -1970,6 +2017,7 @@ func TestDuckDBEngine_SearchFastMessageTypeFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFallbackMessageTypeEmailIncludesLegacyRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -2011,6 +2059,7 @@ func TestDuckDBEngine_SearchFallbackMessageTypeEmailIncludesLegacyRows(t *testin
 }
 
 func TestDuckDBEngine_GetTotalStatsMessageTypeSearch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newMessageTypeParquetEngine(t)
@@ -2025,6 +2074,7 @@ func TestDuckDBEngine_GetTotalStatsMessageTypeSearch(t *testing.T) {
 }
 
 func TestDuckDBEngine_AggregateMessageTypeSearch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newMessageTypeParquetEngine(t)
@@ -2042,6 +2092,7 @@ func TestDuckDBEngine_AggregateMessageTypeSearch(t *testing.T) {
 // TestDuckDBEngine_ListMessages_DateFilter verifies that After/Before date filters
 // work with DuckDB's TIMESTAMP column (regression: VARCHAR params need CAST).
 func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newParquetEngine(t)
@@ -2068,6 +2119,7 @@ func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
 }
 
 func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "offset-bounds.db")
 	var db *sql.DB
@@ -2198,6 +2250,7 @@ func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
 // TestDuckDBEngine_SearchFast_DateFilter verifies that after:/before: in search
 // queries work with DuckDB's TIMESTAMP column.
 func TestDuckDBEngine_SearchFast_DateFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 
 	// after:2024-02-01 (>=): msg3 (Feb 1), msg4 (Feb 15), msg5 (Mar 1)
@@ -2215,6 +2268,7 @@ func TestDuckDBEngine_SearchFast_DateFilter(t *testing.T) {
 
 // TestDuckDBEngine_AggregateBySender_DateFilter verifies date filters on aggregates.
 func TestDuckDBEngine_AggregateBySender_DateFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -2234,6 +2288,7 @@ func TestDuckDBEngine_AggregateBySender_DateFilter(t *testing.T) {
 
 // TestDuckDBEngine_SubAggregate_DateFilter verifies CAST(? AS TIMESTAMP) in SubAggregate.
 func TestDuckDBEngine_SubAggregate_DateFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -2252,6 +2307,7 @@ func TestDuckDBEngine_SubAggregate_DateFilter(t *testing.T) {
 
 // TestDuckDBEngine_SearchFastCount_DateFilter verifies CAST(? AS TIMESTAMP) in SearchFastCount.
 func TestDuckDBEngine_SearchFastCount_DateFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -2265,6 +2321,7 @@ func TestDuckDBEngine_SearchFastCount_DateFilter(t *testing.T) {
 
 // TestDuckDBEngine_AggregateByDomain_DateFilter verifies CAST(? AS TIMESTAMP) in buildWhereClause.
 func TestDuckDBEngine_AggregateByDomain_DateFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -2281,6 +2338,7 @@ func TestDuckDBEngine_AggregateByDomain_DateFilter(t *testing.T) {
 // TestDuckDBEngine_ThreadCount verifies that DuckDB is initialized with the correct
 // thread count based on GOMAXPROCS, and that the setting persists (single connection).
 func TestDuckDBEngine_ThreadCount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine, err := NewDuckDBEngine("", "", nil)
@@ -2305,6 +2363,7 @@ func TestDuckDBEngine_ThreadCount(t *testing.T) {
 }
 
 func TestDuckDBEngine_ListMessages_ConversationIDFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newParquetEngine(t)
@@ -2373,6 +2432,7 @@ func TestDuckDBEngine_ListMessages_ConversationIDFilter(t *testing.T) {
 //
 //	Participants: alice@example.com, bob@company.org, carol@example.com, dan@other.net
 func TestDuckDBEngine_ListMessages_Filters(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -2424,6 +2484,7 @@ func TestDuckDBEngine_ListMessages_Filters(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	conversationID := int64(101)
@@ -2515,6 +2576,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByFilter_MessageTypeEmailIncludesLegacy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -2534,6 +2596,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_MessageTypeEmailIncludesLegacy(
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByAggregateSearch(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	builder := buildStandardTestData(t)
@@ -2572,6 +2635,7 @@ func TestDuckDBEngine_GetDeletionTargetsByAggregateSearch(t *testing.T) {
 }
 
 func TestDuckDBEngine_AggregateSearchAndDeletionShareBodyScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	builder := buildStandardTestData(t)
@@ -2604,6 +2668,7 @@ func TestDuckDBEngine_AggregateSearchAndDeletionShareBodyScope(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	builder := buildStandardTestData(t)
@@ -2743,6 +2808,7 @@ func buildEmptyBucketsTestData(t *testing.T) *TestDataBuilder {
 // TestDuckDBEngine_ListMessages_MatchEmptySender verifies that MatchEmptySender
 // finds messages with no 'from' entry in message_recipients.
 func TestDuckDBEngine_ListMessages_MatchEmptySender(t *testing.T) {
+	t.Parallel()
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -2768,6 +2834,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptySender(t *testing.T) {
 // TestDuckDBEngine_ListMessages_MatchEmptyRecipient verifies that MatchEmptyRecipient
 // finds messages with no 'to' or 'cc' entries in message_recipients.
 func TestDuckDBEngine_ListMessages_MatchEmptyRecipient(t *testing.T) {
+	t.Parallel()
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -2793,6 +2860,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptyRecipient(t *testing.T) {
 // TestDuckDBEngine_ListMessages_MatchEmptyDomain verifies that MatchEmptyDomain
 // finds messages where the sender has no domain.
 func TestDuckDBEngine_ListMessages_MatchEmptyDomain(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
@@ -2822,6 +2890,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptyDomain(t *testing.T) {
 // TestDuckDBEngine_ListMessages_MatchEmptyLabel verifies that MatchEmptyLabel
 // finds messages with no labels.
 func TestDuckDBEngine_ListMessages_MatchEmptyLabel(t *testing.T) {
+	t.Parallel()
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -2847,6 +2916,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptyLabel(t *testing.T) {
 // TestDuckDBEngine_ListMessages_MatchEmptyCombined verifies that multiple
 // MatchEmpty* flags create restrictive AND conditions.
 func TestDuckDBEngine_ListMessages_MatchEmptyCombined(t *testing.T) {
+	t.Parallel()
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -2872,6 +2942,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptyCombined(t *testing.T) {
 // This tests the fix for the bug where EmptyValueTarget could only hold one dimension,
 // causing the original empty constraint to be lost when drilling into a second empty bucket.
 func TestDuckDBEngine_ListMessages_MultipleEmptyTargets(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newEmptyBucketsEngine(t)
@@ -2923,6 +2994,7 @@ func TestDuckDBEngine_ListMessages_MultipleEmptyTargets(t *testing.T) {
 // TestDuckDBEngine_SubAggregate_MultipleEmptyTargets verifies that SubAggregate
 // correctly handles multiple empty-dimension constraints when drilling down.
 func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newEmptyBucketsEngine(t)
@@ -2989,6 +3061,7 @@ func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
 
 // TestDuckDBEngine_GetDeletionTargetsByFilter_NoDataSource verifies error when no SQLite or Parquet available.
 func TestDuckDBEngine_GetDeletionTargetsByFilter_NoDataSource(t *testing.T) {
+	t.Parallel()
 	// Create engine without SQLite or Parquet
 	engine, err := NewDuckDBEngine("", "", nil)
 	require.NoError(t, err, "NewDuckDBEngine")
@@ -3001,6 +3074,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_NoDataSource(t *testing.T) {
 
 // TestDuckDBEngine_GetDeletionTargetsByFilter_NonExistent verifies empty results for non-existent values.
 func TestDuckDBEngine_GetDeletionTargetsByFilter_NonExistent(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3025,6 +3099,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_NonExistent(t *testing.T) {
 
 // TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyFilter verifies that empty filter returns all messages.
 func TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3036,6 +3111,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyBuckets(t *testing.T) {
+	t.Parallel()
 	engine := newEmptyBucketsEngine(t)
 
 	tests := []struct {
@@ -3065,6 +3141,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_EmptyBuckets(t *testing.T) {
 // TestDuckDBEngine_GetDeletionTargetsByFilter_CombinedNoMatch verifies empty results for
 // combined filters that match nothing.
 func TestDuckDBEngine_GetDeletionTargetsByFilter_CombinedNoMatch(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3086,6 +3163,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_CombinedNoMatch(t *testing.T) {
 // TestDuckDBEngine_GetDeletionTargetsByFilter_AfterBefore verifies that After/Before date
 // filters work correctly on the Parquet fallback of GetDeletionTargetsByFilter.
 func TestDuckDBEngine_GetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
@@ -3110,6 +3188,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
 
 // TestEscapeILIKE verifies that ILIKE wildcard characters are escaped.
 func TestEscapeILIKE(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
@@ -3134,6 +3213,7 @@ func TestEscapeILIKE(t *testing.T) {
 // TestBuildWhereClause_SearchOperators tests that buildWhereClause handles
 // various search operators correctly.
 func TestBuildWhereClause_SearchOperators(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	tests := []struct {
@@ -3197,6 +3277,7 @@ func TestBuildWhereClause_SearchOperators(t *testing.T) {
 // TestBuildWhereClause_EscapedArgs verifies that wildcards in search terms
 // are properly escaped in the query arguments.
 func TestBuildWhereClause_EscapedArgs(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	opts := AggregateOptions{SearchQuery: "100%_off"}
@@ -3216,6 +3297,7 @@ func TestBuildWhereClause_EscapedArgs(t *testing.T) {
 // TestBuildWhereClause_ILIKEEscape verifies that search terms are properly
 // escaped for ILIKE patterns in aggregate search conditions.
 func TestBuildWhereClause_ILIKEEscape(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	tests := []struct {
@@ -3252,6 +3334,7 @@ func TestBuildWhereClause_ILIKEEscape(t *testing.T) {
 // TestAggregateBySender_WithSearchQuery verifies that aggregate queries respect
 // search query filters.
 func TestAggregateBySender_WithSearchQuery(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3306,6 +3389,7 @@ func TestAggregateBySender_WithSearchQuery(t *testing.T) {
 // Labels aggregate view only shows matching labels, not all labels from
 // matching messages.
 func TestAggregateByLabel_WithLabelSearch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
@@ -3331,6 +3415,7 @@ func TestAggregateByLabel_WithLabelSearch(t *testing.T) {
 }
 
 func TestDuckDBEngine_AggregateLabelSearchStatsCorrelateFilterAndText(t *testing.T) {
+	t.Parallel()
 	b := buildStandardTestData(t)
 	needle := b.AddLabel("Needle")
 	b.AddMessageLabel(1, needle)
@@ -3356,6 +3441,7 @@ func TestDuckDBEngine_AggregateLabelSearchStatsCorrelateFilterAndText(t *testing
 // TestBuildSearchConditions_EscapedWildcards verifies that buildSearchConditions
 // escapes wildcards: ILIKE ESCAPE for TextTerms and operators.
 func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	tests := []struct {
@@ -3416,6 +3502,7 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFastConversationIDFilter(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	engine := buildStandardTestData(t).BuildEngine()
@@ -3441,6 +3528,7 @@ func TestDuckDBEngine_SearchFastConversationIDFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_ConversationIDFilterScopesAggregatesAndStats(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	engine := buildStandardTestData(t).BuildEngine()
@@ -3465,6 +3553,7 @@ func TestDuckDBEngine_ConversationIDFilterScopesAggregatesAndStats(t *testing.T)
 // TestBuildSearchConditions_UsesILIKENotRegex verifies that the fast search
 // path uses ILIKE (fast on Parquet scans) instead of regexp_matches (slow).
 func TestBuildSearchConditions_UsesILIKENotRegex(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	q := &search.Query{TextTerms: []string{"hello"}}
@@ -3486,6 +3575,7 @@ func TestBuildSearchConditions_UsesILIKENotRegex(t *testing.T) {
 // TestBuildAggregateSearchConditions_UsesILIKENotRegex verifies that the
 // aggregate search path also uses ILIKE instead of regexp_matches.
 func TestBuildAggregateSearchConditions_UsesILIKENotRegex(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	conditions, args := engine.buildAggregateSearchConditions(search.Parse("hello world"))
@@ -3506,6 +3596,7 @@ func TestBuildAggregateSearchConditions_UsesILIKENotRegex(t *testing.T) {
 // =============================================================================
 
 func TestDuckDBEngine_AggregateByRecipientName(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewRecipientNames, DefaultAggregateOptions())
@@ -3520,6 +3611,7 @@ func TestDuckDBEngine_AggregateByRecipientName(t *testing.T) {
 }
 
 func TestDuckDBEngine_SubAggregateByRecipientName(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3537,6 +3629,7 @@ func TestDuckDBEngine_SubAggregateByRecipientName(t *testing.T) {
 }
 
 func TestDuckDBEngine_ListMessages_RecipientNameFilter(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3549,6 +3642,7 @@ func TestDuckDBEngine_ListMessages_RecipientNameFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByFilter_RecipientName(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3561,6 +3655,7 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_RecipientName(t *testing.T) {
 }
 
 func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// Build Parquet data with empty-string and whitespace display_names on recipients
 	engine := createEngineFromBuilder(t, newParquetBuilder(t).
@@ -3610,6 +3705,7 @@ func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T)
 }
 
 func TestDuckDBEngine_ListMessages_MatchEmptyRecipientName(t *testing.T) {
+	t.Parallel()
 	// Build Parquet data with a message that has no recipients
 	engine := createEngineFromBuilder(t, newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
@@ -3648,6 +3744,7 @@ func TestDuckDBEngine_ListMessages_MatchEmptyRecipientName(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupByRecipients(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "linux" {
 		t.Skip("skipping DuckDB test on Linux CI")
 	}
@@ -3665,6 +3762,7 @@ func TestDuckDBEngine_GetTotalStats_GroupByRecipients(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupByLabels(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "linux" {
 		t.Skip("skipping DuckDB test on Linux CI")
 	}
@@ -3681,6 +3779,7 @@ func TestDuckDBEngine_GetTotalStats_GroupByLabels(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupByDefault(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "linux" {
 		t.Skip("skipping DuckDB test on Linux CI")
 	}
@@ -3696,6 +3795,7 @@ func TestDuckDBEngine_GetTotalStats_GroupByDefault(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupedSearchMatchesVisibleRows(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		query            string
@@ -3746,6 +3846,7 @@ func TestDuckDBEngine_GetTotalStats_GroupedSearchMatchesVisibleRows(t *testing.T
 }
 
 func TestDuckDBEngine_GetTotalStats_NameGroupSearchMatchesVisibleRows(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	listSender := b.AddParticipant("list@example.org", "example.org", "List Sender")
@@ -3811,6 +3912,7 @@ func TestDuckDBEngine_GetTotalStats_NameGroupSearchMatchesVisibleRows(t *testing
 // buildNonTextSearchConditions so there is nothing to slice; this test locks
 // the invariant in place by counting "?" placeholders.
 func TestBuildStatsSearchConditions_PlaceholderArgCount(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	cases := []struct {
@@ -3848,6 +3950,7 @@ func TestBuildStatsSearchConditions_PlaceholderArgCount(t *testing.T) {
 // in the emitted WHERE conditions must match the number of args, for any
 // combination of text terms, non-text filters, and keyColumns.
 func TestBuildAggregateSearchConditions_PlaceholderArgCount(t *testing.T) {
+	t.Parallel()
 	engine := &DuckDBEngine{}
 
 	cases := []struct {
@@ -3889,6 +3992,7 @@ func TestBuildAggregateSearchConditions_PlaceholderArgCount(t *testing.T) {
 // TestDuckDBEngine_Aggregate_AllViewTypes is a table-driven test covering all
 // ViewType variants through the unified Aggregate method.
 func TestDuckDBEngine_Aggregate_AllViewTypes(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3989,6 +4093,7 @@ func TestDuckDBEngine_Aggregate_AllViewTypes(t *testing.T) {
 // TestDuckDBEngine_Aggregate_TimeGranularity verifies that TimeGranularity
 // affects the grouping key format in ViewTime aggregates.
 func TestDuckDBEngine_Aggregate_TimeGranularity(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4044,6 +4149,7 @@ func TestDuckDBEngine_Aggregate_TimeGranularity(t *testing.T) {
 // TestDuckDBEngine_SubAggregate_AllViewTypes is a table-driven test for
 // SubAggregate covering all view types.
 func TestDuckDBEngine_SubAggregate_AllViewTypes(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4153,6 +4259,7 @@ func TestDuckDBEngine_SubAggregate_AllViewTypes(t *testing.T) {
 // excludes empty-string domains in both Aggregate and SubAggregate.
 // This locks in the behavior from the domain != ” guard in getViewDef.
 func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
+	t.Parallel()
 	// Build test data with a participant that has an empty domain
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
@@ -4207,6 +4314,7 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 // TestDuckDBEngine_SubAggregate_WithSearchQuery verifies that SubAggregate
 // respects search query filters via the keyColumns mechanism.
 func TestDuckDBEngine_SubAggregate_WithSearchQuery(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4234,6 +4342,7 @@ func TestDuckDBEngine_SubAggregate_WithSearchQuery(t *testing.T) {
 // TestDuckDBEngine_SubAggregate_TimeGranularityInference verifies that
 // inferTimeGranularity correctly adjusts granularity based on period string length.
 func TestDuckDBEngine_SubAggregate_TimeGranularityInference(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4288,6 +4397,7 @@ func TestDuckDBEngine_SubAggregate_TimeGranularityInference(t *testing.T) {
 // TestDuckDBEngine_Aggregate_InvalidViewType verifies that invalid ViewType values
 // return a clear error from the Aggregate API.
 func TestDuckDBEngine_Aggregate_InvalidViewType(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4312,6 +4422,7 @@ func TestDuckDBEngine_Aggregate_InvalidViewType(t *testing.T) {
 // TestDuckDBEngine_SubAggregate_InvalidViewType verifies that invalid ViewType values
 // return a clear error from the SubAggregate API.
 func TestDuckDBEngine_SubAggregate_InvalidViewType(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4342,6 +4453,7 @@ func TestDuckDBEngine_SubAggregate_InvalidViewType(t *testing.T) {
 //  2. "Cannot compare values of type BIGINT and VARCHAR in IN/ANY/ALL clause"
 //     (triggered by filtered_msgs CTE in ListMessages with sender/recipient filters)
 func TestDuckDBEngine_VARCHARParquetColumns(t *testing.T) {
+	t.Parallel()
 	// Create Parquet where conversation_id, size_estimate, and has_attachments
 	// are VARCHAR (no ::BIGINT/boolean cast), and attachment size is a VARCHAR
 	// string, to reproduce type mismatches in COALESCE, JOINs, and TRY_CAST paths.
@@ -4427,6 +4539,7 @@ func TestDuckDBEngine_VARCHARParquetColumns(t *testing.T) {
 // TestSearchCacheKeyFor verifies that the JSON-based cache key avoids
 // ambiguous collisions that a simple delimiter-based approach would have.
 func TestSearchCacheKeyFor(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		conds1    []string
@@ -4530,6 +4643,7 @@ func TestSearchCacheKeyFor(t *testing.T) {
 // same search reuses the cached temp table (cache hit) and returns consistent
 // count and stats across pages.
 func TestSearchFastWithStats_CacheHitSkipsRescan(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine := newParquetEngine(t)
@@ -4567,6 +4681,7 @@ func TestSearchFastWithStats_CacheHitSkipsRescan(t *testing.T) {
 // TestSearchFastWithStats_CacheInvalidatedOnNewSearch verifies that changing
 // the search query invalidates the cache and creates a new temp table.
 func TestSearchFastWithStats_CacheInvalidatedOnNewSearch(t *testing.T) {
+	t.Parallel()
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -4597,6 +4712,7 @@ func TestSearchFastWithStats_CacheInvalidatedOnNewSearch(t *testing.T) {
 // TestDuckDBEngine_HideDeletedFromSource verifies that HideDeletedFromSource
 // filters out deleted messages in aggregates, SubAggregate, search, and stats.
 func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	now := time.Now()
@@ -4689,6 +4805,7 @@ func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
 // deleted_at and is_from_me. The engine should synthesise sensible defaults
 // instead of failing with a binder error.
 func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
+	t.Parallel()
 	requirementsForTest :=
 		// Old-style column definitions (pre-WhatsApp).
 		require.New(t)
@@ -4827,6 +4944,7 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -4843,6 +4961,7 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs(t *testing.T) {
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesNonEmailAndEmptyProviderID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -4864,6 +4983,7 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesNonEmailAndEmptyProv
 }
 
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDs_ChunkedLargeSelection(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	parquet := newParquetEngine(t)
 
@@ -4886,6 +5006,7 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs_ChunkedLargeSelection(t *te
 
 // The daemon runs DuckDB without the SQLite scanner, so filename: must read Parquet.
 func TestDuckDBFilenameFilterParquet(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

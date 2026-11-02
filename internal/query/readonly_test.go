@@ -8,6 +8,7 @@ import (
 )
 
 func TestEnsureReadOnly(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		sql     string

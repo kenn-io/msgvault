@@ -16,6 +16,7 @@ import (
 const relationshipTestTimezoneUTCPlus14 = "Pacific/Kiritimati"
 
 func TestRelationshipCalendarReturnsLocalDaysAndCachedTemperatureSummary(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	engine, canonicalID, _, _ := buildTimelineFixture(t)
@@ -82,6 +83,7 @@ func TestRelationshipCalendarReturnsLocalDaysAndCachedTemperatureSummary(t *test
 }
 
 func TestRelationshipCalendarValidatesIdentityYearAndTimezone(t *testing.T) {
+	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
 	tests := []RelationshipCalendarRequest{
 		{CanonicalID: 0, Year: 2026, Timezone: "UTC"},
@@ -95,6 +97,7 @@ func TestRelationshipCalendarValidatesIdentityYearAndTimezone(t *testing.T) {
 }
 
 func TestRelationshipCalendarValidationUsesRequestedTimezoneYear(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2025, time.December, 31, 10, 30, 0, 0, time.UTC)
 	_, _, err := validateRelationshipCalendarRequestAt(RelationshipCalendarRequest{
 		CanonicalID: 1, Year: 2026, Timezone: relationshipTestTimezoneUTCPlus14,
@@ -108,6 +111,7 @@ func TestRelationshipCalendarValidationUsesRequestedTimezoneYear(t *testing.T) {
 }
 
 func TestRelationshipCalendarAllowsCurrentYearBeyondStaleCacheWatermark(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	currentYear := time.Now().UTC().Year()
@@ -137,6 +141,7 @@ func TestRelationshipCalendarAllowsCurrentYearBeyondStaleCacheWatermark(t *testi
 }
 
 func TestRelationshipCalendarReadsBothUTCPartitionsAtLocalYearBoundary(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "imessage")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
@@ -171,6 +176,7 @@ func TestRelationshipCalendarReadsBothUTCPartitionsAtLocalYearBoundary(t *testin
 }
 
 func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	effectiveAt := time.Date(2025, time.December, 31, 23, 30, 0, 0, time.UTC)
@@ -211,6 +217,7 @@ func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) 
 }
 
 func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
@@ -233,6 +240,7 @@ func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 }
 
 func TestRelationshipCalendarHandlesExtremeOffsetsDSTFractionalOffsetsAndLeapDays(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "imessage")
@@ -291,6 +299,7 @@ func TestRelationshipCalendarHandlesExtremeOffsetsDSTFractionalOffsetsAndLeapDay
 }
 
 func TestRelationshipCalendarDeduplicatesLinkedAliasEdgesPerMessage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)

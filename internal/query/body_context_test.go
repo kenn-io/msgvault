@@ -11,6 +11,7 @@ import (
 )
 
 func TestMarkedFragmentContext(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	startMarker := "__start__"
@@ -31,6 +32,7 @@ func TestMarkedFragmentContext(t *testing.T) {
 }
 
 func TestMarkedFragmentContextHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -39,6 +41,7 @@ func TestMarkedFragmentContextHonorsCancellation(t *testing.T) {
 }
 
 func TestBodyContextGuardRejectsArtificialTokenBoundary(t *testing.T) {
+	t.Parallel()
 	body := strings.Repeat("x", messageBodyContextChunkCoreBytes+100)
 	chunks := makeBodyContextChunks(1, body, 1)
 	require.GreaterOrEqual(t, len(chunks), 2)
@@ -56,6 +59,7 @@ func TestBodyContextGuardRejectsArtificialTokenBoundary(t *testing.T) {
 }
 
 func TestValidBodyContextPrefixIsRuneSafe(t *testing.T) {
+	t.Parallel()
 	prefix, truncated, err := validBodyContextPrefix([]byte("abcéz"), 4)
 	require.NoError(t, err)
 	assert.Equal(t, "abc", prefix)
@@ -63,6 +67,7 @@ func TestValidBodyContextPrefixIsRuneSafe(t *testing.T) {
 }
 
 func TestBodyContextSnippetsCapsDistantMatches(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	var body strings.Builder

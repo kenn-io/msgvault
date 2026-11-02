@@ -7,6 +7,7 @@ import (
 )
 
 func TestFlattenSnippet(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   string

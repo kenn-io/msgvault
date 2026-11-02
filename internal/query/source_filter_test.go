@@ -7,6 +7,7 @@ import (
 )
 
 func TestAppendSourceFilter(t *testing.T) {
+	t.Parallel()
 	id42 := int64(42)
 
 	tests := []struct {

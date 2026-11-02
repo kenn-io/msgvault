@@ -10,6 +10,7 @@ import (
 // TestSQLInjection_InvalidSortField tests that invalid SortField values are handled safely.
 // The sortClause function should validate the SortField is within expected range.
 func TestSQLInjection_InvalidSortField(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// Create options with an invalid SortField value
@@ -26,6 +27,7 @@ func TestSQLInjection_InvalidSortField(t *testing.T) {
 // TestSQLInjection_InvalidMessageSortField tests that invalid MessageSortField values
 // are handled safely in ListMessages.
 func TestSQLInjection_InvalidMessageSortField(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// Create filter with an invalid MessageSortField value
@@ -45,6 +47,7 @@ func TestSQLInjection_InvalidMessageSortField(t *testing.T) {
 // TestSQLInjection_InvalidTimeGranularity tests that invalid TimeGranularity values
 // are handled safely when used in queries.
 func TestSQLInjection_InvalidTimeGranularity(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	opts := DefaultAggregateOptions()
@@ -59,6 +62,7 @@ func TestSQLInjection_InvalidTimeGranularity(t *testing.T) {
 // string fields like Sender, Label, etc. are properly parameterized and
 // cannot be used for SQL injection.
 func TestSQLInjection_FilterStringsAreSafelyParameterized(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// These SQL injection payloads should be treated as literal strings,
@@ -97,6 +101,7 @@ func TestSQLInjection_FilterStringsAreSafelyParameterized(t *testing.T) {
 }
 
 func TestListMessagesFiltersByMessageType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	_, err := env.DB.Exec(`

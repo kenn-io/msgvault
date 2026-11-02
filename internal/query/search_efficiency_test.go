@@ -29,6 +29,7 @@ func observedSearchEngine(t *testing.T) (*SQLiteEngine, *sqlobserve.Observer) {
 }
 
 func TestMetadataSearchSQLiteOptionalStats(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, query                     string
 		limit, offset, rows, statements int
@@ -57,6 +58,7 @@ func TestMetadataSearchSQLiteOptionalStats(t *testing.T) {
 }
 
 func TestMetadataSearchSQLiteCountCancellationStopsStats(t *testing.T) {
+	t.Parallel()
 	engine, observer := observedSearchEngine(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

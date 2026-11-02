@@ -16,6 +16,7 @@ import (
 )
 
 func TestArchiveDuckDBEngineCanceledStartupCleansOwnedSpill(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	spillDir := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -30,6 +31,7 @@ func TestArchiveDuckDBEngineCanceledStartupCleansOwnedSpill(t *testing.T) {
 }
 
 func TestArchiveDuckDBEngineStartupHonorsDeadlineDuringPublication(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	builder := NewTestDataBuilder(t)
 	builder.AddSource("owner@example.com")
@@ -73,6 +75,7 @@ func TestArchiveDuckDBEngineStartupHonorsDeadlineDuringPublication(t *testing.T)
 }
 
 func TestArchiveDuckDBEngineRestrictsSQLToAnalytics(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	t.Run("missing analytics directory", func(t *testing.T) {
 		_, err := NewArchiveDuckDBEngine(t.Context(), "")
@@ -135,6 +138,7 @@ func TestArchiveDuckDBEngineRestrictsSQLToAnalytics(t *testing.T) {
 }
 
 func TestArchiveDuckDBEngineFollowsPublication(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)

@@ -17,6 +17,7 @@ type mixedArchiveBrowserFixture struct {
 }
 
 func TestWriteMixedArchiveBrowserFixture(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	fixture := buildMixedArchiveBrowserFixture(t)
 	require.Equal(int64(100_000), fixture.RawChatMessageCount)

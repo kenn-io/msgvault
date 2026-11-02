@@ -32,6 +32,7 @@ func explainSearchPlan(t *testing.T, env *testEnv, q *search.Query) string {
 // A rare address must look up matching messages by rowid instead of walking
 // every message newest-first and probing its recipients.
 func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	for _, q := range []*search.Query{
 		{FromAddrs: []string{"@example.com"}},
@@ -47,6 +48,7 @@ func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 }
 
 func TestSearchFromDomainTreatsWildcardsLiterally(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	id := env.AddParticipant(dbtest.ParticipantOpts{Email: new("x@myxco.example"), Domain: "myxco.example"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "wildcard probe", FromID: id})
@@ -60,6 +62,7 @@ func TestSearchFromDomainTreatsWildcardsLiterally(t *testing.T) {
 
 // A domain with many matches still returns stable newest-first pages.
 func TestSearchFromDomainManyMatchesPagesNewestFirst(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)

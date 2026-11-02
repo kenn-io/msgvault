@@ -14,6 +14,7 @@ import (
 )
 
 func TestDuckDBEngine_QuerySQL(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -39,6 +40,7 @@ func TestDuckDBEngine_QuerySQL(t *testing.T) {
 }
 
 func TestRegisterViews_BaseViews(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -97,6 +99,7 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 }
 
 func TestRegisterViews_ListsCompatibility(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	listID := "<announce.example.test>"
 	builder := NewTestDataBuilder(t)
@@ -116,6 +119,7 @@ func TestRegisterViews_ListsCompatibility(t *testing.T) {
 }
 
 func TestRegisterViews_OldMessagesCacheDefaultsListIDToNull(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	builder := NewTestDataBuilder(t)
@@ -159,6 +163,7 @@ func TestRegisterViews_OldMessagesCacheDefaultsListIDToNull(t *testing.T) {
 }
 
 func TestRegisterViews_ConvenienceViews(t *testing.T) {
+	t.Parallel()
 	builder := NewTestDataBuilder(t)
 	srcID := builder.AddSource("alice@example.com")
 	bob := builder.AddParticipant(
@@ -296,6 +301,7 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 // to the participant's current address. A legacy cache lacking both columns
 // reads as NULL for each.
 func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
+	t.Parallel()
 	type addresses struct {
 		resolved sql.NullString
 		envelope sql.NullString

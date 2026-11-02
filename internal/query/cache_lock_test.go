@@ -14,6 +14,7 @@ import (
 // reading Parquet files mid-mutation, and must acquire promptly once the
 // build releases.
 func TestAcquireCacheReadLockBlocksDuringBuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dir := t.TempDir()
 
@@ -36,6 +37,7 @@ func TestAcquireCacheReadLockBlocksDuringBuild(t *testing.T) {
 // TestAcquireCacheReadLockSharedHoldersDoNotConflict pins that concurrent
 // queries never block each other: only builds hold the lock exclusively.
 func TestAcquireCacheReadLockSharedHoldersDoNotConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	dir := t.TempDir()
 

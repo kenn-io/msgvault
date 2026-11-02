@@ -11,6 +11,7 @@ import (
 )
 
 func TestBoundedDeletionSearchCountsOnlyExecutableSources(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	chatSourceID := env.AddSource(dbtest.SourceOpts{Type: "discord", Identifier: "chat@example.com"})
 	chatConversationID := env.AddConversation(dbtest.ConversationOpts{SourceID: chatSourceID})

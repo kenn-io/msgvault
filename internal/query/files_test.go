@@ -12,6 +12,7 @@ import (
 )
 
 func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	db, err := sql.Open("duckdb", "")
 	requirements.NoError(err)
@@ -44,6 +45,7 @@ func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing
 }
 
 func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -89,6 +91,7 @@ func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
 }
 
 func TestSearchFilesRestrictsVisualCandidateAttachmentIDsAfterHardFilters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -109,6 +112,7 @@ func TestSearchFilesRestrictsVisualCandidateAttachmentIDsAfterHardFilters(t *tes
 }
 
 func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -172,6 +176,7 @@ func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 }
 
 func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -339,6 +344,7 @@ func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *test
 }
 
 func TestSearchFilesPersonScopeDirectChatSenderUsesWholeCluster(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -429,6 +435,7 @@ func TestSearchFilesPersonScopeDirectChatSenderUsesWholeCluster(t *testing.T) {
 }
 
 func TestSearchFilesPersonScopeValidation(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	engine := b.BuildEngine()
@@ -450,6 +457,7 @@ func TestSearchFilesPersonScopeValidation(t *testing.T) {
 }
 
 func TestSearchFilesEmptyPersonPopulationReturnsNoFiles(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.test")
 	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated"})
@@ -466,6 +474,7 @@ func TestSearchFilesEmptyPersonPopulationReturnsNoFiles(t *testing.T) {
 }
 
 func TestSearchFilesFlattensSnippetMarkupInContainingTitle(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -485,6 +494,7 @@ func TestSearchFilesFlattensSnippetMarkupInContainingTitle(t *testing.T) {
 }
 
 func TestSearchFilesPreservesSubjectContainingTitleWithMarkdownLikeCharacters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -504,6 +514,7 @@ func TestSearchFilesPreservesSubjectContainingTitleWithMarkdownLikeCharacters(t 
 }
 
 func TestSearchFilesUsesStableDateNameAndSizeSorts(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.com")
 	when := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
@@ -545,6 +556,7 @@ func TestSearchFilesUsesStableDateNameAndSizeSorts(t *testing.T) {
 }
 
 func TestSearchFilesNamesUnavailableCache(t *testing.T) {
+	t.Parallel()
 	engine, err := NewDuckDBEngine("", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, engine.Close()) })
@@ -556,6 +568,7 @@ func TestSearchFilesNamesUnavailableCache(t *testing.T) {
 }
 
 func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -595,6 +608,7 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 }
 
 func TestGroupFilesByMailingList(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -634,6 +648,7 @@ func TestGroupFilesByMailingList(t *testing.T) {
 // emitting a separate unlabeled row — and the 'email' file filter that group
 // row drills into must reproduce the group row's count.
 func TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -670,6 +685,7 @@ func TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 }
 
 func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -713,6 +729,7 @@ func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.
 // row for them — the label must come from the base participant record, not
 // the "Unknown person #" fallback.
 func TestGroupFilesLabelsRosterOnlyParticipants(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -766,6 +783,7 @@ func linkedParticipantFilesFixture(t *testing.T) (b *TestDataBuilder, alice, ali
 }
 
 func TestGroupFilesMergesLinkedParticipantIdentities(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b, _, _ := linkedParticipantFilesFixture(t)
@@ -785,6 +803,7 @@ func TestGroupFilesMergesLinkedParticipantIdentities(t *testing.T) {
 }
 
 func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b, alice, alias := linkedParticipantFilesFixture(t)
@@ -811,6 +830,7 @@ func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
 // endpoint honors a conjunctive drill-down (A∩B) rather than replacing the
 // base participant filter with the drilled-into group.
 func TestSearchFilesAdditionalParticipantGroupIntersects(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -845,6 +865,7 @@ func TestSearchFilesAdditionalParticipantGroupIntersects(t *testing.T) {
 }
 
 func TestGroupFilesNamesUnavailableCache(t *testing.T) {
+	t.Parallel()
 	engine, err := NewDuckDBEngine("", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, engine.Close()) })
@@ -856,6 +877,7 @@ func TestGroupFilesNamesUnavailableCache(t *testing.T) {
 }
 
 func TestSearchFilesSentOnlyExcludesDraftAttachments(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)

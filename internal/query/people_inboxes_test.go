@@ -13,6 +13,7 @@ import (
 )
 
 func TestPersonInboxesDeduplicateChatSources(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -120,6 +121,7 @@ func TestPersonInboxesDeduplicateChatSources(t *testing.T) {
 }
 
 func TestPersonInboxesRejectsNonPositiveCanonicalID(t *testing.T) {
+	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
 	_, err := engine.ListPersonInboxes(context.Background(), PersonInboxRequest{})
 	require.ErrorIs(t, err, ErrInvalidExploreRequest)

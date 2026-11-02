@@ -14,6 +14,7 @@ import (
 )
 
 func TestSQLiteQueryEngineDateBoundsCompareMixedOffsetsAsInstants(t *testing.T) {
+	t.Parallel()
 	req := require.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
@@ -108,6 +109,7 @@ func TestSQLiteQueryEngineDateBoundsCompareMixedOffsetsAsInstants(t *testing.T) 
 }
 
 func TestSQLiteInstantDatePredicateUsesExpressionIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

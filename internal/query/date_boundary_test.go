@@ -33,6 +33,7 @@ import (
 // Runs against whichever backend testutil.NewTestStore selects; setting
 // MSGVAULT_TEST_DB to a postgres:// DSN exercises the PG path too.
 func TestDateBoundary_StoreAPIMatchesEngine(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()

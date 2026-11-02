@@ -11,6 +11,7 @@ import (
 )
 
 func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
+	t.Parallel()
 	// Explicit SourceID bypasses the "no sources" check.
 	b := NewTestDataBuilder(t)
 	id := b.AddMessage(MessageOpt{
@@ -21,6 +22,7 @@ func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
 }
 
 func TestTestDataBuilder_ValidationFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		fn   func(*TestDataBuilder)
@@ -52,6 +54,7 @@ func TestTestDataBuilder_ValidationFailures(t *testing.T) {
 }
 
 func TestAddMessage_UsesFirstSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -74,6 +77,7 @@ func TestAddMessage_UsesFirstSource(t *testing.T) {
 }
 
 func TestAddAttachment_SetsHasAttachments(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("a@test.com")
 	msgID := b.AddMessage(MessageOpt{Subject: "with attachment"})
@@ -86,6 +90,7 @@ func TestAddAttachment_SetsHasAttachments(t *testing.T) {
 }
 
 func TestBuild_EmptyAuxiliaryTables(t *testing.T) {
+	t.Parallel()
 	// Build should succeed with messages but no participants, labels, etc.
 	b := NewTestDataBuilder(t)
 	b.AddSource("a@test.com")

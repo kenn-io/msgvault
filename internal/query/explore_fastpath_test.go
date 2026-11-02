@@ -125,6 +125,7 @@ func runExploreBothPaths(t *testing.T, engine *DuckDBEngine, request ExploreRequ
 }
 
 func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
+	t.Parallel()
 	engine, ids := buildFastPathEquivalenceEngine(t)
 	generation := int64(4)
 	after := ids.base.Add(30 * time.Minute)
@@ -212,6 +213,7 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 // LIMIT/OFFSET pages concatenate into exactly the full listing, so
 // offset-based cursors keep working across pages.
 func TestExploreListingFastPathPagesTileFullListing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	engine, _ := buildFastPathEquivalenceEngine(t)
@@ -247,6 +249,7 @@ func runSearchFilesBothPaths(t *testing.T, engine *DuckDBEngine, request FileSea
 }
 
 func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
+	t.Parallel()
 	engine, ids := buildFastPathEquivalenceEngine(t)
 	before := ids.base.Add(90 * time.Minute)
 
@@ -326,6 +329,7 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 // already assembles participant lists archive-wide, so the two-phase rescan
 // would pay that twice.
 func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{}))
 	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
@@ -347,6 +351,7 @@ func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
 // TestExploreParticipantFilterListingStillCorrect exercises the legacy path
 // the fork preserves for participant-scoped listings.
 func TestExploreParticipantFilterListingStillCorrect(t *testing.T) {
+	t.Parallel()
 	engine, ids := buildFastPathEquivalenceEngine(t)
 	response, err := engine.Explore(context.Background(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{ids.alice}},

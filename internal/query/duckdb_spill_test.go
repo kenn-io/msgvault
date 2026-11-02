@@ -11,6 +11,7 @@ import (
 )
 
 func TestPrepareDaemonSpillDirRemovesOnlyValidatedStaleDirectories(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	home := t.TempDir()
@@ -36,6 +37,7 @@ func TestPrepareDaemonSpillDirRemovesOnlyValidatedStaleDirectories(t *testing.T)
 }
 
 func TestDuckDBEngineCloseRemovesOnlyOwnedSpillDirectory(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	root := t.TempDir()
 	owned := filepath.Join(root, "owned")

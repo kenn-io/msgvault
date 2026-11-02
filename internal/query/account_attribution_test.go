@@ -16,6 +16,7 @@ import (
 )
 
 func TestAccountOperatorsOnLiveEngine(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

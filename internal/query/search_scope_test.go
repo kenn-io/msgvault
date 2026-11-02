@@ -18,6 +18,7 @@ import (
 // the test-pg lane. It exercises the production query engine and real FTS
 // index so body terms cannot accidentally leak back into the metadata path.
 func TestSearchFast_MetadataOnly(t *testing.T) {
+	t.Parallel()
 	rootRequire := require.New(t)
 	rootAssert := assert.New(t)
 	f := storetest.New(t)
@@ -81,6 +82,7 @@ func TestSearchFast_MetadataOnly(t *testing.T) {
 }
 
 func TestSearchFastWithStats_MetadataPredicateConsistency(t *testing.T) {
+	t.Parallel()
 	rootRequire := require.New(t)
 	f := storetest.New(t)
 	ctx := context.Background()
@@ -128,6 +130,7 @@ func TestSearchFastWithStats_MetadataPredicateConsistency(t *testing.T) {
 }
 
 func TestSearchFast_MetadataUnicodeCaseFold(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	ctx := context.Background()
 
@@ -177,6 +180,7 @@ func TestSearchFast_MetadataUnicodeCaseFold(t *testing.T) {
 }
 
 func TestSearchFast_StructuredMetadataUnicodeCaseFold(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	ctx := context.Background()
 
@@ -248,6 +252,7 @@ func TestSearchFast_StructuredMetadataUnicodeCaseFold(t *testing.T) {
 // term in a different message, proving the optional capability scopes the
 // index to the body column/weight instead of returning composite hits.
 func TestSearchMessageBodies_BodyColumnOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -286,6 +291,7 @@ func TestSearchMessageBodies_BodyColumnOnly(t *testing.T) {
 }
 
 func TestSearchMessageBodies_PostgreSQLRejectsStaleLayout(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -315,6 +321,7 @@ func TestSearchMessageBodies_PostgreSQLRejectsStaleLayout(t *testing.T) {
 }
 
 func TestSearchMessageBodies_RejectsCanonicalBodyIndexMismatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := createSearchScopeMessage(t, f, "body-canonical-mismatch",
@@ -341,6 +348,7 @@ func TestSearchMessageBodies_RejectsCanonicalBodyIndexMismatch(t *testing.T) {
 }
 
 func TestSearchMessageBodies_ValidatesTermsBeyondSnippetCap(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := createSearchScopeMessage(t, f, "body-sixth-term-mismatch",
@@ -368,6 +376,7 @@ func TestSearchMessageBodies_ValidatesTermsBeyondSnippetCap(t *testing.T) {
 }
 
 func TestSearchMessageBodies_SQLiteOversizedBodyDoesNotPoisonFollowingHit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -405,6 +414,7 @@ func TestSearchMessageBodies_SQLiteOversizedBodyDoesNotPoisonFollowingHit(t *tes
 }
 
 func TestSearchMessageBodies_LimitedHitDoesNotMaskAnotherStaleHit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := storetest.New(t)
 	createSearchScopeMessage(t, f, "body-wide-valid-hit",
@@ -430,6 +440,7 @@ func TestSearchMessageBodies_LimitedHitDoesNotMaskAnotherStaleHit(t *testing.T) 
 }
 
 func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -453,6 +464,7 @@ func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
 }
 
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -473,6 +485,7 @@ func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
 }
 
 func TestSearchMessageBodies_SQLiteUsesNativeTokenizerForTermGroups(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -497,6 +510,7 @@ func TestSearchMessageBodies_SQLiteUsesNativeTokenizerForTermGroups(t *testing.T
 }
 
 func TestSearchMessageBodies_SQLiteTermProbeUsesSanitizedLiteral(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)

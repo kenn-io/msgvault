@@ -17,6 +17,7 @@ func FuzzMetadataSearchParity(f *testing.F) {
 		}
 	}
 	f.Fuzz(func(t *testing.T, data []byte, term string, flags uint8) {
+		t.Parallel()
 		// Bound database materialization, not the generated input domain.
 		data = data[:min(len(data), 2048)]
 		term = term[:min(len(term), 128)]
