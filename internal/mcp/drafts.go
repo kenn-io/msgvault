@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/sensitive"
 )
 
 // DraftRunner runs managed draft commands with the caller's daemon credential.
@@ -134,11 +135,84 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 		if raw.IsValid() && len(raw) > 0 {
 			switch raw[0] {
 			case '{':
+				raw = addSensitiveDraftWarnings(raw, draftSensitiveFindings(command, args))
 				return &toolResult{text: string(raw), structuredContent: raw}, nil
 			case '[':
 				return jsonResult(map[string]jsontext.Value{"data": raw})
 			}
 		}
 		return nil, newInternalError("decode "+command+" output", errors.New("expected a JSON object or array"))
+	}
+}
+
+func draftSensitiveFindings(command string, args map[string]any) []sensitive.Finding {
+	switch command {
+	case "draft-compose", "draft-reply", "draft-forward", "draft-edit":
+		return sensitive.Scan(stringArgument(args, "body"))
+	default:
+		return nil
+	}
+}
+
+type sensitiveDraftWarning struct {
+	Code    string `json:"code"`
+	Kind    string `json:"kind"`
+	Origin  string `json:"origin"`
+	Hint    string `json:"hint"`
+	Message string `json:"message"`
+}
+
+// Decoration happens after a successful mutation. If a receipt cannot accept
+// warnings, preserve it: an error here could encourage a duplicate mutation.
+func addSensitiveDraftWarnings(raw jsontext.Value, findings []sensitive.Finding) jsontext.Value {
+	if len(findings) == 0 {
+		return raw
+	}
+	var object map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return raw
+	}
+	var warnings []jsontext.Value
+	if existing, ok := object["warnings"]; ok {
+		if err := json.Unmarshal(existing, &warnings); err != nil {
+			return raw
+		}
+	}
+	for _, finding := range findings {
+		warning, err := json.Marshal(sensitiveDraftWarning{
+			Code: "sensitive_content", Kind: finding.Kind, Origin: finding.Origin, Hint: finding.Hint,
+			Message: "Draft body may contain " + sensitiveKindLabel(finding.Kind) + ". Review it before sending; remove it unless the recipient must receive it.",
+		})
+		if err != nil {
+			return raw
+		}
+		warnings = append(warnings, warning)
+	}
+	encodedWarnings, err := json.Marshal(warnings)
+	if err != nil {
+		return raw
+	}
+	object["warnings"] = encodedWarnings
+	encoded, err := json.Marshal(object, json.Deterministic(true))
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
+func sensitiveKindLabel(kind string) string {
+	switch kind {
+	case "payment_card":
+		return "a payment card number"
+	case "iban":
+		return "an IBAN"
+	case "us_ssn":
+		return "a US Social Security number"
+	case "api_key":
+		return "an API key or private key"
+	case "password":
+		return "a password"
+	default:
+		return "sensitive information"
 	}
 }
