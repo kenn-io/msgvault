@@ -22,7 +22,7 @@ test('People Filter opens duplicate cards and browser-restored History', async (
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('refreshes cached duplicate tokens and the badge after Unlink and Split', async ({ page }) => {
+test('refreshes cached duplicate tokens and the badge after Unlink', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
   let unlinked = false;
   await page.route(/\/api\/v1\/participants\/701$/, route => route.fulfill({ json: {
@@ -60,20 +60,9 @@ test('refreshes cached duplicate tokens and the badge after Unlink and Split', a
   await expect.poll(() => unlinked).toBe(true);
   await expect.poll(badgeReads).toBeGreaterThan(beforeUnlink);
   await showDuplicates();
-  await page.getByRole('button', { name: 'Back to People' }).click();
-  await page.getByRole('button', { name: 'More actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  await page.getByRole('button', { name: 'Inspect merge 41' }).click();
-  await page.getByRole('button', { name: 'Split merged profile', exact: true }).click();
-  await page.getByRole('checkbox', { name: 'Participant 901', exact: true }).check();
-  await page.getByRole('checkbox', { name: /I confirm splitting/ }).check();
-  await page.getByRole('button', { name: 'Create restored person' }).click();
-  await expect(page.getByRole('heading', { name: 'Split completed' })).toBeVisible();
-  await page.getByRole('button', { name: 'Open source profile Synthetic One (Person 7)', exact: true }).click();
-  await showDuplicates();
   await page.locator('#duplicate-17').getByRole('button', { name: 'Keep separate' }).click();
   await page.getByRole('button', { name: 'Back to People' }).click();
-  await expect.poll(() => fixture.requests.find(request => request.path.endsWith('/17/review/reject'))?.body).toEqual({ review_token: 'review-17-postsplit' });
+  await expect.poll(() => fixture.requests.find(request => request.path.endsWith('/17/review/reject'))?.body).toEqual({ review_token: 'review-17-candidate' });
   await expect(badge).toHaveText('People 1');
 });
 

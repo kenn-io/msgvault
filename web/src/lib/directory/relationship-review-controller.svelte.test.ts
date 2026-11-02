@@ -52,14 +52,17 @@ function requestOf(input: RequestInfo | URL): Request {
 
 describe('RelationshipReviewController', () => {
   it(
-    'loads the selected owner and projects only safe fields',
+    'loads safe fields and supersedes work when the selected owner changes',
     async () => {
       const requests: Array<{ method: string; path: string; query: Array<[string, string]> }> = [];
+      const pending = deferredResponse();
+      let oldSignal!: AbortSignal;
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input);
         const url = new URL(request.url);
         requests.push({ method: request.method, path: url.pathname, query: [...url.searchParams.entries()] });
-        return Response.json({ reviews: [generatedReview()] });
+        if (requests.length === 2) { oldSignal = request.signal; return pending.promise; }
+        return Response.json({ reviews: [generatedReview({ person_id: Number(url.searchParams.get('person_id')) })] });
       });
       const controller = new RelationshipReviewController(createAPIClient(fetchFn));
 
@@ -89,6 +92,14 @@ describe('RelationshipReviewController', () => {
         },
       ]);
       expect(JSON.stringify(controller.rows)).not.toMatch(/forbidden|source_ref|accepted_relationship/i);
+      const oldLoad = controller.load();
+      controller.applyPerson(8);
+      expect(oldSignal.aborted).toBe(true);
+      expect(controller.rows).toEqual([]);
+      await vi.waitFor(() => expect(controller.rows[0]?.person_id).toBe(8));
+      pending.resolve(Response.json({ reviews: [generatedReview()] }));
+      await oldLoad;
+      expect(controller.rows[0]?.person_id).toBe(8);
       controller.destroy();
     },
   );

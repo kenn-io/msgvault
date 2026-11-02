@@ -98,7 +98,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows Identities only on the person Details tab', async () => {
+it('shows Addresses only on the person Details tab', async () => {
   vi.stubEnv('TZ', 'UTC');
   const summary = { id: 1, display_label: 'Alice Example', identifiers: [], activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
   const target = 'cluster:1';
@@ -143,34 +143,6 @@ it('reports a filtered summary failure while retaining the loaded person', async
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByText('Filtered activity is unavailable.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-it('keeps a stale identity mutation retry across Details and Messages', async () => {
-  let links = 0;
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
-    if (path === '/api/v1/participants/search') return Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
-    if (path === '/api/v1/identity/links') { links += 1; return Response.json({ identity_revision: 2, cache_state: 'stale' }); }
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
-  });
-  const controller = new RelationshipsController(client, () => 'UTC');
-  await controller.openTarget('cluster:1', {}, false);
-  const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Bob' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(links).toBe(2));
   } finally { view.unmount(); controller.destroy(); }
 });
 

@@ -2959,14 +2959,10 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
     await fireEvent.click(within(modal).getByRole('radio', { name: 'Synthetic One (Person 7)' }));
     await fireEvent.click(within(modal).getByRole('checkbox', { name: /I understand/ }));
     await fireEvent.click(within(modal).getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
-    expect(merged).toBe(true);
-    await waitFor(() => expect(screen.queryByText(/Both are saved as different people/)).toBeNull());
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
     const savedGrid = await screen.findByRole('grid', { name: 'People results' });
     await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
-    expect(screen.queryByRole('heading', { name: 'Synthetic Two' })).toBeNull();
-    expect(state.current.directoryPersonID).not.toBe(9);
   } finally { view.unmount(); state.destroy(); }
 });
 

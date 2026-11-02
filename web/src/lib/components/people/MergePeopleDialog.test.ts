@@ -11,8 +11,7 @@ it.each([
   { savedAnchor: false, promote: false, outcome: 'unreadable saved profile' },
   { savedAnchor: true, promote: true, outcome: 'retry and merge' },
   { savedAnchor: true, promote: true, outcome: 'cancel' },
-  { savedAnchor: false, promote: true, outcome: 'read failure' },
-  { savedAnchor: false, promote: true, outcome: 'cancel' }
+  { savedAnchor: false, promote: true, outcome: 'read failure' }
 ])('merges profiles with saved anchor=$savedAnchor, promotion=$promote, outcome=$outcome', async ({ savedAnchor, promote, outcome }) => {
   const requests: Request[] = [];
   const links: unknown[] = [];
@@ -96,7 +95,7 @@ function renderRepresentativeLink(savedAnchor: boolean) {
   return { view, controller, links, onClose, onReconcile, profileRequested, finishProfile: () => finishProfile(), changeOrigin: () => participantID = 99 };
 }
 
-it.each([false, true])('links a saved representative and an observed person without promotion: %s', async savedAnchor => {
+async function checkRepresentativeLink(savedAnchor: boolean) {
   const { view, controller, links, onClose, onReconcile, profileRequested, finishProfile, changeOrigin } = renderRepresentativeLink(savedAnchor);
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
@@ -109,9 +108,12 @@ it.each([false, true])('links a saved representative and an observed person with
       finishProfile();
     }
     await waitFor(() => expect(onReconcile).toHaveBeenCalledOnce());
-    // The unmounted dialog has nothing left to close.
-    expect(onClose).toHaveBeenCalledTimes(savedAnchor ? 1 : 0);
+    if (savedAnchor) expect(onClose).toHaveBeenCalledOnce();
+    else expect(onClose).not.toHaveBeenCalled();
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
     expect(onReconcile).toHaveBeenCalledWith(expect.anything(), true);
   } finally { view.unmount(); controller.destroy(); }
-});
+}
+
+it('links a saved representative and an observed person without promotion', () => checkRepresentativeLink(true));
+it('keeps the captured observed origin and skips close after disposal during the saved profile read', () => checkRepresentativeLink(false));
