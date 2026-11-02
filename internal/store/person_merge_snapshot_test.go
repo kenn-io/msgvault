@@ -262,15 +262,19 @@ func TestNormalizePersonMergeSnapshotJSONPreservesLargeIntegers(t *testing.T) {
 }
 
 // postgresPersonReferencesQuery reads all components of composite foreign keys.
-const postgresPersonReferencesQuery = `SELECT child.relname, attribute.attname
- FROM pg_constraint reference
- JOIN pg_class child ON child.oid=reference.conrelid
- JOIN pg_class target ON target.oid=reference.confrelid
- JOIN pg_namespace target_schema ON target_schema.oid=target.relnamespace
- JOIN pg_attribute attribute ON attribute.attrelid=child.oid AND attribute.attnum=ANY(reference.conkey)
- WHERE reference.contype='f' AND target.relname='persons'
- AND target_schema.nspname=current_schema() AND child.relnamespace=target.relnamespace
- ORDER BY child.relname,attribute.attname`
+const postgresPersonReferencesQuery = `SELECT child.relname, columns.attname
+			FROM pg_catalog.pg_constraint constraints
+			JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
+			JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
+			JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+			CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
+			JOIN pg_catalog.pg_attribute columns
+			  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
+			WHERE constraints.contype = 'f'
+			  AND namespace.nspname = current_schema()
+			  AND target.relnamespace = namespace.oid
+			  AND target.relname = 'persons'
+			ORDER BY child.relname, columns.attname`
 
 func TestPostgresPersonReferenceCatalogIncludesCompositeKeys(t *testing.T) {
 	require := require.New(t)
