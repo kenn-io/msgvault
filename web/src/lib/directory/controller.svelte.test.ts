@@ -1085,6 +1085,7 @@ describe('DirectoryController', () => {
 
   it.each([200, 201])('treats %i promotion as successful and refreshes page one', async (status) => {
     const commits: Array<Record<string, unknown>> = [];
+    const onWrite = vi.fn();
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1094,13 +1095,14 @@ describe('DirectoryController', () => {
       if (pathOf(request) === '/api/v1/people/42') return detailResponse(pathOf(request), 42);
       return detailResponse(pathOf(request), 42);
     });
-    const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
+    const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch), onWrite);
 
     await expect(controller.promote(11)).resolves.toEqual({ ok: true, personID: 42 });
     expect(controller.promotionResult).toEqual({ ok: true, personID: 42 });
     expect(commits).toContainEqual({ directoryPersonID: 42 });
     await expect(requests[0]!.clone().json()).resolves.toEqual({ participant_id: 11 });
     expect(controller.rows).toEqual([directoryPerson(42)]);
+    expect(onWrite).toHaveBeenCalledOnce();
   });
 
   it('exposes person binding conflicts without selecting a person', async () => {

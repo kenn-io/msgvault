@@ -600,8 +600,8 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
   }
   const client = clientFor(routes); const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client, undefined, () => void controller.loadList({})); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
-  const onNavigate = vi.fn();
-  const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), directory, controller, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const onNavigate = vi.fn(), onDuplicatesChanged = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged, directory, controller, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -613,6 +613,7 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
     await screen.findByRole('heading', { name: 'Synthetic Two' });
     await act(async () => { finish(new Response(null, { status: 204 })); await deletion.mock.results[0]!.value; });
     expect(onNavigate).not.toHaveBeenCalled();
+    expect(onDuplicatesChanged).toHaveBeenCalledOnce();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -816,6 +817,7 @@ it('counts only loaded saved profiles for deletion after Details unlinks an iden
   const saved = profile(9, 2, [1, 2]);
   let unlinked = false;
   const deletes: number[] = [];
+  const onDuplicatesChanged = vi.fn();
   const client = clientFor({
     '/api/v1/people/directory': request => Response.json({ people: [directoryPerson(new URL(request.url).searchParams.has('cursor') ? 9 : 7)], ...(new URL(request.url).searchParams.has('cursor') ? {} : { next_cursor: 'second' }) }),
     '/api/v1/people/7': request => { expect(request.method).toBe('DELETE'); deletes.push(7); return new Response(null, { status: 204 }); },
@@ -828,7 +830,7 @@ it('counts only loaded saved profiles for deletion after Details unlinks an iden
   const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC'), state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
   const navigate = (patch: Parameters<typeof state.commitNavigation>[0]) => { state.commitNavigation(patch); void view.rerender({ urlState: state.current, target: state.current.relationshipTarget }); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}); };
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: navigate, onReplaceNavigation: navigate, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: navigate, onReplaceNavigation: navigate, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     await screen.findByRole('checkbox', { name: 'Select Synthetic One' });
     await directory.loadNextPage();
@@ -840,6 +842,7 @@ it('counts only loaded saved profiles for deletion after Details unlinks an iden
     await fireEvent.click(within(screen.getByRole('group', { name: 'Confirm unlinking other@example.com' })).getByRole('button', { name: 'Unlink' }));
     await waitFor(() => expect(unlinked).toBe(true));
     await waitFor(() => expect(directory.rows.map(row => row.id)).toEqual([7]));
+    expect(onDuplicatesChanged).toHaveBeenCalledOnce();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     expect(deletes).toEqual([]);
     expect(screen.getByRole('button', { name: 'Clear selection' })).toBeDefined();
@@ -849,5 +852,6 @@ it('counts only loaded saved profiles for deletion after Details unlinks an iden
     expect(dialog.textContent).toContain('This permanently deletes 1 saved profiles');
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm delete' }));
     await waitFor(() => expect(deletes).toEqual([7]));
+    await waitFor(() => expect(onDuplicatesChanged).toHaveBeenCalledTimes(2));
   } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
 });

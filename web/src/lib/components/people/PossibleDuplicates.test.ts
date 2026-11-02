@@ -45,7 +45,7 @@ it.each([
 ])('displays the $failure error and wires $action', async ({ failure, message, action }) => {
   const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
   if (failure === 'queue') controller.error = message;
-  else controller.pageError = message;
+  else { controller.rows = [pair]; controller.pageError = message; }
   const retry = vi.spyOn(controller, 'retryPage').mockResolvedValue();
   const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
   try {
@@ -58,7 +58,7 @@ it.each([
 
 it.each([
   { reviewState: 'candidate', state: 'rejected', pending: false, label: /^Kept separate ·/ },
-  { reviewState: 'accepted', state: 'candidate', pending: false, label: /^candidate ·/ },
+  { reviewState: 'accepted', state: 'accepted', pending: false, label: /^Merged ·/ },
   { reviewState: 'candidate', state: 'accepted', pending: false, label: /^Merged ·/ },
   { reviewState: 'candidate', state: 'accepted', pending: true, label: /^Merge pending ·/ },
 ] as const)('keeps $state read-only in $reviewState with pending=$pending', ({ reviewState, state, pending, label }) => {
