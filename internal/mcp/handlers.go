@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -29,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/internal/verification"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -134,6 +136,7 @@ func listLimitArg(args map[string]any) int {
 type handlers struct {
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
+	unmaskVerification   bool
 	downloads            *downloadCache
 	engine               query.Engine
 	archiveSQLQuerier    ArchiveSQLQuerier
@@ -179,6 +182,9 @@ type ArchiveSQLQuerier interface {
 }
 
 func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if !h.delegatedOnly && !h.unmaskVerification {
+		return toolErrorResult("verification_masked: content analytics require --unmask-verification"), nil
+	}
 	args := req.GetArguments()
 	sql, ok := args["sql"].(string)
 	if !ok || strings.TrimSpace(sql) == "" {
@@ -529,7 +535,7 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
-	case "permission_denied", "unsupported_agent_scope":
+	case "permission_denied", "unsupported_agent_scope", "verification_masked", "verification_unavailable":
 		// The daemon's message names the missing permission or the supported scope.
 		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)
 	case "unauthorized":
@@ -746,6 +752,7 @@ func (h *handlers) searchMessages(ctx context.Context, req toolRequest) (*toolRe
 // labels, dates). Use search_message_bodies for full-body keyword, vector, or
 // hybrid search.
 func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	queryStr, _ := args[toolArgQuery].(string)
@@ -778,6 +785,13 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	if err != nil {
 		return nil, newInternalError("search metadata", err)
 	}
+	protected, err := h.prepareVerificationSummaries(ctx, result.Messages)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	resultCopy := *result
+	result = &resultCopy
+	result.Messages = protected
 	hasMore := len(result.Messages) > limit
 	if hasMore {
 		result.Messages = result.Messages[:limit]
@@ -915,6 +929,7 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 // excerpts centered on each matched term. Requires at least one free-text term
 // for keyword mode; use search_metadata for filter-only queries.
 func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	queryStr, _ := args[toolArgQuery].(string)
@@ -971,7 +986,10 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	if err != nil {
 		return bodySearchError(err)
 	}
-	results := result.Messages
+	results, err := h.prepareVerificationSummaries(ctx, result.Messages)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
 
 	hasMore := len(results) > limit
 	if hasMore {
@@ -1011,6 +1029,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 // staleness are all enforced by the shared searchMessageBodiesHybrid path,
 // which returns vector_not_enabled when vector search is not configured.
 func (h *handlers) semanticSearchMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	queryStr, _ := args[toolArgQuery].(string)
@@ -1180,6 +1199,10 @@ func (h *handlers) searchMessageBodiesHybrid(
 	if err != nil {
 		return nil, newInternalError("hydrate semantic-search results", err)
 	}
+	summaries, err = h.prepareVerificationSummaries(ctx, summaries)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
 	byID := make(map[int64]query.MessageSummary, len(summaries))
 	for _, s := range summaries {
 		byID[s.ID] = s
@@ -1301,6 +1324,10 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	if err != nil {
 		return nil, newInternalError("hydrate daemon semantic-search results", err)
 	}
+	summaries, err = h.prepareVerificationSummaries(ctx, summaries)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
 	byID := make(map[int64]query.MessageSummary, len(summaries))
 	for _, s := range summaries {
 		byID[s.ID] = s
@@ -1321,7 +1348,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 				SubjectBoosted: hit.SubjectBoosted,
 			}
 		}
-		if len(hit.Matches) > 0 {
+		if len(hit.Matches) > 0 && (msg.Verification == nil || !msg.Verification.Masked) {
 			item.Matches = make([]messageMatch, len(hit.Matches))
 			for i, match := range hit.Matches {
 				score := match.Score
@@ -1333,7 +1360,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 				}
 			}
 		}
-		item.MatchesTruncated = hit.MatchesTruncated
+		item.MatchesTruncated = hit.MatchesTruncated && (msg.Verification == nil || !msg.Verification.Masked)
 		items = append(items, item)
 	}
 
@@ -1362,6 +1389,7 @@ type similarMessagesResponse struct {
 // results. Structured filters (account, after, before, has_attachment)
 // are applied at the backend level.
 func (h *handlers) findSimilarMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	if h.similarSearcher != nil {
 		return h.findSimilarMessagesViaSearcher(ctx, req)
 	}
@@ -1422,6 +1450,10 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req toolRequest) (*t
 	summaries, err := h.engine.GetMessageSummariesByIDs(ctx, wantIDs)
 	if err != nil {
 		return nil, newInternalError("hydrate similar-message results", err)
+	}
+	summaries, err = h.prepareVerificationSummaries(ctx, summaries)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
 	}
 	byID := make(map[int64]query.MessageSummary, len(summaries))
 	for _, s := range summaries {
@@ -1498,6 +1530,11 @@ func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolR
 		result.SeedMessageID = seedID
 	}
 
+	protected, err := h.prepareVerificationSummaries(ctx, result.Messages)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	result.Messages = protected
 	return jsonResult(similarMessagesResponse{
 		SeedMessageID: result.SeedMessageID,
 		Returned:      len(result.Messages),
@@ -1635,6 +1672,8 @@ func lineNumberAt(body string, byteOffset int) int {
 }
 
 type getMessageResponse struct {
+	Verification         *verification.Metadata    `json:"verification,omitempty"`
+	SourceID             int64                     `json:"source_id,omitempty"`
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
 	SourceMessageID      string                    `json:"source_message_id"`
@@ -1667,6 +1706,7 @@ type getMessageResponse struct {
 }
 
 func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, "id")
@@ -1681,6 +1721,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	if msg == nil {
 		return toolErrorResult("message not found"), nil
 	}
+	msg = h.prepareVerificationDetail(msg)
 
 	maxChars := intArg(args, toolArgMaxChars, defaultBodyChars)
 	if maxChars <= 0 {
@@ -1733,6 +1774,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	}
 
 	return jsonResult(getMessageResponse{
+		Verification: msg.Verification, SourceID: msg.SourceID,
 		Calendar:             msg.Calendar,
 		WebURL:               msg.WebURL,
 		ID:                   msg.ID,
@@ -1777,7 +1819,10 @@ func (h *handlers) attachVectorChunkMatches(
 		return nil
 	}
 	for i := range items {
-		msg, err := h.engine.GetMessage(ctx, items[i].ID)
+		if items[i].Verification != nil && items[i].Verification.Masked {
+			continue
+		}
+		msg, err := h.canonicalVerification(ctx, items[i].ID)
 		if err != nil {
 			return newInternalError("load message for semantic match context", err)
 		}
@@ -1866,6 +1911,7 @@ func (h *handlers) vectorMatchesInMessage(
 }
 
 func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, "id")
@@ -1887,6 +1933,9 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 	case "", "keyword":
 		// default: literal term search
 	case searchModeVector:
+		if !h.delegatedOnly && !h.unmaskVerification {
+			return toolErrorResult("verification_masked: vector excerpts require --unmask-verification"), nil
+		}
 		return h.vectorMatchesInMessage(ctx, id, queryStr, floatArg(args, toolArgMinScore, 0), limit, offset)
 	default:
 		return toolErrorResult(
@@ -1901,6 +1950,7 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 	if msg == nil {
 		return toolErrorResult("message not found"), nil
 	}
+	msg = h.prepareVerificationDetail(msg)
 
 	allMatches := findTermMatches(msg.BodyText, queryStr)
 	total := int64(len(allMatches))
@@ -1923,7 +1973,17 @@ func findTermMatches(body, term string) []messageMatch {
 	}
 	lowerBody := strings.ToLower(body)
 	lowerTerm := strings.ToLower(term)
-	termLen := len(term)
+	// Unicode case conversion can change byte widths. Advance the original
+	// and normalized positions together so locations address the served body.
+	originalPos, normalizedPos := 0, 0
+	originalOffset := func(target int) int {
+		for normalizedPos < target {
+			r, size := utf8.DecodeRuneInString(body[originalPos:])
+			originalPos += size
+			normalizedPos += utf8.RuneLen(unicode.ToLower(r))
+		}
+		return originalPos
+	}
 	var matches []messageMatch
 	searchFrom := 0
 	for {
@@ -1933,9 +1993,15 @@ func findTermMatches(body, term string) []messageMatch {
 		}
 		pos := searchFrom + idx
 		searchFrom = pos + 1
-		start, end := contextWindow(len(body), pos, termLen, searchContextChars)
-		charOffset := pos
-		line := lineNumberAt(body, pos)
+		charOffset := originalOffset(pos)
+		termEnd, normalizedWidth := charOffset, 0
+		for normalizedWidth < len(lowerTerm) {
+			r, size := utf8.DecodeRuneInString(body[termEnd:])
+			termEnd += size
+			normalizedWidth += utf8.RuneLen(unicode.ToLower(r))
+		}
+		start, end := contextWindow(len(body), charOffset, termEnd-charOffset, searchContextChars)
+		line := lineNumberAt(body, charOffset)
 		matches = append(matches, messageMatch{
 			CharOffset: &charOffset,
 			Snippet:    bodyByteSlice(body, start, end),
@@ -1957,6 +2023,7 @@ var createAttachmentExportFile = func(path string, mode os.FileMode) (attachment
 }
 
 func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, toolArgAttachmentID)
@@ -1977,7 +2044,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 				return nil, err
 			}
 			snapshot := &downloadSnapshot{data: payload.data, attachment: payload}
-			if h.delegatedOnly {
+			{
 				snapshot.validate = func(ctx context.Context) error {
 					current, err := h.engine.GetAttachment(ctx, id)
 					if err != nil {
@@ -1986,7 +2053,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 					if current == nil || current.ContentHash != payload.metadata.ContentHash {
 						return errDownloadExpired
 					}
-					return nil
+					return h.protectVerificationAttachment(ctx, current)
 				}
 			}
 			return snapshot, nil
@@ -2006,7 +2073,10 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 		}
 		return nil, err
 	}
-	att := payload.metadata
+	att, err := h.prepareVerificationAttachment(ctx, payload.metadata)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
 	metaObj := getAttachmentResponse{
 		Docbank:  att.Docbank,
 		Filename: att.Filename,
@@ -2036,6 +2106,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 }
 
 func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, toolArgAttachmentID)
@@ -2050,7 +2121,10 @@ func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*tool
 		}
 		return nil, err
 	}
-	att := payload.metadata
+	att, err := h.prepareVerificationAttachment(ctx, payload.metadata)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
 	data := payload.data
 
 	// Determine destination directory.
@@ -2103,6 +2177,7 @@ func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*tool
 }
 
 func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	// Look up account filter
@@ -2153,6 +2228,10 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 		return nil, newInternalError("list messages", err)
 	}
 
+	results, err = h.prepareVerificationSummaries(ctx, results)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
 	pageLimit := listLimitArg(args)
 	offset := filter.Pagination.Offset
 	hasMore := len(results) > pageLimit
@@ -2208,6 +2287,9 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 }
 
 func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if !h.delegatedOnly && !h.unmaskVerification {
+		return toolErrorResult("verification_masked: content analytics require --unmask-verification"), nil
+	}
 	args := req.GetArguments()
 
 	groupBy, _ := args[toolArgGroupBy].(string)
@@ -2575,6 +2657,7 @@ func (h *handlers) saveDeletionManifest(ctx context.Context, manifest *deletion.
 }
 
 func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ctx = withVerificationCache(ctx)
 	args := req.GetArguments()
 
 	domainsStr, _ := args[toolArgDomains].(string)
@@ -2615,6 +2698,11 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return nil, newInternalError("search messages by domain", err)
 	}
 
+	protected, err := h.prepareVerificationSummaries(ctx, result.Messages)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	result.Messages = protected
 	return jsonResult(searchByDomainsResponse(newPaginatedResponseNoTotal(
 		result.Messages, offset, result.HasMore)))
 }

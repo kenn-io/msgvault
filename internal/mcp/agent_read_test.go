@@ -167,6 +167,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 		want       []string
 	}{
 		{"draft.create", nil},
+		{"verification.read", nil},
 		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
 		{"message.read", []string{ToolGetMessage, ToolListThread, ToolSearchInMessage}},
 		{"attachment.read", []string{ToolGetAttachment}},

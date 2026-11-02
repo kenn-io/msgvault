@@ -355,6 +355,26 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 					ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 				}
 				probing.Store(true)
+				if !delegated {
+					// Masked owner reads require the protection schema before
+					// the MCP transport can advertise any archive-read tools.
+					served := false
+					previousServe := serveMCPStdioWithOptions
+					serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
+					t.Cleanup(func() { serveMCPStdioWithOptions = previousServe })
+					cmd := &cobra.Command{Use: "mcp"}
+					cmd.SetContext(ctx)
+					err := mcpCmd.RunE(cmd, nil)
+					if version == "failed" {
+						require.ErrorContains(err, "check verification protection")
+						require.ErrorContains(err, "probe unavailable")
+					} else {
+						require.ErrorContains(err, "masked MCP reads require daemon API schema")
+					}
+					assert.False(served)
+					assert.Equal(int64(2), healthCalls.Load())
+					return
+				}
 				if delegated && version != "3.0.0" {
 					// Delegated sessions offer nothing but draft tools, so they fail instead of serving an empty list.
 					served := false
