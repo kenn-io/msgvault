@@ -197,11 +197,21 @@ test('pending decisions block Escape and global shortcuts, while failure retains
 });
 
 for (const profile of [
-  { id: 7, name: 'Synthetic One' },
-  { id: 9, name: 'Synthetic Two' }
+  { id: 7, name: 'Synthetic One', width: 390 },
+  { id: 9, name: 'Synthetic Two', width: 1440 }
 ]) {
-  test(`merge handoff inspects ${profile.name} separately without mutating`, async ({ page }) => {
+  test(`merge handoff inspects ${profile.name} separately without mutating`, async ({ page }, testInfo) => {
     const fixture = await installDirectoryReviewArchive(page);
+    await page.setViewportSize({ width: profile.width, height: 900 });
+    const reference = 'synthetic-provenance-reference-'.repeat(8);
+    await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
+      person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
+      names: [{ person_id: profile.id, name_kind: 'formatted', formatted: 'Earlier name', original_value: 'Earlier name', is_derived: false, envelope: {
+        id: 71, ordinal: 0, source: 'carddav_import', source_ref: reference, actor: 'synthetic-importer', confidence: 0.95,
+        active_from: '2026-01-01T00:00:00Z', active_until: '2026-06-01T00:00:00Z', superseded_at: '2026-06-02T00:00:00Z',
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-03T00:00:00Z', vcard: {},
+      } }], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: [],
+    } }));
     await page.goto(reviewURL());
     const merge = await openMergeModal(page);
 
@@ -212,6 +222,21 @@ for (const profile of [
     await expect(page.getByRole('heading', { name: profile.name })).toBeVisible();
     await page.getByRole('button', { name: 'More actions', exact: true }).click();
     await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+    const historyDialog = page.getByRole('dialog', { name: 'Profile history', exact: true });
+    await historyDialog.getByText('1 earlier value', { exact: true }).click();
+    const metadata = historyDialog.locator('.meta').filter({ hasText: reference });
+    await expect(metadata).toContainText('Valid from:');
+    await expect(metadata).toContainText('Valid until:');
+    await expect(metadata).toContainText('Superseded:');
+    await expect(metadata).toContainText('Updated:');
+    await expect.poll(() => metadata.evaluate(element => {
+      const row = element.closest('li')!;
+      const bounds = row.getBoundingClientRect();
+      const range = document.createRange(); range.selectNodeContents(element);
+      return [...range.getClientRects()].every(rect => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1);
+    })).toBe(true);
+    expect(await historyDialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`history-${profile.width}.png`), fullPage: true });
     await expect(page.getByText('No merges', { exact: true })).toBeVisible();
     await expect(page.getByRole('list', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);

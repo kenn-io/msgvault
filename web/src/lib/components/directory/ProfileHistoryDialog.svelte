@@ -180,7 +180,9 @@
     overflow-wrap: anywhere;
   }
   .meta {
-    flex: none;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
@@ -195,6 +197,8 @@
     font-size: var(--font-size-sm);
   }
   details li {
+    flex-direction: column;
+    gap: var(--space-1);
     color: var(--text-secondary);
   }
   .history-error {
