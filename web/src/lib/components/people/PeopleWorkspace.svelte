@@ -196,9 +196,9 @@
     await continueBulk();
   }
   async function retryLink(): Promise<void> {
-    if (!staleLink) return;
-    const result = await controller.linkParticipants(staleLink.a, staleLink.b);
-    if (result.ok && result.cacheState === 'ready') { staleLink = null; bulkMessage = 'Identity cache refreshed.'; }
+    if (!staleLink || bulkPending) return;
+    bulkIDs = [staleLink.a, staleLink.b]; bulkCompleted = 0;
+    await continueBulk();
   }
 </script>
 

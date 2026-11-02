@@ -438,3 +438,34 @@ it('ignores a completed saved profile lookup after an observed person supersedes
     expect(onNavigate.mock.calls).toEqual([[{ relationshipSaved: false }], [{ directoryPersonID: null, relationshipTarget: 'cluster:1', relationshipFiles: false }]]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
+
+it('blocks a second bulk link while an identity cache retry is in flight', async () => {
+  const pairs: unknown[] = [];
+  let resolveRetry: ((response: Response) => void) | undefined;
+  const client = clientFor({
+    '/api/v1/participants/search': () => Response.json({ rows: ['Alice Example', 'Bob Example'].map((display_label, index) => ({ id: index + 1, display_label, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] })), total_count: 2, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/identity/links': async request => {
+      pairs.push(await request.json());
+      if (pairs.length === 2) return new Promise<Response>(resolve => { resolveRetry = resolve; });
+      return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    },
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSort: 'name' });
+  const directory = new DirectoryController(client);
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    for (const name of ['Alice Example', 'Bob Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    const retry = await screen.findByRole('button', { name: 'Retry identity cache' });
+    for (const name of ['Alice Example', 'Bob Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(retry);
+    await waitFor(() => expect(pairs).toHaveLength(2));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    expect(pairs).toHaveLength(2);
+  } finally {
+    resolveRetry?.(Response.json({ identity_revision: 2, cache_state: 'ready' }));
+    view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
+  }
+});
