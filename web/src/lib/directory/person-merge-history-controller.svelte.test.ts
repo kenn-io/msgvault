@@ -220,7 +220,9 @@ describe('PersonMergeHistoryController', () => {
       if (postAttempts === 1) throw new TypeError('connection reset');
       return Response.json(splitResult());
     });
-    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('123-456-789-12');
+    const createRequestID = vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -230,6 +232,7 @@ describe('PersonMergeHistoryController', () => {
     await controller.submitSplit();
     await controller.submitSplit();
 
+    expect(createRequestID).toHaveBeenCalledOnce();
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
       '123-456-789-12',
