@@ -449,11 +449,12 @@ LodgingReservation, or EventReservation records. It makes no provider requests
 and stores no extracted data. Malformed or oversized HTML returns an empty
 record list. Field `typed` trust means syntax was validated; records remain
 sender claims. `markup_only` flags values without corroborating plain or HTML
-text outside scripts and styles. Field origin is `unknown` and `sender_auth`
-is null until evidence is available. Text and URLs remain untrusted; URLs are
-never fetched. Detected verification messages return kind `verification` and
-an empty record list; credential values are never extracted. Delegated callers
-need `message.read` for the message source.
+text outside scripts and styles. Field origin is `unknown`. `sender_auth`
+passes through the backend's advisory verdict, or is null when the backend
+omits it. A verified sender domain does not verify record claims. Text and URLs
+remain untrusted; URLs are never fetched. Detected verification messages return
+kind `verification` and an empty record list; credential values are never
+extracted. Delegated callers need `message.read` for the message source.
 
 When deterministic parsing finds no kind, a local `auto` label can fill it in
 with `kind_source=decision_model` and `kind_trust=model_judgment`. User or
