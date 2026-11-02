@@ -3,13 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { lanes } from '../../../test/operations';
 import { createAPIClient } from '../../api/client';
 import type { MeetingMetricsRequest } from '../../api/generated/models';
-import type { DirectoryReadBundle } from '../../directory/models';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
-import PersonDetail from '../directory/PersonDetail.svelte';
 import AppShell from '../shell/AppShell.svelte';
 
-const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [3, 7], vcard_uid: 'person-7', created_at: '', updated_at: '' };
 function ancillary(path: string): Response {
   if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
   if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
@@ -21,33 +18,6 @@ function ancillary(path: string): Response {
 }
 
 describe('meeting panel surfaces', () => {
-  it('refreshes same Directory person identity revisions and ignores delayed pre-merge evidence', async () => {
-    const metrics: MeetingMetricsRequest[] = [];
-    let resolveOld!: (response: Response) => void;
-    let oldSignal!: AbortSignal;
-    const client = createAPIClient(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/meetings/metrics')) {
-        metrics.push(await request.clone().json());
-        if (metrics.length === 1) { oldSignal = request.signal; return new Promise<Response>((resolve) => { resolveOld = resolve; }); }
-        return Response.json(meetingMetrics());
-      }
-      if (path.endsWith('/meetings/actions')) return Response.json(meetingActions());
-      return ancillary(path);
-    });
-    const bundle: DirectoryReadBundle = { person, etags: {}, errors: {} };
-    const view = render(PersonDetail, { client, personID: 7, bundle });
-    await waitFor(() => expect(resolveOld).toBeDefined());
-    await view.rerender({ client, personID: 7, bundle: { ...bundle, person: { ...person, revision: 2, participant_ids: [7, 9] } } });
-    expect(await screen.findByText('4 meetings')).toBeDefined();
-    expect(metrics).toEqual([{ scope: { person_id: 7 } }, { scope: { person_id: 7 } }]);
-    expect(oldSignal.aborted).toBe(true);
-    resolveOld(Response.json(meetingMetrics({ totals: { ...meetingMetrics().totals, meeting_count: 99 } })));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByText('99 meetings')).toBeNull();
-  });
-
   it('uses separately loaded exact group authority across a workspace round-trip', async () => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];

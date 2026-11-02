@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -31,10 +32,6 @@ function deferredResponse() {
     resolve = settle;
   });
   return { promise, resolve };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 describe('RelationshipReviewQueue', () => {

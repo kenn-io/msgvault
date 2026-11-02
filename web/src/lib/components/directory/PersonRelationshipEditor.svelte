@@ -356,7 +356,7 @@
   .editor {
     display: grid;
     gap: var(--space-3);
-    min-width: min(30rem, 80vw);
+    min-width: 0;
   }
   label {
     display: grid;
