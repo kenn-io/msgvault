@@ -119,7 +119,7 @@
     onNavigate({ directoryPersonID: key.startsWith('person:') ? Number(key.slice(7)) : null, relationshipTarget: key.startsWith('person:') ? null : key, relationshipFiles: false });
   }
   function escape(event: KeyboardEvent): void {
-    if (event.key !== 'Escape' || !hasPerson || appShortcuts.activeScope() !== ROOT_SCOPE) return;
+    if (event.key !== 'Escape' || !hasPerson || urlState.peopleDuplicates || appShortcuts.activeScope() !== ROOT_SCOPE) return;
     if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]') || document.querySelector('.kit-popover-card')) return;
     close();
     event.preventDefault();
