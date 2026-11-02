@@ -10,7 +10,8 @@ const idleStatus = {
   credential_configured: true,
   enabled: false,
   scheduled: false,
-  schedule: ''
+  schedule: '',
+  scheduler_running: false
 };
 
 function run(id: number, state: 'running' | 'succeeded' = 'running', updated = 0) {
