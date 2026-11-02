@@ -139,7 +139,9 @@
       <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
       <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />
     {:else if controller}<AttributeSection {controller} />{/if}
-    <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
+    {#if history}
+      <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
+    {/if}
   </div>
   {#snippet footer()}
     <Button label="Close" onclick={onClose} />
@@ -180,7 +182,9 @@
     overflow-wrap: anywhere;
   }
   .meta {
-    flex: none;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
@@ -195,6 +199,8 @@
     font-size: var(--font-size-sm);
   }
   details li {
+    flex-direction: column;
+    gap: var(--space-1);
     color: var(--text-secondary);
   }
   .history-error {

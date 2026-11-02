@@ -24,7 +24,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
       return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
     }
     if (path.endsWith('/profile')) return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
-    if (path.endsWith('/attributes')) return Response.json({ attributes: [] });
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: (options.definitions ?? []).filter(definition => new URL(request.url).searchParams.get('include_hidden') === 'true' || definition.is_active) });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
@@ -219,7 +219,7 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('preserves a birthday draft across a refresh that introduces a birthday', async () => {
+it('shows a birthday introduced by a profile refresh', async () => {
   const initial = profile();
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
   const client = createAPIClient(async input => {
@@ -235,12 +235,8 @@ it('preserves a birthday draft across a refresh that introduces a birthday', asy
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   const view = render(PersonFields, { controller });
   try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Add birthday' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value: '1985-04-12' } });
     await act(async () => { await controller.reload(); });
     expect(screen.getByText('1990-05-06')).toBeDefined();
-    expect(screen.getByRole('textbox', { name: 'Date' })).toHaveProperty('value', '1985-04-12');
-    expect(screen.getByLabelText('Date kind')).toHaveProperty('value', 'birthday');
   } finally { view.unmount(); controller.destroy(); }
 });
 

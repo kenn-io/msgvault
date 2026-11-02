@@ -3,10 +3,10 @@ import { expect, it } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
-it.each(['edit', 'conflict recovery', 'reactivate', 'delete'])('retains catalog %s', async operation => {
+it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async operation => {
   let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];
-  const definition = { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: operation !== 'reactivate' && operation !== 'conflict recovery', is_sensitive: false, revision: 1, is_deletable: true };
+  const definition = { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: operation !== 'conflict recovery', is_sensitive: false, revision: 1, is_deletable: true };
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
@@ -43,6 +43,7 @@ it.each(['edit', 'conflict recovery', 'reactivate', 'delete'])('retains catalog 
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
     if (operation === 'conflict recovery') {
+      await expect(writes[0]!.clone().json()).resolves.toMatchObject({ is_active: true });
       await screen.findByText('Field changed elsewhere');
       await fireEvent.click(screen.getByRole('button', { name: 'Reload field' }));
       await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Concurrent color'));
@@ -52,8 +53,8 @@ it.each(['edit', 'conflict recovery', 'reactivate', 'delete'])('retains catalog 
       expect(writes[1]!.headers.get('If-Match')).toBe('"attribute-definition-41-r3"');
       await expect(writes[1]!.clone().json()).resolves.toMatchObject({ is_active: true });
     } else {
-      await screen.findByRole('button', { name: operation === 'edit' ? 'Edit Preferred color' : 'Edit Favorite color' });
-      await expect(writes[0]!.clone().json()).resolves.toMatchObject(operation === 'edit' ? { label: 'Preferred color' } : { is_active: true });
+      await screen.findByRole('button', { name: 'Edit Preferred color' });
+      await expect(writes[0]!.clone().json()).resolves.toMatchObject({ label: 'Preferred color' });
     }
   } finally { catalog.unmount(); }
 });
