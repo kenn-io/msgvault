@@ -853,6 +853,8 @@ jobs:
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
+      - *stable-mtimes
+
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
       # and fail here. pgvector is covered by the dedicated test-pgvector job
@@ -863,8 +865,6 @@ jobs:
       # on a contended runner. Leave time for stack output inside the job cap.
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
-      - *stable-mtimes
-
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
