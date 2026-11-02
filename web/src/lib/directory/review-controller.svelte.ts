@@ -462,7 +462,7 @@ export class DirectoryReviewController {
     this.error = null;
     this.pageError = null;
     this.decisionError = null;
-    this.status = null;
+    this.status = this.lastMerge = null;
     this.retryOffset = undefined;
   }
 }

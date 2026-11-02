@@ -53,7 +53,7 @@
 
   $effect(() => {
     const id = controller.lastMerge?.candidateID;
-    if (id && !history && !controller.loading && controller.rows.some(row => row.id === id)) {
+    if (id && !controller.loading && controller.rows.some(row => row.id === id)) {
       void tick().then(() => document.getElementById(`duplicate-${id}`)?.querySelector<HTMLButtonElement>('.footer button:last-child')?.focus());
     }
   });
