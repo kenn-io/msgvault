@@ -21,3 +21,10 @@ func TestFacebookCommentsSchedulerAndCLIBoundaries(t *testing.T) {
 	_, ok = SchedulerJobNameForSource("facebook_comments", "example-page")
 	assert.False(ok, "unscoped display labels cannot select a Page scheduler job")
 }
+
+func TestMetaWebhookCommandsAllowedForOwnerOnly(t *testing.T) {
+	for _, command := range []string{"subscribe-meta-webhooks", "meta-webhooks-status", "replay-meta-webhooks"} {
+		assert.True(t, cliRunCommandAllowed([]string{command}))
+		assert.False(t, delegatedCLIRunAdmitted([]string{command}, &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}))
+	}
+}

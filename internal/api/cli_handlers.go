@@ -1766,6 +1766,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-circleback",
 		"add-chatwoot",
 		"add-facebook-comments", "add-instagram-comments",
+		"subscribe-meta-webhooks", "meta-webhooks-status", "replay-meta-webhooks",
 		"add-plaud",
 		"add-twenty",
 		"add-pocket",
