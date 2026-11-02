@@ -246,7 +246,7 @@ func (s *Spool) Drain(ctx context.Context, handle HandlerFunc) (applied int, err
 	}
 	for _, d := range due {
 		if ctx.Err() != nil {
-			return applied, nil
+			break
 		}
 		outcome, processErr := handle(ctx, d.App, d.Body)
 		if processErr != nil {

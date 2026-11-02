@@ -42,19 +42,19 @@ func newTikTokMessagesCmd() *cobra.Command {
 		}
 		return nil
 	}
-	for _, operation := range []string{"add", "sync", "status", "replay"} {
+	for _, operation := range []string{tikTokAddCommandName, "sync", statusValue, "replay"} {
 		group.AddCommand(newTikTokMessagesAction(operation))
 	}
 	return group
 }
 func newTikTokMessagesAction(operation string) *cobra.Command {
 	var asJSON bool
-	command := &cobra.Command{Use: operation + " [identifier]", Short: map[string]string{"add": "Register and backfill a configured messaging account", "sync": "Read the limited recent message window", "status": "Show receiver state and durable delivery counts", "replay": "Retry held and failed deliveries for the selected app"}[operation], Args: func(cmd *cobra.Command, args []string) error {
+	command := &cobra.Command{Use: operation + " [identifier]", Short: map[string]string{tikTokAddCommandName: "Register and backfill a configured messaging account", "sync": "Read the limited recent message window", statusValue: "Show receiver state and durable delivery counts", "replay": "Retry held and failed deliveries for the selected app"}[operation], Args: func(cmd *cobra.Command, args []string) error {
 		return tikTokCommandError(cmd, cobra.MaximumNArgs(1)(cmd, args))
 	}}
 	command.SetFlagErrorFunc(tikTokCommandError)
 	command.Flags().BoolVar(&asJSON, "json", false, "print JSON results; errors use JSON on stderr")
-	if operation == "add" || operation == "sync" {
+	if operation == tikTokAddCommandName || operation == "sync" {
 		addManualSyncCacheFlags(command)
 	}
 	command.RunE = func(cmd *cobra.Command, args []string) (retErr error) {
@@ -66,7 +66,7 @@ func newTikTokMessagesAction(operation string) *cobra.Command {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		if operation == "status" || operation == "replay" {
+		if operation == statusValue || operation == "replay" {
 			return runTikTokDeliveryControl(cmd, state.cfg, args, operation, asJSON)
 		}
 		profiles, err := selectedTikTokMessageProfiles(state.cfg, args)
@@ -88,7 +88,7 @@ func newTikTokMessagesAction(operation string) *cobra.Command {
 				errs = append(errs, ctx.Err())
 				break
 			}
-			result, err := runTikTokMessageProfile(ctx, st, state.cfg, profile, operation == "add")
+			result, err := runTikTokMessageProfile(ctx, st, state.cfg, profile, operation == tikTokAddCommandName)
 			results = append(results, result)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("TikTok profile %s: %w", profile.Identifier, err))
@@ -100,7 +100,7 @@ func newTikTokMessagesAction(operation string) *cobra.Command {
 				}
 			}
 		}
-		if operation == "add" {
+		if operation == tikTokAddCommandName {
 			errs = append(errs, runPostSourceCreateMigrationsForInvocation(st, state))
 		}
 		if writes {
@@ -186,7 +186,10 @@ func runTikTokDeliveryControl(cmd *cobra.Command, cfg *config.Config, args []str
 			return json.MarshalWrite(cmd.OutOrStdout(), map[string]int{"requeued": count})
 		}
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Requeued %d TikTok deliveries. The running receiver processes them on its next drain.\n", count)
-		return err
+		if err != nil {
+			return fmt.Errorf("write TikTok replay status: %w", err)
+		}
+		return nil
 	}
 	result := struct {
 		Receiver        tikTokReceiverSnapshot `json:"receiver"`
@@ -197,14 +200,17 @@ func runTikTokDeliveryControl(cmd *cobra.Command, cfg *config.Config, args []str
 		return json.MarshalWrite(cmd.OutOrStdout(), result)
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "TikTok receiver: %s %s\nPending: %d; held: %d; failed: %d; done: %d; unsupported EU: %d\nOnly messages captured after connection can be complete; pull history is limited.\n", snapshot.Listener, snapshot.Reason, status.Pending, status.Held, status.Failed, status.Done, status.UnsupportedEU)
-	return err
+	if err != nil {
+		return fmt.Errorf("write TikTok delivery status: %w", err)
+	}
+	return nil
 }
 
 func registerTikTokMessageJobs(sched *scheduler.Scheduler, state *invocation, st *store.Store, maintenance *attachmentMaintenance) {
 	for _, profile := range state.cfg.ScheduledTikTokMessageSources() {
 		job, _ := api.SchedulerJobNameForSource(tiktok.MessagesSourceType, tiktok.SourceIdentifier(profile.AppID, profile.AccountID))
 		err := sched.AddJob(scheduler.Job{Name: job, Schedule: profile.Schedule, Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-			return runScheduledSource(ctx, maintenance, false, func(ctx context.Context) error {
+			return runScheduledSource(ctx, maintenance, true, func(ctx context.Context) error {
 				result, err := runTikTokMessageProfile(ctx, st, state.cfg, profile, false)
 				if result.Summary != nil {
 					err = errors.Join(err, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), job))
@@ -220,12 +226,12 @@ func registerTikTokMessageJobs(sched *scheduler.Scheduler, state *invocation, st
 
 func init() {
 	for _, source := range rootCmd.Commands() {
-		if source.Name() == "source" {
+		if source.Name() == tikTokSourceCommandName {
 			source.AddCommand(newTikTokMessagesCmd())
 			return
 		}
 	}
-	group := &cobra.Command{Use: "source", Short: "Add and sync provider sources"}
+	group := &cobra.Command{Use: tikTokSourceCommandName, Short: "Add and sync provider sources"}
 	group.AddCommand(newTikTokMessagesCmd())
 	rootCmd.AddCommand(group)
 }

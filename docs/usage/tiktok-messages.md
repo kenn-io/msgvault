@@ -95,6 +95,10 @@ selected profile, not the app's full permission grant or review status.
    msgvault source tiktok-messages status example-account
    ```
 
+Keep the daemon running as a persistent service for webhook capture. A daemon
+started automatically for a CLI command can stop when idle, which also stops
+the receiver. The HTTPS proxy does not start msgvault for incoming deliveries.
+
 TikTok configures one callback per event category per app; that callback can
 receive events for every account authorized to the app. msgvault routes on the
 app and the event's `user_openid`. An account needs an enabled profile with

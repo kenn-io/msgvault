@@ -12,7 +12,7 @@ import (
 
 func VerifySignature(secret []byte, header string, body []byte, now time.Time) bool {
 	var timestamp, signature string
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
 			return false

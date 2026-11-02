@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/tiktokwebhook"
 )
@@ -118,4 +121,55 @@ func TestTikTokRuntimeRecoversSpoolAndStops(t *testing.T) {
 	}
 	requirements.NoError(json.Unmarshal(statusOutput.Bytes(), &status))
 	assertions.Equal("disabled", status.Receiver.Listener)
+}
+
+func TestTikTokDeliveryCoordinatesArchiveAndAttachmentMaintenance(t *testing.T) {
+	for _, held := range []string{"archive gate", "attachment maintenance"} {
+		t.Run(held, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			gate := api.NewSerialOperationGate()
+			maintenance := &attachmentMaintenance{coordinator: packstore.NewCoordinator()}
+			var release func()
+			if held == "archive gate" {
+				done, ok := gate.BeginWorkContext(t.Context())
+				requirements.True(ok)
+				release = done
+			} else {
+				lease, err := maintenance.coordinator.AcquireMaintenance(t.Context())
+				requirements.NoError(err)
+				release = func() { assertions.NoError(lease.Release()) }
+			}
+			releaseOnce := sync.OnceFunc(release)
+			t.Cleanup(releaseOnce)
+			calls := 0
+			handle := coordinateTikTokDeliveries(gate, maintenance, func(context.Context, string, []byte) (tiktokwebhook.Outcome, error) {
+				calls++
+				return tiktokwebhook.Outcome{Class: "applied"}, nil
+			})
+			// Cancellation bounds the wait for an occupied real gate or lease.
+			// Ingest must not begin while either maintenance boundary is held.
+			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+			defer cancel()
+			_, err := handle(ctx, "app-example", []byte("synthetic delivery"))
+			requirements.ErrorIs(err, context.DeadlineExceeded)
+			assertions.Zero(calls)
+			releaseOnce()
+			outcome, err := handle(t.Context(), "app-example", []byte("synthetic delivery"))
+			requirements.NoError(err)
+			assertions.Equal("applied", outcome.Class)
+			assertions.Equal(1, calls)
+		})
+	}
+}
+
+func TestTikTokAttachmentWritingCommands(t *testing.T) {
+	assertions := assert.New(t)
+	for _, operation := range []string{"add", "sync"} {
+		assertions.True(attachmentProducingCommand([]string{"source", "tiktok-messages", operation, "example"}))
+	}
+	for _, operation := range []string{"status", "replay"} {
+		assertions.False(attachmentProducingCommand([]string{"source", "tiktok-messages", operation, "example"}))
+	}
+	assertions.False(attachmentProducingCommand([]string{"source", "tiktok-comments", "sync", "example"}))
 }

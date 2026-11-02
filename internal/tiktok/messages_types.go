@@ -55,7 +55,28 @@ type BusinessMessage struct {
 	SharePost        *SharedPost               `json:"share_post,omitempty"`
 	Template         jsontext.Value            `json:"template,omitempty"`
 	Reference        *MessageReference         `json:"referenced_message_info,omitempty"`
-	Extra            map[string]jsontext.Value `json:",unknown"`
+	Extra            map[string]jsontext.Value `json:",embed"`
+	raw              jsontext.Value
+}
+
+// UnmarshalJSON keeps the native payload, including unknown nested fields, for
+// archival storage alongside the typed projection used for import.
+func (m *BusinessMessage) UnmarshalJSON(data []byte) error {
+	type plain BusinessMessage
+	var value plain
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*m = BusinessMessage(value)
+	m.raw = append(jsontext.Value(nil), data...)
+	return nil
+}
+
+func (m BusinessMessage) rawData() ([]byte, error) {
+	if len(m.raw) > 0 {
+		return m.raw, nil
+	}
+	return json.Marshal(m)
 }
 
 func (m BusinessMessage) Kind() string {

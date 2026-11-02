@@ -1069,7 +1069,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	} else {
 		listenerReserved = false
 		analyticsServerStarted = true
-		tikTokWebhooks, err = startTikTokWebhooks(ctx, cfg, s, idleTracker)
+		tikTokWebhooks, err = startTikTokWebhooks(ctx, cfg, s, idleTracker, operationGate, attachmentMaint)
 		if err != nil {
 			serverStartupErr = fmt.Errorf("start TikTok webhooks: %w", err)
 			cancel()

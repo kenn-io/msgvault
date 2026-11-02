@@ -16,6 +16,11 @@ import (
 	"go.kenn.io/msgvault/internal/tiktok"
 )
 
+const (
+	tikTokSourceCommandName = "source"
+	tikTokAddCommandName    = "add"
+)
+
 func configuredTikTokClient(cfg *config.Config, profile config.TikTokSource) (*tiktok.Client, error) {
 	token := os.Getenv(profile.TokenEnv)
 	if token == "" {
@@ -85,7 +90,7 @@ func newTikTokCommentsCmd() *cobra.Command {
 		}
 		return nil
 	}
-	for _, operation := range []string{"add", "sync"} {
+	for _, operation := range []string{tikTokAddCommandName, "sync"} {
 		group.AddCommand(newTikTokCommentsAction(operation))
 	}
 	return group
@@ -151,7 +156,7 @@ func newTikTokCommentsAction(operation string) *cobra.Command {
 			}
 			imp := tiktok.NewImporter(st, client)
 			result := tikTokResult{Profile: profile.Identifier}
-			if operation == "add" {
+			if operation == tikTokAddCommandName {
 				source, addErr := imp.Register(ctx, profile.AppID, profile.AccountID)
 				err = addErr
 				if source != nil {
@@ -166,7 +171,7 @@ func newTikTokCommentsAction(operation string) *cobra.Command {
 			}
 			results = append(results, result)
 			if !asJSON {
-				if operation == "add" && err == nil {
+				if operation == tikTokAddCommandName && err == nil {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered TikTok %s (source %d)\n", profile.Identifier, result.SourceID)
 				}
 				if sum := result.Summary; sum != nil {
@@ -174,7 +179,7 @@ func newTikTokCommentsAction(operation string) *cobra.Command {
 				}
 			}
 		}
-		if operation == "add" {
+		if operation == tikTokAddCommandName {
 			errs = append(errs, runPostSourceCreateMigrationsForInvocation(ctx, st, state))
 		} else {
 			errs = append(errs, rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state))
@@ -218,13 +223,13 @@ func registerTikTokCommentJobs(sched *scheduler.Scheduler, state *invocation, st
 func init() {
 	var source *cobra.Command
 	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "source" {
+		if cmd.Name() == tikTokSourceCommandName {
 			source = cmd
 			break
 		}
 	}
 	if source == nil {
-		source = &cobra.Command{Use: "source", Short: "Add and sync provider sources"}
+		source = &cobra.Command{Use: tikTokSourceCommandName, Short: "Add and sync provider sources"}
 		rootCmd.AddCommand(source)
 	}
 	source.AddCommand(newTikTokCommentsCmd())

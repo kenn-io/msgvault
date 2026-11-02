@@ -90,7 +90,11 @@ func (imp *MessageImporter) run(ctx context.Context, app, account, syncType stri
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, "")
 		}
 	}()
-	retErr = fn(&messageRun{imp: &scoped, source: source, app: app, account: account, sum: sum})
+	run := &messageRun{imp: &scoped, source: source, app: app, account: account, sum: sum}
+	retErr = fn(run)
+	if ctx.Err() == nil {
+		retErr = errors.Join(retErr, run.resolveReplies(ctx))
+	}
 	return sum, retErr
 }
 
@@ -147,7 +151,10 @@ func (imp *MessageImporter) Import(ctx context.Context, app, account string) (*I
 				// both are present in the provider's 20-message projection.
 				slices.SortStableFunc(page.Messages, func(a, b BusinessMessage) int { return cmp.Compare(a.Timestamp, b.Timestamp) })
 				for _, message := range page.Messages {
-					if err = r.persist(ctx, message, ""); err != nil {
+					if writeErr := r.persist(ctx, message, ""); writeErr != nil {
+						errs = append(errs, writeErr)
+					}
+					if ctx.Err() != nil {
 						break
 					}
 				}
@@ -179,7 +186,34 @@ type messageMetadata struct {
 	Message      ID     `json:"message_id"`
 	Type         string `json:"type"`
 	Event        string `json:"event,omitempty"`
-	ReplyTo      ID     `json:"reply_to,omitempty"`
+	ReplyTo      ID     `json:"referenced_message_id,omitempty"`
+}
+
+// Resolve persisted native references after each batch or event. Metadata
+// survives restarts and covers parents delivered after their replies.
+func (r *messageRun) resolveReplies(ctx context.Context) error {
+	var after int64
+	for {
+		rows, err := r.imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, r.source.ID, MessagesSourceType, after, 100)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			var metadata messageMetadata
+			if err := json.Unmarshal([]byte(row.Metadata), &metadata); err != nil {
+				return errors.New("invalid TikTok reply metadata")
+			}
+			if metadata.ReplyTo != "" {
+				if err := r.imp.store.SetReplyToContext(ctx, r.source.ID, row.SourceMessageID, messageKey(metadata.Conversation, metadata.ReplyTo)); err != nil {
+					return err
+				}
+			}
+			after = row.MessageID
+		}
+		if len(rows) < 100 {
+			return nil
+		}
+	}
 }
 
 func messageKey(conversation, message ID) string {
@@ -201,14 +235,15 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 		to = &MessageActor{}
 	}
 	// Native event direction is stronger than absent participant projections.
-	if event == "im_send_msg" {
+	switch event {
+	case "im_send_msg":
 		if from.ID != "" && string(from.ID) != r.account {
 			return errors.New("TikTok outbound account mismatch")
 		}
 		copyFrom := *from
 		copyFrom.ID = ID(r.account)
 		from = &copyFrom
-	} else if event == "im_receive_msg" {
+	case "im_receive_msg":
 		if to.ID != "" && string(to.ID) != r.account {
 			return errors.New("TikTok inbound account mismatch")
 		}
@@ -286,7 +321,7 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(m)
+	raw, err := m.rawData()
 	if err != nil {
 		return err
 	}
@@ -356,7 +391,12 @@ func (r *messageRun) attach(ctx context.Context, messageID int64, message Busine
 }
 
 func durableMedia(path string) error {
-	f, err := os.Open(path)
+	flags := os.O_RDONLY
+	if runtime.GOOS == "windows" {
+		// FlushFileBuffers requires write access on Windows.
+		flags = os.O_RDWR
+	}
+	f, err := os.OpenFile(path, flags, 0)
 	if err != nil {
 		return err
 	}

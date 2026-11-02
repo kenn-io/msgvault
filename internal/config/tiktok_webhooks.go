@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -39,13 +40,13 @@ func (c TikTokWebhooksConfig) Effective() (body, spool int64, retention time.Dur
 func (c TikTokWebhooksConfig) Validate() error {
 	body, spool, retention := c.Effective()
 	if body <= 0 || body > 8<<20 {
-		return fmt.Errorf("tiktok_webhooks.max_body_bytes must be between 1 and 8388608")
+		return errors.New("tiktok_webhooks.max_body_bytes must be between 1 and 8388608")
 	}
 	if spool < 2*body+4096 {
-		return fmt.Errorf("tiktok_webhooks.max_spool_bytes must be at least twice the body limit plus 4096")
+		return errors.New("tiktok_webhooks.max_spool_bytes must be at least twice the body limit plus 4096")
 	}
 	if retention <= 0 {
-		return fmt.Errorf("tiktok_webhooks.done_retention must be a positive duration")
+		return errors.New("tiktok_webhooks.done_retention must be a positive duration")
 	}
 	if c.ListenAddr == "" && len(c.Apps) == 0 {
 		return nil
@@ -53,10 +54,10 @@ func (c TikTokWebhooksConfig) Validate() error {
 	_, port, err := net.SplitHostPort(c.ListenAddr)
 	n, portErr := strconv.Atoi(port)
 	if err != nil || portErr != nil || n < 1 || n > 65535 {
-		return fmt.Errorf("tiktok_webhooks.listen_addr must be host:port with port 1 through 65535")
+		return errors.New("tiktok_webhooks.listen_addr must be host:port with port 1 through 65535")
 	}
 	if len(c.Apps) == 0 {
-		return fmt.Errorf("tiktok_webhooks.apps is required with listen_addr")
+		return errors.New("tiktok_webhooks.apps is required with listen_addr")
 	}
 	seen := map[string]bool{}
 	for i, app := range c.Apps {

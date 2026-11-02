@@ -1,7 +1,9 @@
 package tiktok
 
 import (
+	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -57,7 +59,7 @@ func TestMessagingArchivesMediaEchoesAndSharedCommenterIdentity(t *testing.T) {
 		case "/business/message/media/download/":
 			var body map[string]string
 			if !assertions.NoError(json.UnmarshalRead(r.Body, &body)) {
-				http.Error(w, "invalid fixture", 400)
+				http.Error(w, "invalid fixture", http.StatusBadRequest)
 				return
 			}
 			assertions.Equal("VIDEO", body["media_type"])
@@ -184,11 +186,17 @@ func TestMediaURLsDoNotForwardCredentialsOutsideProvider(t *testing.T) {
 	requirements := require.New(t)
 	c, err := NewClient("fixture-access-token")
 	requirements.NoError(err)
+	calls := 0
+	c.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) {
+		calls++
+		return nil, errors.New("unexpected fixture dispatch")
+	})
 	credentialed := &url.URL{Scheme: "https", Host: "media.tiktokcdn.com", Path: "/image", User: url.UserPassword("example-user", "example-password")}
 	for _, target := range []string{"https://example.com/image", "http://media.tiktokcdn.com/image", "https://media.tiktokcdn.com.example.com/image", credentialed.String(), "https://127.0.0.1/image"} {
 		_, err := c.OpenMessageMedia(t.Context(), "account-example", BusinessMessage{Type: "sticker", Sticker: &MessageURL{URL: target}}, 1024)
 		requirements.Error(err)
 	}
+	assert.Zero(t, calls, "rejected URLs must never reach the transport")
 }
 
 func TestMessagesRejectOversizedHistoryPage(t *testing.T) {
@@ -199,4 +207,103 @@ func TestMessagesRejectOversizedHistoryPage(t *testing.T) {
 	})
 	_, err := c.Messages(t.Context(), "account-example", "conversation+example/")
 	requirements.ErrorContains(err, "20-message")
+}
+
+func TestMessagingBackfillContinuesAfterMediaFailure(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/business/get/":
+			_, _ = fmt.Fprint(w, `{"code":0,"data":{"username":"example-account"}}`)
+		case "/business/message/conversation/list/":
+			if r.URL.Query().Get("conversation_type") == "SINGLE" {
+				_, _ = fmt.Fprint(w, `{"code":0,"data":{"conversations":[{"conversation_id":"conversation-example"}]}}`)
+			} else {
+				_, _ = fmt.Fprint(w, `{"code":0,"data":{"conversations":[]}}`)
+			}
+		case "/business/message/content/list/":
+			_, _ = fmt.Fprint(w, `{"code":0,"data":{"messages":[{"message_id":"media-message","timestamp":1700000000001,"message_type":"IMAGE","image":{"media_id":"media-example"}},{"message_id":"text-message","timestamp":1700000000002,"message_type":"TEXT","text":{"body":"Example follow-up"}}]}}`)
+		case "/business/message/media/download/":
+			_, _ = fmt.Fprint(w, `{"code":40105,"message":"unavailable fixture media"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	imp := NewMessageImporter(st, c, MessageImportOptions{AttachmentsDir: t.TempDir()})
+	source, err := imp.Register(t.Context(), "app-example", "account-example")
+	requirements.NoError(err)
+	sum, err := imp.Import(t.Context(), "app-example", "account-example")
+	requirements.Error(err)
+	assertions.True(sum.Partial)
+	rows, err := st.StoredMessagesContext(t.Context(), source.ID, messageFormat, []string{messageKey("conversation-example", "media-message"), messageKey("conversation-example", "text-message")})
+	requirements.NoError(err)
+	requirements.Len(rows, 2)
+	assertions.Equal("Example follow-up", rows[messageKey("conversation-example", "text-message")].Snippet.String)
+}
+
+func TestMessageRawPreservesNestedProviderFields(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	c := fixtureClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"code":0,"data":{"username":"example-account"}}`)
+	})
+	imp := NewMessageImporter(st, c, MessageImportOptions{AttachmentsDir: t.TempDir()})
+	source, err := imp.Register(t.Context(), "app-example", "account-example")
+	requirements.NoError(err)
+	body := []byte(`{"message_id":9007199254740999,"conversation_id":"conversation-example","timestamp":1700000000001,"type":"text","text":{"body":"Example","provider_extension":9007199254740997},"reaction":[{"emoji":"example"}]}`)
+	var message BusinessMessage
+	requirements.NoError(json.Unmarshal(body, &message))
+	_, err = imp.Apply(t.Context(), "app-example", MessageEvent{ClientKey: "app-example", Event: "im_receive_msg", Account: "account-example"}, message)
+	requirements.NoError(err)
+	rows, err := st.StoredMessagesContext(t.Context(), source.ID, messageFormat, []string{messageKey(message.ConversationID, message.ID)})
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	data, err := st.GetMessageRawContext(t.Context(), rows[messageKey(message.ConversationID, message.ID)].ID)
+	requirements.NoError(err)
+	assert.Equal(t, body, data)
+}
+
+func TestMessageRepliesResolveAfterParentArrives(t *testing.T) {
+	for _, mode := range []string{"webhook", "pull"} {
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			child := BusinessMessage{ID: "reply-example", ConversationID: "conversation-example", Timestamp: 1700000000001, Type: "text", Text: &MessageText{Body: "Example reply"}, Reference: &MessageReference{ID: "parent-example"}}
+			parent := BusinessMessage{ID: "parent-example", ConversationID: child.ConversationID, Timestamp: child.Timestamp, Type: "text", Text: &MessageText{Body: "Example parent"}}
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/business/get/":
+					_, _ = fmt.Fprint(w, `{"code":0,"data":{"username":"example"}}`)
+				case "/business/message/conversation/list/":
+					_, _ = fmt.Fprint(w, `{"code":0,"data":{"conversations":[{"conversation_id":"conversation-example"}]}}`)
+				case "/business/message/content/list/":
+					assertions.NoError(json.MarshalWrite(w, map[string]any{"code": 0, "data": MessagePage{Messages: []BusinessMessage{child, parent}}}))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			imp := NewMessageImporter(st, c, MessageImportOptions{AttachmentsDir: t.TempDir()})
+			source, err := imp.Register(t.Context(), "app-example", "account-example")
+			requirements.NoError(err)
+			if mode == "pull" {
+				_, err = imp.Import(t.Context(), "app-example", "account-example")
+				requirements.NoError(err)
+			} else {
+				for _, message := range []BusinessMessage{child, parent} {
+					_, err = imp.Apply(t.Context(), "app-example", MessageEvent{ClientKey: "app-example", Event: "im_receive_msg", Account: "account-example"}, message)
+					requirements.NoError(err)
+				}
+			}
+			rows, err := st.StoredMessagesContext(t.Context(), source.ID, messageFormat, []string{messageKey(child.ConversationID, child.ID), messageKey(parent.ConversationID, parent.ID)})
+			requirements.NoError(err)
+			requirements.Len(rows, 2)
+			var replyTo sql.NullInt64
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows[messageKey(child.ConversationID, child.ID)].ID).Scan(&replyTo))
+			requirements.True(replyTo.Valid)
+			assertions.Equal(rows[messageKey(parent.ConversationID, parent.ID)].ID, replyTo.Int64)
+		})
+	}
 }

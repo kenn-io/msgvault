@@ -40,9 +40,39 @@ type tikTokWebhookRuntime struct {
 func tikTokSpoolRoot(cfg *config.Config) string {
 	return filepath.Join(cfg.Data.DataDir, "tiktok-webhooks")
 }
-func startTikTokWebhooks(ctx context.Context, cfg *config.Config, st *store.Store, idle *api.IdleTracker) (*tikTokWebhookRuntime, error) {
-	return startTikTokWebhooksWithHandler(ctx, cfg, idle, tikTokDeliveryHandler(cfg, st))
+func startTikTokWebhooks(ctx context.Context, cfg *config.Config, st *store.Store, idle *api.IdleTracker, gate api.OperationGate, maintenance *attachmentMaintenance) (*tikTokWebhookRuntime, error) {
+	return startTikTokWebhooksWithHandler(ctx, cfg, idle, coordinateTikTokDeliveries(gate, maintenance, tikTokDeliveryHandler(cfg, st)))
 }
+
+// Every delivery that can publish attachment bytes shares the daemon's archive
+// gate and mutation lease with CLI imports, scheduled syncs, and maintenance.
+func coordinateTikTokDeliveries(gate api.OperationGate, maintenance *attachmentMaintenance, handle tiktokwebhook.HandlerFunc) tiktokwebhook.HandlerFunc {
+	return func(ctx context.Context, app string, raw []byte) (outcome tiktokwebhook.Outcome, err error) {
+		if gate != nil {
+			var done func()
+			var ok bool
+			if labeled, yes := gate.(api.LabeledOperationGate); yes {
+				done, ok = labeled.BeginLabeledWorkContext(ctx, "TikTok webhook import")
+			} else {
+				done, ok = gate.BeginWorkContext(ctx)
+			}
+			if !ok {
+				if err := ctx.Err(); err != nil {
+					return outcome, err
+				}
+				return outcome, errors.New("archive is busy or shutting down")
+			}
+			defer done()
+		}
+		err = runScheduledSource(ctx, maintenance, true, func(ctx context.Context) error {
+			var handleErr error
+			outcome, handleErr = handle(ctx, app, raw)
+			return handleErr
+		})
+		return outcome, err
+	}
+}
+
 func startTikTokWebhooksWithHandler(ctx context.Context, cfg *config.Config, idle *api.IdleTracker, handle tiktokwebhook.HandlerFunc) (*tikTokWebhookRuntime, error) {
 	r := &tikTokWebhookRuntime{root: tikTokSpoolRoot(cfg), errors: make(chan error, 2)}
 	if !cfg.TikTokWebhooks.Enabled() {

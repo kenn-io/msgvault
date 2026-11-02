@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -20,9 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func signature(secret string, now time.Time, body []byte) string {
+func signature(now time.Time, body []byte) string {
 	stamp := strconv.FormatInt(now.Unix(), 10)
-	mac := hmac.New(sha256.New, []byte(secret))
+	mac := hmac.New(sha256.New, []byte("fixture-secret"))
 	_, _ = mac.Write(append([]byte(stamp+"."), body...))
 	return "t=" + stamp + ",s=" + hex.EncodeToString(mac.Sum(nil))
 }
@@ -30,7 +31,7 @@ func TestSignatureUsesExactRawBytesAndFiveSecondWindow(t *testing.T) {
 	assertions := assert.New(t)
 	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	body := []byte("{\"example\": 1}\n")
-	header := signature("fixture-secret", now, body)
+	header := signature(now, body)
 	assertions.True(VerifySignature([]byte("fixture-secret"), header, body, now))
 	assertions.True(VerifySignature([]byte("fixture-secret"), header, body, now.Add(5*time.Second)))
 	assertions.False(VerifySignature([]byte("fixture-secret"), header, body, now.Add(5*time.Second+time.Nanosecond)))
@@ -51,7 +52,7 @@ func TestReceiverAcknowledgesDurableRawBytesAndDeduplicates(t *testing.T) {
 	h := &Handler{Apps: map[string][]byte{"app-example": []byte("fixture-secret")}, Spool: spool, Now: func() time.Time { return now }}
 	for range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/tiktok/app-example", bytes.NewReader(body))
-		req.Header.Set("Tiktok-Signature", signature("fixture-secret", now, body))
+		req.Header.Set("Tiktok-Signature", signature(now, body))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		requirements.Equal(http.StatusOK, rec.Code)
@@ -60,7 +61,9 @@ func TestReceiverAcknowledgesDurableRawBytesAndDeduplicates(t *testing.T) {
 		requirements.Len(files, 1)
 		info, err := os.Stat(files[0])
 		requirements.NoError(err)
-		assertions.Equal(os.FileMode(0600), info.Mode().Perm())
+		if runtime.GOOS != "windows" {
+			assertions.Equal(os.FileMode(0600), info.Mode().Perm())
+		}
 	}
 	// A fresh process-shaped spool object recovers exactly the accepted bytes.
 	restarted, err := OpenSpool(root, 1<<20)
@@ -90,9 +93,9 @@ func TestReceiverRejectsBeforeAcknowledging(t *testing.T) {
 		status       int
 	}{
 		{"signature", "bad", 1024, http.StatusUnauthorized},
-		{"old", signature("fixture-secret", now.Add(-6*time.Second), body), 1024, http.StatusUnauthorized},
-		{"size", signature("fixture-secret", now, body), 1, http.StatusRequestEntityTooLarge},
-		{"full", signature("fixture-secret", now, body), 1024, http.StatusServiceUnavailable},
+		{"old", signature(now.Add(-6*time.Second), body), 1024, http.StatusUnauthorized},
+		{"size", signature(now, body), 1, http.StatusRequestEntityTooLarge},
+		{"full", signature(now, body), 1024, http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &Handler{Apps: map[string][]byte{"app-example": []byte("fixture-secret")}, Spool: spool, MaxBodyBytes: tc.maximum, Now: func() time.Time { return now }}

@@ -463,6 +463,9 @@ func registerScheduledBeeperJob(
 // attachmentProducingCommand reports whether the first command word names a
 // generic daemon CLI operation that can create loose attachments.
 func attachmentProducingCommand(args []string) bool {
+	if len(args) >= 3 && args[0] == tikTokSourceCommandName && args[1] == "tiktok-messages" {
+		return args[2] == tikTokAddCommandName || args[2] == "sync"
+	}
 	if len(args) == 0 {
 		return false
 	}

@@ -39,10 +39,10 @@ func manualSyncCLICommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if len(args) >= 3 && args[0] == "source" && args[1] == "tiktok-comments" && args[2] == "sync" {
+	if len(args) >= 3 && args[0] == tikTokSourceCommandName && args[1] == "tiktok-comments" && args[2] == "sync" {
 		return true
 	}
-	if len(args) >= 3 && args[0] == "source" && args[1] == "tiktok-messages" && (args[2] == "add" || args[2] == "sync") {
+	if len(args) >= 3 && args[0] == tikTokSourceCommandName && args[1] == "tiktok-messages" && (args[2] == tikTokAddCommandName || args[2] == "sync") {
 		return true
 	}
 	switch args[0] {
