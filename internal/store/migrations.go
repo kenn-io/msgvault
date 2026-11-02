@@ -167,6 +167,11 @@ func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
 				return fmt.Errorf("close hidden text backfill IDs: %w", closeErr)
 			}
 			for _, id := range ids {
+				// Body writers take the same lock before reading or replacing HTML.
+				// Hold it through the flag update so a rewrite cannot make it stale.
+				if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+					return fmt.Errorf("lock hidden text backfill message %d: %w", id, err)
+				}
 				var bodyHTML string
 				err := tx.QueryRowContext(ctx, `SELECT body_html FROM message_bodies
 					WHERE message_id = ? AND body_html <> ''`, id).Scan(&bodyHTML)
