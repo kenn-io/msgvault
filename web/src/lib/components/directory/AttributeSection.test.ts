@@ -91,7 +91,7 @@ function renderSection(
 describe('AttributeSection', () => {
   it('keeps current imported provenance reachable while concealing sensitive values until reveal', async () => {
     const sensitive = definition();
-    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' }, 0, { source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8, active_until: '2099-01-01T00:00:00Z' });
+    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' }, 0, { source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8 });
     const historical = personValue(sensitive, 17, { type: 'text', text: 'synthetic historical secret' }, 0, {
       active_until: '2026-07-01T00:00:00Z',
       superseded_at: '2026-07-01T00:00:00Z',
@@ -104,7 +104,8 @@ describe('AttributeSection', () => {
     const currentRow = screen.getByText(/Reference: source-card-7/).closest('li')!;
     expect(currentRow.textContent).toContain('Actor: synthetic-importer');
     expect(currentRow.textContent).toContain('Confidence: 0.8');
-    expect(currentRow.textContent).toMatch(/Valid from:.*Valid until:/);
+    expect(currentRow.textContent).toContain('Valid from:');
+    expect(screen.getByText('1 earlier value').closest('details')?.textContent).toContain('Valid until:');
     expect(document.body.innerHTML).not.toContain('synthetic current secret');
     expect(screen.queryByText('synthetic historical secret')).toBeNull();
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
