@@ -649,6 +649,11 @@ for (const previous of ['Alice', 'no person']) {
     for (const person of profiles) {
       await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
       await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+      const participantID = person.participant_ids[0];
+      await page.route(`**/api/v1/participants/${participantID}/timeline`, route => route.fulfill({ json: {
+        rows: [{ ...timelineRows[0], key: `message:${participantID}`, anchor_message_id: participantID, title: `${person.display_name}'s message`, participant_ids: [participantID], participant_labels: [person.display_name] }],
+        total_count: 1, cache_revision: 'cache-relationships', search_provenance: {}
+      } }));
     }
     await page.route('**/api/v1/participants/1', route => route.fulfill({ json: { ...alice, profile: { id: 91, display_name: 'Alice Example' } } }));
     await page.route('**/api/v1/participants/2', route => route.fulfill({ json: { ...alice, id: 2, display_label: 'Bob Example' } }));
@@ -663,7 +668,7 @@ for (const previous of ['Alice', 'no person']) {
     await page.getByRole('radio', { name: 'Messages', exact: true }).click();
     await expect(list.getByRole('row', { name: /Bob Example/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
-    await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Subject line')).toBeVisible();
+    await expect(page.getByRole('grid', { name: 'Messages results' }).getByText("Bob Example's message")).toBeVisible();
   });
 }
 

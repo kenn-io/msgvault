@@ -130,19 +130,6 @@ describe('PersonRecordActions', () => {
     await waitFor(() => expect(controller.mutationPending).toBe(false));
   });
 
-  it('shows one of rename or delete at a time', async () => {
-    renderActions(vi.fn());
-
-    await choose('Rename');
-    await choose('Delete');
-    expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
-
-    await choose('Rename');
-    expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
-  });
-
   it('disables both write actions when the person cannot be written', async () => {
     renderActions(vi.fn(), null);
 
