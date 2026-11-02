@@ -160,8 +160,8 @@
     await directory.refreshSelectedPerson();
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
-    bulkPending = true;
-    bulkConflict = undefined;
+    bulkPending = true; bulkConflict = undefined;
+    if (soloPerson === success.result.merge.absorbed_person_id) onReplaceNavigation({ directoryPersonID: success.survivor.id });
     page.onAnnounce?.(`Profiles merged into ${success.survivor.display_name}.`);
     if (bulkContext) await reconcilePersonMerge(bulkContext);
     await continueBulk();

@@ -166,6 +166,47 @@ it.each(['fails', 'is cancelled', 'clears the stale warning', 'merges'])('handle
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
+it.each([7, 42])('bulk merge replaces an absorbed saved selection and preserves unrelated Details (selected=%s)', async selectedID => {
+  let merged = false;
+  const one = profile(7, 4, [1]), two = profile(9, 2, [2]);
+  const unrelated = { ...profile(42, 1, []), display_name: 'Unrelated person' };
+  const survivor = { ...two, revision: 3, participant_ids: [1, 2] };
+  const structured = (person: ReturnType<typeof profile>, alias: string) => ({ person, names: [{ person_id: person.id, name_kind: 'nickname', formatted: alias, original_value: alias, is_derived: false, envelope: { id: person.id, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } }], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+  const missing = () => Response.json({ error: 'person_not_found', message: 'Person not found.' }, { status: 404 });
+  const client = clientFor({
+    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
+    '/api/v1/people/directory': () => Response.json({ people: merged ? [survivor, unrelated] : [one, two, unrelated] }),
+    '/api/v1/people/7': () => merged ? missing() : Response.json(one, { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/7/profile': () => merged ? missing() : Response.json(structured(one, 'Absorbed alias'), { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/9': () => Response.json(merged ? survivor : two, { headers: { ETag: merged ? '"person-9-r3"' : '"person-9-r2"' } }),
+    '/api/v1/people/9/profile': () => Response.json(structured(merged ? survivor : two, 'Survivor alias'), { headers: { ETag: merged ? '"person-9-r3"' : '"person-9-r2"' } }),
+    '/api/v1/people/42': () => Response.json(unrelated, { headers: { ETag: '"person-42-r1"' } }),
+    '/api/v1/people/42/profile': () => Response.json(structured(unrelated, 'Unrelated alias'), { headers: { ETag: '"person-42-r1"' } }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, profile: merged ? survivor : one, display_label: merged ? 'Synthetic Two' : 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
+    '/api/v1/identity/links': () => merged ? Response.json({ identity_revision: 8, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 }),
+    '/api/v1/people/9/merge': () => { merged = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: survivor, merge: { id: 41, survivor_person_id: 9, absorbed_person_id: 7, current_person_id: 9, survivor_vcard_uid: 'synthetic-9', absorbed_vcard_uid: 'synthetic-7', survivor_revision_before: 2, absorbed_revision_before: 4, survivor_revision_after: 3, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-9-r3"' } }); },
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', directoryPersonID: selectedID });
+  const sync = () => view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void sync(); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}, false); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    expect(await screen.findByText(selectedID === 7 ? 'Absorbed alias' : 'Unrelated alias')).toBeDefined();
+    for (const name of ['Alice Example', 'Bob Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic Two (Person 9)' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+    await screen.findByText('People are now treated as the same person.');
+    const expectedID = selectedID === 7 ? 9 : 42;
+    await waitFor(() => expect(directory.selectedPersonID).toBe(expectedID));
+    expect(state.current.directoryPersonID).toBe(expectedID);
+    expect(await screen.findByText(selectedID === 7 ? 'Survivor alias' : 'Unrelated alias')).toBeDefined();
+    expect(screen.queryByText('Absorbed alias')).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it.each(['Category', 'Organization'])('forwards typed %s profile filters as drafts', async (field) => {
   const client = clientFor({});
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
