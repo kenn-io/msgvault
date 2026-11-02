@@ -20,6 +20,7 @@
   let alsoTrack = $state(false);
   let rejectReason = $state('');
   let expandedSentence = $state<string | null>(null);
+  let loadedRefreshKey: string | undefined;
   // The switch is bound, not read-only, because a native checkbox keeps
   // whatever the owner clicked. Binding lets a refused change snap it back to
   // the state the daemon still holds without replacing the focused control.
@@ -33,12 +34,20 @@
   const actionsDisabled = $derived(controller.pending !== null || controller.briefLoading);
 
   $effect.pre(() => {
-    const nextPersonID = personID; refreshKey;
-    alsoTrack = false;
-    rejectReason = '';
-    expandedSentence = null;
+    const nextPersonID = personID;
+    const nextRefreshKey = refreshKey;
+    const pending = controller.pending;
     untrack(() => {
-      void controller.setPerson(nextPersonID);
+      if (controller.personID !== nextPersonID) {
+        alsoTrack = false;
+        rejectReason = '';
+        expandedSentence = null;
+        loadedRefreshKey = nextRefreshKey;
+        void controller.setPerson(nextPersonID);
+      } else if (nextRefreshKey !== loadedRefreshKey && pending === null) {
+        loadedRefreshKey = nextRefreshKey;
+        void controller.refresh();
+      }
     });
   });
 
