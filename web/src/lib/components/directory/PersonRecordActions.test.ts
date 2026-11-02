@@ -52,22 +52,47 @@ describe('PersonRecordActions', () => {
     await expect(requests[0]!.clone().json()).resolves.toEqual({ display_name: 'Renamed User' });
   });
 
-  it('locks rename controls while the non-abortable write is pending', async () => {
+  it('locks the rename input through the pending write and deferred readback', async () => {
     let resolveRename!: (response: Response) => void;
-    const pendingRename = new Promise<Response>((resolve) => { resolveRename = resolve; });
-    const controller = renderActions(vi.fn<typeof fetch>(async () => pendingRename));
-
-    await choose('Rename');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-
-    await waitFor(() => expect(controller.mutationPending).toBe(true));
-    expect(screen.getByRole('button', { name: 'Cancel rename' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Renaming…' })).toHaveProperty('disabled', true);
-
-    resolveRename(new Response(JSON.stringify({ ...person(), revision: 4 }), {
-      headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' }
+    let releaseReadback!: () => void;
+    const pendingRename = new Promise<Response>(resolve => resolveRename = resolve);
+    const pendingReadback = new Promise<void>(resolve => releaseReadback = resolve);
+    const renamed = { ...person(), revision: 4, display_name: 'Renamed User' };
+    const controller = renderActions(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method !== 'GET') return pendingRename;
+      await pendingReadback;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/profile')) return Response.json({ person: renamed, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+      return Response.json(renamed, { headers: { ETag: '"person-7-r4"' } });
     }));
-    await waitFor(() => expect(controller.mutationPending).toBe(false));
+    try {
+      await choose('Rename');
+      const input = screen.getByRole('textbox', { name: 'Display name' });
+      await fireEvent.input(input, { target: { value: 'Renamed User' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+
+      await waitFor(() => expect(controller.mutationPending).toBe(true));
+      expect(input).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Cancel rename' })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Renaming…' })).toHaveProperty('disabled', true);
+
+      resolveRename(Response.json(renamed, { headers: { ETag: '"person-7-r4"' } }));
+      await waitFor(() => expect(controller.reloadPending).toBe(true));
+      expect(controller.mutationPending).toBe(false);
+      expect(input).toHaveProperty('disabled', true);
+      expect(input).toHaveProperty('value', 'Renamed User');
+      releaseReadback();
+      await waitFor(() => expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull());
+    } finally {
+      resolveRename(Response.json(renamed, { headers: { ETag: '"person-7-r4"' } }));
+      releaseReadback();
+      await waitFor(() => expect(controller.reloadPending).toBe(false));
+      controller.destroy();
+    }
   });
 
   it('requires confirmation and the current strong ETag before deleting a person', async () => {
