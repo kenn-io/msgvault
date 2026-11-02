@@ -12,8 +12,6 @@ import { ExploreState, serializeExploreURLState } from '../../explore/state.svel
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
 import AppShell from './AppShell.svelte';
-import App from '../../../App.svelte';
-import { createSessionController } from '../../api/session.svelte';
 import { ShellData } from './shell-data.svelte';
 import SettingsWorkspace from '../settings/SettingsWorkspace.svelte';
 import type { CardDAVSettingsRequest } from '../../carddav/navigation';
@@ -1338,7 +1336,7 @@ describe('AppShell', () => {
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
-        person_id: 7, cadence_status: 'current', computed_at: '2026-08-03T00:00:00Z', interaction_count: 0, stale: false
+        person_id: 7, cadence_status: 'ok', computed_at: '2026-08-03T00:00:00Z', interaction_count: 0, stale: false
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
@@ -1514,7 +1512,7 @@ describe('AppShell', () => {
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/7/contact-state') return Response.json({
-        person_id: 7, cadence_status: 'current', interaction_count: 0,
+        person_id: 7, cadence_status: 'ok', interaction_count: 0,
         computed_at: '2026-08-28T10:00:00Z', stale: false
       });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
@@ -2084,7 +2082,7 @@ describe('AppShell', () => {
       if (path === '/api/v1/people/42/attributes') return Response.json({ person_id: 42, attributes: [] });
       if (path === '/api/v1/people/42/network') return Response.json({ root_person_id: 42, depth: 1, truncated: false, nodes: [], edges: [] });
       if (path === '/api/v1/people/42/contact-state') return Response.json({
-        person_id: 42, cadence_status: 'current', computed_at: '2026-07-19T10:00:00Z',
+        person_id: 42, cadence_status: 'ok', computed_at: '2026-07-19T10:00:00Z',
         interaction_count: 1, stale: false
       });
       if (path === '/api/v1/people/42/employments') return Response.json({ employments: [] });

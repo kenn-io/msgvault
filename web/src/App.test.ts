@@ -548,7 +548,7 @@ describe('application foundation', () => {
       if (path === '/api/v1/people/7/contact-state')
         return Response.json({
           person_id: 7,
-          cadence_status: 'current',
+          cadence_status: 'ok',
           interaction_count: 0,
           computed_at: '2026-08-28T10:00:00Z',
           stale: false,
