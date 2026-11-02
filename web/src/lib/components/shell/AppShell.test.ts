@@ -2112,6 +2112,7 @@ describe('AppShell', () => {
     expect(promotion).toBeDefined();
     await expect(promotion!.clone().json()).resolves.toMatchObject({ participant_id: 11 });
     await screen.findByRole('button', { name: 'More actions' });
+    expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
 
     window.history.back();
     await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
