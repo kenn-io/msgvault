@@ -197,7 +197,7 @@ it('keeps an open field draft when the saved person activity finishes loading', 
     if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0 });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });

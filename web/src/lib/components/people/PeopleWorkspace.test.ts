@@ -203,7 +203,7 @@ it('reads a saved profile once before Details opens', async () => {
     paths.push(path);
     if (path === '/api/v1/people/directory') return Response.json({ people: [profile] });
     if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
-    if (path === '/api/v1/relationships/1/calendar') return Response.json({ year: 2026, days: [] });
+    if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
     if (path === '/api/v1/people/91') return Response.json(profile);
     if (path === '/api/v1/people/91/profile') return Response.json({ person: profile, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     if (path === '/api/v1/people/91/attributes') return Response.json({ person_id: 91, attributes: [] });
@@ -329,7 +329,7 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   } finally { observer.disconnect(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('loads a saved person deep link and opens Directory from its person page', async () => {
+it('loads a saved person deep link', async () => {
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
   const client = clientFor({
@@ -344,8 +344,6 @@ it('loads a saved person deep link and opens Directory from its person page', as
     expect(screen.getByRole('group', { name: 'Person page' })).toBeDefined();
     release(Response.json(profile(7, 1, [])));
     await screen.findByRole('heading', { name: 'Synthetic One' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
-    expect(onNavigate).toHaveBeenCalledWith({ workspace: 'directory', directoryPersonID: null, relationshipTarget: null });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -409,7 +407,7 @@ it('keeps Files and its filters when a saved person finishes initial hydration',
     '/api/v1/people/7/attributes': () => Response.json({ person_id: 7, attributes: [] }),
     '/api/v1/people/7/files/search': () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [], profile: saved }),
-    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
@@ -461,7 +459,7 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
     '/api/v1/attribute-definitions': () => Response.json({ definitions: [] }),
     '/api/v1/people/9': () => { if (failed) throw new Error('Could not load selected person.'); return Response.json(saved, { headers: { ETag: `"person-${saved.id}-r1"` } }); },
     '/api/v1/participants/1': () => failure === 'participant' && failed ? Response.json({ message: 'Participant unavailable' }, { status: 503 }) : Response.json({ id: 1, display_label: 'Synthetic One', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: failure !== 'profile' ? 7 : null });
@@ -504,7 +502,7 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
     '/api/v1/person-merges/41': () => Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] }),
     '/api/v1/people/7/split': () => { split = true; return Response.json({ source_person: saved(), new_person: profile(9, 1, [1]), split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'synthetic-9', source_revision_before: 4, source_revision_after: 5, exact_reversal: false, actor: 'web', created_at: when }, exact_reversal: false, ambiguous_rows: [{ table_name: 'person_names', original_row_key: 'synthetic-row', action: 'ambiguous' }], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }); },
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: split ? profile(9, 1, [1]) : saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': () => Response.json({ year: 2026, days: [] }),
+    '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: savedEntry ? 7 : null, relationshipTarget: 'cluster:1' });

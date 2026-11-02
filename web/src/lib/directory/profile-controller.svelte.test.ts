@@ -151,6 +151,12 @@ describe('DirectoryProfileController', () => {
     expect(controller.canWriteProfile).toBe(false);
     expect(requests(fetchFn)).toHaveLength(1);
 
+    const draft = controller.draft, conflict = controller.conflict;
+    await controller.reload(false);
+    expect(controller.person?.revision).toBe(4);
+    expect(controller.draft).toBe(draft);
+    expect(controller.conflict).toBe(conflict);
+
     await controller.reload();
     expect(controller.attributesError).toBe('attributes unavailable');
     expect(onDetailChange).toHaveBeenLastCalledWith(expect.objectContaining({

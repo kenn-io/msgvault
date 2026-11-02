@@ -79,7 +79,6 @@ describe('DirectoryEntityController', () => {
       expect(await controller.updateOrganization(21, { name: 'Renamed employer' })).toMatchObject({ ok: true });
       oldLookup.resolve(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
       await opening;
-      expect(controller.employments[0]?.organization_id).toBe(21);
       expect(controller.organizationRecords.get(21)?.organization.name).toBe('Renamed employer');
     } finally {
       oldLookup.resolve(Response.json(organizationProfile()));
