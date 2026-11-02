@@ -5,6 +5,8 @@
 export interface PersonTierSignals {
   active_days_long: number;
   active_days_short: number;
+  calls_long: number;
+  calls_short: number;
   channels_long: number;
   excluded_list_events: number;
   inbound_long: number;
