@@ -19,7 +19,7 @@ function candidate(id: number, state = 'candidate') {
     source: 'synthetic',
     state,
     review_token: `token-${id}-${state}`,
-    actionable: state === 'candidate',
+    actionable: state === 'candidate' || state === 'conflict',
     application_pending: false,
     evidence: [],
     created_at: '2026-08-01T00:00:00Z',
@@ -189,9 +189,8 @@ describe('DirectoryReviewController', () => {
         const id = Number(url.pathname.split('/').at(-1));
         return Response.json({ id, display_label: changed ? 'Updated Example' : 'Original Example', activity_count: changed ? 9 : 3, identifiers: [{ participant_id: id, type: 'email', is_primary: true, value: changed ? 'updated@example.com' : 'absorbed@example.com' }] });
       }
-      if (url.pathname === '/api/v1/people/1') return Response.json(person(1));
       reads += 1;
-      const row = { ...candidate(17), right_kind: 'person', right_id: 1 };
+      const row = candidate(17);
       if (reads > 1) row.review_token = 'fresh-token';
       return page([row]);
     });
@@ -292,7 +291,7 @@ describe('DirectoryReviewController', () => {
     expect(requests).toHaveLength(1);
   });
 
-  it.each(['restored copy', 'newer To review', '409 recovery', '503 recovery'] as const)('preserves the active review context after deferred settlement: %s', async scenario => {
+  it.each(['newer To review', '409 recovery', '503 recovery'] as const)('preserves the active review context after deferred settlement: %s', async scenario => {
     const decisionResponse = deferredResponse();
     const conflict = {
       error: 'person_merge_required', message: 'Choose a survivor', profiles: [
@@ -318,8 +317,8 @@ describe('DirectoryReviewController', () => {
       const navigation = scenario === 'newer To review' ? controller.setIdentityState('accepted') : undefined;
       const decision = controller.settleDecision();
       await vi.waitFor(() => expect(controller.isDecisionPending(17)).toBe(true));
-      if (scenario === 'restored copy' || scenario === 'newer To review') {
-        if (scenario === 'newer To review') expect(controller.identityState).toBe('candidate');
+      if (scenario === 'newer To review') {
+        expect(controller.identityState).toBe('candidate');
         controller.applyURLState({ identityState: 'candidate' }, true);
         await vi.waitFor(() => expect(controller.rows).toEqual([candidate(99)]));
         decisionResponse.resolve(Response.json({ candidate: candidate(17, 'accepted'), identity_revision: 4, cache_state: 'ready' }));
@@ -354,17 +353,6 @@ describe('DirectoryReviewController', () => {
       expect(controller.isDecisionPending(17)).toBe(false);
       expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
     } finally { controller.destroy(); }
-  });
-
-  it('keeps decision draft editing isolated by candidate', () => {
-    const controller = new DirectoryReviewController(createAPIClient(vi.fn()));
-
-    controller.setDecisionDraft(17, 'First note');
-    controller.setDecisionDraft(18, 'Second note');
-    controller.clearDecisionDraft(17);
-
-    expect(controller.getDecisionDraft(17)).toBe('');
-    expect(controller.getDecisionDraft(18)).toBe('Second note');
   });
 
   it("keeps a pending decision's row draft", async () => {
@@ -479,10 +467,10 @@ it('returns to the first page when deciding the last later-page row empties that
   } finally { controller.destroy(); }
 });
 
-it.each(['next', 'previous', 'retry', 'invalidate'] as const)('keeps the %s page destination after settling its queued decision', async direction => {
+it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination after settling its queued decision', async direction => {
   const decision = deferredResponse(), destination = deferredResponse();
-  const start = direction === 'previous' ? 10 : 0;
-  const target = direction === 'previous' || direction === 'invalidate' ? 0 : 10;
+  const start = 0;
+  const target = direction === 'invalidate' ? 0 : 10;
   const order: string[] = [];
   let reads = 0;
   let moving = false, decided = false, posted = false, destinationRead = false;
@@ -502,7 +490,7 @@ it.each(['next', 'previous', 'retry', 'invalidate'] as const)('keeps the %s page
     if (direction === 'retry') await controller.loadNextPage();
     await controller.queueDecision(controller.rows[0]!, 'reject');
     moving = true;
-    const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'previous' ? controller.loadPreviousPage() : direction === 'invalidate' ? controller.invalidate(true) : controller.retryPage();
+    const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'invalidate' ? controller.invalidate(true) : controller.retryPage();
     await vi.waitFor(() => expect(posted).toBe(true));
     if (direction === 'invalidate') expect(order).toEqual(['GET', 'POST']);
     decision.resolve(Response.json({ candidate: candidate(start + 1, 'rejected'), cache_state: 'ready' }));

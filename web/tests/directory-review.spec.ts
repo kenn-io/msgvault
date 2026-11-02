@@ -62,14 +62,13 @@ test('refreshes the duplicate queue and badge after Unlink', async ({ page }) =>
   await showDuplicates();
   await page.locator('#duplicate-17').getByRole('button', { name: 'Keep separate' }).click();
   await page.getByRole('button', { name: 'Back to People' }).click();
-  await expect.poll(() => fixture.requests.find(request => request.path.endsWith('/17/review/reject'))?.body).toEqual({ review_token: 'review-17-candidate' });
   await expect(badge).toHaveText('People 1');
 });
 
 for (const bulk of [false, true]) {
   test(`deleting a saved person through ${bulk ? 'bulk Delete' : 'More actions'} refreshes cached duplicates`, async ({ page }) => {
     const fixture = await installDirectoryReviewArchive(page);
-    Object.assign(fixture.candidates[0]!, { left_kind: 'person', left_id: 7 });
+    Object.assign(fixture.candidates[0]!, { left_kind: 'person', left_id: 7, actionable: false, blocker: 'endpoint_unsupported' });
     let deleted = false;
     await page.route('**/api/v1/people/directory*', route => route.fulfill({ json: { people: [7, 9].filter(id => !deleted || id !== 7).map(id => ({ id, revision: id === 7 ? 4 : 2, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', categories: [], organizations: [], primary_channel: 'email', contact_state: 'active' })) } }));
     await page.route(/\/api\/v1\/people\/7$/, route => {

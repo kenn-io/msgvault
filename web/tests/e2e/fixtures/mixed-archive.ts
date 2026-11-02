@@ -656,7 +656,7 @@ function reviewCandidate(id: number, overrides: Partial<IdentityMatchCandidate> 
   return {
     id,
     left_id: id * 10,
-    left_kind: 'beeper_user',
+    left_kind: 'participant',
     right_id: id * 10 + 1,
     right_kind: 'participant',
     basis: 'stable_provider_id',
@@ -699,7 +699,7 @@ function reviewCandidate(id: number, overrides: Partial<IdentityMatchCandidate> 
  */
 export async function installDirectoryReviewArchive(page: Page) {
   const archive = await installMixedArchive(page);
-  const candidates = [reviewCandidate(17), reviewCandidate(18), reviewCandidate(19)];
+  const candidates = [reviewCandidate(17), reviewCandidate(18), reviewCandidate(19, { left_id: 701, right_id: 901, actionable: false, blocker: 'person_merge_required' })];
   const people = new Map([
     [7, reviewPerson(7, 4, 'Synthetic One')],
     [9, reviewPerson(9, 2, 'Synthetic Two')],

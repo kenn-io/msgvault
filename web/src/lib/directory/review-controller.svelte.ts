@@ -114,10 +114,6 @@ export class DirectoryReviewController {
     if (draft === '') this.decisionDrafts.delete(candidateID);
     else this.decisionDrafts.set(candidateID, draft);
   }
-  clearDecisionDraft(candidateID: number): void {
-    if (this.disposed || this.pendingDecisions.has(candidateID)) return;
-    this.decisionDrafts.delete(candidateID);
-  }
   reviewContextSnapshot(): DirectoryReviewContextSnapshot {
     return {
       generation: this.reviewContextGeneration,

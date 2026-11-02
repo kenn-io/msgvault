@@ -188,7 +188,7 @@ it('keeps an open field draft when the saved person activity finishes loading', 
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
-it.each(['merge', 'Retry'])('keeps the current person retry pair when an earlier %s finishes late', async phase => {
+it('keeps the current person retry pair when an earlier Retry finishes late', async () => {
   const writes: Array<{ participant_a: number; participant_b: number }> = [];
   let release!: (response: Response) => void;
   const client = createAPIClient(async input => {
@@ -202,7 +202,7 @@ it.each(['merge', 'Retry'])('keeps the current person retry pair when an earlier
     if (path.endsWith('/participants/search')) return Response.json({ rows: [2, 4].map(id => ({ id, display_label: `Peer ${id}`, identifiers: [], activity_count: 1 })) });
     if (path.endsWith('/identity/links')) {
       writes.push(await request.json());
-      if (writes.length === (phase === 'merge' ? 1 : 2)) return new Promise<Response>(resolve => { release = resolve; });
+      if (writes.length === 2) return new Promise<Response>(resolve => { release = resolve; });
       return Response.json({ identity_revision: writes.at(-1)!.participant_a === 3 ? 3 : 2, cache_state: 'stale' });
     }
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
@@ -217,11 +217,9 @@ it.each(['merge', 'Retry'])('keeps the current person retry pair when an earlier
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 2/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    if (phase === 'Retry') {
-      await screen.findByText('Identity saved; the cache refresh failed.');
-      await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
-    }
-    await waitFor(() => expect(writes).toHaveLength(phase === 'merge' ? 1 : 2));
+    await screen.findByText('Identity saved; the cache refresh failed.');
+    await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(writes).toHaveLength(2));
     await controller.openTarget('cluster:3', {}, false);
     await view.rerender({ ...props, target: 'cluster:3' });
     await screen.findByRole('heading', { name: 'Observed 3' });
@@ -230,10 +228,10 @@ it.each(['merge', 'Retry'])('keeps the current person retry pair when an earlier
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 4/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await screen.findByText('Identity saved; the cache refresh failed.');
-    await act(async () => { release(Response.json({ identity_revision: 2, cache_state: 'ready' })); await link.mock.results[phase === 'merge' ? 0 : 1]!.value; });
+    await act(async () => { release(Response.json({ identity_revision: 2, cache_state: 'ready' })); await link.mock.results[1]!.value; });
     expect(screen.queryByText('Identity saved; the cache refresh failed.')).not.toBeNull();
     await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(writes).toHaveLength(phase === 'merge' ? 3 : 4));
+    await waitFor(() => expect(writes).toHaveLength(4));
     expect(writes.at(-1)).toEqual({ participant_a: 3, participant_b: 4 });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });

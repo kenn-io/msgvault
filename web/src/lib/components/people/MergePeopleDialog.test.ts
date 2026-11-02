@@ -89,14 +89,14 @@ function renderRepresentativeLink(savedAnchor: boolean) {
     throw new Error(`Unexpected ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
-  const onReconcile = vi.fn(async () => undefined), onClose = vi.fn();
+  const onReconcile = vi.fn(async () => undefined), onClose = vi.fn(), onLinked = vi.fn();
   // A live caller input stays unread in the saved-only search until the deferred link resumes.
-  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, get participantID() { return participantID; }, name: 'Synthetic', onReconcile, onClose });
-  return { view, controller, links, onClose, onReconcile, profileRequested, finishProfile: () => finishProfile(), changeOrigin: () => participantID = 99 };
+  const view = render(MergePeopleDialog, { client, controller, personID: savedAnchor ? 7 : null, get participantID() { return participantID; }, name: 'Synthetic', onReconcile, onClose, onLinked });
+  return { view, controller, links, onClose, onLinked, onReconcile, profileRequested, finishProfile: () => finishProfile(), changeOrigin: () => participantID = 99 };
 }
 
 async function checkRepresentativeLink(savedAnchor: boolean) {
-  const { view, controller, links, onClose, onReconcile, profileRequested, finishProfile, changeOrigin } = renderRepresentativeLink(savedAnchor);
+  const { view, controller, links, onClose, onLinked, onReconcile, profileRequested, finishProfile, changeOrigin } = renderRepresentativeLink(savedAnchor);
   try {
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Observed/ : /Synthetic Saved/ }));
@@ -108,12 +108,12 @@ async function checkRepresentativeLink(savedAnchor: boolean) {
       finishProfile();
     }
     await waitFor(() => expect(onReconcile).toHaveBeenCalledOnce());
-    if (savedAnchor) expect(onClose).toHaveBeenCalledOnce();
-    else expect(onClose).not.toHaveBeenCalled();
+    if (savedAnchor) { expect(onClose).toHaveBeenCalledOnce(); expect(onLinked).toHaveBeenCalledOnce(); }
+    else { expect(onClose).not.toHaveBeenCalled(); expect(onLinked).not.toHaveBeenCalled(); }
     expect(links).toEqual([{ participant_a: savedAnchor ? 2 : 1, participant_b: savedAnchor ? 1 : 2 }]);
     expect(onReconcile).toHaveBeenCalledWith(expect.anything(), true);
   } finally { view.unmount(); controller.destroy(); }
 }
 
 it('links a saved representative and an observed person without promotion', () => checkRepresentativeLink(true));
-it('keeps the captured observed origin and skips close after disposal during the saved profile read', () => checkRepresentativeLink(false));
+it('keeps the captured observed origin and skips linked and close callbacks after disposal during the saved profile read', () => checkRepresentativeLink(false));
