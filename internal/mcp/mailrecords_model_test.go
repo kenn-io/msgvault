@@ -10,7 +10,7 @@ import (
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	Require "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -21,9 +21,10 @@ import (
 func TestMessageRecordsLocalAutoKindProvenance(t *testing.T) {
 	for _, handler := range []string{"store", "query"} {
 		t.Run(handler, func(t *testing.T) {
+			require := Require.New(t)
 			st := testutil.NewTestStore(t)
 			source, _, err := testutil.CreateIndexedSourceMessage(st, "records@example.test", "seed", "Fixture", "Fixture")
-			require.NoError(t, err)
+			require.NoError(err)
 			var engine query.Engine
 			if handler == "query" {
 				engine = query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -32,12 +33,12 @@ func TestMessageRecordsLocalAutoKindProvenance(t *testing.T) {
 			server := httptest.NewServer(srv.Router())
 			t.Cleanup(server.Close)
 			owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
-			require.NoError(t, err)
+			require.NoError(err)
 			t.Cleanup(func() { _ = owner.Close() })
 			grant, err := owner.IssueAgentToken(t.Context(), "records", []string{"message.read"}, []int64{source.ID}, nil, time.Time{})
-			require.NoError(t, err)
+			require.NoError(err)
 			agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
-			require.NoError(t, err)
+			require.NoError(err)
 			t.Cleanup(func() { _ = agent.Close() })
 			session := task5ConnectClient(t, agentServeOptions(t, agent), true)
 			embedded := NewEmbeddedReader(st, "")
@@ -56,28 +57,29 @@ func TestMessageRecordsLocalAutoKindProvenance(t *testing.T) {
 			}
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
+					require := Require.New(t)
 					_, id, err := testutil.CreateIndexedSourceMessage(st, "records@example.test", tc.name, "Purchase notice", tc.body)
-					require.NoError(t, err)
-					require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{String: tc.html, Valid: tc.html != ""}))
+					require.NoError(err)
+					require.NoError(st.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{String: tc.html, Valid: tc.html != ""}))
 					var labelID int64
 					var labelSource any
 					if tc.provider {
 						labelSource = source.ID
 					}
-					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO labels (source_id,name,label_type) VALUES (?, 'mv:kind/receipt', ?) RETURNING id`), labelSource, tc.labelType).Scan(&labelID))
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO labels (source_id,name,label_type) VALUES (?, 'mv:kind/receipt', ?) RETURNING id`), labelSource, tc.labelType).Scan(&labelID))
 					labels := []int64{labelID}
 					if tc.conflict {
-						require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO labels (source_id,name,label_type) VALUES (NULL, 'mv:kind/invoice', 'auto') RETURNING id`).Scan(&labelID))
+						require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO labels (source_id,name,label_type) VALUES (NULL, 'mv:kind/invoice', 'auto') RETURNING id`).Scan(&labelID))
 						labels = append(labels, labelID)
 					}
-					require.NoError(t, st.ReplaceMessageLabels(id, labels))
+					require.NoError(st.ReplaceMessageLabels(id, labels))
 					remote, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMessageRecords, Arguments: map[string]any{"message_id": id}})
-					require.NoError(t, err)
+					require.NoError(err)
 					local, structured, err := embedded.Call(t.Context(), []int64{source.ID}, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: ToolGetMessageRecords}}, map[string]any{"message_id": float64(id)})
-					require.NoError(t, err)
+					require.NoError(err)
 					local.StructuredContent = structured
 					for _, result := range []*sdkmcp.CallToolResult{remote, local} {
-						require.False(t, result.IsError, task5SDKResultText(result))
+						require.False(result.IsError, task5SDKResultText(result))
 						value := task5StructuredAs[messageRecordsResponse](t, result)
 						assert.Equal(t, tc.want, value.Kind)
 						assert.Equal(t, tc.source, value.KindSource)
@@ -89,7 +91,7 @@ func TestMessageRecordsLocalAutoKindProvenance(t *testing.T) {
 						assert.NotContains(t, task5SDKResultText(result), "654321")
 					}
 					denied, _, err := embedded.Call(t.Context(), []int64{source.ID + 100000}, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: ToolGetMessageRecords}}, map[string]any{"message_id": float64(id)})
-					require.NoError(t, err)
+					require.NoError(err)
 					assert.True(t, denied.IsError)
 				})
 			}
