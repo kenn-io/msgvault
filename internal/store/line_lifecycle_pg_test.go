@@ -15,7 +15,8 @@ import (
 func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 	must := require.New(t)
 
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	st.DB().SetMaxOpenConns(4)
 	source, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
@@ -54,7 +55,8 @@ func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 func TestLineFirstGroupMessageLocksClockBeforeConversation(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	st.DB().SetMaxOpenConns(4)
 	source, err := st.GetOrCreateSource("line", "2000000001")
 	must.NoError(err)
@@ -97,7 +99,8 @@ func TestLineFirstGroupMessageLocksClockBeforeConversation(t *testing.T) {
 func TestLineEnqueueSerializesWithRetirement(t *testing.T) {
 	must := require.New(t)
 
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	st.DB().SetMaxOpenConns(4)
 	source, err := st.GetOrCreateSource("line", "2000000000")
 	must.NoError(err)
