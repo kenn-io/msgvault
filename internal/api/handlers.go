@@ -334,6 +334,8 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
+	ReplyToMessageID *int64 `json:"reply_to_message_id,omitempty" doc:"Local ID of a visible archived reply parent in the same source. Does not establish whether parent text is embedded in this body."`
+
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
@@ -568,6 +570,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 
 	return MessageDetail{
 		RelatedMessageID:  qMsg.RelatedMessageID,
+		ReplyToMessageID:  qMsg.ReplyToMessageID,
 		ConversationTitle: qMsg.ConversationTitle,
 
 		ID:                qMsg.ID,
@@ -810,6 +813,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
+		ReplyToMessageID:  msg.ReplyToMessageID,
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
 		Body:              msg.Body,

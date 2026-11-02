@@ -663,6 +663,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
+			segmentsDoc+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
 			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
@@ -670,12 +671,13 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":            safeIDSchema("Message ID"),
-			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
-			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
-			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
-			"body_format":   bodyFormat,
-			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+			"id":                   safeIDSchema("Message ID"),
+			toolArgOffset:          nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
+			"center_at":            signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			toolArgMaxChars:        signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
+			"body_format":          bodyFormat,
+			toolArgIncludeSegments: booleanSchema("Include full-body authored, quoted, forwarded and signature ranges (default false). Labels describe markers, not verified authorship."),
+			"full_body":            booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
 		}, "id"),
 		outputSchemaFor[getMessageResponse](),
 		(*handlers).getMessage,
@@ -724,6 +726,7 @@ func listThreadDefinition() toolDefinition {
 	return readDefinition(
 		ToolListThread,
 		"List visible archived messages in one conversation in chronological order (sent_at, undated last, then id). "+
+			segmentsDoc+
 			"Pass exactly one of id or source_message_id (any message in the thread) or thread_id (provider conversation ID, such as a Gmail threadId); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Page with offset until has_more is false; total counts the whole conversation. "+
@@ -732,14 +735,15 @@ func listThreadDefinition() toolDefinition {
 			"last_sync_at is the account's latest sync activity: newer replies may not be archived yet. "+
 			"Hidden duplicates are excluded; last_sync_at does not establish conversation completeness.",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":               safeIDSchema("msgvault ID of any message in the conversation"),
-			toolArgSourceMsgID: stringSchema("Provider ID of any message in the conversation"),
-			toolArgThreadID:    stringSchema("Provider conversation ID"),
-			toolArgAccount:     stringSchema("Account identifier (email address) that narrows a provider-ID lookup"),
-			toolArgOffset:      nonNegativeIntegerSchema("Messages to skip (default 0)", 0),
-			toolArgLimit:       limit,
+			"id":                   safeIDSchema("msgvault ID of any message in the conversation"),
+			toolArgSourceMsgID:     stringSchema("Provider ID of any message in the conversation"),
+			toolArgThreadID:        stringSchema("Provider conversation ID"),
+			toolArgAccount:         stringSchema("Account identifier (email address) that narrows a provider-ID lookup"),
+			toolArgOffset:          nonNegativeIntegerSchema("Messages to skip (default 0)", 0),
+			toolArgLimit:           limit,
+			toolArgIncludeSegments: booleanSchema("Include per-message full-body segment ranges, body_format, body_length and new_text_bytes (default false)."),
 		}),
-		outputSchemaFor[query.ThreadPage](),
+		outputSchemaFor[threadSegmentsResponse](),
 		(*handlers).listThread,
 	)
 }

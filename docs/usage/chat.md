@@ -373,9 +373,9 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_in_message` | Find case-insensitive literal matches within one message body, with raw-body offsets and line numbers. | `id` (int, required), `query` (string, required), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. Returns `data`, `returned`, `offset`, and `has_more`; add `returned` to `offset` to page while `has_more` is true. | `domains` (comma-separated string, required), `limit` (int, default 100, max 500), `offset` (int), `after` (string), `before` (string) |
-| `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
+| `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool), `include_segments` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
-| `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
+| `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int), `include_segments` (bool) |
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
 | `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
@@ -477,6 +477,40 @@ support message-type filtering.
 slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
+
+On newer `main` builds, pass `include_segments: true` to `get_message`
+or `list_thread` to distinguish residual authored text from quoted history,
+forwards, and signatures. Without this flag, their response shapes stay the
+same. For example:
+
+```json
+{"id": 42, "include_segments": true, "body_format": "text", "offset": 0, "max_chars": 2000}
+```
+
+The response adds `segments_version: "seg-v1"` and `segments`. Each segment
+has `start` and `end` byte offsets into the **full selected body**, even when
+only a window is returned. Keep the same `body_format` while following these
+ranges. HTML offsets address the original markup, not rendered text. In a
+thread response, each message also gets `body_format`, `body_length`, and
+`new_text_bytes`, the byte count of residual authored ranges. Fetch its body
+with `get_message` using that format.
+
+`kind` is `authored`, `quoted`, `forwarded`, or `signature`. Authored means
+that no relay marker was recognized; it does not prove who wrote the text.
+`trust` is `sender_words`, `relayed`, or `boilerplate`, describing attribution
+rather than truth or sender authentication. `basis`, `depth`, and `confidence`
+explain the structural marker or heuristic. Forwarded `claimed` headers carry
+`content_trust: "untrusted_text"`: they are spoofable display text and must
+never establish a person's identity or supply a recipient.
+
+Processing examines at most 1 MiB; HTML also has a token limit. An unexamined
+tail remains authored with `basis: "unexamined_tail"`, and
+`segments_truncated: true` reports that limit. Text heuristics apply to email.
+Chat bodies remain authored; an available archived reply relation appears as
+`reply_to.message_id`. The relation does not establish whether the parent text
+is embedded in the child. Message detail HTTP and CLI routes expose the same
+parent as `reply_to_message_id` with daemon API schema 3.36.0 or newer. Missing,
+hidden, self-referencing, or different-source parents are omitted.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
 `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an

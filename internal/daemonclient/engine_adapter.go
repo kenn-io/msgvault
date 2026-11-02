@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -820,12 +821,36 @@ func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail
 	return detail, nil
 }
 
+// GetMessageWithBody reads canonical text and HTML bodies for callers that
+// inspect or label the complete message body. The ordinary message endpoint
+// exposes only its legacy body fallback.
+func (e *Engine) GetMessageWithBody(ctx context.Context, id int64) (*query.MessageDetail, error) {
+	if e == nil || e.store == nil {
+		return nil, ErrNotSupported
+	}
+
+	msg, err := e.store.GetCLIMessage(ctx, strconv.FormatInt(id, 10))
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return nil, nil //nolint:nilnil // engine API uses (nil, nil) for not-found
+	}
+	if err != nil {
+		return nil, err
+	}
+	// This adapter receives a local archive ID, while the CLI endpoint can also
+	// resolve provider IDs. Do not expose a different message if those IDs collide.
+	if msg != nil && msg.ID != id {
+		return nil, nil //nolint:nilnil // a provider-ID collision is indistinguishable from a missing local message
+	}
+	return msg, nil
+}
+
 func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 	if msg == nil {
 		return nil
 	}
 	detail := &query.MessageDetail{
 		RelatedMessageID:     msg.RelatedMessageID,
+		ReplyToMessageID:     msg.ReplyToMessageID,
 		ID:                   msg.ID,
 		IsFromMe:             msg.IsFromMe,
 		Calendar:             msg.Calendar,

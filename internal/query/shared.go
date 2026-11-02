@@ -508,6 +508,7 @@ func getMessageRawShared(ctx context.Context, db store.SQLReader, rebind rebindF
 func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
 	conditions, args := appendSourceFilter([]string{whereClause}, args, "m.", nil, sourcescope.IDs(ctx))
 	whereClause = strings.Join(conditions, " AND ")
+	replyColumn := fmt.Sprintf("(SELECT parent.id FROM %smessages parent WHERE parent.id = m.reply_to_message_id AND parent.source_id = m.source_id AND parent.id <> m.id AND %s)", tablePrefix, store.LiveMessagesWhere("parent", true))
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -527,11 +528,12 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 			m.hidden_text_present,
 			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at,
+			%s,
 			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s
-	`, tablePrefix, tablePrefix, whereClause)
+	`, replyColumn, tablePrefix, tablePrefix, whereClause)
 
 	var msg MessageDetail
 	var sentAt, receivedAt, deletedAt sql.NullTime
@@ -554,6 +556,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 		&msg.HiddenTextPresent,
 		&msg.IsFromMe,
 		&deletedAt,
+		&msg.ReplyToMessageID,
 		&metadata,
 	)
 	if err == sql.ErrNoRows {

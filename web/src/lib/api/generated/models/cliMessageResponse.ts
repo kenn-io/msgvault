@@ -24,6 +24,7 @@ export interface CliMessageResponse {
   /** @nullable */
   received_at: string | null;
   related_message_id?: number;
+  reply_to_message_id?: number;
   rfc822_message_id?: string;
   sent_at: string;
   size_estimate: number;

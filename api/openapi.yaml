@@ -2858,6 +2858,9 @@ components:
         related_message_id:
           format: int64
           type: integer
+        reply_to_message_id:
+          format: int64
+          type: integer
         rfc822_message_id:
           type: string
         sent_at:
@@ -8220,6 +8223,10 @@ components:
         message_type:
           type: string
         related_message_id:
+          format: int64
+          type: integer
+        reply_to_message_id:
+          description: Local ID of a visible archived reply parent in the same source. Does not establish whether parent text is embedded in this body.
           format: int64
           type: integer
         sent_at:

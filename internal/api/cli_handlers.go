@@ -882,6 +882,7 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
+	ReplyToMessageID     *int64                    `json:"reply_to_message_id,omitempty"`
 	RelatedMessageID     *int64                    `json:"related_message_id,omitempty"`
 	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
 	ID                   int64                     `json:"id"`
@@ -3742,6 +3743,7 @@ func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 		Subject:              msg.Subject,
 		MessageType:          msg.MessageType,
 		RelatedMessageID:     msg.RelatedMessageID,
+		ReplyToMessageID:     msg.ReplyToMessageID,
 		Snippet:              msg.Snippet,
 		SentAt:               msg.SentAt,
 		ReceivedAt:           msg.ReceivedAt,

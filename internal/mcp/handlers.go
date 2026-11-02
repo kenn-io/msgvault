@@ -1632,6 +1632,8 @@ func lineNumberAt(body string, byteOffset int) int {
 }
 
 type getMessageResponse struct {
+	messageSegments
+
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
 	SourceMessageID      string                    `json:"source_message_id"`
@@ -1671,7 +1673,18 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		return toolErrorResult(err.Error()), nil
 	}
 
-	msg, err := h.engine.GetMessage(ctx, id)
+	requestedBodyFormat, _ := args["body_format"].(string)
+	if requestedBodyFormat == "" {
+		requestedBodyFormat = bodyFormatAuto
+	}
+	includeSegments, _ := args[toolArgIncludeSegments].(bool)
+
+	var msg *query.MessageDetail
+	if includeSegments || requestedBodyFormat == bodyFormatHTML {
+		msg, err = messageDetailWithBody(ctx, h.engine, id)
+	} else {
+		msg, err = h.engine.GetMessage(ctx, id)
+	}
 	if err != nil {
 		return messageLookupError("load message", err)
 	}
@@ -1684,11 +1697,6 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		maxChars = defaultBodyChars
 	} else if maxChars > maxBodyChars {
 		maxChars = maxBodyChars
-	}
-
-	requestedBodyFormat, _ := args["body_format"].(string)
-	if requestedBodyFormat == "" {
-		requestedBodyFormat = bodyFormatAuto
 	}
 
 	fullBody := msg.BodyText
@@ -1729,7 +1737,12 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		bodyHTML = bodySlice
 	}
 
+	var segments messageSegments
+	if includeSegments {
+		segments = segmentsForMessage(msg, fullBody, bodyFormat)
+	}
 	return jsonResult(getMessageResponse{
+		messageSegments:      segments,
 		Calendar:             msg.Calendar,
 		WebURL:               msg.WebURL,
 		ID:                   msg.ID,

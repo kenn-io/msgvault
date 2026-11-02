@@ -386,7 +386,7 @@ import (
 // 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
-// 3.35.0 adds archived calendar occurrence listing.
+// 3.35.0 adds archived calendar occurrence listing and canonical body_text to message details alongside the legacy body fallback.
 // 3.36.0 adds stored plaintext range counts to document indexing status.
 // 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
 const APISchemaVersion = "3.37.0"

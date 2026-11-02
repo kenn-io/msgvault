@@ -86,6 +86,10 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 	}{
 		{ToolGetMessage, map[string]any{"id": ids[0]}, false},
 		{ToolGetMessage, map[string]any{"id": ids[1]}, true},
+		{ToolGetMessage, map[string]any{"id": ids[0], "include_segments": true}, false},
+		{ToolGetMessage, map[string]any{"id": ids[1], "include_segments": true}, true},
+		{ToolListThread, map[string]any{"id": ids[0], "include_segments": true}, false},
+		{ToolListThread, map[string]any{"id": ids[1], "include_segments": true}, true},
 		{ToolGetStats, map[string]any{}, false},
 		{ToolListMessages, map[string]any{}, false},
 		{ToolSearchByDomains, map[string]any{"domains": "example.test"}, false},

@@ -243,5 +243,8 @@ func (h *handlers) listThread(ctx context.Context, req toolRequest) (*toolResult
 	if err != nil {
 		return originalExportError("list thread", err)
 	}
+	if include, _ := args[toolArgIncludeSegments].(bool); include {
+		return h.threadSegments(ctx, page)
+	}
 	return jsonResult(page)
 }

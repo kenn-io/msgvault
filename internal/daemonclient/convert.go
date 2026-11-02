@@ -418,6 +418,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	}
 	return &query.MessageDetail{
 		RelatedMessageID:     resp.RelatedMessageID,
+		ReplyToMessageID:     resp.ReplyToMessageID,
 		ID:                   resp.ID,
 		Calendar:             calendarProjectionFromGenerated(resp.Calendar),
 		SourceMessageID:      resp.SourceMessageID,

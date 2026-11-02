@@ -28,6 +28,8 @@ export interface MessageDetail {
   labels: string[];
   message_type?: string;
   related_message_id?: number;
+  /** Local ID of a visible archived reply parent in the same source. Does not establish whether parent text is embedded in this body. */
+  reply_to_message_id?: number;
   sent_at: string;
   size_bytes: number;
   snippet: string;

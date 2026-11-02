@@ -48,6 +48,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	ReplyToMessageID     *int64
 	RelatedMessageID     *int64
 	ConversationTitle    string
 	Calendar             *CalendarProjection
@@ -239,6 +240,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			m.size_estimate,
 			m.is_from_me,
 			m.deleted_from_source_at,
+			(SELECT parent.id FROM messages parent WHERE parent.id = m.reply_to_message_id AND parent.source_id = m.source_id AND parent.id <> m.id AND %s),
 			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
@@ -249,7 +251,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id = ?%s
-	`, participantSummarySenderSQL, scope)
+	`, participantSummarySenderSQL, LiveMessagesWhere("parent", true), scope)
 
 	var m APIMessage
 	// sentAt is a COALESCE expression; use nullableTimestamp so
@@ -279,6 +281,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.SizeEstimate,
 		&isFromMe,
 		&deletedAt,
+		&m.ReplyToMessageID,
 		&metadata,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
