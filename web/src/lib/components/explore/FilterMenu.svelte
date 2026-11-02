@@ -1,6 +1,6 @@
 <script lang="ts">
   import { autoReposition, Button, Checkbox, escapeCloses, floatingPopoverStyle } from '@kenn-io/kit-ui';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import { createExploreAPI } from '../../explore/api';
@@ -18,12 +18,14 @@
     client,
     filters,
     onChange,
-    onClear,
+    extra = undefined,
+    onClear = undefined,
   }: {
+    extra?: Snippet;
+    onClear?: () => void;
     client: APIClient;
     filters: ExploreFilter[];
     onChange: (filters: ExploreFilter[]) => void;
-    onClear: () => void;
   } = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -124,7 +126,8 @@
 
   function clear(): void {
     dateError = '';
-    onClear();
+    if (onClear) onClear();
+    else onChange([]);
   }
 </script>
 
@@ -175,7 +178,8 @@
       </div>
     </fieldset>
     {#if dateError}<p role="alert">{dateError}</p>{/if}
-    {#if filters.length > 0}
+    {@render extra?.()}
+    {#if filters.length > 0 || extra}
       <div class="panel-footer">
         <Button surface="soft" label="Clear filters" onclick={clear} />
       </div>

@@ -1093,28 +1093,34 @@ func (s *Server) handleCardDAVStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if s.scheduler != nil && s.scheduler.IsRunning() {
-		jobs := map[string]bool{}
-		if present {
-			jobs[CardDAVJobNameForConnection(name)] = true
-		} else {
-			jobs[CardDAVJobName] = true
-			for _, connection := range s.cardDAV.connectionNames() {
-				jobs[CardDAVJobNameForConnection(connection)] = true
-			}
-		}
-		for _, job := range s.scheduler.JobStatus() {
-			if !jobs[job.Name] {
-				continue
-			}
-			status.Scheduled = true
-			if !job.NextRun.IsZero() && (status.NextScheduledAt == nil || job.NextRun.Before(*status.NextScheduledAt)) {
-				next := job.NextRun
-				status.NextScheduledAt = &next
-			}
+	statuses := map[string]*CardDAVStatusResponse{}
+	if present {
+		statuses[CardDAVJobNameForConnection(name)] = &status
+	} else {
+		statuses[CardDAVJobName] = &status
+		for _, connection := range s.cardDAV.connectionNames() {
+			statuses[CardDAVJobNameForConnection(connection)] = &status
 		}
 	}
+	s.applyCardDAVSchedules(statuses)
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) applyCardDAVSchedules(statuses map[string]*CardDAVStatusResponse) {
+	if s.scheduler == nil || !s.scheduler.IsRunning() {
+		return
+	}
+	for _, job := range s.scheduler.JobStatus() {
+		status := statuses[job.Name]
+		if status == nil {
+			continue
+		}
+		status.Scheduled = true
+		if !job.NextRun.IsZero() && (status.NextScheduledAt == nil || job.NextRun.Before(*status.NextScheduledAt)) {
+			next := job.NextRun
+			status.NextScheduledAt = &next
+		}
+	}
 }
 
 func (s *Server) handleCardDAVRuns(w http.ResponseWriter, r *http.Request) {
