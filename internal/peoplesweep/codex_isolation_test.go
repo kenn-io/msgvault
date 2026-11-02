@@ -90,7 +90,7 @@ func buildCodexIsolationExecutableFixture(
 		"-X=main.markerBase64=" + base64.StdEncoding.EncodeToString([]byte(fixture.marker)),
 		"-X=main.secret=" + fixture.secret,
 	}
-	_, err := os.ReadFile(filepath.Join("testdata", "codexfixture", "main.go"))
+	_, err := os.ReadDir(filepath.Join("testdata", "codexfixture"))
 	require.NoError(t, err)
 	command := exec.CommandContext(
 		t.Context(), "go", "build", "-trimpath", "-ldflags", strings.Join(linkerValues, " "), "-o", path, ".",

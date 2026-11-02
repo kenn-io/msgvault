@@ -30,8 +30,8 @@ func SecretCommand(tb testing.TB, mode string) []string {
 		}
 		fixtureDir, err := exec.Command("go", "list", "-f", "{{.Dir}}", "go.kenn.io/msgvault/internal/testutil/secretcommand").Output()
 		require.NoError(tb, err)
-		for _, name := range []string{"store.go", "cmd/main.go"} {
-			_, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(fixtureDir)), name))
+		for _, name := range []string{".", "cmd"} {
+			_, err := os.ReadDir(filepath.Join(strings.TrimSpace(string(fixtureDir)), name))
 			require.NoError(tb, err)
 		}
 		cmd := exec.Command("go", "build", "-p=1", "-o", exe, "go.kenn.io/msgvault/internal/testutil/secretcommand/cmd") //nolint:gosec // Build the fixed fixture package in a private scratch directory.

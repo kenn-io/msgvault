@@ -2260,8 +2260,8 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	requirements.NoError(err, "generate client:\n%s", out)
 	fixer, err := filepath.Abs("../codegenfix/cmd")
 	requirements.NoError(err, "resolve generated-client validator fixup")
-	for _, name := range []string{"main.go", "../fix.go"} {
-		_, err := os.ReadFile(filepath.Join(fixer, name))
+	for _, name := range []string{".", ".."} {
+		_, err := os.ReadDir(filepath.Join(fixer, name))
 		requirements.NoError(err)
 	}
 	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))

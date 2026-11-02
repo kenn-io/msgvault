@@ -317,8 +317,6 @@ conn = Conn()
 module.load_schema(conn)
 print(conn.scripts[0])
 `
-	_, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate_demo_data.py"))
-	require.NoError(err)
 	cmd := exec.Command("python3", "-c", probe)
 	cmd.Env = append(
 		os.Environ(),
