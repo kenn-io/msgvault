@@ -410,6 +410,72 @@ describe('SourcesWorkspace', () => {
     } finally { view.unmount(); }
   });
 
+  it.each([
+    ['idle', 'history'],
+    ['scheduled', 'status'],
+  ])('keeps the reconciled contacts result when an older %s Connections refresh resolves while %s is pending', async (schedule, pending) => {
+    vi.useFakeTimers();
+    let finishRefresh!: (response: Response) => void;
+    let finishStatus!: (response: Response) => void;
+    let finishHistory!: (response: Response) => void;
+    let connectionsReads = 0;
+    let syncStarted = false;
+    const older = { ...contact, status: { ...contact.status, scheduled: schedule === 'scheduled', latest: { ...contact.status.latest,
+      state: 'failed', error_code: 'upstream_failed', error_message: 'Previous sync failed.' } } };
+    const latest = { ...contact.status.latest, id: 2, created: 7,
+      started_at: '2026-07-20T10:00:00Z', finished_at: '2026-07-20T10:00:05Z' };
+    const current = { ...older.status, latest, latest_successful: latest };
+    let reconciliationStatus: Request | undefined;
+    const fetch = api([], (url, request) => {
+      if (url.pathname.endsWith('/carddav/connections') && ++connectionsReads === 2) {
+        return new Promise<Response>(resolve => { finishRefresh = resolve; });
+      }
+      if (url.pathname.endsWith('/carddav/sync') && request.method === 'POST') {
+        syncStarted = true;
+        return Response.json({ status: 'succeeded' });
+      }
+      if (url.pathname.endsWith('/carddav/status')) {
+        if (!syncStarted) return Response.json(older.status);
+        if (reconciliationStatus) return Response.json(current);
+        reconciliationStatus = request;
+        return new Promise<Response>(resolve => { finishStatus = resolve; });
+      }
+      if (url.pathname.endsWith('/carddav/runs')) {
+        return new Promise<Response>(resolve => { finishHistory = resolve; });
+      }
+    }, [older]);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
+      const row = screen.getByRole('row', { name: /user-a/ });
+      const panel = screen.getByRole('dialog', { name: 'user-a' });
+      view.component.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      await fireEvent.click(within(row).getByRole('button', { name: 'Sync now user-a' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconciliationStatus).toBeDefined();
+      if (pending === 'history') {
+        finishStatus(Response.json(current));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(within(row).getByText('Succeeded')).toBeDefined();
+      }
+
+      finishRefresh(Response.json({ connections: [older] }));
+      await vi.advanceTimersByTimeAsync(0);
+      if (pending === 'status') finishStatus(Response.json(current));
+      finishHistory(Response.json({ runs: [latest] }));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(within(row).getByText('Succeeded')).toBeDefined();
+      expect(row.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T10:00:05Z');
+      expect(within(panel).getByText(/7 new/)).toBeDefined();
+      expect(within(panel).queryByText('Previous sync failed.')).toBeNull();
+      expect(within(row).queryByText('Sync state unknown.')).toBeNull();
+      expect((within(row).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
+    } finally { view.unmount(); }
+  });
+
   it('offers contacts sync-state retry in the row and panel', async () => {
     let statusReads = 0;
     const fetch = api([], url => {

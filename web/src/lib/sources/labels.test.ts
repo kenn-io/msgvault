@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, sourceMailbox, syncUnavailableLabel } from './labels';
+import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -19,10 +19,6 @@ describe('source labels', () => {
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
   ])('names source type %j', (code, want) => {
     expect(sourceTypeLabel(code)).toBe(want);
-  });
-
-  it('extracts the mailbox from an IMAP source identifier', () => {
-    expect(sourceMailbox('imaps://work@example.com@imap.example.com:993')).toBe('work@example.com');
   });
 
   it.each([
