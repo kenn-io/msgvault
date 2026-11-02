@@ -225,16 +225,17 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 }
 
 func TestBuildIncrementalAppendFitsLowMemoryOnLargeArchive(t *testing.T) {
+	requirements := require.New(t)
 	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 300_000, 1000, 3)
-	require.NoError(t, setRelationshipTestMemoryLimit(db, "128MB"))
+	requirements.NoError(setRelationshipTestMemoryLimit(db, "128MB"))
 	_, err := db.Exec("SET max_temp_directory_size = '128MB'")
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	_, err = Build(t.Context(), db, BuildOptions{
 		Mode: ModeIncremental, CommittedRoot: committedRoot,
 		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	assert.Equal(t, int64(903_000), relationshipParquetCount(t, db, stagedRoot, DatasetLogicalContributions))
 }
 
