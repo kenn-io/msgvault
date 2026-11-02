@@ -323,7 +323,7 @@ async function mergeAndSplit(page: Page, inspectSnapshot?: (fixture: Awaited<Ret
   return { fixture, split };
 }
 
-test('explicit merge and partial split open Synthetic One with fresh server state', async ({ page }) => {
+test('opening the source profile reuses state already refreshed by split reconciliation', async ({ page }) => {
   const { fixture, split } = await mergeAndSplit(page, async fixture => {
     await page.getByRole('button', { name: 'View verified snapshot' }).focus();
     await page.keyboard.press('Enter');

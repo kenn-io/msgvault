@@ -179,38 +179,32 @@ it('clears the stale warning after all bulk pairs link successfully', async () =
   expect(result.calls).toBe(2);
 });
 
-it('blocks another bulk link while a merge reconciles, then finishes the remaining pairs', async () => {
-  const result = bulkLinkHarness('merges');
+it.each([null, 7])('reconciles bulk merges and follows an absorbed selection (selected=%s)', async selectedID => {
+  const result = bulkLinkHarness('merges', selectedID);
+  if (selectedID === 7) {
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    expect(await screen.findByText('Absorbed alias')).toBeDefined();
+  }
   await startBulkLink();
   await confirmBulkMerge();
   await waitFor(() => expect(result.releaseReconcile).toBeDefined());
   expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
-  expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
-  expect(result.links).toHaveLength(1);
+  if (selectedID === null) {
+    expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    expect(result.links).toHaveLength(1);
+  }
   result.releaseReconcile?.();
   expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
   expect(result.links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
   expect(result.calls).toBe(3);
-});
-
-it('follows the survivor when a bulk merge absorbs the selected saved profile', async () => {
-  const result = bulkLinkHarness('merges', 7);
-  await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-  expect(await screen.findByText('Absorbed alias')).toBeDefined();
-  await startBulkLink();
-  await confirmBulkMerge();
-  await waitFor(() => expect(result.releaseReconcile).toBeDefined());
-  expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
-  result.releaseReconcile?.();
-  expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
-  expect(result.links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
-  expect(result.calls).toBe(3);
-  await waitFor(() => expect(result.directory.selectedPersonID).toBe(9));
-  expect(result.state.current.directoryPersonID).toBe(9);
-  await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-  expect(await screen.findByText('Survivor alias')).toBeDefined();
-  expect(screen.queryByText('Absorbed alias')).toBeNull();
+  if (selectedID === 7) {
+    await waitFor(() => expect(result.directory.selectedPersonID).toBe(9));
+    expect(result.state.current.directoryPersonID).toBe(9);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    expect(await screen.findByText('Survivor alias')).toBeDefined();
+    expect(screen.queryByText('Absorbed alias')).toBeNull();
+  }
 });
 
 it.each(['Category', 'Organization'])('forwards typed %s profile filters as drafts', async (field) => {

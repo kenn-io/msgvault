@@ -579,6 +579,7 @@ describe('application foundation', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
+    expect(screen.queryByRole('dialog', { name: 'Publish to address book' })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(detailHeading));
     expect(detailRequests).toEqual([41]);
     const firstAnnouncement = screen.getByRole('status', { name: 'Operation status' }).firstElementChild;
