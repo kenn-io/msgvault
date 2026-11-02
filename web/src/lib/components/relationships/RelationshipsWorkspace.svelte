@@ -12,7 +12,7 @@
 </script>
 
 <script lang="ts">
-  import { appShortcuts, Button, DetailDrawer, EmptyState, ROOT_SCOPE } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, DetailDrawer, EmptyState, PageHeader, ROOT_SCOPE } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { MeetingRef } from '../../api/generated/models';
@@ -33,7 +33,6 @@
   import RelationshipHeader from './RelationshipHeader.svelte';
   import RelationshipCalendar from './RelationshipCalendar.svelte';
   import RelationshipList from './RelationshipList.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
   import { localDayBoundsUTC, timelineRowToSelection } from './timeline-support';
 

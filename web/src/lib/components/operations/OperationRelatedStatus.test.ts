@@ -14,7 +14,7 @@ const documentStatus = {
     processed_provider_units: 5, profile_enabled: true, profile_exists: true,
     provider_latency_millis: 20, provider_requests: 5, provider_retries: 1, ready_owners: 4,
     reported_provider_bytes: 100, retry_owners: 1, staging_owners: 0,
-    stored_plaintext_chunks: 12, successful_attempts: 4, terminal_owners: 0,
+    stored_plaintext_chunks: 12, stored_plaintext_ranges: 0, successful_attempts: 4, terminal_owners: 0,
     unknown_role_occurrences: 0, verified_upload_bytes: 100
   },
   active_rebuild: { snapshot_owners: 5, remaining_owners: 1 }
@@ -31,6 +31,19 @@ const visualStatus = {
 };
 
 describe('OperationRelatedStatus', () => {
+  it('shows saved page ranges before any chunks are published', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      ...documentStatus,
+      status: { ...documentStatus.status, stored_plaintext_chunks: 0, stored_plaintext_ranges: 2 }
+    }));
+    render(OperationRelatedStatus, {
+      client: createAPIClient(fetchFn), authority: 'getDocumentIndexStatus', configured: true,
+      onClose: vi.fn(), onConfigure: vi.fn()
+    });
+
+    expect(await screen.findByText('0 stored plaintext chunks · 2 saved page ranges · 5 provider requests')).toBeDefined();
+  });
+
   it.each([
     ['getDocumentIndexStatus', '/api/v1/documents/status/current', documentStatus, '4 of 5 owners ready'],
     ['getDocumentVectorStatus', '/api/v1/documents/vectors/status', {

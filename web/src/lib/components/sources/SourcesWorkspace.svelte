@@ -4,7 +4,7 @@
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
-  import { Button, Chip, IconButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
+  import { Button, Chip, IconButton, PageHeader, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { onDestroy, onMount } from 'svelte';
@@ -13,7 +13,6 @@
   import { scheduleSummary } from '../../settings/cron';
   import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
-  import PageHeader from '../shell/PageHeader.svelte';
   import type {
     SourceStatus as GeneratedSourceStatus,
     SyncRunStatus as GeneratedSyncRunStatus,
