@@ -2244,3 +2244,26 @@ func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
 		})
 	}
 }
+
+func TestEditConfigFilePreservesConversationPolicy(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	for _, body := range []string{"", "[beeper]\nmax_participants=0\n[slack]\nmax_participants=17\n[discord]\nmax_participants=25\n[teams]\nmax_participants=31\n[conversation_policy]\nactivity_window_days=13\n[[conversation_policy.overrides]]\nsource_type='slack'\nsource_identifier='T_EXAMPLE:U_EXAMPLE'\nconversation_id='room'\ntier='cold'\n"} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		requirements.NoError(os.WriteFile(path, []byte(body), 0600))
+		before, err := Load(path, "")
+		requirements.NoError(err)
+		snapshot, err := ReadConfigFile(path)
+		requirements.NoError(err)
+		_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "beeper.media_max_participants", Value: int64(12)}, {Key: "web.theme", Value: "dark"}})
+		requirements.NoError(err)
+		after, err := Load(path, "")
+		requirements.NoError(err)
+		assertions.Equal(before.ConversationPolicySettings(), after.ConversationPolicySettings())
+		if body == "" {
+			assertions.Zero(after.Beeper.MaxParticipants)
+			assertions.Equal(180, after.ConversationPolicy.ActivityWindowDays)
+		}
+	}
+}

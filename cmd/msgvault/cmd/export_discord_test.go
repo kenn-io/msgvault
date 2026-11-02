@@ -25,7 +25,17 @@ func TestExportDiscordWritesVersionedBoundedJSON(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.CompleteSync(runID, "complete"))
 
-	cmd := newExportDiscordLocalCmd(testDiscordCommandDeps(t, st, "", ""))
+	deps := testDiscordCommandDeps(t, st, "", "")
+	writerOpens, readerOpens := 0, 0
+	deps.openStore = func() (*store.Store, func(), error) {
+		writerOpens++
+		return st, func() {}, nil
+	}
+	deps.openReadStore = func() (*store.Store, func(), error) {
+		readerOpens++
+		return st, func() {}, nil
+	}
+	cmd := newExportDiscordLocalCmd(deps)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
@@ -51,6 +61,8 @@ func TestExportDiscordWritesVersionedBoundedJSON(t *testing.T) {
 		Containers            []store.DiscordExportContainer `json:"containers"`
 	}
 	require.NoError(json.Unmarshal(output.Bytes(), &got))
+	assert.Zero(writerOpens, "export must use the initialized read opener")
+	assert.Equal(1, readerOpens)
 	assert.Equal("msgvault-discord-export/1", got.Schema)
 	assert.Equal(Version, got.MsgvaultVersion)
 	assert.False(got.SourceSyncCompletedAt.IsZero())

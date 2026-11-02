@@ -124,7 +124,7 @@ func runRepairDatesLocal(
 	usesAnalyticsCache := dateRepairUsesAnalyticsCache(cfg.DatabaseDSN())
 	unlockCache := func() error { return nil }
 	if usesAnalyticsCache {
-		releaseCacheLocks, err := lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+		releaseCacheLocks, err := lockCacheAndInvalidateSyncState(st, cfg.AnalyticsDir())
 		if err != nil {
 			return fmt.Errorf("protect analytics cache for date repair: %w", err)
 		}
@@ -183,7 +183,6 @@ func runRepairDatesLocal(
 			cfg.AnalyticsDir(),
 			true,
 			false,
-			publishLockHeld,
 			analyticsBuilderOverrides(cfg.Analytics),
 		); err != nil {
 			ledger.Status = "applied-cache-failed"

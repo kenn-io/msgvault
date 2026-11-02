@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -75,6 +76,9 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		return err
 	}
 	defer cleanup()
+	if _, err := st.ConfigureConversationPolicy(cmd.Context(), cfg.ConversationPolicySettings(), time.Now()); err != nil {
+		return err
+	}
 
 	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping Slackdump import...")
 	defer stop()
@@ -92,6 +96,10 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	postImportErr := runSlackdumpPostImportMigrations(
 		cmd.OutOrStdout(), st, summary, opts.NoDefaultIdentity, state,
 	)
+	// Default identity selection may have just confirmed a self participant.
+	// Drain its activity hints before publishing the refreshed archive cache.
+	_, policyErr := st.ConfigureConversationPolicy(context.WithoutCancel(ctx), cfg.ConversationPolicySettings(), time.Now())
+	postImportErr = errors.Join(postImportErr, policyErr)
 	if importErr != nil {
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run the command to import the export again.")

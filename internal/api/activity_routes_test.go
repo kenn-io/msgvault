@@ -379,9 +379,10 @@ func TestActivityHTTPMissingContactStateAndBeyondTailPages(t *testing.T) {
 	var state store.ContactState
 	require.NoError(json.Unmarshal(stateResponse.Body.Bytes(), &state))
 	assert.True(state.Stale)
-	assert.Zero(state.InteractionCount)
+	assert.Equal(int64(1), state.InteractionCount,
+		"a missing contact summary is recalculated from current Full activity")
 	assert.Equal(store.ChannelEmail, state.InferredChannel)
-	assert.Equal(store.CadenceUnknown, state.CadenceStatus)
+	assert.Equal(store.CadenceOverdue, state.CadenceStatus)
 
 	daysResponse := activityRequest(t, f.server, http.MethodGet,
 		fmt.Sprintf("/api/v1/people/%d/days?offset=99", f.personID), nil, true)

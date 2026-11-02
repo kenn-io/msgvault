@@ -197,7 +197,7 @@ func buildDirectorySQL(path func(string) string) string {
 	return fmt.Sprintf(`
 WITH canon AS (
 	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
+	       coalesce(try_cast(c.canonical_id AS BIGINT), p.id::BIGINT) AS canonical_id,
 	       trim(coalesce(p.display_name, ''))::VARCHAR AS display_name,
 	       trim(coalesce(p.phone_number, ''))::VARCHAR AS phone_number,
 	       trim(coalesce(p.email_address, ''))::VARCHAR AS email_address

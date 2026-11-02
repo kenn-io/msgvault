@@ -236,6 +236,12 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		// Only the roster's size and read outcome matter to media policy; the
 		// members are resolved below, where their display names are kept too.
 		roster := &memberRoster{memberCount: len(members), err: merr}
+		if err := imp.recordRosterOutcome(convID, roster); err != nil {
+			return fmt.Errorf("record chat %s roster: %w", ch.ID, err)
+		}
+		if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+			return err
+		}
 		chatComplete := true
 		var toRecips []recipientRef
 		if merr == nil {
@@ -254,7 +260,6 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			chatComplete = false
 			sum.Errors++
 		}
-		imp.recordRosterOutcome(convID, roster, sum)
 		chatOpts := opts
 		chatOpts.MediaConversation = attachmentpolicy.Conversation{
 			Type:             conversationType(ch.ChatType),
@@ -315,6 +320,18 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			if t := gm.LastModifiedDateTime.UTC(); t.After(maxTime) {
 				maxTime = t
 			}
+		}
+		// Resolve direct replies after every fetched parent has been persisted;
+		// Graph may return the child first.
+		for i := range msgs {
+			if msgs[i].ReplyToID != "" {
+				if err := imp.store.SetReplyToContext(ctx, sourceID, chatSourceMessageID(ch.ID, msgs[i].ID), chatSourceMessageID(ch.ID, msgs[i].ReplyToID)); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+			return err
 		}
 		truncated := pageTruncated || (opts.Limit > 0 && convCount < len(msgs))
 		if chatComplete && !truncated && !maxTime.IsZero() {
@@ -445,7 +462,12 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 					sum.Errors++
 				}
 			}
-			imp.recordRosterOutcome(convID, roster, sum)
+			if err := imp.recordRosterOutcome(convID, roster); err != nil {
+				return fmt.Errorf("record channel roster: %w", err)
+			}
+			if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+				return err
+			}
 
 			prevDelta := state.ChannelDelta(key)
 			var newDelta string
@@ -632,6 +654,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 					sum.Errors++
 				}
 			}
+			if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+				return err
+			}
 
 			truncated := channelTruncated || (opts.Limit > 0 && convCount < len(collected))
 			if !truncated && newDelta != "" {
@@ -685,16 +710,14 @@ func (r *memberRoster) policyCount(policy attachmentpolicy.Policy) int {
 // unknown marker when it could not be. Backfill and purge read this record
 // rather than the archived participant rows, which accumulate every member
 // ever seen and therefore never shrink when someone leaves.
-func (imp *Importer) recordRosterOutcome(convID int64, roster *memberRoster, sum *ImportSummary) {
-	var err error
+// recordRosterOutcome persists the roster size the policy refresh reads next.
+// A failed write would leave that refresh on stale membership, so callers stop
+// instead of classifying the room from it.
+func (imp *Importer) recordRosterOutcome(convID int64, roster *memberRoster) error {
 	if roster.err != nil {
-		err = imp.store.MarkConversationMemberCountUnknown(convID)
-	} else {
-		err = imp.store.SetConversationMemberCount(convID, roster.memberCount)
+		return imp.store.MarkConversationMemberCountUnknown(convID)
 	}
-	if err != nil {
-		sum.Errors++
-	}
+	return imp.store.SetConversationMemberCount(convID, roster.memberCount)
 }
 
 // channelHasOwnRoster reports whether a channel's membership is separate from
@@ -871,7 +894,14 @@ func (imp *Importer) refreshMembership(
 		return unknownMembership
 	}
 	roster := resolver.forConversation(ctx, ref, sum)
-	imp.recordRosterOutcome(ref.ConversationID, roster, sum)
+	if err := imp.recordRosterOutcome(ref.ConversationID, roster); err != nil {
+		sum.Errors++
+		return unknownMembership
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{ref.ConversationID}, time.Now()); err != nil {
+		sum.Errors++
+		return unknownMembership
+	}
 	if roster.err != nil {
 		return unknownMembership
 	}

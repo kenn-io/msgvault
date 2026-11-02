@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -403,4 +405,69 @@ func TestDirectoryLinearMatcherPreservesAcceptance(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(p, after)
 	}
+}
+
+// A demoted room must stop shaping Directory contact times right away, not
+// only after the activity projector recomputes contact state.
+func TestDirectoryContactStateIgnoresDemotedRoomBeforeRecompute(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	person := createDirectoryPerson(t, st, "Alice Example", "alice@sample.test", "friend", "inactive", "Acme")
+	source, err := st.GetOrCreateSource("slack", "T0SYNTHETIC")
+	require.NoError(err)
+	older := time.Date(2026, time.March, 1, 9, 0, 0, 0, time.UTC)
+	middle := older.Add(24 * time.Hour)
+	newer := older.Add(48 * time.Hour)
+	for _, contact := range []struct {
+		room string
+		at   time.Time
+	}{{"kept", older}, {"demoted-later", middle}, {"demoted", newer}} {
+		room, err := st.EnsureConversation(source.ID, contact.room, contact.room)
+		require.NoError(err)
+		require.NoError(st.SetConversationPolicyOverride(ctx, source.ID, contact.room, conversationpolicy.Full))
+		message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: contact.room, MessageType: "slack"})
+		require.NoError(err)
+		localDate := contact.at.Format("2006-01-02")
+		_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO activity_events (
+			message_id, ref_kind, source_id, conversation_id, channel, occurred_at, date_origin,
+			date_precision, timezone, utc_offset_minutes, local_date, direction,
+			owner_address, projected_last_modified, projected_identity_revision,
+			projected_account_identity_revision
+		) VALUES (?, 'message', ?, ?, 'chat', ?, 'sent_at', 'timestamp', 'UTC', 0, ?, 'inbound', '', ?, 1, 1)`),
+			message, source.ID, room, contact.at, localDate, contact.at)
+		require.NoError(err)
+		_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO activity_event_persons (message_id, person_id, role, evidence, local_date)
+			VALUES (?, ?, 'sender', 'direct', ?)`), message, person.ID, localDate)
+		require.NoError(err)
+	}
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_contact_state (person_id, last_contact_at, last_contact_channel, interaction_count)
+		VALUES (?, ?, 'chat', 3)`), person.ID, newer)
+	require.NoError(err)
+	recent, err := st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{LastContactAfter: &newer})
+	require.NoError(err)
+	require.Equal([]int64{person.ID}, directoryPersonIDs(recent.People), "the recomputed state starts with the newer contact")
+
+	require.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "demoted", conversationpolicy.Cold))
+	recent, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{LastContactAfter: &newer})
+	require.NoError(err)
+	assert.Empty(recent.People, "the demoted room's contact no longer counts")
+	lastContact := func() time.Time {
+		t.Helper()
+		all, err := st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{Query: "alice"})
+		require.NoError(err)
+		require.Len(all.People, 1)
+		require.NotNil(all.People[0].LastContactAt)
+		return *all.People[0].LastContactAt
+	}
+	assert.Equal(middle, lastContact())
+
+	// The contact state is still dirty from the first demotion; a second
+	// demotion must refresh the Directory again, including when an importer's
+	// sync-scoped store makes it.
+	runID, err := st.StartSync(source.ID, "full")
+	require.NoError(err)
+	require.NoError(st.ScopedToSync(source.ID, runID).SetConversationPolicyOverride(ctx, source.ID, "demoted-later", conversationpolicy.Cold))
+	assert.Equal(older, lastContact())
 }

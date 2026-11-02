@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -27,6 +28,7 @@ func TestArchiveWriteSearchRead(t *testing.T) {
 	require.NoError(err)
 	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "General")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "CEXAMPLE", conversationpolicy.Full))
 	message := &store.Message{
 		SourceID: source.ID, ConversationID: conversation,
 		SourceMessageID: "CEXAMPLE:1704110400.000001", MessageType: "slack",

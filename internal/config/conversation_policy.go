@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 )
 
-// ConversationPolicyConfig is separate from attachment limits. Overrides are
-// staged configuration until all downstream consumers support cold eligibility.
+// ConversationPolicyConfig is separate from attachment limits. Store settings
+// resolve its overrides together with persisted CLI overrides.
 type ConversationPolicyConfig struct {
 	ActivityWindowDays int                           `toml:"activity_window_days"`
 	Overrides          []conversationpolicy.Override `toml:"overrides"`
@@ -42,17 +42,6 @@ func (c *Config) ConversationParticipantLimit(sourceType string) int {
 	}
 }
 
-// ConversationOverride resolves a source-scoped declarative override. A saved
-// CLI override takes precedence at the Store boundary.
-func (c *Config) ConversationOverride(sourceType, sourceIdentifier, conversationID string) conversationpolicy.Tier {
-	for _, o := range c.ConversationPolicy.Overrides {
-		if o.SourceType == sourceType && o.SourceIdentifier == sourceIdentifier && o.ConversationID == conversationID {
-			return o.Tier
-		}
-	}
-	return ""
-}
-
 func (c *Config) validateConversationPolicy() error {
 	for _, provider := range []string{"beeper", "slack", "discord", "teams"} {
 		if c.ConversationParticipantLimit(provider) < 0 {
@@ -81,4 +70,13 @@ func (c *Config) validateConversationPolicy() error {
 		seen[key] = true
 	}
 	return nil
+}
+
+// ConversationPolicySettings returns only policy data, never account credentials.
+func (c *Config) ConversationPolicySettings() conversationpolicy.Settings {
+	settings := conversationpolicy.Settings{MaxParticipants: make(map[string]int, 5), ActivityWindowDays: int(c.ConversationPolicy.ActivityWindow() / (24 * time.Hour)), Overrides: append([]conversationpolicy.Override(nil), c.ConversationPolicy.Overrides...)}
+	for _, provider := range []string{"beeper", "slack", "slackdump", "discord", "teams"} {
+		settings.MaxParticipants[provider] = c.ConversationParticipantLimit(provider)
+	}
+	return settings
 }

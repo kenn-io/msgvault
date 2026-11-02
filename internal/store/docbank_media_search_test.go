@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -86,6 +87,34 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		require.Len(onlyNew, 2)
 		assert.Equal("new.pdf", onlyNew[0].Filename)
 		assert.Equal("new earlier.pdf", onlyNew[1].Filename)
+	})
+	t.Run("cold rooms are left out", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := storetest.New(t)
+		source, err := f.Store.GetOrCreateSource("slack", "T0SYNTHETIC")
+		require.NoError(err)
+		versions := map[conversationpolicy.Tier]string{
+			conversationpolicy.Full: "00000000-0000-4000-8000-000000000011",
+			conversationpolicy.Cold: "00000000-0000-4000-8000-000000000012",
+		}
+		for i, tier := range []conversationpolicy.Tier{conversationpolicy.Full, conversationpolicy.Cold} {
+			room, err := f.Store.EnsureConversation(source.ID, string(tier), string(tier))
+			require.NoError(err)
+			require.NoError(f.Store.SetConversationPolicyOverride(t.Context(), source.ID, string(tier), tier))
+			mid, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: string(tier), MessageType: "slack"})
+			require.NoError(err)
+			hash := fmt.Sprintf("%064x", 100+i)
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: string(tier) + ".pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(20 + i), VersionID: versions[tier]}, ""))
+		}
+		ids, _, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
+		require.NoError(err)
+		assert.Equal([]string{versions[conversationpolicy.Full]}, ids)
+		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, []string{versions[conversationpolicy.Full], versions[conversationpolicy.Cold]}, 10)
+		require.NoError(err)
+		require.Len(occurrences, 1)
+		assert.Equal("full.pdf", occurrences[0].Filename)
 	})
 	t.Run("per-version limit and duplicate collapse", func(t *testing.T) {
 		assert := assert.New(t)

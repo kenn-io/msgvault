@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -14,12 +15,16 @@ import (
 )
 
 type conversationPolicyDeps struct {
-	open   func(context.Context) (*store.Store, func(), error)
-	config func(context.Context) *config.Config
+	open     func(context.Context) (*store.Store, func(), error)
+	openRead func(context.Context) (*store.Store, func(), error)
+	config   func(context.Context) *config.Config
 }
 
 func newPolicyCmd() *cobra.Command {
 	cmd := newPolicyLocalCmd(conversationPolicyDeps{
+		openRead: func(ctx context.Context) (*store.Store, func(), error) {
+			return openInitializedStoreForInvocation(ctx, invocationFromContext(ctx))
+		},
 		open: func(ctx context.Context) (*store.Store, func(), error) {
 			state := invocationFromContext(ctx)
 			if state == nil || state.cfg == nil {
@@ -57,9 +62,13 @@ type conversationPolicyView struct {
 func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 	cmd := &cobra.Command{Use: "policy", Short: "Show room tiers and overrides"}
 	cmd.AddCommand(&cobra.Command{
-		Use: "list", Short: "List rooms, effective tiers and staged overrides as JSON", Args: cobra.NoArgs,
+		Use: "list", Short: "List rooms, effective tiers and overrides as JSON", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			st, closeStore, err := deps.open(cmd.Context())
+			open := deps.openRead
+			if open == nil {
+				open = deps.open
+			}
+			st, closeStore, err := open(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -69,12 +78,15 @@ func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 				return err
 			}
 			views := make([]conversationPolicyView, 0, len(rows))
-			cfg := deps.config(cmd.Context())
+			settings, err := st.ConversationPolicySettingsContext(cmd.Context())
+			if err != nil {
+				return err
+			}
 			for _, row := range rows {
-				view := conversationPolicyView{ConversationPolicy: row, Staged: true}
-				if cfg != nil {
-					view.SelectedOverride = cfg.ConversationOverride(row.SourceType, row.SourceIdentifier, row.ProviderID)
-					if view.SelectedOverride != "" {
+				view := conversationPolicyView{ConversationPolicy: row}
+				for _, override := range settings.Overrides {
+					if override.SourceType == row.SourceType && override.SourceIdentifier == row.SourceIdentifier && override.ConversationID == row.ProviderID {
+						view.SelectedOverride = override.Tier
 						view.OverrideOrigin = "config"
 					}
 				}
@@ -101,7 +113,7 @@ func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 			argCount = 3
 			use += " TIER"
 		}
-		cmd.AddCommand(&cobra.Command{Use: use, Short: operation + " a staged override (full or cold)", Args: cobra.ExactArgs(argCount),
+		cmd.AddCommand(&cobra.Command{Use: use, Short: operation + " an enforced override (full or cold)", Args: cobra.ExactArgs(argCount),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				sourceID, err := strconv.ParseInt(args[0], 10, 64)
 				if err != nil || sourceID <= 0 {
@@ -119,10 +131,14 @@ func newPolicyLocalCmd(deps conversationPolicyDeps) *cobra.Command {
 					return err
 				}
 				defer closeStore()
+				cfg := deps.config(cmd.Context())
+				if err := initializeConversationPolicy(cmd.Context(), st, cfg, time.Now()); err != nil {
+					return err
+				}
 				if err := st.SetConversationPolicyOverride(cmd.Context(), sourceID, args[1], tier); err != nil {
 					return err
 				}
-				if _, err = fmt.Fprintln(cmd.OutOrStdout(), "Conversation override saved (staged; effective tier remains full)."); err != nil {
+				if _, err = fmt.Fprintln(cmd.OutOrStdout(), "Conversation override enforced; analytics rebuild scheduled when enabled."); err != nil {
 					return fmt.Errorf("write conversation policy result: %w", err)
 				}
 				return nil

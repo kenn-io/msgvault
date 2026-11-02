@@ -378,6 +378,10 @@ func openBeeperImporter(flagAccounts []string, state *invocation, allowHistoryOn
 	if err != nil {
 		return nil, nil, nil, "", nil, err
 	}
+	if _, err := s.ConfigureConversationPolicy(context.Background(), cfg.ConversationPolicySettings(), time.Now()); err != nil {
+		cleanup()
+		return nil, nil, nil, "", nil, err
+	}
 	token, err := beeper.LoadToken(cfg.TokensDir())
 	if err != nil {
 		cleanup()
@@ -422,6 +426,9 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
+	if err := refreshConversationPolicyForSync(ctx, s, currentConversationPolicySettingsSource(state), time.Now()); err != nil {
+		return err
+	}
 	accountIDs, err := resolveBeeperSyncAccounts(s, nil, cfg)
 	if err != nil {
 		return err

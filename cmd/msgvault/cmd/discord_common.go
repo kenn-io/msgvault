@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -20,16 +21,18 @@ import (
 const sourceTypeDiscord = "discord"
 
 type discordCommandDeps struct {
-	bind                 func(context.Context) discordCommandDeps
-	openStore            func() (*store.Store, func(), error)
-	tokenManager         func() *discord.TokenManager
-	apiBaseURL           func() string
-	providerConfig       func() config.DiscordConfig
-	attachmentsDir       func() string
-	databaseDSN          func() string
-	rebuildCache         func(string) error
-	postSourceMigrations func(*store.Store) error
-	registerGuild        func(*store.Store, discord.Guild, string) error
+	conversationPolicySettings func() (conversationpolicy.Settings, error)
+	bind                       func(context.Context) discordCommandDeps
+	openStore                  func() (*store.Store, func(), error)
+	openReadStore              func() (*store.Store, func(), error)
+	tokenManager               func() *discord.TokenManager
+	apiBaseURL                 func() string
+	providerConfig             func() config.DiscordConfig
+	attachmentsDir             func() string
+	databaseDSN                func() string
+	rebuildCache               func(string) error
+	postSourceMigrations       func(*store.Store) error
+	registerGuild              func(*store.Store, discord.Guild, string) error
 }
 
 func defaultDiscordCommandDeps() discordCommandDeps {
@@ -43,12 +46,19 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 		currentCfg = state.cfg
 	}
 	return discordCommandDeps{
-		bind: defaultDiscordCommandDepsForContext,
+		bind:                       defaultDiscordCommandDepsForContext,
+		conversationPolicySettings: currentConversationPolicySettingsSource(state),
 		openStore: func() (*store.Store, func(), error) {
 			if state == nil || currentCfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")
 			}
 			return openWritableStoreAndInitForIngestInvocation(state)
+		},
+		openReadStore: func() (*store.Store, func(), error) {
+			if state == nil || currentCfg == nil {
+				return nil, nil, errors.New("configuration is unavailable")
+			}
+			return openInitializedStoreForInvocation(ctx, state)
 		},
 		tokenManager: func() *discord.TokenManager {
 			if currentCfg == nil {

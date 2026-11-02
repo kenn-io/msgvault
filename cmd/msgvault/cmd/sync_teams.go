@@ -52,6 +52,9 @@ Examples:
 			return err
 		}
 		defer cleanup()
+		if _, err := s.ConfigureConversationPolicy(cmd.Context(), cfg.ConversationPolicySettings(), time.Now()); err != nil {
+			return err
+		}
 		dbPath := cfg.DatabaseDSN()
 
 		if err := requireMicrosoftOAuthConfig(cfg); err != nil {

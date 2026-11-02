@@ -870,7 +870,8 @@ func TestContactStateHandlesMissingProjectionAndMalformedCadence(t *testing.T) {
 	state, err := f.Store.ContactStateContext(t.Context(), personID, last)
 	require.NoError(err)
 	assert.True(state.Stale)
-	assert.Zero(state.InteractionCount)
+	assert.Equal(int64(1), state.InteractionCount,
+		"a stale summary is refreshed from current Full activity before the projection catches up")
 	assert.Equal(store.ChannelEmail, state.InferredChannel)
 	assert.Equal(store.CadenceUnknown, state.CadenceStatus)
 

@@ -162,7 +162,11 @@ func openWritableStoreAndInitForInvocation(state *invocation) (*store.Store, fun
 }
 
 func openWritableStoreAndInitForIngestInvocation(state *invocation) (*store.Store, func(), error) {
-	return openWritableStoreAndInitWithInvocation(state, runStartupMigrationsForIngest)
+	st, closeStore, err := openWritableStoreAndInitWithInvocation(state, runStartupMigrationsForIngest)
+	if err != nil {
+		return nil, nil, err
+	}
+	return activateConversationPolicyWriter(context.Background(), state, st, closeStore)
 }
 
 func openWritableStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store) error) (*store.Store, func(), error) {

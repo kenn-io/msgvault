@@ -125,7 +125,7 @@ func TestPurgesAdvanceDerivedDataRevision(t *testing.T) {
 	require.NoError(err)
 	afterSource, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
-	assert.Equal(t, afterChannel+1, afterSource, "source removal")
+	assert.Greater(t, afterSource, afterChannel, "source removal advances the revision for source and policy cleanup")
 }
 
 func TestPurgeChannelRefusesQueuedSyncOperation(t *testing.T) {

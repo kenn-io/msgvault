@@ -961,7 +961,7 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 	require.NoError(<-lockDone)
 }
 
-func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
+func TestRemoveAccountCmd_InvalidatesCacheThroughRebuild(t *testing.T) {
 	cfg := testConfigValue()
 
 	require := require.New(t)
@@ -1002,28 +1002,16 @@ func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
 		require.FailNow("timed out waiting after account cascade")
 	}
 
-	type aggregateResult struct {
-		rows []query.AggregateRow
-		err  error
-	}
-	aggregateDone := make(chan aggregateResult, 1)
-	go func() {
-		rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
-		aggregateDone <- aggregateResult{rows: rows, err: err}
-	}()
-
-	select {
-	case result := <-aggregateDone:
-		close(resumeRemoval)
-		require.FailNow("cache reader passed the removal writer lock", "rows=%v err=%v", result.rows, result.err)
-	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the paused removal holds the writer lock
-	}
-
+	readCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = engine.Aggregate(readCtx, query.ViewSenders, query.DefaultAggregateOptions())
+	// Always resume the worker before assertions so a regression cannot strand it.
 	close(resumeRemoval)
+	require.ErrorIs(err, query.ErrCacheUnavailable, "invalidated cache fails closed during removal")
 	require.NoError(<-removeDone, "remove account")
-	result := <-aggregateDone
-	require.NoError(result.err, "first aggregate after rebuild")
-	assert.Empty(result.rows, "removed source must not remain in the rebuilt cache")
+	rows, err := engine.Aggregate(t.Context(), query.ViewSenders, query.DefaultAggregateOptions())
+	require.NoError(err, "first aggregate after rebuild")
+	assert.Empty(rows, "removed source must not remain in the rebuilt cache")
 }
 
 // TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState pins that a

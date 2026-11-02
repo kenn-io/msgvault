@@ -46,7 +46,17 @@ func (s *Store) ResolveAccountIdentityContext(
 	sourceID int64,
 	identifier string,
 ) (ResolvedAccountIdentity, error) {
-	identities, err := s.ListAccountIdentitiesContext(ctx, sourceID)
+	return resolveAccountIdentityWith(ctx, s.db, sourceID, identifier)
+}
+
+// accountIdentityQuerier keeps identity resolution on the caller's transaction.
+type accountIdentityQuerier interface {
+	chunkQuerier
+	contextStatementQuerier
+}
+
+func resolveAccountIdentityWith(ctx context.Context, q accountIdentityQuerier, sourceID int64, identifier string) (ResolvedAccountIdentity, error) {
+	identities, err := listAccountIdentitiesWith(ctx, q, sourceID)
 	if err != nil {
 		return ResolvedAccountIdentity{}, err
 	}
@@ -63,7 +73,7 @@ func (s *Store) ResolveAccountIdentityContext(
 			"source %d identity %q: %w", sourceID, identifier, ErrAccountIdentityNotFound)
 	}
 
-	participantIDs, err := participantIDsForAddressesContext(ctx, s.db, []string{storedIdentifier})
+	participantIDs, err := participantIDsForAddressesContext(ctx, q, []string{storedIdentifier})
 	if err != nil {
 		return ResolvedAccountIdentity{}, fmt.Errorf("resolve account identity participants: %w", err)
 	}

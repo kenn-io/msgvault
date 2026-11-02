@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -16,14 +17,17 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var buildCacheBeforePublicationMovesHook func() error
 var cachePublicationAfterMoveHook func(string) error
 
 type cacheStaging struct {
-	root    string
-	buildID string
+	// Empty only in archive-free publication fixtures.
+	policyDBPath string
+	root         string
+	buildID      string
 }
 
 func cacheStagingPrefix(analyticsDir string) string {
@@ -290,29 +294,13 @@ func syncDestinationParents(destination, analyticsDir string) error {
 	}
 }
 
-// cachePublishLocking selects how publication coordinates with readers on
-// the shared cache lock (query.CacheBuildLockPath). Builders run staging and
-// index construction under only the builder lock, so their publication must
-// acquire the reader-coordination lock exclusively for the brief
-// rename+marker step. Destructive maintenance (lockCacheAndInvalidateSyncState)
-// already holds that lock exclusively for its whole operation and must not
-// re-acquire it — a second acquisition in the same process uses a second
-// file descriptor and self-deadlocks.
-type cachePublishLocking uint8
-
-const (
-	acquirePublishLock cachePublishLocking = iota
-	publishLockHeld
-)
-
 func publishCache(
 	staging *cacheStaging,
 	analyticsDir string,
 	plan cachePublishPlan,
 	stateData []byte,
-	locking cachePublishLocking,
 ) error {
-	return publishCacheWithBeforeMarker(staging, analyticsDir, plan, stateData, nil, locking)
+	return publishCacheWithBeforeMarker(staging, analyticsDir, plan, stateData, nil)
 }
 
 func publishCacheWithBeforeMarker(
@@ -321,7 +309,6 @@ func publishCacheWithBeforeMarker(
 	plan cachePublishPlan,
 	stateData []byte,
 	beforeMarker func() error,
-	locking cachePublishLocking,
 ) error {
 	moves, err := planCacheMoves(staging, analyticsDir, plan)
 	if err != nil {
@@ -343,9 +330,27 @@ func publishCacheWithBeforeMarker(
 			return fmt.Errorf("sync staged cache dataset %s: %w", move.dataset, err)
 		}
 	}
+	var state query.CacheSyncState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		return fmt.Errorf("decode cache policy marker: %w", err)
+	}
+	var authority *store.Store
+	if staging.policyDBPath != "" {
+		var err error
+		authority, err = store.OpenReadOnly(staging.policyDBPath)
+		if err != nil {
+			return fmt.Errorf("open publication policy authority: %w", err)
+		}
+		defer func() { _ = authority.Close() }()
+		release, err := authority.AcquireSQLiteConversationPolicyFence(context.Background(), store.ConversationPolicyShared)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	// Readers are excluded only from here on: everything above touched
 	// staged files, not the committed generation.
-	if locking == acquirePublishLock {
+	{
 		readerLock, err := cacheBuildFileLock(analyticsDir)
 		if err != nil {
 			return fmt.Errorf("create cache publish lock: %w", err)
@@ -354,6 +359,15 @@ func publishCacheWithBeforeMarker(
 			return fmt.Errorf("acquire cache publish lock: %w", err)
 		}
 		defer func() { _ = readerLock.Unlock() }()
+	}
+	if authority != nil {
+		live, err := authority.ConversationPolicyRevision(context.Background())
+		if err != nil {
+			return err
+		}
+		if live != state.ConversationPolicyRevision {
+			return store.ErrConversationPolicyStale
+		}
 	}
 	for _, move := range moves {
 		if move.replace {
@@ -383,10 +397,6 @@ func publishCacheWithBeforeMarker(
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	if err != nil {
 		return fmt.Errorf("fingerprint published analytics cache: %w", err)
-	}
-	var state query.CacheSyncState
-	if err := json.Unmarshal(stateData, &state); err != nil {
-		return fmt.Errorf("decode cache sync state for publication: %w", err)
 	}
 	state.PublishedAt = time.Now().UTC()
 	state.DatasetFingerprint = fingerprint

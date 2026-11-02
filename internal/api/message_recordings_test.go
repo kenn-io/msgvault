@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -137,6 +138,7 @@ func newRecordingFixture(t *testing.T) *recordingFixture {
 	_, err := f.Store.DB().Exec(f.Store.Rebind(
 		`UPDATE sources SET source_type = 'beeper', identifier = ? WHERE id = ?`), "signal", f.Source.ID)
 	require.NoError(t, err)
+	require.NoError(t, f.Store.SetConversationPolicyOverride(t.Context(), f.Source.ID, "default-thread", conversationpolicy.Full))
 	docbank := newFakeDocbank(t)
 	client, err := docbankmedia.NewClient(docbank.server.URL, func() (string, error) { return "docbank-key", nil })
 	require.NoError(t, err)

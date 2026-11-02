@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -957,6 +958,9 @@ func newPersonSweepDocumentFixture(t *testing.T) (*storetest.Fixture, int64) {
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE sources SET source_type = 'slack' WHERE id = ?`), f.Source.ID)
 	require.NoError(t, err)
+	var room string
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT c.source_conversation_id FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.id=?`), messageID).Scan(&room))
+	require.NoError(t, f.Store.SetConversationPolicyOverride(t.Context(), f.Source.ID, room, conversationpolicy.Full))
 	return f, person.ID
 }
 
