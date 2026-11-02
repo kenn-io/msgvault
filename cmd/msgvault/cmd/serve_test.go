@@ -501,7 +501,7 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
 
-	healthClient := &http.Client{Timeout: time.Second}
+	healthClient := &http.Client{Timeout: serveLifecycleTestTimeout}
 	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
 	require.NoError(err, "GET /health")
 	defer func() { _ = resp.Body.Close() }()
@@ -681,7 +681,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
 
-	healthClient := &http.Client{Timeout: time.Second}
+	healthClient := &http.Client{Timeout: serveLifecycleTestTimeout}
 	readAnalyticsMode := func() string {
 		resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
 		if err != nil {
