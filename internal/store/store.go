@@ -1635,7 +1635,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
-	if version < 17 {
+	if version < 18 {
 		// Earlier versions submitted one provider job per extraction attempt.
 		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
 			return fmt.Errorf("backfill document upload counts: %w", err)
@@ -2316,6 +2316,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for
