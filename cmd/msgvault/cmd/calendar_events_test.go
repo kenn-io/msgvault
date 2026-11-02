@@ -54,8 +54,9 @@ func TestCalendarEventsCommand(t *testing.T) {
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed\x1b[31m\x1b[0m\x1b]52;c;Y2xpcGJvYXJk\x07", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
 		{name: "series cap", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"}, wantErr: "calendar query is too broad: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"},
-		{name: "old daemon", version: "3.27.0", wantErr: "calendar events require daemon API schema 3.29.0 or newer"},
-		{name: "prior schema", version: "3.28.0", wantErr: "calendar events require daemon API schema 3.29.0 or newer"},
+		{name: "old daemon", version: "3.27.0", wantErr: "calendar events require daemon API schema 3.33.0 or newer"},
+		{name: "prior schema", version: "3.28.0", wantErr: "calendar events require daemon API schema 3.33.0 or newer"},
+		{name: "prior calendar schema", version: "3.32.0", wantErr: "calendar events require daemon API schema 3.33.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
 		{name: "dry run", args: []string{"--dry-run"}, wantErr: "--dry-run is only valid"},
 		{name: "read only", args: []string{"--read-only"}, wantErr: "--read-only is only valid"},
@@ -121,6 +122,18 @@ func TestCalendarEventsCommand(t *testing.T) {
 		})
 	}
 }
+func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
+	root := newCalendarControlCmd(nil)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"events", "--help"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "--from")
+	for _, name := range []string{"--account", "--dry-run", "--read-only", "--send-updates"} {
+		assert.NotContains(t, out.String(), name)
+	}
+}
+
 func TestCalendarEventsRFC3339Bounds(t *testing.T) {
 	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })

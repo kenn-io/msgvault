@@ -90,7 +90,7 @@ Pass `next_cursor` as `cursor` with the same window, including offsets, and auth
 
 Agents need `calendar.event.read` or `message.read` on the source. Reads include only granted sources. `calendar.read` alone returns 403. Missing or hidden occurrences return 404, and unsupported recurrence returns 422. Lists with too many candidate rows return 400 `query_too_broad`. When list expansion reaches its work limit, the response keeps completed results and lists interrupted and remaining series under `unexpandable`. Invalid windows, limits, refs, or cursors return 400 `invalid_argument`.
 
-Archived calendar reads require schema 3.27.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#read-archived-events-unreleased) for display and expansion behavior.
+Archived calendar reads require schema 3.33.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#read-archived-events-unreleased) for display and expansion behavior.
 
 ### Calendar control
 
@@ -188,13 +188,21 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.32.0**.
+it is separate from the binary release version. The current schema is **3.35.0**.
 
-Schema 3.32.0 adds owner-only call evidence import, inspection and person summaries. It also adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
-
-Schema 3.31.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
+Schema 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity: `queued_at` in scheduler account and CardDAV status, `scheduler_queued_at` in Sources status, and CardDAV `scheduler_running`.
 
 Schema 3.29.0 adds the optional `address` filter to `GET /api/v1/people/directory`. It matches literal case-insensitive fragments on a saved person's currently bound identities or current curated contact points without semantic search. CLI and MCP address lookups require a daemon supporting this schema.
+
+Schema 3.33.0 adds the read-only [person tier preview](#get-apiv1peopletiers) and [explanation](#get-apiv1peopleidtier) routes. The `preview_person_tiers` and `explain_person_tier` MCP tools require a daemon supporting this schema.
+
+Schema 3.35.0 adds archived calendar occurrence listing, paging and source scope, owner meeting links, and call evidence.
+
+Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to person tier signals.
+
+Schema 3.28.0 adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
+
+Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -741,6 +749,50 @@ when it has no qualifying connections.
 
 Invalid depths return `400`; an unknown durable person returns `404`. The
 projection has no ETag because it is not a mutation resource.
+
+---
+
+### Person tier preview {#get-apiv1peopletiers}
+
+**Endpoint:** `GET /api/v1/people/tiers`
+
+List saved people in tier 1 or 2, tier 1 first and the most recent contact
+first within a tier. The rules, windows, and thresholds are
+[`[people.tiers]`](/docs/configuration/#people-tiers), read from the config
+file at request time, so this answers the same as `msgvault person tiers
+preview --json`. The route only reads; track the people you choose with
+`PUT /api/v1/people/{id}/tracking`.
+
+```json
+{
+  "people": [
+    {"person_id": 7, "display_name": "Ana Example", "tier": 1, "rule": "tier1_intensity", "tracked": false, "last_contact_date": "2026-10-28"}
+  ],
+  "as_of": "2026-10-29",
+  "readiness": {"ready": true, "reasons": []},
+  "projection": {"timezone": "UTC", "max_direct": 25}
+}
+```
+
+`readiness.ready` is `false` while the activity projection is behind or was
+built under other `[activity]` settings; counts can then be too low. While the
+projection rebuilds after a change to `[activity] timezone` or
+`max_direct_counterparts`, the route returns `409` /
+`activity_projection_rebuilding`. Invalid `[people.tiers]` settings return
+`503` / `person_tiers_config_invalid`.
+
+---
+
+### Person tier explanation {#get-apiv1peopleidtier}
+
+**Endpoint:** `GET /api/v1/people/{id}/tier`
+
+Show every count behind one saved person's tier against its threshold,
+including people in tier 3. The body has the preview row's fields plus
+`exclusion` (`owner`, `automated_address`, `calendar_room`, or `null`),
+`signals` (the windowed counts), and `thresholds` (each check with `observed`,
+`required`, `enabled`, and `met`). An unknown person returns `404` /
+`person_profile_not_found`; rebuild and config errors match the preview.
 
 ---
 

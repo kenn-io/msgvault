@@ -25,7 +25,7 @@ type timelineFixture struct {
 	now          time.Time
 	owner, peer  int64
 	serial       int
-	tierEvidence map[int64][]int64
+	tierEvidence map[int64][]*store.Message
 }
 
 func newTimelineFixture(t *testing.T) *timelineFixture {
@@ -122,10 +122,12 @@ func (f *timelineFixture) savePerson() int64 {
 func (f *timelineFixture) tier(person int64, tier int) {
 	f.T.Helper()
 	if f.tierEvidence == nil {
-		f.tierEvidence = map[int64][]int64{}
+		f.tierEvidence = map[int64][]*store.Message{}
 	}
-	for _, id := range f.tierEvidence[person] {
-		require.NoError(f.T, f.Store.SetMessageSentState(id, false))
+	for _, message := range f.tierEvidence[person] {
+		message.IsSent = sql.NullBool{Bool: false, Valid: true}
+		_, err := f.Store.UpsertMessageContext(f.T.Context(), message)
+		require.NoError(f.T, err)
 	}
 	f.tierEvidence[person] = nil
 	var participant int64
@@ -142,13 +144,15 @@ func (f *timelineFixture) tier(person int64, tier int) {
 		if out {
 			sender, recipient = f.owner, participant
 		}
+		var evidence *store.Message
 		id := f.add(f.now.AddDate(0, 0, -i-1), out, func(m *store.Message) {
+			evidence = m
 			m.ConversationID = conv
 			m.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		})
 		require.NoError(f.T, f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
 		require.NoError(f.T, f.Store.ReplaceMessageRecipients(id, "to", []int64{recipient}, nil))
-		f.tierEvidence[person] = append(f.tierEvidence[person], id)
+		f.tierEvidence[person] = append(f.tierEvidence[person], evidence)
 	}
 }
 

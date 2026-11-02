@@ -51,7 +51,7 @@ conversation briefs.
 | `VOYAGE_API_KEY`                        | text search, semantic people search, visual attachments (after the probe)       | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024)                           | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents.                                                        |
 | `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-1`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
 | `OPENAI_API_KEY`                        | text search only when no Voyage key      | `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
-| no key for the feature being configured | loopback Ollama at `[chat].server` when reachable                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The required model must already be installed. |
+| no key for the feature being configured | text: Ollama with `nomic-embed-text`, then the shared local server; sweep: loopback Ollama at `[chat].server`                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The Ollama model must already be installed. Setup asks before downloading missing files for the shared local server. |
 
 These are setup choices, not runtime failover. Adding a Voyage key does not
 replace an existing OpenAI text index, and an unavailable inference provider
@@ -126,6 +126,8 @@ source_since = "2025-01-01"      # January 1 of last year
 allow_sensitive = true
 request_timeout = "1m0s"
 ```
+
+Use `msgvault setup providers --local-embeddings` to switch text search to the shared local server. The same Nomic message recipe keeps its index. Another model requires a full rebuild. See [local embedding setup](vector-search.md) for separate document-vector and person-consent behavior.
 
 ### `[vector]` and `[vector.embeddings]`
 

@@ -153,6 +153,7 @@ type handlers struct {
 	calendar             CalendarBackend
 	calEvents            CalendarEventsBackend
 	personAgendaBackend  PersonAgendaBackend
+	personTierBackend    PersonTierBackend
 	kata                 KataBackend
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
@@ -784,14 +785,14 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
-			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState,
+			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
 		})
 	}
-	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState)
+	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, search.LiteralORWarnings(queryStr))
 }
 
-func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string) (*toolResult, error) {
-	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state})
+func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, warnings []string) (*toolResult, error) {
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Warnings: warnings})
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {

@@ -176,6 +176,7 @@ func (m MultimodalConfig) ImageQueriesEnabled() bool {
 // EmbeddingsConfig configures the external embedding endpoint used to convert
 // message text into vectors.
 type EmbeddingsConfig struct {
+	LocalOnly      bool               `toml:"local_only"`
 	APIFormat      EmbeddingAPIFormat `toml:"api_format"`
 	Endpoint       string             `toml:"endpoint"`
 	APIKeyEnv      string             `toml:"api_key_env"`
@@ -199,6 +200,27 @@ func (e EmbeddingsConfig) EffectiveAPIFormat() EmbeddingAPIFormat {
 	return e.APIFormat
 }
 
+// LocalCompatible reports whether the shared local server supports this recipe.
+func (e EmbeddingsConfig) LocalCompatible() bool {
+	if e.EffectiveAPIFormat() != APIFormatOpenAI || e.Dimension != 768 {
+		return false
+	}
+	switch e.Model {
+	case "nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text:v1.5":
+		return true
+	default:
+		return false
+	}
+}
+
+// IdentityDestination names the provider independently of a local server's port.
+func (e EmbeddingsConfig) IdentityDestination() string {
+	if e.LocalOnly {
+		return "http://local-embeddings.invalid/v1"
+	}
+	return e.Endpoint
+}
+
 // Validate checks embedding-provider settings without requiring the ordinary
 // message-vector lane to be enabled. Document vectors use the same provider
 // policy under their own enablement and consent controls.
@@ -213,10 +235,13 @@ func (e EmbeddingsConfig) Validate() error {
 		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
 			APIFormatVoyageContextual, "voyage-context-4", e.Model)
 	}
-	if e.Endpoint == "" {
+	if e.LocalOnly && !e.LocalCompatible() {
+		return errors.New("vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions")
+	}
+	if e.IdentityDestination() == "" {
 		return errors.New("vector.embeddings.endpoint: required")
 	}
-	u, err := url.Parse(e.Endpoint)
+	u, err := url.Parse(e.IdentityDestination())
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return errors.New("vector.embeddings.endpoint: must be an http or https URL with a host")
 	}

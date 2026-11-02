@@ -166,14 +166,13 @@ func TestLoopWalkExcludesUnsentReplies(t *testing.T) {
 		id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
 			Message: &store.Message{SourceID: source.ID, ConversationID: conversation, MessageType: message.kind,
 				SourceMessageID: strconv.Itoa(i), SenderID: sql.NullInt64{Int64: message.sender, Valid: true}, IsFromMe: message.fromMe,
-				SentAt: sql.NullTime{Time: loopAgo(time.Duration(5-i) * loopDay), Valid: true}},
+				SentAt: sql.NullTime{Time: loopAgo(time.Duration(5-i) * loopDay), Valid: true},
+				IsSent: sql.NullBool{Bool: i == 0, Valid: true}},
 			BodyText: sql.NullString{String: message.body, Valid: true},
 		})
 		require.NoError(err)
 		if i == 0 {
 			question = id
-		} else {
-			require.NoError(f.Store.SetMessageSentStateContext(t.Context(), id, false))
 		}
 	}
 	var ids []int64
