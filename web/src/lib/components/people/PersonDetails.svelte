@@ -21,7 +21,7 @@
   const profile = $derived(directory.selectedPersonID === personID ? directory.profile : null);
   const entity = $derived(directory.selectedPersonID === personID ? directory.entity : null);
   const bundle = $derived(directory.selectedPersonID === personID ? directory.detail : null);
-  $effect(() => { const owner = profile; if (owner) untrack(() => void owner.reloadDefinitions()); });
+  $effect(() => { const owner = profile, collection = entity; if (owner) untrack(() => { void owner.reloadDefinitions(); void collection?.load(); }); });
 </script>
 
 <div class="details">

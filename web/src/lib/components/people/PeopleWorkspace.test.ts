@@ -8,6 +8,7 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
+import { employment, organizationProfile } from '../../directory/entity-fixtures.test-support';
 import { emptyCalendar } from './fixtures.test-support';
 
 const when = '2026-07-19T10:00:00Z';
@@ -245,6 +246,8 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
     '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved), { headers: { ETag: '"person-7-r1"' } }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: saved, display_label: 'Saved Person', identifiers: [], first_at: when, last_at: when, activity_count: 50, file_count: 0, source_counts: [] }),
     '/api/v1/people/7/contact-state': () => Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 50, computed_at: when, stale: false }),
+    '/api/v1/people/7/employments': () => Response.json({ employments: [employment()] }),
+    '/api/v1/organizations/21': () => Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
   const requests = vi.spyOn(client, 'fetch');
@@ -268,7 +271,9 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
     if (entry === 'list') {
       await waitFor(() => expect(directory.detailLoading).toBe(false));
       const paths = requests.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname);
-      expect(paths.filter(path => /attribute-definitions|agenda|brief/.test(path))).toEqual([]);
+      expect(paths.filter(path => /attribute-definitions|agenda|brief|\/people\/7\/(employments|relationships)|relationship-types|\/organizations\//.test(path))).toEqual([]);
+      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+      expect(await screen.findByRole('button', { name: 'Synthetic Org' })).toBeDefined();
     }
   } finally { release(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

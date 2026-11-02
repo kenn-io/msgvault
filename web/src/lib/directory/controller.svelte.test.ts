@@ -283,21 +283,25 @@ describe('DirectoryController', () => {
 
     await controller.loadSelection(7, true);
     const oldEntity = controller.entity!;
+    const oldLoad = oldEntity.load();
+    await vi.waitFor(() => expect(requests.some(request => pathOf(request) === '/api/v1/people/7/employments')).toBe(true));
     const oldRequest = requests.find((request) => pathOf(request) === '/api/v1/people/7/employments')!;
     await controller.loadSelection(8, true);
+    await controller.entity!.load();
 
     expect(oldRequest.signal.aborted).toBe(true);
     expect(controller.entity?.personID).toBe(8);
     await vi.waitFor(() => expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]));
 
     oldEmployments.resolve(Response.json({ employments: [{ id: 70, person_id: 7, organization_id: 1, is_current: true, is_primary: true, source: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] }));
+    await oldLoad;
     await vi.waitFor(() => expect(oldEntity.employmentsLoading).toBe(false));
     expect(oldEntity.employments).toEqual([]);
     expect(controller.entity?.personID).toBe(8);
     expect(controller.entity?.employments.map((item) => item.id)).toEqual([80]);
   });
 
-  it('requests each detail section once per selection, including relationships when reopening the same person', async () => {
+  it('loads profile sections once per selection and leaves entity reads to Details', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -308,7 +312,9 @@ describe('DirectoryController', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn));
 
     await controller.loadSelection(7, true);
-    await vi.waitFor(() => expect(controller.entity?.relationshipTypesLoading).toBe(false));
+    expect(requests.map(pathOf)).not.toContain('/api/v1/people/7/employments');
+    expect(requests.map(pathOf)).not.toContain('/api/v1/people/7/relationships');
+    await controller.entity!.load();
 
     const paths = requests.map(pathOf).sort();
     expect(paths).toEqual([...new Set(paths)]);
@@ -320,6 +326,7 @@ describe('DirectoryController', () => {
     expect(controller.detail).not.toHaveProperty('relationships');
 
     await controller.loadSelection(7);
+    await controller.entity!.load();
     expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
     controller.destroy();
   });

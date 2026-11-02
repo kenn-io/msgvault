@@ -345,7 +345,6 @@ export class DirectoryController {
     this.entity = new DirectoryEntityController(this.client, personID, {
       onDirectoryChange: async () => { await this.refreshLoadedPagesAfterSummaryWrite(personID, {}); this.onWrite(); },
     });
-    void this.entity.load();
     this.detailAbort = controller;
     const generation = this.detailGeneration;
     this.selectedPersonID = personID;

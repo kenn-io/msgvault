@@ -124,11 +124,13 @@
       <div class="calendar">
         {#if domain}
           <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
-        {:else}
+        {:else if scope}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}
             {selectedDate} {since} title="Activity" onDateChange={(date) => selectedDate = date}
             onYearChange={(year) => { selectedDate = null; void controller.loadRelationshipYear(year); }} />
+        {:else}
+          <EmptyState title="No items match this view" />
         {/if}
       </div>
     {/if}

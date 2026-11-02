@@ -329,6 +329,9 @@ it.each([
     } else {
       expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
       expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
+      await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+      expect(screen.getByText('No items match this view')).toBeDefined();
+      expect(screen.queryByText('Relationship activity has not loaded.')).toBeNull();
     }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
