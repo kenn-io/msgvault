@@ -53,3 +53,8 @@ export function isTextProfileDate(value: string): boolean {
   const trimmed = value.trim();
   return trimmed !== '' && profileParts(trimmed) === undefined;
 }
+
+export function formatPartialDate(value: { year?: number; month?: number; day?: number } | undefined): string {
+  if (!value) return '';
+  return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
+}

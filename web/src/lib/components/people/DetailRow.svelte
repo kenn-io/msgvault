@@ -29,7 +29,7 @@
   }
 
   .label {
-    width: 120px;
+    width: var(--detail-label-width);
     flex: none;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
@@ -68,12 +68,6 @@
   @media (hover: none) {
     .actions {
       opacity: 1;
-    }
-  }
-
-  @media (max-width: 640px) {
-    .label {
-      width: 88px;
     }
   }
 </style>

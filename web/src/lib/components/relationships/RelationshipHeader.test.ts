@@ -116,13 +116,13 @@ describe('RelationshipHeader', () => {
   });
 
   it('shows a title heading in place of the counts line when the page header already names the person', () => {
-    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
+    render(RelationshipHeader, baseProps({ title: 'Identities' }));
     expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
     expect(screen.queryByText(/items/)).toBeNull();
   });
 
   it('collapses linked identities, opens them on request, and describes identity chips in tooltips', async () => {
-    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
+    render(RelationshipHeader, baseProps({ title: 'Identities' }));
 
     const summary = screen.getByText('Identities (2)');
     const disclosure = summary.closest('details');
@@ -200,14 +200,14 @@ describe('RelationshipHeader', () => {
   });
 
   it('groups person actions together', () => {
-    render(RelationshipHeader, baseProps({ showIdentity: false, title: 'Identities' }));
+    render(RelationshipHeader, baseProps({ title: 'Identities' }));
 
     const actions = screen.getByRole('group', { name: 'Person actions' });
     expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
   });
 
   it.each([0, 9])('renders domain counts and dates for %i items without person actions', activity => {
-    render(RelationshipHeader, baseProps({ showIdentity: false, detail: { ...domain(), activity_count: activity, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
+    render(RelationshipHeader, baseProps({ detail: { ...domain(), activity_count: activity, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
 
     expect(screen.getByText(/items/).textContent?.replace(/\s+/g, ' ').trim()).toBe(activity === 0 ? '0 items · 3 people' : '9 items · Jun 1, 2026 – Jul 19, 2026 · 3 people');
     expect(screen.queryByLabelText('Linked identities')).toBeNull();
