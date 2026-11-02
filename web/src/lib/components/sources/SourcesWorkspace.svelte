@@ -22,6 +22,8 @@
   type Source = GeneratedSourceStatus;
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
+  // While idle, scheduled sources are re-read so a queued scheduled sync shows up.
+  const IDLE_POLL_MS = 30_000;
   // A terminal result older than 24 hours is explicitly called stale.
   const STALE_LAST_RESULT_MS = 24 * 60 * 60 * 1000;
   let {
@@ -109,7 +111,7 @@
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
-      !sources.some((source) => syncRunning(source) || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
+      !sources.some((source) => syncRunning(source) || source.scheduler_queued || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
       return;
@@ -175,7 +177,7 @@
       }
       const hasActiveSync = next.some(syncRunning);
       const hasLockHold = next.some(schedulerHoldsSyncLock);
-      if (hasActiveSync) {
+      if (hasActiveSync || next.some((source) => source.scheduler_queued)) {
         lockHoldPolls = 0;
         lockStatusStale = false;
         pollDelay = advanced ? MIN_POLL_MS : Math.min(MAX_POLL_MS, pollDelay * 2);
@@ -196,6 +198,8 @@
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {
         schedulePoll(nextDelay, false, lockHoldPoll);
+      } else if (!lockStatusStale && next.some((source) => source.scheduled)) {
+        schedulePoll(IDLE_POLL_MS, true);
       }
     } catch (cause) {
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
@@ -206,7 +210,7 @@
       }
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
-        !sources.some(syncRunning) && awaitingSourceID === undefined) {
+        !sources.some((source) => syncRunning(source) || source.scheduler_queued) && awaitingSourceID === undefined) {
         lockStatusStale = true;
         return;
       }
@@ -225,7 +229,7 @@
         const nextDelay = pollDelay;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         schedulePoll(nextDelay, true, sources.some(schedulerHoldsSyncLock) &&
-          !sources.some(syncRunning));
+          !sources.some((source) => syncRunning(source) || source.scheduler_queued));
       }
     } finally {
       if (requestGeneration === generation) {
@@ -403,6 +407,14 @@
               {:else if latestAt}
                 <time datetime={latestAt} title={formatDateTime(latestAt, 'long')}>{formatDateTime(latestAt)}</time>
                 {#if staleLastResult(source)}<span class="stale">This result may be out of date.</span>{/if}
+              {/if}
+              {#if source.scheduler_queued_at && !source.active_sync}
+                <span
+                  >Queued since <time
+                    datetime={source.scheduler_queued_at}
+                    title={formatDateTime(source.scheduler_queued_at, 'long')}>{formatDateTime(source.scheduler_queued_at)}</time
+                  ></span
+                >
               {/if}
             </div>
           </td>

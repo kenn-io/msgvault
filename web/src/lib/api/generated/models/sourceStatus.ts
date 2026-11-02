@@ -21,6 +21,7 @@ export interface SourceStatus {
   scheduler_last_error?: string;
   scheduler_pending?: boolean;
   scheduler_queued?: boolean;
+  scheduler_queued_at?: string;
   scheduler_started_at?: string;
   source_type: string;
   sync_unavailable_reason?: string;

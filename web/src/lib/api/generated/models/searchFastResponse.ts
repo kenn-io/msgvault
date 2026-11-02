@@ -11,5 +11,6 @@ export interface SearchFastResponse {
   query: string;
   stats?: TotalStatsResponse;
   total_count: number;
+  warnings?: string[];
   [key: string]: unknown;
 }
