@@ -1698,7 +1698,7 @@ func upsertMessageBody(
 	messageID int64,
 	bodyText, bodyHTML sql.NullString,
 ) error {
-	embeddingChanged, textChanged, err := messageBodyChanges(q, messageID, bodyText, bodyHTML)
+	embeddingChanged, textChanged, recordsChanged, err := messageBodyChanges(q, messageID, bodyText, bodyHTML)
 	if err != nil {
 		return err
 	}
@@ -1719,6 +1719,14 @@ func upsertMessageBody(
 	if err != nil {
 		return err
 	}
+	if recordsChanged && dialect.DriverName() != postgresDriverName {
+		// Reuse the cache repair journal: edits to covered bodies require a
+		// full repair, while bodies above the published ID remain appendable.
+		if _, err := q.Exec(`INSERT INTO cache_related_change_journal (dataset, message_id)
+			VALUES ('message_facts', ?)`, messageID); err != nil {
+			return fmt.Errorf("invalidate message records projection: %w", err)
+		}
+	}
 	hiddenTextPresent := bodyHTML.Valid && mime.HTMLHasHiddenText(bodyHTML.String)
 	if _, err := q.Exec(`UPDATE messages SET hidden_text_present = ? WHERE id = ? AND hidden_text_present <> ?`,
 		hiddenTextPresent, messageID, hiddenTextPresent); err != nil {
@@ -1737,20 +1745,22 @@ func messageBodyChanges(
 	q querier,
 	messageID int64,
 	bodyText, bodyHTML sql.NullString,
-) (embeddingChanged bool, textChanged bool, err error) {
+) (embeddingChanged bool, textChanged bool, recordsChanged bool, err error) {
 	var oldText, oldHTML sql.NullString
 	err = q.QueryRow(`
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
-	if errors.Is(err, sql.ErrNoRows) {
-		return embeddingBodyValue(bodyText, bodyHTML) != "",
-			nullStringValue(bodyText) != "", nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, false, false, err
 	}
-	if err != nil {
-		return false, false, err
+	textChanged = nullStringValue(oldText) != nullStringValue(bodyText)
+	htmlChanged := nullStringValue(oldHTML) != nullStringValue(bodyHTML)
+	if textChanged || htmlChanged {
+		recordsChanged = strings.Contains(strings.ToLower(nullStringValue(oldHTML)), "application/ld+json") ||
+			strings.Contains(strings.ToLower(nullStringValue(bodyHTML)), "application/ld+json")
 	}
 	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML),
-		nullStringValue(oldText) != nullStringValue(bodyText), nil
+		textChanged, recordsChanged, nil
 }
 
 func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {

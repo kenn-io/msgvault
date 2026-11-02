@@ -66,7 +66,7 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 	tables := []string{
 		"messages", "participants", "message_recipients",
 		"labels", "message_labels", "attachments",
-		"conversations", "sources",
+		"conversations", "sources", "message_records",
 	}
 	for _, table := range tables {
 		var count int

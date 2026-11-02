@@ -60,9 +60,33 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 | `message_recipients` | message_id, participant_id, recipient_type (from/to/cc/bcc), display_name, email_address, envelope_address |
 | `labels` | id, name |
 | `message_labels` | message_id, label_id |
+| `message_records` | message_id, kind, basis, merchant, order_number, amount, currency, tracking_number, carrier, status, starts_at, ends_at, origin, destination, confirmation_code, dropped, extractor_version, extra |
 | `attachments` | message_id, filename, size |
 | `conversations` | id, source_conversation_id, title, conversation_type |
 | `sources` | id, source_type |
+
+`message_records` is a rebuildable projection of schema.org JSON-LD in
+archived mail. `basis` is `jsonld`; `extra` carries the complete record with
+field trust, unknown authorship, and `markup_only` hints. Typed values validate
+syntax, not the sender's claims. URLs remain untrusted and are never fetched.
+Credential messages identified by the verification detector are excluded.
+This slice does not add a restriction policy to archive SQL.
+
+The builder reads bodies by message ID from the same snapshot as the other
+cache tables. It skips bodies over 1 MiB and parses only HTML with the JSON-LD
+marker. Body changes and deletions invalidate the cache through its repair
+journal. Queries use the cache publication reported in the existing `cache`
+metadata; rebuild for current aggregate results. No extracted records are
+stored in the archive database.
+
+For example, count claimed shipments by carrier:
+
+```sql
+SELECT carrier, count(*)
+FROM message_records
+WHERE kind = 'shipment'
+GROUP BY carrier;
+```
 
 `messages.rfc822_message_id` is NULL when the stored identifier contains invalid
 UTF-8. The archive retains the original bytes; `repair-encoding` reports these

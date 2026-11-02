@@ -895,6 +895,10 @@ func (b *parquetBuilder) build() (string, func()) {
 	defer func() { _ = db.Close() }()
 
 	b.writeParquetFiles(db, tmpDir)
+	recordDir := filepath.Join(tmpDir, "message_records")
+	require.NoError(b.t, os.MkdirAll(recordDir, 0o755))
+	_, err = db.Exec("COPY (" + EmptyMessageRecordsSQL + ") TO '" + escapePath(filepath.Join(recordDir, "records.parquet")) + "' (FORMAT PARQUET)")
+	require.NoError(b.t, err)
 	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
