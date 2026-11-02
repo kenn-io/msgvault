@@ -9,10 +9,10 @@
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
   import PersonAddresses from './PersonAddresses.svelte';
+  import { formatContactDate } from '../../directory/labels';
   import MergePeopleDialog from './MergePeopleDialog.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
   import { localDayBoundsUTC } from '../relationships/timeline-support';
-  import { formatContactDate } from '../../directory/labels';
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import PersonHeader from './PersonHeader.svelte';

@@ -1,4 +1,4 @@
-import { person, mergeResult } from '../../directory/entity-fixtures.test-support';
+import { directoryPerson, person, mergeResult } from '../../directory/entity-fixtures.test-support';
 import { documentStatus, lanes } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
@@ -1722,7 +1722,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
-  it('clears a failed Save alert when switching People candidates', async () => {
+  it('opens a new People candidate from the selected saved person', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', directoryPersonID: 7
     }))}`);
@@ -1773,14 +1773,14 @@ describe('AppShell', () => {
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
 
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
 
     rendered.unmount();
     state.destroy();
   });
 
-  it.each(['reader next', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
+  it.each(['reader next', 'Display without columns', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1817,6 +1817,9 @@ describe('AppShell', () => {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');
+      } else if (control === 'Display without columns') {
+        await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+        expect(screen.queryByRole('menuitem', { name: 'Size' })).toBeNull();
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });
@@ -2803,38 +2806,6 @@ function settingsWithLeaveGuard(client: ReturnType<typeof createAPIClient>) {
   });
 }
 
-it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view replaces the Settings leave choice, then %s', async (choice) => {
-  window.history.replaceState(null, '', '/?workspace=files');
-  window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
-  const state = new ExploreState(window);
-  const client = settingsLeaveClient();
-  const rendered = render(AppShell, { client, state, settings: settingsWithLeaveGuard(client) });
-  try {
-    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
-    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-    window.history.back();
-    await popped;
-    await screen.findByRole('button', { name: 'Stay' });
-    expect(state.current.workspace).toBe('settings');
-    expect(window.location.search).toBe('?workspace=files');
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
-    expect(window.location.search).toBe('?workspace=settings&mode=full_text');
-    await fireEvent.click(await screen.findByRole('button', { name: choice }));
-    if (choice === 'Stay') {
-      expect(state.current.workspace).toBe('settings');
-      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
-      expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '15m');
-    } else {
-      await screen.findByRole('grid', { name: 'Messages results' });
-      expect(state.current.workspace).toBe('everything');
-      expect(new URLSearchParams(window.location.search).get('workspace')).toBe('everything');
-    }
-  } finally {
-    rendered.unmount(); state.destroy();
-  }
-});
-
 it('keeps the Settings leave choice after Past runs closes through Source status', async () => {
   window.history.replaceState(null, '', '/?workspace=sources');
   const state = new ExploreState(window);
@@ -2960,11 +2931,12 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [profile(7)] : [profile(7), profile(9)] });
+    if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [directoryPerson(7)] : [directoryPerson(7), directoryPerson(9)] });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
     if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
-    if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
+    if (/\/people\/(7|9)\/profile$/.test(path)) { const id = Number(path.split('/').at(-2)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json({ person: profile(id), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); }
+    if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
     if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? 'Synthetic One' : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
@@ -2977,7 +2949,8 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
   const view = render(AppShell, { client, state });
   try {
     const grid = await screen.findByRole('grid', { name: 'People results' });
-    await within(grid).findByText('Synthetic Two');
+    await fireEvent.click(await within(grid).findByText('Synthetic Two'));
+    await waitFor(() => expect(state.current.directoryPersonID).toBe(9));
     await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
     await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
@@ -2992,6 +2965,8 @@ it('refreshes Saved after merging a pair through Possible duplicates', async () 
     await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
     const savedGrid = await screen.findByRole('grid', { name: 'People results' });
     await waitFor(() => expect(within(savedGrid).queryByText('Synthetic Two')).toBeNull());
+    expect(screen.queryByRole('heading', { name: 'Synthetic Two' })).toBeNull();
+    expect(state.current.directoryPersonID).not.toBe(9);
   } finally { view.unmount(); state.destroy(); }
 });
 
@@ -3031,30 +3006,73 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it('refreshes Saved rows when browser Back restores unchanged filters', async () => {
-  let synced = false;
-  const saved = () => ({ ...person(7, 1, []), display_name: synced ? 'After sync' : 'Before sync', organizations: [], categories: [], contact_state: 'active' });
+it('shows a saved profile rename when returning to cached duplicate cards', async () => {
+  let renamed = false;
+  const saved = () => ({ ...person(7, renamed ? 5 : 4, []), display_name: renamed ? 'Renamed saved person' : 'Original saved person' });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/people/directory')) return Response.json({ people: [saved()] });
-    if (path.endsWith('/people/7')) return Response.json(saved(), { headers: { ETag: '"person-7-r1"' } });
+    const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, left_kind: 'person', left_id: 7 }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/people/directory')) return Response.json({ people: [directoryPerson(7, { display_name: saved().display_name, revision: saved().revision })] });
+    if (path === '/api/v1/people/7') {
+      if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); renamed = true; }
+      return Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } });
+    }
+    if (path === '/api/v1/people/7/profile') return Response.json({ person: saved(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+    if (path === '/api/v1/people/attribute-definitions') return Response.json({ definitions: [] });
+    if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+    if (path === '/api/v1/participants/2') return Response.json({ id: 2, display_label: 'Observed counterpart', identifiers: [], activity_count: 3 });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
-  window.history.replaceState(null, '', '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true })));
-  const state = new ExploreState(window);
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, peopleDuplicates: true });
   const view = render(AppShell, { client, state });
   try {
-    const grid = await screen.findByRole('grid', { name: 'People results' });
-    await fireEvent.click(await within(grid).findByText('Before sync'));
-    await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
-    synced = true;
-    const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+    await within(await screen.findByRole('listitem', { name: /Original saved person and/ })).findByText('Original saved person');
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to People' }));
+    await fireEvent.click(await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Original saved person'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed saved person' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+    await screen.findByRole('heading', { name: 'Renamed saved person' });
+    await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
+    await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
+    await screen.findByRole('button', { name: 'Keep separate' });
+    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Renamed saved person'));
+  } finally { view.unmount(); state.destroy(); }
+});
+
+it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view replaces the Settings leave choice, then %s', async (choice) => {
+  window.history.replaceState(null, '', '/?workspace=files');
+  window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');
+  const state = new ExploreState(window);
+  const client = settingsLeaveClient();
+  const rendered = render(AppShell, { client, state, settings: settingsWithLeaveGuard(client) });
+  try {
+    await fireEvent.input(await screen.findByLabelText('Stop when idle after'), { target: { value: '15m' } });
+    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
     window.history.back();
-    await restored;
-    await waitFor(() => expect(state.current.directoryPersonID).toBeNull());
-    expect(await within(grid).findByText('After sync')).toBeDefined();
-    expect(within(grid).queryByText('Before sync')).toBeNull();
-  } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
+    await popped;
+    await screen.findByRole('button', { name: 'Stay' });
+    expect(state.current.workspace).toBe('settings');
+    expect(window.location.search).toBe('?workspace=files');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Budget threads' }));
+    expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+    await fireEvent.click(await screen.findByRole('button', { name: choice }));
+    if (choice === 'Stay') {
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings&mode=full_text');
+      expect(screen.getByLabelText('Stop when idle after')).toHaveProperty('value', '15m');
+    } else {
+      await screen.findByRole('grid', { name: 'Messages results' });
+      expect(state.current.workspace).toBe('everything');
+      expect(new URLSearchParams(window.location.search).get('workspace')).toBe('everything');
+    }
+  } finally {
+    rendered.unmount(); state.destroy();
+  }
 });

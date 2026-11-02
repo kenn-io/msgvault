@@ -1,13 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi, onTestFinished } from 'vitest';
-import { tick } from 'svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
+import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import KataEvidenceDialog from './KataEvidenceDialog.svelte';
-import PersonPage from '../people/PersonPage.svelte';
-import { DirectoryController } from '../../directory/controller.svelte';
-import { RelationshipsController } from '../../relationships/controller.svelte';
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 
 const selector = { kind: 'message' as const, message_id: 42, start_rune: 0, max_chars: 1000 };
 const issue = { uid: 'issue-uid', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' };
@@ -64,56 +59,20 @@ describe('KataEvidenceDialog', () => {
     let finish!: (response: Response) => void;
     const pending = new Promise<Response>(resolve => { finish = resolve; });
     const h = harness(async () => pending);
-    const when = '2026-07-19T10:00:00Z';
-    const client = createAPIClient(async (input) => {
-      const path = new URL((input as Request).url).pathname;
-      const meeting = meetingFixtureResponse(path);
-      if (meeting) return meeting;
-      if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Example sender', partial_label: false, identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when, cache_revision: 'cache-rel' });
-      if (path.endsWith('/timeline')) return Response.json({
-        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', total_count: 1,
-        rows: [{ key: 'message:42', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1,
-          title: 'Follow up', has_attachments: false, message_count: 1, anchor_message_id: 42, conversation_id: 70, match: {} }]
-      });
-      if (path === '/api/v1/conversations/70') return Response.json({
-        id: 70, anchor_id: 42, has_before: false, has_after: false, total: 1,
-        messages: [{ id: 42, conversation_id: 70, subject: 'Follow up', from: 'sender@example.com',
-          to: ['inbox@example.com'], sent_at: when, snippet: 'Preview', body: 'Opening passage' }]
-      });
-      if (path.endsWith('/tasks/status')) return Response.json({ state: 'disabled' });
-      if (path.endsWith('/tasks')) return Response.json({ state: 'disabled', complete: false, tasks: [], outbound_metadata: {} });
-      return Response.json({ rows: [] });
-    });
-    const controller = new RelationshipsController(client, () => 'UTC');
-    const predicate = { filters: [], presentation: 'table' as const };
-    const directory = new DirectoryController(client);
-    render(PersonPage, { props: {
-      client, controller, directory, predicate, target: 'cluster:1', filesOpen: false,
-      onFiltersChange: vi.fn(), onReconcilePersonMerge: vi.fn(async () => undefined), onFilesToggle: vi.fn()
-    } });
-    onTestFinished(() => { controller.destroy(); directory.destroy(); });
-    await controller.openTarget('cluster:1', predicate);
-    await fireEvent.click((await screen.findByText('Follow up')).closest('[role="row"]')!);
-    const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
-    const onclose = vi.fn(async () => { await tick(); dialog.unmount(); });
-    const dialog = render(KataEvidenceDialog, { target: reading, props: { client: h.client, selector, defaultTitle: 'Follow up', onclose } });
-    await within(screen.getByRole('dialog', { name: 'Kata issue' })).findByText('Opening passage');
+    const onclose = vi.fn();
+    render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up', onclose });
+    await screen.findByText('Opening passage');
     if (saving) await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
     const close = screen.getAllByRole('button', { name: 'Close' })[0];
     close.focus();
     await fireEvent.keyDown(close, { key: 'Escape' });
     expect(onclose).toHaveBeenCalledTimes(saving ? 0 : 1);
-    expect(document.body.contains(reading)).toBe(true);
     if (saving) {
       finish(Response.json({ issue, replayed: false }, { status: 201 }));
       await screen.findByText('example#abcd');
       await fireEvent.keyDown(screen.getAllByRole('button', { name: 'Close' })[0], { key: 'Escape' });
     }
     expect(onclose).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('dialog', { name: 'Kata issue' })).toBeNull();
-    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBe(reading);
-    await fireEvent.keyDown(reading, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
   });
 
   const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };

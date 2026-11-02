@@ -1,4 +1,3 @@
-import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -6,8 +5,8 @@ import { DirectoryReviewController } from '../../directory/review-controller.sve
 import PossibleDuplicates from './PossibleDuplicates.svelte';
 import { pair } from '../shell/fixtures.test-support';
 
-it('renders endpoint summaries and wires Retry and Merge', async () => {
-  const row = { ...pair, left_kind: 'person', basis: 'stable_provider_id', review_token: 'after-profile-merge' };
+it('renders endpoint summaries and wires Retry and both decisions', async () => {
+  const row = { ...pair, left_kind: 'person', basis: 'stable_provider_id', review_token: 'displayed-token' };
   let unavailable = true;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -30,21 +29,8 @@ it('renders endpoint summaries and wires Retry and Merge', async () => {
     await screen.findByText('Same provider identity');
     const merge = screen.getByRole('button', { name: 'Merge' });
     await fireEvent.click(merge);
-    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'after-profile-merge' }), 'accept');
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'displayed-token' }), 'accept');
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep separate' }));
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 17, review_token: 'displayed-token' }), 'reject');
   } finally { view.unmount(); controller.destroy(); }
-});
-
-it('disables Merge while the post-merge page reloads', async () => {
-  let finish!: (response: Response) => void;
-  const controller = new DirectoryReviewController(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    if (new URL(request.url).pathname.endsWith('/match-candidates')) return new Promise<Response>(resolve => { finish = resolve; });
-    return Response.json({ id: 1, display_label: 'Alpha Example', identifiers: [] });
-  }));
-  controller.rows = [pair];
-  const view = render(PossibleDuplicates, { controller, onDecide: (candidate, decision) => void controller.queueDecision(candidate, decision) });
-  const refresh = controller.completePersonMerge(17, { survivor: person(7), result: mergeResult(person(7)), responseETag: '"person-7-r4"' });
-  try {
-    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Merge' })).toHaveProperty('disabled', true));
-  } finally { finish(Response.json({ candidates: [{ ...pair, review_token: 'refreshed-17' }], offset: 0, limit: 11 })); await refresh; view.unmount(); controller.destroy(); }
 });

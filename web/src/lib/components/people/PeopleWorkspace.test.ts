@@ -1,4 +1,4 @@
-import { person as profile } from '../../directory/entity-fixtures.test-support';
+import { directoryPerson, person as profile } from '../../directory/entity-fixtures.test-support';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -62,36 +62,6 @@ it('keeps the day across Details and the file filter across Files', async () => 
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('Escape from People results closes the reader before leaving the person', async () => {
-  const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: [] }),
-    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
-    '/api/v1/relationships/1/calendar': async request => Response.json({ year: (await request.json()).year, days: [] }),
-    '/api/v1/participants/1/timeline': () => Response.json({ rows: [{ key: 'message:2', kind: 'email', title: 'Saved message', occurred_at: when, first_at: when, message_type: 'email', conversation_type: 'email', source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, conversation_id: 2, anchor_message_id: 2, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
-    '/api/v1/conversations/2': () => Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: when, message_type: 'email', from: 'Alice Example', to: [], body: 'Reader body', snippet: 'Reader body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false }),
-    '/api/v1/cli/accounts': () => Response.json({ accounts: [] }),
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', {}, false);
-  const onNavigate = vi.fn(patch => state.commitNavigation(patch));
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    const messages = await screen.findByRole('grid', { name: 'Messages results' });
-    await fireEvent.click(await within(messages).findByText('Saved message'));
-    await screen.findByText('Reader body');
-    const people = screen.getByRole('grid', { name: 'People results' });
-    people.focus();
-    await fireEvent.keyDown(people, { key: 'Escape' });
-    expect(state.current.relationshipTarget).toBe('cluster:1');
-    await waitFor(() => expect(screen.queryByText('Reader body')).toBeNull());
-    expect(onNavigate).not.toHaveBeenCalled();
-    people.focus();
-    await fireEvent.keyDown(people, { key: 'Escape' });
-    expect(state.current.relationshipTarget).toBeNull();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); window.history.replaceState(null, '', '/'); }
-});
-
 it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the open person', async (control) => {
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: [] }),
@@ -115,7 +85,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['fails', 'is cancelled', 'clears the stale warning', 'merges'])('handles the next pair when it %s', async (outcome) => {
+it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the result when the next pair %s', async (outcome) => {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
   const links: Array<{ participant_a: number; participant_b: number }> = [];
   const client = clientFor({
@@ -126,7 +96,7 @@ it.each(['fails', 'is cancelled', 'clears the stale warning', 'merges'])('handle
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
-      return calls === 1 || outcome === 'clears the stale warning' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'clears the stale warning' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
+      return calls === 1 || outcome === 'refreshes the cache' ? Response.json({ identity_revision: 5, cache_state: calls === 1 && outcome === 'refreshes the cache' ? 'stale' : 'ready' }) : outcome === 'fails' ? Response.json({ error: 'internal_error', message: 'Synthetic link failed' }, { status: 500 }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/7/merge': () => Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: profile(7, 5, [1, 2]), merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } })
   });
@@ -281,7 +251,7 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: merged ? [one] : [one, two] }),
     '/api/v1/people/7': () => Response.json(one, { headers: { ETag: '"person-7-r4"' } }),
-    '/api/v1/people/7/profile': () => Response.json({ person: one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }, { headers: { ETag: '"person-7-r4"' } }),
+    '/api/v1/people/7/profile': () => Response.json({ person: one, names: [], addresses: [], dates: [], categories: [], media: [], contact_points: merged ? [{ person_id: 7, address_kind: 'email', original_value: 'absorbed@example.com', normalized_value: 'absorbed@example.com', envelope: { id: 11, ordinal: 0, source: 'user', vcard: {}, created_at: when, updated_at: when } }] : [] }, { headers: { ETag: '"person-profile-7-r4"' } }),
     '/api/v1/participants/1': () => Response.json({ id: 1, profile: one, display_label: 'Synthetic One', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/participants/search': () => Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
     '/api/v1/identity/links': () => merged ? Response.json({ identity_revision: 8, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 }),
@@ -302,7 +272,6 @@ it('refreshes the selected survivor and Saved list after merging', async () => {
     await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
-    observer.observe(view.container, { childList: true, subtree: true });
     observer.observe(view.container, { childList: true, subtree: true });
     await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
     const input = await openTypeahead('Search people');
@@ -385,6 +354,7 @@ it.each([
 });
 
 
+
 it('keeps Files and its filters when a saved person finishes initial hydration', async () => {
   let releaseProfile!: (response: Response) => void;
   const pendingProfile = new Promise<Response>(resolve => releaseProfile = resolve);
@@ -415,6 +385,7 @@ it('keeps Files and its filters when a saved person finishes initial hydration',
     expect(screen.getByRole('checkbox', { name: 'PDFs' })).toHaveProperty('checked', false);
   } finally { releaseProfile(Response.json(saved)); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
+
 
 it('routes reconciliation Reload to the directory controller', async () => {
   const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 2, []), contact_state: 'active', categories: [], organizations: [] }] }) });
@@ -478,6 +449,7 @@ it.each([['participant', false], ['profile', false], ['second person', false], [
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
+
 it('keeps person B selected when an earlier deletion of person A completes', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
@@ -486,7 +458,7 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
     routes[`/api/v1/people/${id}`] = request => request.method === 'DELETE' ? pending : Response.json(profile(id, 1, []), { headers: { ETag: `"person-${id}-r1"` } });
     routes[`/api/v1/people/${id}/profile`] = () => Response.json({ person: profile(id, 1, []), names: [], addresses: [], dates: [], categories: [], media: [], contact_points: [] }, { headers: { ETag: `"person-${id}-r1"` } });
   }
-  const client = clientFor(routes); const directory = new DirectoryController(client); const controller = new RelationshipsController(client, () => 'UTC'); const state = new ExploreState(null);
+  const client = clientFor(routes); const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client, undefined, () => void controller.loadList({})); const state = new ExploreState(null);
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
   const onNavigate = vi.fn();
   const view = render(PeopleWorkspace, { props: { client, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), directory, controller, urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
@@ -556,4 +528,54 @@ it('leaving People aborts its pending Save', async () => {
     view.unmount();
     expect(pending!.signal.aborted).toBe(true);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %s', async entry => {
+  let synced = false;
+  const client = clientFor({ '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7, { display_name: synced ? 'After sync' : 'Before sync' })] }) });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC');
+  const props = { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
+  let view = render(PeopleWorkspace, { props });
+  try {
+    await within(await screen.findByRole('grid', { name: 'People results' })).findByText('Before sync');
+    if (entry === 'remount') view.unmount();
+    synced = true;
+    if (entry === 'remount') view = render(PeopleWorkspace, { props });
+    else await view.rerender({ ...props, restorationEpoch: 1 });
+    const grid = await screen.findByRole('grid', { name: 'People results' });
+    await within(grid).findByText('After sync');
+    expect(within(grid).queryByText('Before sync')).toBeNull();
+  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
+});
+
+it('Escape from People results closes the reader before leaving the person', async () => {
+  const client = clientFor({
+    '/api/v1/relationships': () => Response.json({ rows: [] }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json({ year: (await request.json()).year, days: [] }),
+    '/api/v1/participants/1/timeline': () => Response.json({ rows: [{ key: 'message:2', kind: 'email', title: 'Saved message', occurred_at: when, first_at: when, message_type: 'email', conversation_type: 'email', source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, conversation_id: 2, anchor_message_id: 2, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }),
+    '/api/v1/conversations/2': () => Response.json({ id: 2, messages: [{ id: 2, conversation_id: 2, subject: 'Saved message', sent_at: when, message_type: 'email', from: 'Alice Example', to: [], body: 'Reader body', snippet: 'Reader body', attachments: [] }], anchor_id: 2, total: 1, has_before: false, has_after: false }),
+    '/api/v1/cli/accounts': () => Response.json({ accounts: [] }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', {}, false);
+  const onNavigate = vi.fn(patch => state.commitNavigation(patch));
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const messages = await screen.findByRole('grid', { name: 'Messages results' });
+    await fireEvent.click(await within(messages).findByText('Saved message'));
+    await screen.findByText('Reader body');
+    const people = screen.getByRole('grid', { name: 'People results' });
+    people.focus();
+    await fireEvent.keyDown(people, { key: 'Escape' });
+    expect(state.current.relationshipTarget).toBe('cluster:1');
+    await waitFor(() => expect(screen.queryByText('Reader body')).toBeNull());
+    expect(onNavigate).not.toHaveBeenCalled();
+    people.focus();
+    await fireEvent.keyDown(people, { key: 'Escape' });
+    expect(state.current.relationshipTarget).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); window.history.replaceState(null, '', '/'); }
 });

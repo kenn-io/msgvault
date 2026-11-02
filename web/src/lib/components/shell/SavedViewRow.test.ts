@@ -35,7 +35,7 @@ it('keeps a view with invalid state disabled and deletable', async () => {
   expect(onDeleteView).toHaveBeenCalledOnce();
 });
 
-it.each(['save', 'move'])('locks a pending rename and preserves focus through %s', async ending => {
+it.each(['save', 'move', 'reorder'])('locks a pending rename and preserves focus through %s', async ending => {
   let finish!: () => void;
   const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
   const onRenameView = vi.fn(() => pending);
@@ -55,6 +55,10 @@ it.each(['save', 'move'])('locks a pending rename and preserves focus through %s
   files.textContent = 'Files';
   container.appendChild(files);
   if (ending === 'move') files.focus();
+  if (ending === 'reorder') {
+    container.parentElement!.appendChild(container);
+    expect(document.activeElement).toBe(document.body);
+  }
   finish();
   await waitFor(() => expect(screen.queryByRole('textbox', { name: /Rename/ })).toBeNull());
   await tick();

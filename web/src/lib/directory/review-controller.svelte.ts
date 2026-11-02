@@ -272,7 +272,7 @@ export class DirectoryReviewController {
 
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }
   /** Summaries describe whole clusters, so any identity change outdates them all. */
-  private invalidateSummaries(): void { this.summaries.clear(); this.lookupAbort.abort(); }
+  invalidateSummaries(): void { this.summaries.clear(); this.lookupAbort.abort(); }
   /** Queues the lookups for the cards on the current page. */
   requestSummaries(): void {
     this.lookupQueue = [];

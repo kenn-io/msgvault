@@ -41,7 +41,6 @@
   // Each history entry keeps its own day: Back restores that entry's day, even for the same target.
   $effect(() => { void page.target; untrack(() => selectedDate = relationshipDayHistory(window.history.state, 'relationships', page.target)); });
   $effect(() => { const target = untrack(() => page.target); window.history.replaceState({ ...window.history.state, [RELATIONSHIP_DAY_HISTORY_KEY]: selectedDate && target ? { target, date: selectedDate } : undefined }, ''); });
-  // A standalone saved profile opens its editable details by default.
   $effect(() => { void (soloPerson ?? target); untrack(() => { domainYear = null; details = soloPerson !== null && !page.filesOpen; filenameQuery = ''; mimeFamilies = []; }); });
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
@@ -60,7 +59,8 @@
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
   const soloPerson = $derived(urlState.directoryPersonID);
   const predicateKey = $derived(JSON.stringify(page.predicate));
-  let appliedRestorationEpoch = untrack(() => restorationEpoch);
+  // The directory outlives this view, so a new mount reloads its retained rows once.
+  let appliedRestorationEpoch: number | undefined;
   $effect(() => {
     controller.facet = facet; controller.showAll = showAll; controller.query = query;
     controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'last_contact_asc' ? { field: 'latest_at', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
@@ -160,7 +160,6 @@
   async function peopleDeleted(ids: number[]): Promise<void> {
     onDuplicatesChanged();
     if (selectedProfileID !== null && ids.includes(selectedProfileID)) close();
-    await controller.loadList(page.predicate);
   }
   async function startBulk(): Promise<void> {
     const ids = [...selection.explicitKeys].map((key) => /^cluster:([1-9][0-9]*)$/.exec(key)?.[1]).filter((id): id is string => id !== undefined).map(Number);
@@ -245,7 +244,7 @@
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
-    onRecordDeleted={(deletedID) => { onDuplicatesChanged(); if (deletedID === selectedProfileID) close(); }}
+    onRecordDeleted={(deletedID) => void peopleDeleted([deletedID])}
     onIdentityChanged={onDuplicatesChanged}
     onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
     onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />

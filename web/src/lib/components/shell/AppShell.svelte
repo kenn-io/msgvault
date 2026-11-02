@@ -361,7 +361,7 @@
   const directoryController = new DirectoryController(
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
-    () => { void relationshipsController.loadList(exploreState.predicate()); },
+    () => { void relationshipsController.loadList(exploreState.predicate()); directoryReviewController.invalidateSummaries(); },
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
@@ -399,52 +399,38 @@
   let flashRoot = $state<HTMLElement>();
   $effect(() => {
     const view = shellData.pending;
-    if (!view) return;
-    const flashID = untrack(() => showFlash(`Deleted ${view.name}`, {
-      durationMs: 8000,
-      action: { label: 'Undo', onclick: () => void undoViewDeletion(view) },
-    }));
-    const expire = () => void flashViewError(shellData.expireDelete());
-    const timer = setTimeout(expire, 8000);
-    window.addEventListener('pagehide', expire);
-    void tick().then(() => {
-      if (document.activeElement === document.body) flashRoot?.querySelector<HTMLElement>('.kit-flash-banner__action')?.focus();
-    });
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener('pagehide', expire);
-      dismissFlash(flashID);
-    };
+    if (view) return untrack(() => stageUndo(`Deleted ${view.name}`, () => undoViewDeletion(view), () => void flashViewError(shellData.expireDelete())));
+  });
+  $effect(() => {
+    const queued = directoryReviewController.pending;
+    if (queued) return untrack(() => stageUndo(queued.decision === 'accept' ? 'Merge queued' : 'Keep separate queued', () => undoDuplicateDecision(queued.candidate.id), () => void directoryReviewController.settleDecision()));
   });
 
-  $effect(() => {
-    const pending = directoryReviewController.pending;
-    if (!pending) return;
-    const flashID = untrack(() => showFlash(pending.decision === 'accept' ? 'Merge queued' : 'Keep separate queued', {
-      durationMs: 8000,
-      action: { label: 'Undo', onclick: async () => {
-        directoryReviewController.undoDecision();
-        await tick();
-        document.getElementById(`duplicate-${pending.candidate.id}`)?.focus();
-      } },
-    }));
-    const expire = () => void directoryReviewController.settleDecision();
+  /** The flash only offers Undo; the timer and pagehide make the staged change final. */
+  function stageUndo(message: string, undo: () => Promise<void>, expire: () => void): () => void {
+    const flashID = showFlash(message, { durationMs: 8000, action: { label: 'Undo', onclick: () => void undo() } });
     const timer = setTimeout(expire, 8000);
     window.addEventListener('pagehide', expire);
     void tick().then(() => {
-      if (document.activeElement === document.body) flashRoot?.querySelector<HTMLElement>('.kit-flash-banner:last-child .kit-flash-banner__action')?.focus();
+      if (document.activeElement === document.body) [...flashRoot?.querySelectorAll<HTMLElement>('.kit-flash-banner__action') ?? []].at(-1)?.focus();
     });
     return () => {
       clearTimeout(timer);
       window.removeEventListener('pagehide', expire);
       dismissFlash(flashID);
     };
-  });
+  }
 
   async function undoViewDeletion(view: SavedView): Promise<void> {
     await shellData.undoDelete();
     await tick();
     shellRoot?.querySelector<HTMLElement>(`[data-saved-view-id="${view.id}"] .saved-view__open`)?.focus();
+  }
+
+  async function undoDuplicateDecision(candidateID: number): Promise<void> {
+    directoryReviewController.undoDecision();
+    await tick();
+    document.getElementById(`duplicate-${candidateID}`)?.focus();
   }
 
   let sidebarCollapsed = $state(readSidebarCollapsed());
@@ -1566,9 +1552,10 @@
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
-    onSuccess={async success => { await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
+    onSuccess={async success => { if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
+
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 
