@@ -268,7 +268,8 @@ describe('DirectoryProfileController', () => {
 
   it('uses the revision returned by a rename for the next structured-profile patch', async () => {
     let write = 0;
-    const fetchFn = vi.fn<typeof fetch>(async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      if ((input instanceof Request ? input : new Request(input)).method !== 'PATCH') return Response.json({ error: 'unavailable', message: 'Refresh unavailable' }, { status: 503 });
       write += 1;
       return write === 1
         ? new Response(JSON.stringify(person(7, 4, 'Alice Example')), { headers: { ETag: '"person-7-r4"' } })
@@ -279,7 +280,7 @@ describe('DirectoryProfileController', () => {
     await controller.rename('Alice Example');
     await controller.patchProfile({ names: { add: [], supersede: [] } });
 
-    expect(requests(fetchFn)[1]!.headers.get('If-Match')).toBe('"person-7-r4"');
+    expect(requests(fetchFn).filter(request => request.method === 'PATCH')[1]!.headers.get('If-Match')).toBe('"person-7-r4"');
     expect(controller.personETag).toBe('"person-7-r5"');
   });
 
@@ -389,7 +390,7 @@ describe('DirectoryProfileController', () => {
 
   it('rejects a rapid second rename without letting the first response erase its draft', async () => {
     let resolveFirst: ((response: Response) => void) | undefined;
-    const fetchFn = vi.fn<typeof fetch>(async () => new Promise<Response>((resolve) => { resolveFirst = resolve; }));
+    const fetchFn = vi.fn<typeof fetch>(async input => (input instanceof Request ? input : new Request(input)).method === 'PATCH' ? new Promise<Response>((resolve) => { resolveFirst = resolve; }) : Response.json({ error: 'unavailable', message: 'Refresh unavailable' }, { status: 503 }));
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
 
     const first = controller.rename('First name');
@@ -407,7 +408,7 @@ describe('DirectoryProfileController', () => {
 
   it('rejects a rapid second profile patch without reusing the stale ETag', async () => {
     let resolveFirst: ((response: Response) => void) | undefined;
-    const fetchFn = vi.fn<typeof fetch>(async () => new Promise<Response>((resolve) => { resolveFirst = resolve; }));
+    const fetchFn = vi.fn<typeof fetch>(async input => (input instanceof Request ? input : new Request(input)).method === 'PATCH' ? new Promise<Response>((resolve) => { resolveFirst = resolve; }) : Response.json({ error: 'unavailable', message: 'Refresh unavailable' }, { status: 503 }));
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
     const firstPatch = { names: { add: [], supersede: [] } };
     const laterPatch = { categories: { add: [], supersede: [] } };

@@ -341,7 +341,7 @@ describe('DirectoryController', () => {
           : [directoryPerson(8), { ...directoryPerson(7), revision: 5, display_name: 'Concurrent Name' }] });
       }
       if (path === '/api/v1/people/7' && request.method === 'GET') {
-        return new Response(JSON.stringify({ id: 7, revision: 3, display_name: 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r3"' } });
+        return new Response(JSON.stringify({ id: 7, revision: renamed ? 4 : 3, display_name: renamed ? 'Zed Example' : 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: `"person-7-r${renamed ? 4 : 3}"` } });
       }
       if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: renamed ? 'Zed Example' : 'Person 7', hop: 0 }], edges: [] });
       if (path === '/api/v1/people/7' && request.method === 'PATCH') {
@@ -349,7 +349,7 @@ describe('DirectoryController', () => {
         return new Response(JSON.stringify({ id: 7, revision: 4, display_name: 'Zed Example', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }), { headers: { ETag: '"person-7-r4"' } });
       }
       if (path === '/api/v1/people/7/profile') {
-        return new Response(JSON.stringify({ person: { id: 7, revision: 3, display_name: 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
+        return new Response(JSON.stringify({ person: { id: 7, revision: renamed ? 4 : 3, display_name: renamed ? 'Zed Example' : 'Person 7', participant_ids: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard_uid: 'person-7' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: `"person-7-r${renamed ? 4 : 3}"` } });
       }
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
       return detailResponse(path);
@@ -488,8 +488,8 @@ describe('DirectoryController', () => {
           categories: profileWrite === 1 ? [category] : [], media: []
         }), { headers: { ETag: `"person-7-r${3 + profileWrite}"` } });
       }
-      if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
-      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
+      if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 + profileWrite }), { headers: { ETag: `"person-7-r${3 + profileWrite}"` } });
+      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 + profileWrite }, names: [], contact_points: [], addresses: [], dates: [], categories: profileWrite === 1 ? [category] : [], media: [] }), { headers: { ETag: `"person-7-r${3 + profileWrite}"` } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
       return detailResponse(path);
     });
@@ -928,7 +928,7 @@ describe('DirectoryController', () => {
     { name: 'network rejection', failurePage: 1, network: true, message: 'reconciliation network down' }
   ])('preserves the prior page sequence and offers Reload after a $name failure', async ({ failurePage, network, message }) => {
     let directoryRead = 0;
-    let reconciliationRead = 0;
+    let reconciliationRead = 0; let profileWritten = false;
     const category = {
       person_id: 7, original_value: 'VIP', normalized_value: 'vip',
       envelope: { id: 31, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} }
@@ -948,12 +948,13 @@ describe('DirectoryController', () => {
         return Response.json({ error: 'unavailable', message }, { status: 503 });
       }
       if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') {
+        profileWritten = true;
         return new Response(JSON.stringify({
           person: { id: 7, revision: 4 }, names: [], contact_points: [], addresses: [], dates: [], categories: [category], media: []
         }), { headers: { ETag: '"person-7-r4"' } });
       }
-      if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: 3 }), { headers: { ETag: '"person-7-r3"' } });
-      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }), { headers: { ETag: '"person-7-r3"' } });
+      if (path === '/api/v1/people/7') return new Response(JSON.stringify({ id: 7, revision: profileWritten ? 4 : 3 }), { headers: { ETag: `"person-7-r${profileWritten ? 4 : 3}"` } });
+      if (path === '/api/v1/people/7/profile') return new Response(JSON.stringify({ person: { id: 7, revision: profileWritten ? 4 : 3 }, names: [], contact_points: [], addresses: [], dates: [], categories: profileWritten ? [category] : [], media: [] }), { headers: { ETag: `"person-7-r${profileWritten ? 4 : 3}"` } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
       return detailResponse(path);
     });
@@ -1148,7 +1149,7 @@ describe('DirectoryController', () => {
     } finally { controller.destroy(); }
   });
 
-  it.each(['pending attribute save', 'pending profile reload', 'split'])('refreshes the selected profile after a %s and permits its next structured edit', async cause => {
+  it.each(['pending attribute save', 'pending profile reload', 'pending structured PATCH', 'split'])('refreshes the selected profile after a %s and permits its next structured edit', async cause => {
     const pendingSave = deferredResponse();
     const pendingReload = deferredResponse();
     let holdProfileRead = false;
@@ -1157,14 +1158,15 @@ describe('DirectoryController', () => {
     const patches: Request[] = [];
     const definition = { id: 1, universal_id: '00000000-0000-4000-8000-000000000001', object_type: 'person', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_sensitive: false, is_active: true, revision: 1 };
     const value = { id: 41, person_id: 7, definition_id: 1, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'A note' }, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', source: 'user' };
-    const person = () => ({ id: 7, revision: linked ? 4 : 3, display_name: 'Synthetic Person', participant_ids: linked ? (cause === 'split' ? [11] : [11, 12]) : (cause === 'split' ? [11, 12] : [11]), vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
-    const profile = () => ({ person: person(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    const person = () => ({ id: 7, revision: linked ? 4 : cause === 'pending structured PATCH' && patches.length === 0 ? 2 : 3, display_name: 'Synthetic Person', participant_ids: linked ? (cause === 'split' ? [11] : [11, 12]) : (cause === 'split' ? [11, 12] : [11]), vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
+    const profile = () => ({ person: person(), names: cause === 'pending structured PATCH' && patches.length > 0 ? [{ person_id: 7, name_kind: 'nickname', formatted: 'Saved nickname', original_value: 'Saved nickname', is_derived: false, envelope: { id: 81, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} } }] : [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
       if (path === '/api/v1/people/7/attributes/note') return pendingSave.promise;
       if (path === '/api/v1/people/7/profile' && request.method === 'PATCH') {
         patches.push(request);
+        if (cause === 'pending structured PATCH' && patches.length === 1) { staleProfile = Response.json(profile(), { headers: { ETag: '"person-7-r3"' } }); return pendingSave.promise; }
         if (request.headers.get('If-Match') !== '"person-7-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
       }
       if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: linked ? 1 : 3, last_contact_at: linked ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: linked ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
@@ -1187,7 +1189,8 @@ describe('DirectoryController', () => {
       const owner = controller.profile;
       expect(controller.detail?.contactState).toMatchObject({ interaction_count: 3, last_contact_at: '2026-08-15T00:00:00Z', cadence_status: 'ok' });
       if (cause === 'pending attribute save') save = controller.profile!.setAttribute('note', { value: { type: 'text', text: 'A note' } });
-      if (cause === 'pending attribute save') expect(controller.profile!.mutationPending).toBe(true);
+      if (cause === 'pending structured PATCH') save = controller.profile!.patchProfile({ names: { add: [{ name_kind: 'nickname', formatted: 'Saved nickname', envelope: { source: 'user' } }] } });
+      if (cause === 'pending attribute save' || cause === 'pending structured PATCH') expect(controller.profile!.mutationPending).toBe(true);
       if (cause === 'pending profile reload') {
         holdProfileRead = true;
         reload = controller.profile!.reload();
@@ -1196,7 +1199,7 @@ describe('DirectoryController', () => {
       linked = true;
       if (cause === 'split') await controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
       else await controller.refreshSelectedPerson();
-      pendingSave.resolve(Response.json({ dry_run: false, value }));
+      pendingSave.resolve(cause === 'pending structured PATCH' ? staleProfile! : Response.json({ dry_run: false, value }));
       await save;
       pendingReload.resolve(staleProfile ?? Response.json({}));
       await reload;
@@ -1206,8 +1209,8 @@ describe('DirectoryController', () => {
       expect(controller.detail?.etags).toMatchObject({ person: '"person-7-r4"', structuredProfile: '"person-7-r4"' });
       expect(controller.detail?.contactState).toMatchObject({ interaction_count: 1, last_contact_at: '2026-08-01T00:00:00Z', cadence_status: 'overdue' });
       await controller.profile!.patchProfile({ contact_points: { add: [{ address_kind: 'phone', original_value: '+12025550123', envelope: { source: 'user' } }] } });
-      expect(patches).toHaveLength(1);
-      expect(patches[0]!.headers.get('If-Match')).toBe('"person-7-r4"');
+      expect(patches).toHaveLength(cause === 'pending structured PATCH' ? 2 : 1);
+      expect(patches.at(-1)!.headers.get('If-Match')).toBe('"person-7-r4"');
       expect(controller.profile!.conflict).toBeNull();
     } finally {
       pendingSave.resolve(Response.json({ message: 'Save unavailable' }, { status: 503 }));
