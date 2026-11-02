@@ -11,7 +11,6 @@ import { dismissFlash, FlashBanner } from '@kenn-io/kit-ui';
 vi.mock('../directory/PersonBindingConflictModal.svelte', { spy: true });
 
 it.each([
-  { savedAnchor: true, promote: false, outcome: 'merge' },
   { savedAnchor: true, promote: false, outcome: 'stale merge' },
   { savedAnchor: false, outcome: 'selected saved profile read fails' },
   { savedAnchor: true, promote: true, outcome: 'retry and merge' },
@@ -66,6 +65,7 @@ it.each([
       expect(onClose).toHaveBeenCalledOnce();
       return;
     }
+    controller.query = 'Another person';
     if (outcome === 'stale merge') {
       await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
@@ -74,9 +74,9 @@ it.each([
       expect(await screen.findByText('People merged. Identity cache refresh failed.')).toBeDefined();
       expect(onOpenPerson).toHaveBeenCalledWith(7);
       expect(onReconcile).toHaveBeenLastCalledWith(context);
+      expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST')).toHaveLength(0);
       return;
     }
-    controller.query = 'Another person';
     await modal.onSuccess({ result: mergeResult(profile(7)), survivor: profile(7), responseETag: '"person-7-r5"' });
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
     expect(onReconcile).toHaveBeenLastCalledWith(context);

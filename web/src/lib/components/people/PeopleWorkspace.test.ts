@@ -815,7 +815,7 @@ it('keeps the survivor choice open after promoting the observed person during Me
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('counts only loaded saved profiles for deletion after Details unlinks an identity', async () => {
+it('refreshes duplicates after Details unlink and deletion of only loaded saved profiles', async () => {
   const saved = profile(9, 2, [1, 2]);
   let unlinked = false;
   const deletes: number[] = [];

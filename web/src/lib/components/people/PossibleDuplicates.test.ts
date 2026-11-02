@@ -61,12 +61,11 @@ it.each([
 });
 
 it.each([
-  { reviewState: 'candidate', state: 'rejected', pending: false, label: /^Kept separate ·/ },
-  { reviewState: 'candidate', state: 'accepted', pending: false, label: /^Merged ·/ },
-  { reviewState: 'candidate', state: 'accepted', pending: true, label: /^Merge pending ·/ },
-] as const)('keeps $state read-only in $reviewState with pending=$pending', ({ reviewState, state, pending, label }) => {
+  { state: 'rejected', pending: false, label: /^Kept separate ·/ },
+  { state: 'accepted', pending: false, label: /^Merged ·/ },
+  { state: 'accepted', pending: true, label: /^Merge pending ·/ },
+] as const)('keeps $state read-only with pending=$pending', ({ state, pending, label }) => {
   const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
-  controller.identityState = reviewState;
   controller.rows = [{ ...pair, state, application_pending: pending, actionable: false }];
   const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
   try {

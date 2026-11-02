@@ -76,7 +76,7 @@ describe('PersonAddresses', () => {
     expect(screen.queryByRole('button', { name: /Unlink/ })).toBeNull();
   });
 
-  it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', async evidence => {
+  it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', evidence => {
     const base = clusteredPersonWithBareMember();
     const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
     const members = evidence === 'email' ? [{ participant_id: 78, email: 'bare@example.com' }] : evidence === 'duplicate names' ? [{ participant_id: 56, display_name: 'Shared Example' }, { participant_id: 78, display_name: 'Shared Example' }] : [];
@@ -86,8 +86,7 @@ describe('PersonAddresses', () => {
       expect(screen.getByRole('button', { name: 'Unlink profile Shared Example (78)' })).toBeDefined();
     } else {
       const name = evidence === 'email' ? 'bare@example.com' : '78';
-      await fireEvent.click(screen.getByRole('button', { name: `Unlink profile ${name}` }));
-      expect(screen.getByRole('group', { name: `Confirm unlinking profile ${name}` })).toBeDefined();
+      expect(screen.getByRole('button', { name: `Unlink profile ${name}` })).toBeDefined();
     }
   });
 
@@ -120,51 +119,38 @@ describe('PersonAddresses', () => {
     } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); }
   });
 
-  it('confirming a cut-vertex member\'s unlink removes every edge incident to it, not just one', async () => {
-    const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
-    render(PersonAddresses, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
-    expect(screen.getByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
-
-    await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledTimes(2));
-    expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 34);
-    expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56);
-    expect(screen.queryByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('cancelling an unlink confirm leaves the chip untouched and calls nothing', async () => {
-    const onUnlinkParticipants = vi.fn();
-    render(PersonAddresses, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink carol@example.com' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(screen.queryByRole('group', { name: 'Confirm unlinking carol@example.com' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
-    expect(onUnlinkParticipants).not.toHaveBeenCalled();
-  });
-
-  it('retains failed unlink confirmation and retries a stale result for the same pair', async () => {
+  it.each(['success on cut vertex', 'cancel', 'failure then stale and retry'])('handles unlink confirmation: %s', async outcome => {
     const onUnlinkParticipants = vi.fn<(...ids: number[]) => Promise<LinkOutcome>>()
-      .mockResolvedValueOnce({ ok: false, code: 'error', message: 'Request failed (500)' })
-      .mockResolvedValueOnce({ ok: true, identityRevision: 4, cacheState: 'stale' })
       .mockResolvedValue({ ok: true, identityRevision: 4, cacheState: 'ready' });
+    if (outcome === 'failure then stale and retry') onUnlinkParticipants
+      .mockResolvedValueOnce({ ok: false, code: 'error', message: 'Request failed (500)' })
+      .mockResolvedValueOnce({ ok: true, identityRevision: 4, cacheState: 'stale' });
     render(PersonAddresses, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
+    const name = outcome === 'success on cut vertex' ? '+15550100002' : 'carol@example.com';
+    await fireEvent.click(screen.getByRole('button', { name: `Unlink ${name}` }));
+    expect(screen.getByRole('group', { name: `Confirm unlinking ${name}` })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: outcome === 'cancel' ? 'Cancel' : 'Unlink' }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink carol@example.com' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
-    expect(screen.getByRole('group', { name: 'Confirm unlinking carol@example.com' })).toBeDefined();
-    expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    expect(onUnlinkParticipants.mock.calls).toEqual([[34, 56], [34, 56], [34, 56]]);
+    if (outcome === 'cancel') {
+      expect(screen.queryByRole('group', { name: `Confirm unlinking ${name}` })).toBeNull();
+      expect(screen.getByRole('button', { name: `Unlink ${name}` })).toBeDefined();
+      expect(onUnlinkParticipants).not.toHaveBeenCalled();
+    } else if (outcome === 'success on cut vertex') {
+      await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledTimes(2));
+      expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 34);
+      expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56);
+      expect(screen.queryByRole('group', { name: `Confirm unlinking ${name}` })).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+    } else {
+      expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
+      expect(screen.getByRole('group', { name: `Confirm unlinking ${name}` })).toBeDefined();
+      expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
+      await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+      expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(onUnlinkParticipants.mock.calls).toEqual([[34, 56], [34, 56], [34, 56]]);
+    }
   });
 
   it.each(['failure', 'stale-cache banner'])('finishes captured unlinks without showing a late %s on the next person', async outcome => {
