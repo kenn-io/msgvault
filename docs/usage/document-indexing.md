@@ -38,7 +38,9 @@ below explain each provider’s consent and build workflow.
 The provider receives complete original bytes for each directly authorized format.
 Msgvault keeps the containing-message links, normalized text, text chunks,
 indexes, consent records, and backups locally. It does not retain the full raw
-provider JSON or Markdown response.
+provider JSON or Markdown response. Successful Docling PDF ranges keep
+normalized page units in local checkpoints until publication, `documents
+purge-derived`, or the weekly cleanup described under Docling retries.
 
 For Mistral, eligible CSV attachments use a local conversion step when enabled.
 Msgvault retains the CSV source hash and `text/csv` occurrence identity, then sends only
@@ -89,9 +91,10 @@ to send queries to the embedding provider.
     old model no longer validate: run a fresh probe, then
     `documents consent-mistral` again.
 
-Provider uploads are manual-only. `msgvault serve` performs weekly local
-reconciliation and derivative cleanup when document indexing is enabled, but it
-never starts extraction on its own. Start every upload batch explicitly with
+Provider uploads are manual-only. While `msgvault serve` runs, it cleans stale
+local derivatives weekly, even when document indexing is disabled. Attachment
+reconciliation runs weekly when document indexing is enabled. Neither job
+starts extraction on its own. Start every upload batch explicitly with
 `documents build` or `documents resume`; when the daemon owns the archive, it
 runs that requested batch so the command does not contend for the writer lock.
 
@@ -238,6 +241,31 @@ a canceled build, or a lost submission response, the next `build` or `resume`
 uploads the document again once its retry delay or lease has passed. That can
 run a document twice on your server.
 
+PDFs over 50 pages use consecutive jobs of at most 50 pages. Each job uploads the
+original PDF again and gets its own `total_timeout` and `max_poll_attempts`.
+The existing whole-document page cap still applies. A 600-page PDF needs
+`max_pages_per_document >= 600`, then runs as twelve jobs. The fixed size aims
+to lower peak memory; memory scaling with page count is an inference, not a
+measured guarantee.
+
+Successful ranges save normalized page units in the local archive database, so
+retry and resume submit only missing ranges, even after a daemon restart. A full
+rebuild starts fresh. Publication removes these checkpoints, and
+`msgvault documents purge-derived --hash <sha256> --yes` removes them
+immediately. Removing the source or message does not: after no live message
+contains the PDF, its profile stops being the target, or a newer attempt
+replaces the checkpoints, the weekly `msgvault serve` cleanup deletes them once
+they have gone seven days without changes. Without `serve`, they stay until
+publication or purge. Backups made before removal can still contain that
+plaintext.
+
+Nothing becomes searchable until every range succeeds and one transaction
+publishes the combined document. Complete mappings preserve original page
+numbers, including blank pages. If any range needs Markdown fallback, every
+range's Markdown is joined in page order as one document without page claims.
+Degraded ranges stay in memory for the current run and are resent on retry.
+Partial-success results are rejected and never checkpointed.
+
 A job that is still running when `total_timeout` or `max_poll_attempts` runs
 out fails with `provider_timeout` and does not retry on its own. Docling Serve
 keeps working on a job after msgvault stops waiting, so automatic resubmission
@@ -351,6 +379,11 @@ Search results include the containing message and attachment provenance,
 heading path, normalized text, checksum, score, and an opaque stable cursor.
 The same search is available at `GET /api/v1/documents/search`; status is at
 `GET /api/v1/documents/status`.
+
+Status reports plaintext storage and backup exposure while either published
+chunks or unpublished Docling range checkpoints remain in the archive, including
+after a failed extraction. JSON status counts them separately in
+`stored_plaintext_chunks` and `stored_plaintext_ranges`.
 
 Use `--source-id`, `--message-id`, or `--attachment-id` for exact archive
 objects. `--person` selects a durable person; `--participant` selects an

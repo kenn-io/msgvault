@@ -121,6 +121,7 @@ type DocumentIndexStatus struct {
 	TerminalOwners             int64                       `json:"terminal_owners"`
 	MissingOwners              int64                       `json:"missing_owners"`
 	StoredPlaintextChunks      int64                       `json:"stored_plaintext_chunks"`
+	StoredPlaintextRanges      int64                       `json:"stored_plaintext_ranges"`
 }
 
 // DocumentIndexStatusRequest identifies one exact profile and configured scope.
@@ -585,7 +586,7 @@ func (s *Store) GetDocumentIndexStatus(ctx context.Context, profileID string) (D
 		       (SELECT COALESCE(SUM(request_count), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(retry_count), 0) FROM document_extractions WHERE profile_id = ?),
 		       (SELECT COALESCE(SUM(provider_latency_ms), 0) FROM document_extractions WHERE profile_id = ?),
-		       (SELECT COALESCE(SUM(CASE WHEN e.request_count > 0 THEN COALESCE(c.pdf_bytes, e.local_bytes) ELSE 0 END), 0)
+		       (SELECT COALESCE(SUM(e.upload_count * COALESCE(c.pdf_bytes, e.local_bytes)), 0)
 		        FROM document_extractions e
 		        LEFT JOIN document_extraction_conversions c ON c.extraction_id = e.id
 		        WHERE e.profile_id = ?),
@@ -718,10 +719,12 @@ func (s *Store) GetDocumentIndexStatusForScope(
 	if err != nil {
 		return DocumentIndexStatus{}, fmt.Errorf("read document index role exclusions: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_chunks`).Scan(
-		&status.StoredPlaintextChunks,
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM document_chunks),
+		       (SELECT COUNT(*) FROM document_extraction_ranges)`).Scan(
+		&status.StoredPlaintextChunks, &status.StoredPlaintextRanges,
 	); err != nil {
-		return DocumentIndexStatus{}, fmt.Errorf("count stored document plaintext chunks: %w", err)
+		return DocumentIndexStatus{}, fmt.Errorf("count stored document plaintext: %w", err)
 	}
 	status.Failures, status.FailuresExhausted, err = s.documentFailureDiagnostics(ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes)
 	if err != nil {
@@ -899,11 +902,52 @@ func (s *Store) CompleteDocumentExtractionRebuild(ctx context.Context, rebuildID
 	return nil
 }
 
+// GarbageCollectDocumentRangeCheckpoints removes bounded range checkpoints
+// from superseded attempts or profiles that are no longer the target. Active
+// staging leases are never collected.
+func (s *Store) GarbageCollectDocumentRangeCheckpoints(
+	ctx context.Context,
+	before time.Time,
+	limit int,
+) (int, error) {
+	if before.IsZero() || limit <= 0 || limit > 10_000 {
+		return 0, errors.New("document range checkpoint GC has invalid bounds")
+	}
+	var removed int
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		deletedRanges, err := tx.Exec(`
+			DELETE FROM document_extraction_ranges WHERE extraction_id IN (
+			    SELECT e.id FROM document_extractions e
+			    WHERE e.updated_at < ?
+			      AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
+			      AND EXISTS (SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id)
+			      AND (
+			          NOT EXISTS (SELECT 1 FROM document_index_state WHERE singleton = 1 AND target_profile_id = e.profile_id)
+			          OR EXISTS (SELECT 1 FROM document_extractions newer
+			              WHERE newer.profile_id = e.profile_id AND newer.canonical_blob_hash = e.canonical_blob_hash
+			                AND newer.extraction_input_key = e.extraction_input_key
+			                AND (newer.created_at > e.created_at OR (newer.created_at = e.created_at AND newer.id > e.id)))
+			      )
+			ORDER BY e.updated_at, e.id
+			LIMIT ?
+		)`, before.UTC(), limit)
+		if err != nil {
+			return fmt.Errorf("delete stale document extraction ranges: %w", err)
+		}
+		rows, err := deletedRanges.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read stale document extraction range delete count: %w", err)
+		}
+		removed = int(rows)
+		return nil
+	})
+	return removed, err
+}
+
 // GarbageCollectDocumentDerivatives removes bounded stale extraction
 // revisions. Superseded revisions are eligible after the recovery cutoff.
-// Current owners and terminal suppression records are eligible only after
-// their final live occurrence is gone. Active staging leases are never
-// collected.
+// Current owners and terminal suppression records stay while their source is
+// live. Active staging leases are never collected.
 func (s *Store) GarbageCollectDocumentDerivatives(
 	ctx context.Context,
 	before time.Time,
@@ -921,7 +965,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			LEFT JOIN document_extraction_heads h ON h.extraction_id = e.id
 			WHERE e.updated_at < ?
 			  AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
-			  AND ((h.extraction_id IS NULL AND e.state != 'terminal') OR NOT EXISTS (
+			  AND ((h.extraction_id IS NULL AND e.state != 'terminal' AND NOT EXISTS (SELECT 1 FROM document_extraction_ranges r WHERE r.extraction_id = e.id)) OR NOT EXISTS (
 			      SELECT 1 FROM document_occurrences o
 			      JOIN messages m ON m.id = o.message_id
 			      WHERE o.canonical_blob_hash = e.canonical_blob_hash

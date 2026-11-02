@@ -1057,6 +1057,80 @@ func TestScheduledDocumentReconcileDoesNotEnableUnconsentedConsumer(t *testing.T
 	require.ErrorIs(t, err, store.ErrAttachmentChangeConsumerMissing)
 }
 
+func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Attachments.Documents.Enabled = true
+	cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+	cfg.Attachments.Documents.Endpoint = "http://127.0.0.1:5001"
+	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+	ctx := withTestConfig(t, cfg)
+	fixture := storetest.New(t)
+	documentsConfig, _, _, profile, err := configuredDocumentProfile("", invocationFromContext(ctx))
+	require.NoError(err)
+	_, err = fixture.Store.EnsureDocumentExtractionProfile(ctx, profile)
+	require.NoError(err)
+	require.NoError(fixture.Store.RecordDocumentProviderConsent(ctx, store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+	messageID := fixture.CreateMessage("scheduled-document-cleanup")
+	hash := strings.Repeat("c", 64)
+	require.NoError(fixture.Store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+		Filename: "scheduled-cleanup.pdf", MIMEType: "application/pdf", Size: 128,
+		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+		SourcePartKey: "part:cleanup",
+	}))
+	var attachmentID int64
+	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&attachmentID))
+	_, eligible, err := fixture.Store.ReconcileDocumentOccurrence(ctx, attachmentID, 1)
+	require.NoError(err)
+	require.True(eligible)
+	claim, err := fixture.Store.ClaimDocumentExtraction(ctx, store.DocumentExtractionClaimInput{
+		ExtractionID: "scheduled-cleanup-attempt", ProfileID: profile.ID, CanonicalBlobHash: hash,
+		ExtractionInputKey: "original", OccurrenceAttachmentID: attachmentID,
+		OccurrenceMIMEType: "application/pdf", OccurrenceMessageType: "email",
+		LeaseOwner: "scheduled-cleanup-worker", LeaseUntil: time.Now().UTC().Add(time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	})
+	require.NoError(err)
+	require.NoError(fixture.Store.SaveDocumentExtractionRange(ctx, claim,
+		storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes))
+	require.NoError(fixture.Store.FailDocumentExtraction(ctx, store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_timeout", Terminal: true,
+	}))
+	retired, err := fixture.Store.RetireDocumentExtractionProfile(ctx, profile.ID)
+	require.NoError(err)
+	require.True(retired)
+	_, _, err = fixture.Store.RemoveSourceSerialized(ctx, fixture.Source.ID)
+	require.NoError(err)
+	var count int
+	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+		"SELECT COUNT(*) FROM messages WHERE source_id = ?"), fixture.Source.ID).Scan(&count))
+	assert.Zero(count)
+	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(
+		"UPDATE document_extractions SET updated_at = ? WHERE id = ?"),
+		time.Now().UTC().Add(-2*documentDerivativeRecoveryWindow), claim.ExtractionID)
+	require.NoError(err)
+
+	sched := scheduler.New(func(context.Context, string) error { return nil })
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	require.NoError(configureDocumentReconcileJob(ctx, sched, fixture.Store, false))
+	assert.True(sched.IsJobScheduled(documentFullReconcileJob))
+	require.NoError(sched.TriggerJob(documentFullReconcileJob))
+	_, err = fixture.Store.GetAttachmentChangeConsumer(ctx, documentindex.DocumentAttachmentConsumerKey)
+	require.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
+	require.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	assert.Zero(count)
+	require.NoError(fixture.Store.DB().QueryRow(
+		fixture.Store.Rebind("SELECT COUNT(*) FROM document_extractions WHERE id = ?"), claim.ExtractionID).Scan(&count))
+	assert.Equal(1, count, "range cleanup must leave gated extraction cleanup unchanged")
+}
+
 func TestScheduledDocumentReconcilePreservesExistingConsentWhenExtractionDisabled(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
