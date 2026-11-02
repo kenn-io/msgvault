@@ -108,7 +108,7 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 	// preserve the request while running, then retry a recoverable failure once.
 	const pendingRetry = `docbank_attachment_processing.outcome = 'retry_requested'
  AND docbank_attachment_processing.fingerprint = excluded.fingerprint
- AND docbank_attachment_processing.job_id = excluded.job_id`
+ AND (docbank_attachment_processing.job_id = excluded.job_id OR docbank_attachment_processing.job_id = '')`
 	recoverable := nextActionAt.IsZero() && slices.Contains(DocbankRequeueOutcomes, d.Outcome)
 	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO docbank_attachment_processing
  (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -133,11 +133,12 @@ func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, pro
 	result := DocbankAttachmentProcessingSummary{Outcomes: map[string]int64{}}
 	args := []any{"docbank-processing:" + dest + ":" + profile, dest}
 	args = append(args, visibleArgs...)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT COALESCE(p.outcome, ''), COUNT(*)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT
+ CASE WHEN p.outcome = 'retry_requested' AND p.job_id = '' THEN '' ELSE COALESCE(p.outcome, '') END, COUNT(*)
  FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash
  AND p.fingerprint = (SELECT value FROM archive_metadata WHERE key = ?)
- WHERE d.destination_key = ? AND `+processable+` GROUP BY COALESCE(p.outcome, '')`),
+ WHERE d.destination_key = ? AND `+processable+` GROUP BY 1`),
 		args...)
 	if err != nil {
 		return result, err

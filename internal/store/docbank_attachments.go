@@ -481,8 +481,8 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 		}
 		if _, err := q.Exec(`
 			UPDATE docbank_attachment_processing SET outcome = 'retry_requested'
-			WHERE destination_key = ? AND outcome = 'requested'
-			  AND job_id <> '' AND next_action_at IS NOT NULL`, destination); err != nil {
+			WHERE destination_key = ? AND outcome IN ('', 'requested')
+			  AND next_action_at IS NOT NULL`, destination); err != nil {
 			return fmt.Errorf("request retry after pending attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
