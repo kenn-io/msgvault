@@ -3062,3 +3062,60 @@ it.each([false, true])('preserves focus when Undo settles, navigating away=%s', 
     await waitFor(() => expect(document.activeElement).toBe(navigate ? messages : screen.getByRole('radio', { name: 'To review' })));
   } finally { rendered.unmount(); state.destroy(); }
 });
+
+it.each(['Next', 'History', 'Retry page'])('keeps the second duplicate decision when %s is attempted while the first posts', async action => {
+  let releaseFirst!: () => void;
+  let releasePage!: () => void;
+  const posted: number[] = [], decided = new Set<number>();
+  let pageFailed = false;
+  const candidates = Array.from({ length: 12 }, (_, index) => ({ ...pair, id: 17 + index, review_token: `review-${17 + index}` }));
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url), path = url.pathname;
+    const match = path.match(/\/(\d+)\/review\/reject$/);
+    if (match) {
+      const id = Number(match[1]);
+      posted.push(id);
+      if (id === 17) await new Promise<void>((resolve, reject) => {
+        releaseFirst = resolve;
+        request.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+      decided.add(id);
+      return Response.json({ candidate: { ...pair, id, state: 'rejected' }, cache_state: 'ready' });
+    }
+    if (path.endsWith('/identity/match-candidates')) {
+      const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit'));
+      if (offset && action === 'Retry page' && !pageFailed) { pageFailed = true; return Response.json({ message: 'Queue unavailable' }, { status: 503 }); }
+      if (limit === 11 && (offset || url.searchParams.get('state') === 'accepted,rejected')) await new Promise<void>((resolve, reject) => {
+        releasePage = resolve;
+        request.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+      return Response.json({ candidates: candidates.filter(row => !decided.has(row.id)).slice(offset, offset + limit), offset, limit });
+    }
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await screen.findAllByRole('button', { name: 'Keep separate' });
+    if (action === 'Retry page') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await screen.findByRole('button', { name: 'Retry page' });
+    }
+    await fireEvent.click(within(document.getElementById('duplicate-17')!).getByRole('button', { name: 'Keep separate' }));
+    await screen.findByRole('button', { name: 'Undo' });
+    await fireEvent.click(within(document.getElementById('duplicate-18')!).getByRole('button', { name: 'Keep separate' }));
+    await waitFor(() => expect(posted).toEqual([17]));
+    const navigation = action === 'History' ? screen.getByRole('radio', { name: action }) : screen.getByRole('button', { name: action });
+    expect.soft(navigation).toHaveProperty('disabled', true);
+    (navigation as HTMLButtonElement).click();
+    await tick();
+    releaseFirst();
+    await screen.findByRole('button', { name: 'Undo' });
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
+    await waitFor(() => expect(posted).toEqual([17, 18]));
+  } finally { releaseFirst?.(); releasePage?.(); rendered.unmount(); state.destroy(); }
+});

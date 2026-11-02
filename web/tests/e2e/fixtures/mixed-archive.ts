@@ -1,3 +1,4 @@
+import { person, merge } from '../../../src/lib/directory/person-fixtures.test-support';
 import { stubOperationStatus } from '../../kit-ui';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
@@ -1209,32 +1210,14 @@ export async function installDirectoryReviewArchive(page: Page) {
 
 function reviewPerson(id: number, revision: number, displayName: string): Person {
   return {
-    id,
-    revision,
-    display_name: displayName,
-    participant_ids: id === 7 ? [701, 702] : [901],
-    vcard_uid: `synthetic-${id}`,
+    ...person(id, revision, id === 7 ? [701, 702] : [901], displayName),
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-02T00:00:00Z',
   };
 }
 
 function reviewMerge(): PersonMerge {
-  return {
-    id: 41,
-    survivor_person_id: 7,
-    absorbed_person_id: 9,
-    current_person_id: 7,
-    survivor_vcard_uid: 'synthetic-7',
-    absorbed_vcard_uid: 'synthetic-9',
-    survivor_revision_before: 4,
-    absorbed_revision_before: 2,
-    survivor_revision_after: 5,
-    actor: 'web',
-    snapshot_version: 1,
-    snapshot_sha256: 'synthetic-digest',
-    created_at: '2026-01-03T12:00:00Z',
-  };
+  return { ...merge(person(7, 5)), created_at: '2026-01-03T12:00:00Z' };
 }
 
 function reviewMergeDetail(splitCompleted = false): PersonMergeDetail {
