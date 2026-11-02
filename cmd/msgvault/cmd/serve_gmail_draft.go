@@ -567,6 +567,11 @@ func emitGmailDraftLifecycleOutput(
 	if emit == nil {
 		return nil
 	}
+	if intent.authorizeOutput != nil {
+		if err := intent.authorizeOutput(output.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+			return err
+		}
+	}
 	if intent.MetadataOnly {
 		output.Content = ""
 		output.RawMIME = ""
@@ -834,6 +839,7 @@ func (a *storeAPIAdapter) runDelegatedGmailDraftLifecycle(
 		return err
 	}
 	intent.MetadataOnly = !canReadContent
+	a.setDraftLifecycleOutputAuthorization(ctx, &intent, grant)
 	return a.runCLIGmailDraftLifecycle(ctx, intent, draft, grant, emit)
 }
 
@@ -1034,6 +1040,11 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		if buildErr != nil {
 			return draftReplyError("invalid_draft", buildErr)
+		}
+		if grant != nil {
+			if _, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, source.ID, replacement.Raw); err != nil {
+				return err
+			}
 		}
 		return a.runGmailDraftEdit(ctx, intent, draft, source, client, replacement, finish, refresh, emit)
 	}

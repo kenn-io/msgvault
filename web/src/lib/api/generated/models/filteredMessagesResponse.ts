@@ -9,6 +9,7 @@ export interface FilteredMessagesResponse {
   has_more: boolean;
   index_state?: string;
   limit: number;
+  masked_hits_dropped?: number;
   messages: MessageSummary[];
   offset: number;
   [key: string]: unknown;

@@ -212,10 +212,12 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
 		return mcpserver.ServeOptions{}, fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
 	}
-	opts := mcpserver.ServeOptions{
-		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
-	}
+	opts := mcpserver.ServeOptions{DelegatedOnly: true}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.VerificationMinAPISchemaVersion) {
+		// Draft lifecycle output is protected by verification.read only on
+		// daemons that implement the verification-aware endpoints.
+		opts.Drafts = daemonMCPDraftRunner{client: st}
+		opts.DraftCommands = mcpDraftCommands(true)
 		grant, err := st.AgentTokenSelf(ctx)
 		if err != nil {
 			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
@@ -223,6 +225,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.Engine = daemonclient.NewEngineAdapter(st)
 		opts.AttachmentReader = st
 		opts.GrantPermissions = grant.Permissions
+		if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.VerificationArrivalsMinAPISchemaVersion) {
+			opts.Verifications = st
+		}
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
@@ -299,6 +304,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	var schemaVersion string
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.VerificationArrivalsMinAPISchemaVersion) {
+		opts.Verifications = st
 	}
 	if capabilityErr == nil && health != nil && health.Vector != nil &&
 		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {

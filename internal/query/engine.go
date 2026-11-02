@@ -112,6 +112,13 @@ type Engine interface {
 	Close() error
 }
 
+// AttachmentVerificationSnapshotReader reads an attachment and its canonical
+// parent message from one database snapshot. Masked attachment metadata must
+// not combine fields from an attachment import with content from another.
+type AttachmentVerificationSnapshotReader interface {
+	GetAttachmentVerificationSnapshot(ctx context.Context, id int64) (*AttachmentInfo, *MessageDetail, error)
+}
+
 // VirtualAccountLister reads the virtual account catalog: per source, its
 // confirmed identities and its unattributed rows, with live counts.
 type VirtualAccountLister interface {
@@ -264,10 +271,13 @@ type DomainSearchResult struct {
 
 // SearchFastResult carries messages and index status, with optional totals and aggregate stats.
 type SearchFastResult struct {
-	IndexState string
-	Messages   []MessageSummary
-	TotalCount int64
-	Stats      *TotalStats
+	MaskedHitsDropped int
+	NextOffset        int  // raw candidate offset after daemon-side protection
+	HasMore           bool // daemon-side pagination before dropped hits
+	IndexState        string
+	Messages          []MessageSummary
+	TotalCount        int64
+	Stats             *TotalStats
 }
 
 // TotalStats provides overall database statistics.

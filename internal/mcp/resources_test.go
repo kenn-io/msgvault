@@ -730,9 +730,11 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			must := require.New(t)
 			privateMessage := "daemon-private-" + strings.ReplaceAll(test.name, " ", "-")
 			client := task4DaemonErrorClient(t, test.path, test.code, privateMessage, test.status)
+			opts := test.opts(client)
+			opts.UnmaskVerification = true
 			response, raw := task4RawRequest(
 				t,
-				newMCPHTTPServer(test.opts(client), HTTPOptions{}).Handler,
+				newMCPHTTPServer(opts, HTTPOptions{}).Handler,
 				"tools/call",
 				map[string]any{"name": test.tool, "arguments": test.args},
 				nil,

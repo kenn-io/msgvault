@@ -238,6 +238,7 @@ const (
 	MessageSortByDate MessageSortField = iota
 	MessageSortBySize
 	MessageSortBySubject
+	MessageSortByReceivedAt
 )
 
 // MessageFilter specifies which messages to retrieve.
@@ -274,6 +275,10 @@ type MessageFilter struct {
 	// Date range
 	After  *time.Time
 	Before *time.Time
+
+	// Receipt-time range; zero received_at values fall back to sent_at.
+	ReceivedAfter  *time.Time
+	ReceivedBefore *time.Time
 
 	// Content filter
 	WithAttachmentsOnly   bool // only return messages with attachments

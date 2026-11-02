@@ -82,11 +82,13 @@ const (
 )
 
 type paginatedResponse[T any] struct {
-	Data     []T   `json:"data"`
-	Total    int64 `json:"total"`
-	Returned int   `json:"returned"`
-	Offset   int   `json:"offset"`
-	HasMore  bool  `json:"has_more"`
+	MaskedHitsDropped int   `json:"masked_hits_dropped,omitzero"`
+	NextOffset        int   `json:"next_offset,omitzero"`
+	Data              []T   `json:"data"`
+	Total             int64 `json:"total"`
+	Returned          int   `json:"returned"`
+	Offset            int   `json:"offset"`
+	HasMore           bool  `json:"has_more"`
 }
 
 func newPaginatedResponse[T any](data []T, total int64, offset int) paginatedResponse[T] {
@@ -134,36 +136,38 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	embeddingStatus      EmbeddingStatusReader
-	delegatedOnly        bool
-	unmaskVerification   bool
-	downloads            *downloadCache
-	engine               query.Engine
-	archiveSQLQuerier    ArchiveSQLQuerier
-	attachmentsDir       string
-	attachmentReader     AttachmentReader
-	manifestSaver        DeletionManifestSaver
-	hybridSearcher       HybridSearcher
-	similarSearcher      SimilarSearcher
-	dataDir              string
-	documentSearcher     DocumentSearcher
-	mediaSearcher        MediaSearcher
-	personFileSearcher   PersonFileSearcher
-	peopleBackend        peoplebrowser.Backend
-	directoryBackend     peoplebrowser.DirectoryLister
-	savedViews           savedview.Service
-	meetings             MeetingBackend
-	calendar             CalendarBackend
-	personAgendaBackend  PersonAgendaBackend
-	personTierBackend    PersonTierBackend
-	kata                 KataBackend
-	identityReview       IdentityReviewBackend
-	personCardDAV        PersonCardDAVBackend
-	messageTags          MessageTagBackend
-	identityScoring      IdentityScoringBackend
-	drafts               DraftRunner
-	contactRoutesBackend ContactRoutesBackend
-	chatDiscoveryBackend ChatDiscoveryBackend
+	embeddingStatus               EmbeddingStatusReader
+	delegatedOnly                 bool
+	verificationProtectedByDaemon bool
+	unmaskVerification            bool
+	verifications                 VerificationLister
+	downloads                     *downloadCache
+	engine                        query.Engine
+	archiveSQLQuerier             ArchiveSQLQuerier
+	attachmentsDir                string
+	attachmentReader              AttachmentReader
+	manifestSaver                 DeletionManifestSaver
+	hybridSearcher                HybridSearcher
+	similarSearcher               SimilarSearcher
+	dataDir                       string
+	documentSearcher              DocumentSearcher
+	mediaSearcher                 MediaSearcher
+	personFileSearcher            PersonFileSearcher
+	peopleBackend                 peoplebrowser.Backend
+	directoryBackend              peoplebrowser.DirectoryLister
+	savedViews                    savedview.Service
+	meetings                      MeetingBackend
+	calendar                      CalendarBackend
+	personAgendaBackend           PersonAgendaBackend
+	personTierBackend             PersonTierBackend
+	kata                          KataBackend
+	identityReview                IdentityReviewBackend
+	personCardDAV                 PersonCardDAVBackend
+	messageTags                   MessageTagBackend
+	identityScoring               IdentityScoringBackend
+	drafts                        DraftRunner
+	contactRoutesBackend          ContactRoutesBackend
+	chatDiscoveryBackend          ChatDiscoveryBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -182,7 +186,7 @@ type ArchiveSQLQuerier interface {
 }
 
 func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, error) {
-	if !h.delegatedOnly && !h.unmaskVerification {
+	if !h.verificationProtectedByDaemon && !h.unmaskVerification {
 		return toolErrorResult("verification_masked: content analytics require --unmask-verification"), nil
 	}
 	args := req.GetArguments()
@@ -228,6 +232,9 @@ type VisualSearchRequest struct {
 }
 
 func (h *handlers) searchVisualAttachments(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	if h.visualSearcher == nil {
 		return toolErrorResult("visual_search_not_ready: visual attachment search is unavailable"), nil
 	}
@@ -360,6 +367,9 @@ type PersonFileSearchRequest struct {
 }
 
 func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	if h.personFileSearcher == nil {
 		return toolErrorResult("person_file_search_unavailable: person file search is not configured"), nil
 	}
@@ -437,6 +447,10 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 // servers can fetch the bytes over HTTP.
 type AttachmentReader interface {
 	ReadAttachment(ctx context.Context, contentHash string) ([]byte, error)
+}
+
+type attachmentContentAuthorizer interface {
+	AuthorizeAttachmentContent(ctx context.Context, contentHash string) error
 }
 
 // DeletionManifestSaver persists staged deletion manifests. It is optional:
@@ -785,16 +799,34 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	if err != nil {
 		return nil, newInternalError("search metadata", err)
 	}
-	protected, err := h.prepareVerificationSummaries(ctx, result.Messages)
+	hasMore := len(result.Messages) > limit
+	pageRows := result.Messages
+	if hasMore {
+		pageRows = pageRows[:limit]
+	}
+	nextOffset := offset + len(pageRows)
+	if h.delegatedOnly && result.MaskedHitsDropped > 0 {
+		// A dropped lookahead row leaves at most limit survivors. Return them
+		// all and advance over the daemon's original candidate page.
+		hasMore, nextOffset = result.HasMore, result.NextOffset
+	}
+	protected, err := h.prepareVerificationSummaries(ctx, pageRows)
 	if err != nil {
 		return toolErrorResult(errVerificationUnavailable.Error()), nil
 	}
 	resultCopy := *result
 	result = &resultCopy
 	result.Messages = protected
-	hasMore := len(result.Messages) > limit
-	if hasMore {
-		result.Messages = result.Messages[:limit]
+	var dropped int
+	result.Messages, dropped, err = h.guardVerificationSearch(ctx, result.Messages, q)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	dropped += result.MaskedHitsDropped
+	if dropped > 0 {
+		page := newPaginatedResponseNoTotal(result.Messages, offset, hasMore)
+		page.MaskedHitsDropped, page.NextOffset = dropped, nextOffset
+		return jsonResult(searchMetadataResponse{paginatedResponse: page, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr)})
 	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
@@ -809,6 +841,9 @@ func metadataSearchResult(messages []query.MessageSummary, total int64, offset i
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	args := req.GetArguments()
 	queryText, _ := args[toolArgQuery].(string)
 	if strings.TrimSpace(queryText) == "" {
@@ -995,6 +1030,15 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	if hasMore {
 		results = results[:limit]
 	}
+	nextOffset := offset + len(results)
+	if h.delegatedOnly && result.MaskedHitsDropped > 0 {
+		hasMore, nextOffset = result.HasMore, result.NextOffset
+	}
+	results, dropped, err := h.guardVerificationSearch(ctx, results, q)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	dropped += result.MaskedHitsDropped
 
 	data := make([]searchMessageItem, 0, len(results))
 	for _, r := range results {
@@ -1016,8 +1060,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 		data = append(data, item)
 	}
 
+	page := newPaginatedResponseNoTotal(data, offset, hasMore)
+	if dropped > 0 {
+		page.MaskedHitsDropped, page.NextOffset = dropped, nextOffset
+	}
 	return jsonResult(searchMessageBodiesResponse{
-		paginatedResponse: newPaginatedResponseNoTotal(data, offset, hasMore),
+		paginatedResponse: page,
 		Mode:              searchModeKeyword,
 		IndexState:        result.IndexState,
 	})
@@ -1254,9 +1302,18 @@ func (h *handlers) searchMessageBodiesHybrid(
 			hasMore = true
 		}
 	}
+	nextOffset := offset + len(page)
+	page, dropped, err := h.guardVerificationSearchItems(ctx, page, parsed)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	pagination := newPaginatedResponseNoTotal(page, offset, hasMore)
+	if dropped > 0 {
+		pagination.MaskedHitsDropped, pagination.NextOffset = dropped, nextOffset
+	}
 
 	return jsonResult(searchMessageBodiesResponse{
-		paginatedResponse: newPaginatedResponseNoTotal(page, offset, hasMore),
+		paginatedResponse: pagination,
 		Mode:              mode,
 		PoolSaturated:     meta.PoolSaturated,
 		Accelerator:       meta.Accelerator,
@@ -1340,6 +1397,21 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 			continue
 		}
 		item := searchMessageItem{MessageSummary: msg}
+		matches := hit.Matches
+		matchesTruncated := hit.MatchesTruncated
+		if len(matches) > 0 && !h.verificationProtectedByDaemon && !h.unmaskVerification &&
+			(msg.Verification == nil || !msg.Verification.Masked) {
+			canonical, err := h.canonicalVerification(ctx, hit.ID)
+			if err != nil {
+				return toolErrorResult(errVerificationUnavailable.Error()), nil //nolint:nilerr // MCP tool results carry this failure in-band.
+			}
+			if canonical.ID != hit.ID || msg.SourceID != 0 && canonical.SourceID != msg.SourceID {
+				return toolErrorResult(errVerificationUnavailable.Error()), nil
+			}
+			var withheld bool
+			matches, withheld = retainCanonicalHybridMatches(matches, canonical.BodyText)
+			matchesTruncated = matchesTruncated || withheld
+		}
 		if explain {
 			item.Score = &hybridScoreBreakdown{
 				RRF:            hit.RRFScore,
@@ -1348,9 +1420,9 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 				SubjectBoosted: hit.SubjectBoosted,
 			}
 		}
-		if len(hit.Matches) > 0 && (msg.Verification == nil || !msg.Verification.Masked) {
-			item.Matches = make([]messageMatch, len(hit.Matches))
-			for i, match := range hit.Matches {
+		if len(matches) > 0 && (msg.Verification == nil || !msg.Verification.Masked) {
+			item.Matches = make([]messageMatch, len(matches))
+			for i, match := range matches {
 				score := match.Score
 				item.Matches[i] = messageMatch{
 					CharOffset: match.CharOffset,
@@ -1360,12 +1432,21 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 				}
 			}
 		}
-		item.MatchesTruncated = hit.MatchesTruncated && (msg.Verification == nil || !msg.Verification.Masked)
+		item.MatchesTruncated = matchesTruncated && (msg.Verification == nil || !msg.Verification.Masked)
 		items = append(items, item)
 	}
 
+	nextOffset := offset + len(pageHits)
+	items, dropped, err := h.guardVerificationSearchItems(ctx, items, parsed)
+	if err != nil {
+		return toolErrorResult(errVerificationUnavailable.Error()), nil
+	}
+	pagination := newPaginatedResponseNoTotal(items, offset, hasMore)
+	if dropped > 0 {
+		pagination.MaskedHitsDropped, pagination.NextOffset = dropped, nextOffset
+	}
 	return jsonResult(searchMessageBodiesResponse{
-		paginatedResponse: newPaginatedResponseNoTotal(items, offset, hasMore),
+		paginatedResponse: pagination,
 		Mode:              mode,
 		PoolSaturated:     result.PoolSaturated,
 		Accelerator:       result.Accelerator,
@@ -1933,7 +2014,7 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 	case "", "keyword":
 		// default: literal term search
 	case searchModeVector:
-		if !h.delegatedOnly && !h.unmaskVerification {
+		if !h.verificationProtectedByDaemon && !h.unmaskVerification {
 			return toolErrorResult("verification_masked: vector excerpts require --unmask-verification"), nil
 		}
 		return h.vectorMatchesInMessage(ctx, id, queryStr, floatArg(args, toolArgMinScore, 0), limit, offset)
@@ -2044,17 +2125,39 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 				return nil, err
 			}
 			snapshot := &downloadSnapshot{data: payload.data, attachment: payload}
-			{
-				snapshot.validate = func(ctx context.Context) error {
-					current, err := h.engine.GetAttachment(ctx, id)
-					if err != nil {
-						return newInternalError("authorize attachment chunk", err)
-					}
-					if current == nil || current.ContentHash != payload.metadata.ContentHash {
-						return errDownloadExpired
-					}
-					return h.protectVerificationAttachment(ctx, current)
+			originalMetadata := *payload.metadata
+			snapshot.validate = func(ctx context.Context) error {
+				current, err := h.engine.GetAttachment(ctx, id)
+				if err != nil {
+					return newInternalError("authorize attachment chunk", err)
 				}
+				if !sameAttachmentPayload(&originalMetadata, current) {
+					return errDownloadExpired
+				}
+				if h.verificationProtectedByDaemon {
+					authorizer, ok := h.attachmentReader.(attachmentContentAuthorizer)
+					if !ok {
+						return &attachmentUnavailableError{message: errVerificationUnavailable.Error()}
+					}
+					if err := authorizer.AuthorizeAttachmentContent(ctx, current.ContentHash); err != nil {
+						var coded interface{ APIErrorCode() string }
+						if errors.As(err, &coded) && coded.APIErrorCode() == "verification_masked" {
+							return &attachmentUnavailableError{message: errVerificationMasked.Error()}
+						}
+						return &attachmentUnavailableError{message: errVerificationUnavailable.Error()}
+					}
+				} else if err := h.protectVerificationAttachment(ctx, current); err != nil {
+					return err
+				}
+				// Reuse the pinned bytes only while the current archive metadata
+				// still points at the same content. Returning cached metadata could
+				// disclose an old credential-bearing filename after an import.
+				payload.metadata = current
+				payload.mimeType = current.MimeType
+				if payload.mimeType == "" {
+					payload.mimeType = "application/octet-stream"
+				}
+				return nil
 			}
 			return snapshot, nil
 		})
@@ -2077,10 +2180,14 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
+	mimeType := att.MimeType
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
 	metaObj := getAttachmentResponse{
 		Docbank:  att.Docbank,
 		Filename: att.Filename,
-		MIMEType: payload.mimeType,
+		MIMEType: mimeType,
 		Size:     att.Size,
 	}
 	if chunked {
@@ -2287,7 +2394,7 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 }
 
 func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult, error) {
-	if !h.delegatedOnly && !h.unmaskVerification {
+	if !h.verificationProtectedByDaemon && !h.unmaskVerification {
 		return toolErrorResult("verification_masked: content analytics require --unmask-verification"), nil
 	}
 	args := req.GetArguments()

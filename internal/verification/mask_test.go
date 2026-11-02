@@ -71,6 +71,47 @@ func TestMaskKnownCodeWithWhitespace(t *testing.T) {
 	}
 }
 
+func TestMaskGroupedAlphanumericAcrossMIMEVariants(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	finding := Detect(Input{
+		BodyText: "Your verification code is AB4 C9D",
+		BodyHTML: "<p>Your verification code is <b>AB4C9D</b></p>",
+	})
+	requirements.NotNil(finding)
+	masker := NewMasker(finding)
+
+	masked := masker.Text("Copied: AB4 C9D")
+	assertions.Equal("Copied: "+CodePlaceholder, masked)
+	assertions.Equal(masked, masker.Text(masked))
+}
+
+func TestMaskRepeatedDecodedCredentialLinkPayload(t *testing.T) {
+	assertions := assert.New(t)
+	link := "https://example.com/verify?code=%2534%2538%2532%2539%2531%2533"
+	masker := NewMasker(&Finding{Kind: "magic_link", Values: []Secret{{Kind: "link", Value: link}}})
+
+	masked := masker.Text("Uncued repeated value: 482913")
+	assertions.Equal("Uncued repeated value: "+LinkPlaceholder, masked)
+	assertions.Equal(masked, masker.Text(masked))
+}
+
+func TestMaskRepeatedEncodedPathCredentialPayload(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	link := "https://example.com/auth%2Fabcdefghijklmnop"
+	values := CredentialLinkSearchValues(link)
+	assertions.Contains(values, "abcdefghijklmnop")
+
+	body := link + " Repeated abcdefghijklmnop"
+	finding := Detect(Input{BodyText: body})
+	requirements.NotNil(finding)
+	masked := NewMasker(finding).Text(body)
+	assertions.NotContains(masked, "abcdefghijklmnop")
+	assertions.Contains(masked, LinkPlaceholder)
+}
+
 func TestMaskOversizedValueFailsClosed(t *testing.T) {
 	value := "https://example.com/login?token=" + strings.Repeat("a", 65*1024)
 	m := NewMasker(&Finding{Values: []Secret{{Kind: "link", Value: value}}})

@@ -161,14 +161,14 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
+	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListVerifications, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
 	for _, tc := range []struct {
 		permission string
 		want       []string
 	}{
 		{"draft.create", nil},
 		{"verification.read", nil},
-		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
+		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListVerifications, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
 		{"message.read", []string{ToolGetMessage, ToolListThread, ToolSearchInMessage}},
 		{"attachment.read", []string{ToolGetAttachment}},
 		{"stats.read", []string{ToolGetStats}},
@@ -184,6 +184,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 			opts := agentServeOptions(t, agent)
 			opts.AttachmentReader = agent
 			opts.EmbeddingStatus = agent
+			opts.Verifications = agent
 			session := task5ConnectClient(t, opts, true)
 			initialized := session.InitializeResult()
 			requirements.NotNil(initialized)
@@ -209,7 +210,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 }
 
 func TestAgentAttachmentChunksReauthorize(t *testing.T) {
-	for _, action := range []string{"revoke", "replacement", "disappearance"} {
+	for _, action := range []string{"revoke", "replacement", "disappearance", "verification"} {
 		t.Run(action, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -258,9 +259,9 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			requirements.NoError(err)
 			updated := call(8)
 			assertions.False(updated.IsError, task5SDKResultText(updated))
-			assertions.Contains(task5SDKResultText(updated), "synthetic.bin")
-			assertions.Contains(task5SDKResultText(updated), "application/octet-stream")
-			assertions.NotContains(task5SDKResultText(updated), "updated.bin")
+			assertions.Contains(task5SDKResultText(updated), "updated.bin")
+			assertions.Contains(task5SDKResultText(updated), "text/plain")
+			assertions.NotContains(task5SDKResultText(updated), "synthetic.bin")
 			switch action {
 			case "revoke":
 				requirements.NoError(owner.RevokeAgentToken(t.Context(), grant.ID))
@@ -276,10 +277,15 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			case "disappearance":
 				_, err = st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE id=?"), attachmentID)
 				requirements.NoError(err)
+			case "verification":
+				requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Your verification code is 482913", Valid: true}, sql.NullString{}))
 			}
 			result := call(12)
 			assertions.True(result.IsError, task5SDKResultText(result))
 			assertions.NotContains(task5SDKResultText(result), "data_base64")
+			if action == "verification" {
+				assertions.Contains(task5SDKResultText(result), "verification_masked")
+			}
 			if action == "replacement" {
 				restarted, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetAttachment, Arguments: map[string]any{"attachment_id": attachmentID, "offset": 0, "length": 4}})
 				requirements.NoError(err)

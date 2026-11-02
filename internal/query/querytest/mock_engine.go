@@ -140,6 +140,17 @@ func (m *MockEngine) GetAttachment(_ context.Context, id int64) (*query.Attachme
 	return nil, nil //nolint:nilnil // mirrors Engine.GetAttachment (nil, nil) not-found contract
 }
 
+// GetAttachmentVerificationSnapshot returns the mock attachment and its parent
+// message as one fixture value. Production engines provide a database snapshot.
+func (m *MockEngine) GetAttachmentVerificationSnapshot(ctx context.Context, id int64) (*query.AttachmentInfo, *query.MessageDetail, error) {
+	attachment, err := m.GetAttachment(ctx, id)
+	if err != nil || attachment == nil || attachment.MessageID == 0 {
+		return attachment, nil, err
+	}
+	message, err := m.GetMessage(ctx, attachment.MessageID)
+	return attachment, message, err
+}
+
 func (m *MockEngine) GetAttachmentsByHash(_ context.Context, contentHash string) ([]query.AttachmentInfo, error) {
 	if m.AttachmentsByHash != nil {
 		if attachments, ok := m.AttachmentsByHash[contentHash]; ok {

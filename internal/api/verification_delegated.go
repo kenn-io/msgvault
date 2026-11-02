@@ -9,13 +9,49 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
 type verificationRequestKey struct{}
 type verificationRequest struct {
-	sources map[int64]agentgrant.SourceRef
-	details map[int64]*query.MessageDetail
+	sources  map[int64]agentgrant.SourceRef
+	details  map[int64]*query.MessageDetail
+	dropped  int
+	examined int
+}
+
+func (s *Server) verificationQueryDrop(r *http.Request, canonical *query.MessageDetail, reveal bool) bool {
+	if reveal {
+		return false
+	}
+	queryText := r.URL.Query().Get("q")
+	if queryText == "" {
+		queryText = r.URL.Query().Get("search_query")
+	}
+	if !query.VerificationQueryMatches(canonical, query.VerificationQueryTokens(search.ParseOR(queryText))) {
+		return false
+	}
+	state, err := s.verificationRequest(r)
+	if err == nil {
+		state.dropped++
+	}
+	return true
+}
+
+func verificationHitsDropped(r *http.Request) int {
+	state, _ := r.Context().Value(verificationRequestKey{}).(*verificationRequest)
+	if state == nil {
+		return 0
+	}
+	return state.dropped
+}
+
+func verificationPageEnd(r *http.Request, offset, returned int) int {
+	if state, ok := r.Context().Value(verificationRequestKey{}).(*verificationRequest); ok {
+		return offset + state.examined
+	}
+	return offset + returned
 }
 
 func (s *Server) verificationRequest(r *http.Request) (*verificationRequest, error) {
@@ -98,22 +134,44 @@ func (s *Server) prepareAgentSummaries(w http.ResponseWriter, r *http.Request, r
 	if s.requestAuthentication(r).Grant == nil {
 		return rows, true
 	}
-	out := make([]query.MessageSummary, len(rows))
-	for i, row := range rows {
+	state, err := s.verificationRequest(r)
+	if err != nil {
+		verificationUnavailable(w)
+		return nil, false
+	}
+	state.examined = len(rows)
+	out := make([]query.MessageSummary, 0, len(rows))
+	for _, row := range rows {
 		canonical, reveal, err := s.verificationCanonical(r, row.ID)
 		if err != nil || canonical.SourceID != row.SourceID {
 			verificationUnavailable(w)
 			return nil, false
 		}
-		out[i] = query.PrepareSummaryVerification(row, canonical, reveal, time.Now())
+		if !s.verificationQueryDrop(r, canonical, reveal) {
+			out = append(out, query.PrepareSummaryVerification(row, canonical, reveal, time.Now()))
+		}
 	}
 	return out, true
 }
 
 func (s *Server) prepareAgentStored(w http.ResponseWriter, r *http.Request, rows []APIMessage) ([]APIMessage, bool) {
+	return s.prepareAgentStoredWithQueryFilter(w, r, rows, true)
+}
+
+func (s *Server) prepareAgentStoredDetail(w http.ResponseWriter, r *http.Request, rows []APIMessage) ([]APIMessage, bool) {
+	return s.prepareAgentStoredWithQueryFilter(w, r, rows, false)
+}
+
+func (s *Server) prepareAgentStoredWithQueryFilter(w http.ResponseWriter, r *http.Request, rows []APIMessage, filterSearchHits bool) ([]APIMessage, bool) {
 	if s.requestAuthentication(r).Grant == nil {
 		return rows, true
 	}
+	state, err := s.verificationRequest(r)
+	if err != nil {
+		verificationUnavailable(w)
+		return nil, false
+	}
+	state.examined = len(rows)
 	out := slices.Clone(rows)
 	for i := range out {
 		canonical, reveal, err := s.verificationCanonical(r, out[i].ID)
@@ -158,7 +216,21 @@ func (s *Server) prepareAgentStored(w http.ResponseWriter, r *http.Request, rows
 			row.Verification.MaskedFields = append(row.Verification.MaskedFields, "snippet")
 		}
 	}
-	return out, true
+	if !filterSearchHits {
+		return out, true
+	}
+	filtered := make([]APIMessage, 0, len(out))
+	for _, row := range out {
+		canonical, reveal, err := s.verificationCanonical(r, row.ID)
+		if err != nil {
+			verificationUnavailable(w)
+			return nil, false
+		}
+		if !s.verificationQueryDrop(r, canonical, reveal) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered, true
 }
 
 func (s *Server) prepareAgentThread(w http.ResponseWriter, r *http.Request, page *query.ThreadPage) (*query.ThreadPage, bool) {

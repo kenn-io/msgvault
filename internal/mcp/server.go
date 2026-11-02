@@ -48,6 +48,7 @@ const (
 	ToolExportEML                 = "export_eml"
 	ToolListThread                = "list_thread"
 	ToolListMessages              = "list_messages"
+	ToolListVerifications         = "list_verifications"
 	ToolGetStats                  = "get_stats"
 	ToolAggregate                 = "aggregate"
 	ToolStageDeletion             = "stage_deletion"
@@ -182,6 +183,7 @@ type ServeOptions struct {
 	DelegatedOnly bool
 	// UnmaskVerification is owner launch configuration, never a delegated override.
 	UnmaskVerification bool
+	Verifications      VerificationLister
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
 	// mode, a read tool is listed only when the grant holds its permission.
 	GrantPermissions []string
@@ -379,40 +381,42 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		embeddingStatus:      opts.EmbeddingStatus,
-		delegatedOnly:        opts.DelegatedOnly,
-		unmaskVerification:   opts.UnmaskVerification && !opts.DelegatedOnly,
-		downloads:            opts.downloads,
-		engine:               opts.Engine,
-		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
-		attachmentsDir:       opts.AttachmentsDir,
-		attachmentReader:     opts.AttachmentReader,
-		manifestSaver:        opts.ManifestSaver,
-		hybridSearcher:       opts.HybridSearcher,
-		similarSearcher:      opts.SimilarSearcher,
-		dataDir:              opts.DataDir,
-		documentSearcher:     opts.DocumentSearcher,
-		mediaSearcher:        opts.MediaSearcher,
-		personFileSearcher:   opts.PersonFileSearcher,
-		peopleBackend:        opts.PeopleBackend,
-		directoryBackend:     opts.DirectoryBackend,
-		hybridEngine:         opts.HybridEngine,
-		vectorCfg:            opts.VectorCfg,
-		backend:              opts.Backend,
-		visualSearcher:       opts.VisualSearcher,
-		savedViews:           opts.SavedViews,
-		meetings:             opts.Meetings,
-		calendar:             opts.Calendar,
-		personAgendaBackend:  opts.PersonAgendaBackend,
-		personTierBackend:    opts.PersonTierBackend,
-		kata:                 opts.Kata,
-		identityReview:       opts.IdentityReview,
-		personCardDAV:        opts.PersonCardDAV,
-		messageTags:          opts.MessageTags,
-		identityScoring:      opts.IdentityScoring,
-		drafts:               opts.Drafts,
-		contactRoutesBackend: opts.ContactRoutesBackend,
-		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		embeddingStatus:               opts.EmbeddingStatus,
+		delegatedOnly:                 opts.DelegatedOnly,
+		verificationProtectedByDaemon: opts.DelegatedOnly,
+		unmaskVerification:            opts.UnmaskVerification && !opts.DelegatedOnly,
+		verifications:                 opts.Verifications,
+		downloads:                     opts.downloads,
+		engine:                        opts.Engine,
+		archiveSQLQuerier:             opts.ArchiveSQLQuerier,
+		attachmentsDir:                opts.AttachmentsDir,
+		attachmentReader:              opts.AttachmentReader,
+		manifestSaver:                 opts.ManifestSaver,
+		hybridSearcher:                opts.HybridSearcher,
+		similarSearcher:               opts.SimilarSearcher,
+		dataDir:                       opts.DataDir,
+		documentSearcher:              opts.DocumentSearcher,
+		mediaSearcher:                 opts.MediaSearcher,
+		personFileSearcher:            opts.PersonFileSearcher,
+		peopleBackend:                 opts.PeopleBackend,
+		directoryBackend:              opts.DirectoryBackend,
+		hybridEngine:                  opts.HybridEngine,
+		vectorCfg:                     opts.VectorCfg,
+		backend:                       opts.Backend,
+		visualSearcher:                opts.VisualSearcher,
+		savedViews:                    opts.SavedViews,
+		meetings:                      opts.Meetings,
+		calendar:                      opts.Calendar,
+		personAgendaBackend:           opts.PersonAgendaBackend,
+		personTierBackend:             opts.PersonTierBackend,
+		kata:                          opts.Kata,
+		identityReview:                opts.IdentityReview,
+		personCardDAV:                 opts.PersonCardDAV,
+		messageTags:                   opts.MessageTags,
+		identityScoring:               opts.IdentityScoring,
+		drafts:                        opts.Drafts,
+		contactRoutesBackend:          opts.ContactRoutesBackend,
+		chatDiscoveryBackend:          opts.ChatDiscoveryBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
@@ -643,7 +647,7 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 // agentReadToolPermission names the grant permission the daemon requires for a read tool.
 func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolListVerifications:
 		return agentgrant.PermissionSearchRead, true
 	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
 		return agentgrant.PermissionMessageRead, true

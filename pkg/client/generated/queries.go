@@ -1758,3 +1758,23 @@ type GetTextStatsQuery struct {
 	// SearchQuery Search query
 	SearchQuery *string `json:"search_query,omitempty"`
 }
+
+type ListVerificationsQuery struct {
+	// Since RFC3339 lower bound, defaults to one hour ago and is capped at 24 hours
+	Since *string `json:"since,omitempty"`
+
+	// Sender Exact sender claim, case-insensitive
+	Sender *string `json:"sender,omitempty"`
+
+	// Kind Verification kind
+	Kind *string `json:"kind,omitempty"`
+
+	// Limit Maximum arrivals, default 20, max 100; at most 1000 candidates are scanned
+	Limit *int64 `json:"limit,omitempty"`
+
+	// IncludeExpired Include expired credentials, still masked by default
+	IncludeExpired *bool `json:"include_expired,omitempty"`
+
+	// Reveal Owner reveal opt-in; delegated reads always use their source grant instead
+	Reveal *bool `json:"reveal,omitempty"`
+}

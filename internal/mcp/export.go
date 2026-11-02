@@ -157,6 +157,9 @@ func (h *handlers) exportEML(ctx context.Context, req toolRequest) (*toolResult,
 		if err != nil {
 			return nil, err
 		}
+		if err := h.protectVerificationOriginalMIME(ctx, original); err != nil {
+			return nil, err
+		}
 		return &downloadSnapshot{data: original.MIME, original: original, validate: func(ctx context.Context) error { return h.protectVerificationOriginal(ctx, reader, ref) }}, nil
 	})
 	if err != nil {

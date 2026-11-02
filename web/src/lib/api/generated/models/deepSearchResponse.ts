@@ -11,7 +11,9 @@ export interface DeepSearchResponse {
   has_more: boolean;
   index_state?: string;
   limit: number;
+  masked_hits_dropped?: number;
   messages: MessageSummary[];
+  next_offset?: number;
   offset: number;
   query: string;
   scope?: string;

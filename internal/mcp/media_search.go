@@ -29,6 +29,9 @@ func searchMediaDefinition() toolDefinition {
 }
 
 func (h *handlers) searchMedia(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	args := req.GetArguments()
 	query, _ := args[toolArgQuery].(string)
 	if strings.TrimSpace(query) == "" {

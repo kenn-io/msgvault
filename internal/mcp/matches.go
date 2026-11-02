@@ -36,6 +36,38 @@ func messageMatchesFromChunks(matches []chunkmatch.Match) []messageMatch {
 	return out
 }
 
+// retainCanonicalHybridMatches keeps excerpts only when their exact text and
+// byte offset still identify the same context in the canonical body.
+func retainCanonicalHybridMatches(matches []HybridSearchMatch, body string) ([]HybridSearchMatch, bool) {
+	if len(matches) == 0 {
+		return nil, false
+	}
+	kept := make([]HybridSearchMatch, 0, len(matches))
+	withheld := false
+	for _, match := range matches {
+		if !hybridMatchPresentAtCanonicalOffset(body, match) {
+			withheld = true
+			continue
+		}
+		kept = append(kept, match)
+	}
+	return kept, withheld
+}
+
+func hybridMatchPresentAtCanonicalOffset(body string, match HybridSearchMatch) bool {
+	if match.CharOffset == nil || match.Snippet == "" {
+		return false
+	}
+	offset := *match.CharOffset
+	if offset < 0 || offset > len(body)-len(match.Snippet) {
+		return false
+	}
+	if match.Line != nil && *match.Line != lineNumberAt(body, offset) {
+		return false
+	}
+	return strings.HasPrefix(body[offset:], match.Snippet)
+}
+
 // extractContextChar returns up to contextChars of body text centered on each
 // case-insensitive term match, merging overlapping windows.
 func extractContextChar(body string, terms []string, contextChars int) []string {

@@ -265,13 +265,14 @@ type TriggerSyncResponse struct {
 }
 
 type FilteredMessagesResponse struct {
-	IndexState       string           `json:"index_state,omitempty"`
-	Count            int              `json:"count"`
-	HasMore          bool             `json:"has_more"`
-	Offset           int              `json:"offset"`
-	Limit            int              `json:"limit"`
-	Messages         []MessageSummary `json:"messages"`
-	AppliedSourceIDs []int64          `json:"applied_source_ids,omitempty"`
+	MaskedHitsDropped int              `json:"masked_hits_dropped,omitzero"`
+	IndexState        string           `json:"index_state,omitempty"`
+	Count             int              `json:"count"`
+	HasMore           bool             `json:"has_more"`
+	Offset            int              `json:"offset"`
+	Limit             int              `json:"limit"`
+	Messages          []MessageSummary `json:"messages"`
+	AppliedSourceIDs  []int64          `json:"applied_source_ids,omitempty"`
 }
 
 type GmailIDsResponse struct {
@@ -284,18 +285,20 @@ type GmailIDsResponse struct {
 }
 
 type DeepSearchResponse struct {
-	Warnings     []string            `json:"warnings,omitempty"`
-	IndexState   string              `json:"index_state,omitempty"`
-	Query        string              `json:"query"`
-	Scope        string              `json:"scope,omitempty"`
-	Messages     []MessageSummary    `json:"messages"`
-	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
-	Count        int                 `json:"count"`
-	TotalCount   int64               `json:"total_count"`
-	Stats        *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
-	HasMore      bool                `json:"has_more"`
-	Offset       int                 `json:"offset"`
-	Limit        int                 `json:"limit"`
+	NextOffset        int                 `json:"next_offset,omitzero"`
+	MaskedHitsDropped int                 `json:"masked_hits_dropped,omitzero"`
+	Warnings          []string            `json:"warnings,omitempty"`
+	IndexState        string              `json:"index_state,omitempty"`
+	Query             string              `json:"query"`
+	Scope             string              `json:"scope,omitempty"`
+	Messages          []MessageSummary    `json:"messages"`
+	BodyContexts      []BodySearchContext `json:"body_contexts,omitempty"`
+	Count             int                 `json:"count"`
+	TotalCount        int64               `json:"total_count"`
+	Stats             *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
+	HasMore           bool                `json:"has_more"`
+	Offset            int                 `json:"offset"`
+	Limit             int                 `json:"limit"`
 }
 
 // BodySearchContext carries exact body-match excerpts separately from the
@@ -378,13 +381,14 @@ func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
 
 // SearchResult represents search results.
 type SearchResult struct {
-	Warnings   []string         `json:"warnings,omitempty"`
-	IndexState string           `json:"index_state,omitempty"`
-	Query      string           `json:"query"`
-	Total      int64            `json:"total"`
-	Page       int              `json:"page"`
-	PageSize   int              `json:"page_size"`
-	Messages   []MessageSummary `json:"messages"`
+	MaskedHitsDropped int              `json:"masked_hits_dropped,omitzero"`
+	Warnings          []string         `json:"warnings,omitempty"`
+	IndexState        string           `json:"index_state,omitempty"`
+	Query             string           `json:"query"`
+	Total             int64            `json:"total"`
+	Page              int              `json:"page"`
+	PageSize          int              `json:"page_size"`
+	Messages          []MessageSummary `json:"messages"`
 }
 
 // hybridSearchResponse represents results from vector or hybrid search.
@@ -824,8 +828,12 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
-	protected, allowed := s.prepareAgentStored(w, r, []APIMessage{*msg})
+	protected, allowed := s.prepareAgentStoredDetail(w, r, []APIMessage{*msg})
 	if !allowed {
+		return
+	}
+	if len(protected) != 1 {
+		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
 	msg = &protected[0]
@@ -1046,13 +1054,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchResult{
-		Warnings:   search.LiteralORWarnings(searchText),
-		IndexState: agentIndexState(r),
-		Query:      searchText,
-		Total:      total,
-		Page:       page,
-		PageSize:   pageSize,
-		Messages:   summaries,
+		MaskedHitsDropped: verificationHitsDropped(r),
+		Warnings:          search.LiteralORWarnings(searchText),
+		IndexState:        agentIndexState(r),
+		Query:             searchText,
+		Total:             total,
+		Page:              page,
+		PageSize:          pageSize,
+		Messages:          summaries,
 	})
 }
 
@@ -2238,13 +2247,16 @@ type TotalStatsResponse struct {
 
 // SearchFastResponse represents fast search results with stats.
 type SearchFastResponse struct {
-	Warnings         []string            `json:"warnings,omitempty"`
-	IndexState       string              `json:"index_state,omitempty"`
-	Query            string              `json:"query"`
-	Messages         []MessageSummary    `json:"messages"`
-	TotalCount       int64               `json:"total_count"`
-	Stats            *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
-	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
+	NextOffset        int                 `json:"next_offset,omitzero"`
+	HasMore           bool                `json:"has_more"`
+	MaskedHitsDropped int                 `json:"masked_hits_dropped,omitzero"`
+	Warnings          []string            `json:"warnings,omitempty"`
+	IndexState        string              `json:"index_state,omitempty"`
+	Query             string              `json:"query"`
+	Messages          []MessageSummary    `json:"messages"`
+	TotalCount        int64               `json:"total_count"`
+	Stats             *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
+	AppliedSourceIDs  []int64             `json:"applied_source_ids,omitempty"`
 }
 
 type TextConversationRow struct {
@@ -3114,13 +3126,14 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
-		IndexState:       agentIndexState(r),
-		Count:            len(summaries),
-		HasMore:          hasMore,
-		Offset:           filter.Pagination.Offset,
-		Limit:            requestLimit,
-		Messages:         summaries,
-		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
+		MaskedHitsDropped: verificationHitsDropped(r),
+		IndexState:        agentIndexState(r),
+		Count:             len(summaries),
+		HasMore:           hasMore,
+		Offset:            filter.Pagination.Offset,
+		Limit:             requestLimit,
+		Messages:          summaries,
+		AppliedSourceIDs:  append([]int64(nil), filter.SourceIDs...),
 	})
 }
 
@@ -3755,11 +3768,12 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
-		Count:    len(summaries),
-		HasMore:  result.HasMore,
-		Offset:   filter.Pagination.Offset,
-		Limit:    requestLimit,
-		Messages: summaries,
+		MaskedHitsDropped: verificationHitsDropped(r),
+		Count:             len(summaries),
+		HasMore:           result.HasMore,
+		Offset:            filter.Pagination.Offset,
+		Limit:             requestLimit,
+		Messages:          summaries,
 	})
 }
 
@@ -3964,13 +3978,16 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
-		Warnings:         search.LiteralORWarnings(queryStr),
-		IndexState:       indexState,
-		Query:            queryStr,
-		Messages:         summaries,
-		TotalCount:       result.TotalCount,
-		Stats:            toTotalStatsResponse(result.Stats),
-		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
+		NextOffset:        verificationPageEnd(r, offset, len(result.Messages)),
+		HasMore:           limit > 0 && (result.TotalCount > int64(verificationPageEnd(r, offset, len(result.Messages))) || result.TotalCount < 0 && verificationPageEnd(r, offset, len(result.Messages))-offset == limit),
+		MaskedHitsDropped: verificationHitsDropped(r),
+		Warnings:          search.LiteralORWarnings(queryStr),
+		IndexState:        indexState,
+		Query:             queryStr,
+		Messages:          summaries,
+		TotalCount:        result.TotalCount,
+		Stats:             toTotalStatsResponse(result.Stats),
+		AppliedSourceIDs:  append([]int64(nil), filter.SourceIDs...),
 	})
 }
 
@@ -4141,18 +4158,20 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		stats = nil
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
-		Warnings:     warnings,
-		IndexState:   agentIndexState(r),
-		Query:        queryStr,
-		Scope:        scope,
-		Messages:     summaries,
-		BodyContexts: bodyContexts,
-		Count:        len(summaries),
-		TotalCount:   totalCount,
-		Stats:        toTotalStatsResponse(stats),
-		HasMore:      hasMore,
-		Offset:       offset,
-		Limit:        limit,
+		NextOffset:        verificationPageEnd(r, offset, len(messages)),
+		MaskedHitsDropped: verificationHitsDropped(r),
+		Warnings:          warnings,
+		IndexState:        agentIndexState(r),
+		Query:             queryStr,
+		Scope:             scope,
+		Messages:          summaries,
+		BodyContexts:      bodyContexts,
+		Count:             len(summaries),
+		TotalCount:        totalCount,
+		Stats:             toTotalStatsResponse(stats),
+		HasMore:           hasMore,
+		Offset:            offset,
+		Limit:             limit,
 	})
 }
 

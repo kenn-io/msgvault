@@ -13,6 +13,7 @@ import type {
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
   ApproveCardDAVPublicationPathParameters,
+  ArrivalPage,
   AttachmentInfo,
   AttributeDefinition,
   AttributeDefinitionsResponse,
@@ -277,6 +278,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  ListVerificationsParams,
   MCPCapabilities,
   Manifest,
   MediaSearchResponse,
@@ -4462,6 +4464,18 @@ export const getTextStats = (
 ) => {
   return orvalFetch<TotalStatsResponse>(
     { url: `/api/v1/text/stats`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List recent verification arrivals without revealing credentials by default
+ */
+export const listVerifications = (
+  params?: ListVerificationsParams,
+  options?: SecondParameter<typeof orvalFetch<ArrivalPage>>,
+) => {
+  return orvalFetch<ArrivalPage>(
+    { url: `/api/v1/verifications`, method: "GET", params },
     options,
   );
 };

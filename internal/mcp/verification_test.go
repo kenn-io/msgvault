@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
@@ -256,6 +258,7 @@ func TestVerificationCanonicalContextMasksSummary(t *testing.T) {
 	assertions.Contains(result.text, `"masked":true`)
 	assertions.Equal("Your verification code is 482913", canonical.BodyText)
 	h.delegatedOnly = true
+	h.verificationProtectedByDaemon = true
 	masked := query.PrepareVerification(canonical, false, time.Now())
 	assertions.Contains(masked.BodyText, verification.CodePlaceholder)
 	assertions.Same(masked, h.prepareVerificationDetail(masked))
@@ -313,6 +316,229 @@ func TestVerificationAttachmentAndRawContinuation(t *testing.T) {
 	missing := *attachment
 	missing.MessageID = 0
 	assertions.ErrorContains(x.h.protectVerificationAttachment(t.Context(), &missing), "verification_unavailable")
+}
+
+func TestAttachmentContinuationUsesFreshMetadataAfterMessageImport(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	const attachmentID = int64(81)
+	const messageID = int64(82)
+	data := []byte("abcdefgh")
+	hash := strings.Repeat("b", 64)
+	dir := t.TempDir()
+	createAttachmentFixture(t, dir, hash, data)
+	engine := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{
+			messageID: {
+				ID: messageID, SourceID: 9, Subject: "Routine notice",
+				BodyText: "Your verification code is 482913.",
+			},
+		},
+		Attachments: map[int64]*query.AttachmentInfo{
+			attachmentID: {
+				ID: attachmentID, MessageID: messageID, SourceID: 9,
+				Filename: "receipt-482913.pdf", MimeType: "application/pdf",
+				Size: int64(len(data)), ContentHash: hash,
+			},
+		},
+	}
+	h := newTestHandlers(engine)
+	h.unmaskVerification = false
+	h.attachmentsDir = dir
+	t.Cleanup(h.downloads.close)
+
+	first := runTool[getAttachmentResponse](t, ToolGetAttachment, h.getAttachment, map[string]any{
+		"attachment_id": float64(attachmentID), "offset": float64(0), "length": float64(4),
+	})
+	assertions.NotContains(first.Filename, "482913")
+	assertions.Contains(first.Filename, verification.CodePlaceholder)
+	requirements.NotNil(first.SHA256)
+
+	engine.Messages[messageID] = &query.MessageDetail{
+		ID: messageID, SourceID: 9, Subject: "Routine notice", BodyText: "An ordinary attachment update.",
+	}
+	engine.Attachments[attachmentID] = &query.AttachmentInfo{
+		ID: attachmentID, MessageID: messageID, SourceID: 9,
+		Filename: "receipt-current.pdf", MimeType: "application/pdf",
+		Size: int64(len(data)), ContentHash: hash,
+	}
+	continued := runTool[getAttachmentResponse](t, ToolGetAttachment, h.getAttachment, map[string]any{
+		"attachment_id": float64(attachmentID), "offset": float64(4), "length": float64(4), "sha256": *first.SHA256,
+	})
+	assertions.Equal("receipt-current.pdf", continued.Filename)
+	assertions.NotContains(continued.Filename, "482913")
+}
+
+type attachmentMetadataMutationEngine struct {
+	query.Engine
+
+	updateAfterRead func() error
+}
+
+func (e *attachmentMetadataMutationEngine) GetAttachment(ctx context.Context, id int64) (*query.AttachmentInfo, error) {
+	attachment, err := e.Engine.GetAttachment(ctx, id)
+	if err == nil && e.updateAfterRead != nil {
+		update := e.updateAfterRead
+		e.updateAfterRead = nil
+		if updateErr := update(); updateErr != nil {
+			return nil, updateErr
+		}
+	}
+	return attachment, err
+}
+
+func (e *attachmentMetadataMutationEngine) GetAttachmentVerificationSnapshot(ctx context.Context, id int64) (*query.AttachmentInfo, *query.MessageDetail, error) {
+	reader, ok := e.Engine.(query.AttachmentVerificationSnapshotReader)
+	if !ok {
+		return nil, nil, errors.New("attachment verification snapshots are unavailable")
+	}
+	return reader.GetAttachmentVerificationSnapshot(ctx, id)
+}
+
+func TestAttachmentMetadataAndCanonicalMessageUseSameSnapshotAfterImport(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "synthetic-source")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "synthetic-thread", "email_thread", "Synthetic")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "synthetic-message",
+		MessageType: "email", Subject: sql.NullString{String: "Routine notice", Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "Routine attachment notice.", Valid: true}, sql.NullString{}))
+	attachmentHash := strings.Repeat("c", 64)
+	attachmentBytes := []byte("synthetic attachment bytes")
+	requirements.NoError(st.UpsertAttachment(messageID, "receipt-482913.pdf", "application/pdf", "", attachmentHash, len(attachmentBytes)))
+	var attachmentID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), messageID).Scan(&attachmentID))
+
+	engine := query.NewSQLiteEngine(st.DB())
+	wrapped := &attachmentMetadataMutationEngine{Engine: engine, updateAfterRead: func() error {
+		requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "Routine attachment update.", Valid: true}, sql.NullString{}))
+		_, err := st.DB().Exec(st.Rebind("UPDATE attachments SET filename=? WHERE id=?"), "receipt-current.pdf", attachmentID)
+		return err
+	}}
+	h := newTestHandlers(wrapped)
+	h.unmaskVerification = false
+	h.attachmentReader = attachmentReaderFunc(func(context.Context, string) ([]byte, error) {
+		return attachmentBytes, nil
+	})
+	t.Cleanup(h.downloads.close)
+
+	result := runTool[getAttachmentResponse](t, ToolGetAttachment, h.getAttachment, map[string]any{"attachment_id": float64(attachmentID)})
+	assertions.Equal("receipt-current.pdf", result.Filename)
+	assertions.NotContains(result.Filename, "482913")
+}
+
+func TestVerificationOwnerRawOnlyMultipartHTMLBlocksRawExport(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "raw-verification-source")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "raw-verification-thread", "email_thread", "Synthetic")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "raw-only-message",
+		MessageType: "email", Subject: sql.NullString{String: "Routine notice", Valid: true},
+	})
+	requirements.NoError(err)
+	raw := []byte("From: sender@example.test\r\n" +
+		"To: recipient@example.test\r\n" +
+		"Subject: Routine notice\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=verification-boundary\r\n\r\n" +
+		"--verification-boundary\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"A routine message.\r\n" +
+		"--verification-boundary\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+		"<p>Your verification code is <strong>482913</strong>. Expires in 10 minutes.</p>\r\n" +
+		"--verification-boundary--\r\n")
+	requirements.NoError(st.UpsertMessageRaw(messageID, raw))
+
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	h := newTestHandlers(engine)
+	h.unmaskVerification = false
+	t.Cleanup(func() {
+		h.downloads.close()
+		requirements.NoError(engine.Close())
+	})
+
+	canonical, err := engine.GetMessage(t.Context(), messageID)
+	requirements.NoError(err)
+	requirements.NotNil(canonical)
+	assertions.Contains(canonical.BodyText, "A routine message.")
+	assertions.Contains(canonical.BodyHTML, "482913")
+
+	denied := runToolExpectError(t, ToolExportEML, h.exportEML, map[string]any{"id": float64(messageID)})
+	assertions.Contains(denied.text, "verification_masked")
+	assertions.NotContains(denied.text, "482913")
+}
+
+func TestVerificationOwnerMalformedRawMIMEBlocksRawExport(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "raw-verification-source")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "raw-verification-thread", "email_thread", "Synthetic")
+	requirements.NoError(err)
+
+	raw := []byte("From: sender@example.test\r\n" +
+		"To: recipient@example.test\r\n" +
+		"Subject: Routine notice\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart mixed; boundary=verification-boundary\r\n\r\n" +
+		"--verification-boundary\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Your verification code is 482913.\r\n" +
+		"--verification-boundary--\r\n")
+	parsed, parseErr := msgmime.ParseWithRecovery(raw, "")
+	requirements.Error(parseErr)
+	requirements.NotNil(parsed)
+	assertions.Contains(parsed.BodyText, "MIME parsing failed")
+	assertions.NotContains(parsed.BodyText, "482913")
+
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "recovered-message",
+		MessageType: "email", Subject: sql.NullString{String: parsed.Subject, Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageBody(messageID,
+		sql.NullString{String: parsed.GetBodyText(), Valid: true},
+		sql.NullString{String: parsed.BodyHTML, Valid: parsed.BodyHTML != ""}))
+	requirements.NoError(st.UpsertMessageRaw(messageID, raw))
+
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	h := newTestHandlers(engine)
+	h.unmaskVerification = false
+	t.Cleanup(func() {
+		h.downloads.close()
+		requirements.NoError(engine.Close())
+	})
+
+	canonical, err := engine.GetMessage(t.Context(), messageID)
+	requirements.NoError(err)
+	requirements.NotNil(canonical)
+	assertions.Contains(canonical.BodyText, "MIME parsing failed")
+	assertions.NotContains(canonical.BodyText, "482913")
+
+	denied := runToolExpectError(t, ToolExportEML, h.exportEML, map[string]any{"id": float64(messageID)})
+	assertions.Contains(denied.text, "verification_masked")
+	assertions.NotContains(denied.text, "482913")
+
+	h.unmaskVerification = true
+	exported := runTool[exportEMLResponse](t, ToolExportEML, h.exportEML, map[string]any{"id": float64(messageID)})
+	exportedMIME, err := base64.StdEncoding.DecodeString(exported.DataBase64)
+	requirements.NoError(err)
+	assertions.Contains(string(exportedMIME), "482913")
 }
 
 func TestVerificationBinaryAttachmentMetadata(t *testing.T) {

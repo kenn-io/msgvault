@@ -44,6 +44,9 @@ func (h *handlers) updateMessageTags(ctx context.Context, req toolRequest) (*too
 	return h.messageTagsCall(ctx, req, true)
 }
 func (h *handlers) messageTagsCall(ctx context.Context, req toolRequest, write bool) (*toolResult, error) {
+	if denied := h.requireOwnerVerificationUnmask(); denied != nil {
+		return denied, nil
+	}
 	args := req.GetArguments()
 	id, err := getIDArg(args, "message_id")
 	if err != nil {

@@ -19,9 +19,25 @@ type EmbeddedReader struct {
 	downloads *downloadCache
 }
 
-func NewEmbeddedReader(st *store.Store, attachmentsDir string) *EmbeddedReader {
+// EmbeddedReaderOptions controls disclosure for direct, source-scoped reads.
+type EmbeddedReaderOptions struct {
+	UnmaskVerification bool
+}
+
+func NewEmbeddedReader(st *store.Store, attachmentsDir string, options ...EmbeddedReaderOptions) *EmbeddedReader {
+	var opts EmbeddedReaderOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	downloads := &downloadCache{}
-	h := &handlers{engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), attachmentsDir: attachmentsDir, downloads: downloads, delegatedOnly: true}
+	h := &handlers{
+		engine:                        query.NewEngine(st.DB(), st.IsPostgreSQL()),
+		attachmentsDir:                attachmentsDir,
+		downloads:                     downloads,
+		delegatedOnly:                 true,
+		unmaskVerification:            opts.UnmaskVerification,
+		verificationProtectedByDaemon: false,
+	}
 	r := &EmbeddedReader{store: st, downloads: downloads, handlers: make(map[string]sdkmcp.ToolHandlerFor[map[string]any, any])}
 	for _, d := range stableOperationCatalogs.get(catalogCapabilities{}) {
 		switch d.name {

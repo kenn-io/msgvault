@@ -81,6 +81,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		SimilarSearcher:      struct{ SimilarSearcher }{},
 		DocumentSearcher:     struct{ DocumentSearcher }{},
 		MediaSearcher:        struct{ MediaSearcher }{},
+		Verifications:        struct{ VerificationLister }{},
 		PersonFileSearcher:   struct{ PersonFileSearcher }{},
 		PeopleBackend:        struct{ peoplebrowser.Backend }{},
 		DirectoryBackend:     struct{ peoplebrowser.DirectoryLister }{},

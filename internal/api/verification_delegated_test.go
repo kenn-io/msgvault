@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestVerificationDelegatedChannels(t *testing.T) {
@@ -133,6 +134,35 @@ func TestVerificationDelegatedChannels(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestVerificationDelegatedStoreOnlyMessageDetailSkipsSearchFiltering(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, id, err := testutil.CreateIndexedSourceMessage(
+		st, "sender@example.test", "reader@example.test", "Synthetic login", "Your verification code is 482913.",
+	)
+	requirements.NoError(err)
+	cfg := &config.Config{
+		HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()},
+		Server: config.ServerConfig{AgentAccess: true},
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	_, token, _, err := srv.agentGrants.Issue(
+		"synthetic detail reader", []agentgrant.Permission{agentgrant.PermissionMessageRead},
+		[]agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{},
+	)
+	requirements.NoError(err)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d?q=482913", id), nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.NotContains(w.Body.String(), "482913")
+	assertions.Contains(w.Body.String(), verification.CodePlaceholder)
 }
 
 func TestVerificationHTMLOnlyAttachmentRefusal(t *testing.T) {
@@ -275,6 +305,6 @@ func TestVerificationStoredCroppedSnippet(t *testing.T) {
 	srv.Router().ServeHTTP(w, r)
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	assertions.NotContains(w.Body.String(), "AB4C")
-	assertions.Contains(w.Body.String(), "[verification content masked]")
+	assertions.Contains(w.Body.String(), verification.ContentPlaceholder)
 	assertions.Contains(w.Body.String(), `"masked":true`)
 }

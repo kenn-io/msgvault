@@ -225,6 +225,28 @@ func TestMCPGetPersonProfileStripsControlCharactersFromBriefText(t *testing.T) {
 	assert.Equal("stale", uncertainty["reason"])
 }
 
+func TestMCPGetPersonProfileWithholdsBriefWhenVerificationIsMasked(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	profile := briefProfileFixture()
+	profile.Brief.RenderedText = "A saved note repeats verification code 482913."
+	profile.Brief.Sentences[0].Text = "A saved note repeats verification code 482913."
+	profile.Brief.Items[0].Text = "verification code 482913"
+	backend := &profileReadingPeopleBackend{profile: profile}
+
+	result := rawModernCall(t, peopleToolOptions(backend), HTTPOptions{}, "tools/call", map[string]any{
+		"name": ToolGetPersonProfile, "arguments": map[string]any{"person_id": 7},
+	}).Result
+	assertions.NotEqual(true, result["isError"], "result: %#v", result)
+	structured := toolStructuredContent(t, result)
+	lastTalked, ok := structured["last_talked"].(map[string]any)
+	requirements.True(ok)
+	assertions.Nil(lastTalked["brief"])
+	encoded, err := json.Marshal(structured)
+	requirements.NoError(err)
+	assertions.NotContains(string(encoded), "482913")
+}
+
 func TestMCPGetPersonProfileReportsAnAbsentBriefAndContactState(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

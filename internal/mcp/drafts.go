@@ -75,6 +75,11 @@ var stableDraftDefinitions = func() map[string]toolDefinition {
 
 func draftToolHandler(command, positional string) catalogToolHandler {
 	return func(h *handlers, ctx context.Context, req toolRequest) (*toolResult, error) {
+		if command != "draft-send-as" {
+			if result := h.requireOwnerVerificationUnmask(); result != nil {
+				return result, nil
+			}
+		}
 		args := req.GetArguments()
 		request := DraftCommandRequest{Command: command, Flags: map[string][]string{}}
 		for key, value := range args {

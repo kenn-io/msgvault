@@ -104,13 +104,13 @@ func NewMasker(f *Finding) *Masker {
 		for _, form := range forms {
 			alternatives = append(alternatives, encodedPattern(form))
 		}
-		// Numeric payloads and the usable digits of prefixed codes share all
-		// literal and encoded grouping forms.
+		// Grouped codes share literal and encoded forms across MIME variants,
+		// including alphanumeric values split by HTML or whitespace.
 		compact := strings.NewReplacer(" ", "", "-", "").Replace(secret.Value)
 		if len(secret.Value) > 2 && secret.Value[0] >= 'A' && secret.Value[0] <= 'Z' && secret.Value[1] == '-' && allDigits(compact[1:]) {
 			compact = compact[1:]
 		}
-		if allDigits(compact) {
+		if allDigits(compact) || credentialCodeComponent(compact) {
 			parts := make([]string, 0, len(compact))
 			for _, r := range compact {
 				parts = append(parts, encodedPattern(string(r)))
@@ -130,39 +130,7 @@ func NewMasker(f *Finding) *Masker {
 // linkPayloads follows the detector's URL payload rules without treating
 // ordinary path components or navigation parameters as credentials.
 func linkPayloads(value string) []string {
-	u, err := url.Parse(value)
-	if err != nil {
-		return nil
-	}
-	var payloads []string
-	add := func(value string) {
-		if value != "" && !slices.Contains(payloads, value) {
-			payloads = append(payloads, value)
-		}
-	}
-	parts := func(path string, query url.Values) {
-		for component := range strings.SplitSeq(path, "/") {
-			if tokenPattern.MatchString(component) || codePattern.FindString(component) == component && codeShape(component) {
-				add(component)
-			}
-		}
-		for key, values := range query {
-			credentialKey := credentialEndpoint(key) || slices.Contains([]string{"code", "id", "ticket", "key", "nonce", "state"}, strings.ToLower(key))
-			for _, value := range values {
-				if credentialKey && strings.TrimSpace(value) != "" || tokenPattern.MatchString(value) {
-					add(value)
-				}
-			}
-		}
-	}
-	parts(u.Path, u.Query())
-	path, query, hasQuery := strings.Cut(u.Fragment, "?")
-	if !hasQuery && strings.Contains(path, "=") {
-		query, path = path, ""
-	}
-	fragmentValues, _ := url.ParseQuery(query)
-	parts(path, fragmentValues)
-	return payloads
+	return CredentialLinkSearchValues(value)
 }
 
 // Grouping can mix literal, HTML-entity and percent-encoded whitespace.
@@ -263,7 +231,7 @@ func Describe(in Input, f *Finding, masked bool, fields []string, now time.Time)
 	m := NewMasker(f)
 	metadata := &Metadata{
 		Kind: f.Kind, Confidence: f.Confidence, Signals: slices.Clone(f.Signals),
-		Sender: m.Text(in.SenderEmail), ReceivedAt: in.SentAt, Masked: masked,
+		Sender: m.Text(in.SenderEmail), ReceivedAt: in.EffectiveReceivedAt(), Masked: masked,
 		MaskedFields: slices.Clone(fields),
 		Reveal:       "requires verification.read on the message source or an owner session started with --unmask-verification",
 	}

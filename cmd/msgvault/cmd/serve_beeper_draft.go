@@ -43,6 +43,18 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, intent dra
 	if intent.MetadataOnly {
 		output.Content, output.CandidateContent = nil, ""
 	}
+	if intent.authorizeTextOutput != nil {
+		if output.Content != nil {
+			if err := intent.authorizeTextOutput(draft.SourceID, *output.Content); err != nil {
+				return err
+			}
+		}
+		if output.CandidateContent != "" {
+			if err := intent.authorizeTextOutput(draft.SourceID, output.CandidateContent); err != nil {
+				return err
+			}
+		}
+	}
 	if intent.JSON {
 		data, err := jsonv2.Marshal(output)
 		if err != nil {
@@ -141,6 +153,19 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
 		return err
 	}
+	lifecycleIntent := draftLifecycleIntent{JSON: intent.JSON}
+	if grant != nil {
+		ref := draftSourceRef(source)
+		if err := authorizeDelegatedDraftTextRead(grant, ref, intent.Body); err != nil {
+			return err
+		}
+		lifecycleIntent.authorizeTextOutput = func(sourceID int64, text string) error {
+			if sourceID != source.ID {
+				return draftReplyNotPermitted(errors.New("draft source is unavailable"))
+			}
+			return authorizeDelegatedDraftTextRead(grant, ref, text)
+		}
+	}
 	if len(intent.To) != 1 || len(intent.Cc)+len(intent.Bcc) != 0 || intent.Subject != "" || intent.From != "" {
 		return draftReplyError("invalid_args", errors.New("a Beeper draft takes one --to chat ID, --body, and no other fields"))
 	}
@@ -165,7 +190,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 			// Reading draft text needs draft.edit; creators get the ID.
 			existing.Text, existing.Pending = nil, nil
 		}
-		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: intent.JSON}, "draft_exists", existing)
+		_ = emitBeeperDraft(emit, cliStreamStderr, lifecycleIntent, "draft_exists", existing)
 		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
 	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
 		return draftReplyError("draft_read_failed", err)
@@ -184,7 +209,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err != nil {
 		return draftReplyError("local_persistence_failed", err)
 	}
-	return a.writeBeeperDraft(ctx, client, source, draft, state, draftLifecycleIntent{JSON: intent.JSON}, "created", emit)
+	return a.writeBeeperDraft(ctx, client, source, draft, state, lifecycleIntent, "created", emit)
 }
 
 // runBeeperDraftLifecycle serves draft-get, draft-edit and draft-delete for
@@ -202,6 +227,13 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		if err != nil {
 			return draftReplyNotPermitted(err)
 		}
+		ref := draftSourceRef(source)
+		intent.authorizeTextOutput = func(sourceID int64, text string) error {
+			if sourceID != source.ID {
+				return draftReplyNotPermitted(errors.New("draft source is unavailable"))
+			}
+			return authorizeDelegatedDraftTextRead(grant, ref, text)
+		}
 		permissions := api.CLIRunDraftLifecyclePermissions(intent.Operation)
 		// Native drafts have no archived sender; create alone cannot read them.
 		if intent.Operation == api.CLIRunDraftGetCommand {
@@ -213,6 +245,23 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		intent.MetadataOnly = !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
 			Type: source.SourceType, Identifier: source.Identifier,
 		})
+		if intent.Operation == api.CLIRunDraftEditCommand {
+			if err := authorizeDelegatedDraftTextRead(grant, ref, intent.Body); err != nil {
+				return err
+			}
+		}
+		if intent.Operation == api.CLIRunDraftDeleteCommand && !intent.MetadataOnly {
+			if draft.Text != nil {
+				if err := intent.authorizeTextOutput(draft.SourceID, *draft.Text); err != nil {
+					return err
+				}
+			}
+			if draft.Pending != nil {
+				if err := intent.authorizeTextOutput(draft.SourceID, draft.Pending.Text); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
 		return emitBeeperDraft(emit, cliStreamStdout, intent, "ok", draft)

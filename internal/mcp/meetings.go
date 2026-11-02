@@ -34,6 +34,9 @@ type MeetingBackend interface {
 }
 
 func (h *handlers) getMeetingContext(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	args := req.GetArguments()
 	messageIDs, err := positiveInt64ArrayArg(args, "message_ids")
 	if err != nil {
@@ -66,6 +69,9 @@ func (h *handlers) getMeetingContext(ctx context.Context, req toolRequest) (*too
 }
 
 func (h *handlers) listMeetingActionItems(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	args := req.GetArguments()
 	scope, err := meetingScopeFromArgs(args)
 	if err != nil {

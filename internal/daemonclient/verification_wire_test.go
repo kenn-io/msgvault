@@ -48,6 +48,16 @@ func TestVerificationMetadataThroughDaemon(t *testing.T) {
 			}
 			requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{String: "<p>" + body + "</p>", Valid: true}))
 			requirements.NoError(st.UpsertFTS(id, "glacier 482913", body, "", "", ""))
+			htmlConv, err := st.EnsureConversationWithType(src.ID, "html-only-chat", "direct_chat", "HTML-only")
+			requirements.NoError(err)
+			htmlID, err := st.UpsertMessage(&store.Message{
+				SourceID: src.ID, ConversationID: htmlConv, SourceMessageID: "html-only-message", MessageType: "beeper",
+				Subject: sql.NullString{String: "HTML-only verification", Valid: true},
+				SentAt:  sql.NullTime{Time: time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC), Valid: true},
+			})
+			requirements.NoError(err)
+			htmlBody := `<p>Your verification code is <b>AB4</b><span>C9D</span></p>`
+			requirements.NoError(st.UpsertMessageBody(htmlID, sql.NullString{}, sql.NullString{String: htmlBody, Valid: true}))
 			hash := strings.Repeat("d", 64)
 			requirements.NoError(st.UpsertAttachment(id, "482913.txt", "text/plain", "", hash, 32))
 			engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -94,14 +104,28 @@ func TestVerificationMetadataThroughDaemon(t *testing.T) {
 				check(detail, detail.Verification)
 				assertions.Equal(src.ID, detail.SourceID)
 				assertions.Equal("provider-message", detail.SourceMessageID)
+				htmlDetail, err := adapter.GetMessage(t.Context(), htmlID)
+				requirements.NoError(err)
+				requirements.NotNil(htmlDetail.Verification)
+				assertions.Equal(!reveal, htmlDetail.Verification.Masked)
+				assertions.Empty(htmlDetail.BodyText)
+				if reveal {
+					assertions.Equal(htmlBody, htmlDetail.BodyHTML)
+				} else {
+					assertions.Equal(verification.ContentPlaceholder, htmlDetail.BodyHTML)
+				}
 				cli, err := client.GetCLIMessage(t.Context(), strconv.FormatInt(id, 10))
 				requirements.NoError(err)
 				check(cli, cli.Verification)
 				assertions.Equal(src.ID, cli.SourceID)
 				rows, err := adapter.ListMessages(t.Context(), query.MessageFilter{})
 				requirements.NoError(err)
-				requirements.Len(rows, 1)
-				check(rows[0], rows[0].Verification)
+				requirements.Len(rows, 2)
+				for _, row := range rows {
+					if row.ID == id {
+						check(row, row.Verification)
+					}
+				}
 				page, err := adapter.ListThread(t.Context(), query.ThreadQuery{MessageRef: query.MessageRef{ID: id}, Limit: 10})
 				requirements.NoError(err)
 				requirements.Len(page.Messages, 1)
@@ -118,6 +142,13 @@ func TestVerificationMetadataThroughDaemon(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Contains(detail.BodyText, "482913")
 			assertions.Nil(detail.Verification)
+			htmlDetail, err := daemonclient.NewEngineAdapter(owner).GetMessage(t.Context(), htmlID)
+			requirements.NoError(err)
+			assertions.Empty(htmlDetail.BodyText)
+			assertions.Equal(htmlBody, htmlDetail.BodyHTML)
+			maskedHTML := query.PrepareVerification(htmlDetail, false, time.Time{})
+			requirements.NotNil(maskedHTML.Verification)
+			assertions.Equal(verification.ContentPlaceholder, maskedHTML.BodyHTML)
 		})
 	}
 }

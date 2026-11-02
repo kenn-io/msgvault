@@ -142,6 +142,10 @@ func TestReaderScopedMCP(t *testing.T) {
 	}
 	chunk := payload(call("get_attachment", map[string]any{"attachment_id": fixtures[0].attachment, "offset": 0, "length": 4}))
 	assertions.Equal("dGVsZQ==", chunk["data_base64"])
+	continued := payload(call("get_attachment", map[string]any{
+		"attachment_id": fixtures[0].attachment, "offset": 4, "length": 4, "sha256": chunk["sha256"],
+	}))
+	assertions.Equal("c2NvcA==", continued["data_base64"], "native scoped readers can continue under the same scope")
 	setScope([]int64{fixtures[1].source})
 	denied := call("get_attachment", map[string]any{"attachment_id": fixtures[0].attachment, "offset": 4, "length": 4, "sha256": chunk["sha256"]})
 	assertions.True(denied.IsError, "cached bytes require fresh scope")
@@ -201,6 +205,48 @@ func TestReaderScopedMCP(t *testing.T) {
 	requirements.ErrorIs(err, context.Canceled)
 	_, _, err = reader.Call(ctx, []int64{fixtures[0].source}, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "aggregate"}}, map[string]any{})
 	requirements.Error(err, "catalog membership alone must not admit an unsupported operation")
+}
+
+func TestReaderVerificationMaskCanBeOptedOut(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ctx := t.Context()
+	a := openReaderArchive(t)
+	source, err := a.Store().GetOrCreateSource("gmail", "verification-reader@example.test")
+	requirements.NoError(err)
+	conversation, err := a.Store().EnsureConversationWithType(source.ID, "verification-reader-thread", "email_thread", "Synthetic")
+	requirements.NoError(err)
+	body := "Your verification code is 482913."
+	messageID, err := a.Store().UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "verification-reader-message",
+		MessageType: "email", Subject: sql.NullString{String: "Routine notice", Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(a.Store().UpsertMessageBody(messageID, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	requirements.NoError(a.Store().UpsertFTS(messageID, "Routine notice", body, "", "", ""))
+	call := func(reader *catalog.Reader) *sdkmcp.CallToolResult {
+		t.Helper()
+		result, structured, callErr := reader.Call(ctx, []int64{source.ID}, &sdkmcp.CallToolRequest{
+			Params: &sdkmcp.CallToolParamsRaw{Name: "get_message"},
+		}, map[string]any{"id": float64(messageID), "full_body": true})
+		requirements.NoError(callErr)
+		result.StructuredContent = structured
+		return result
+	}
+	masked, err := catalog.NewReader(a, catalog.ReaderOptions{})
+	requirements.NoError(err)
+	t.Cleanup(masked.Close)
+	maskedResult, err := json.Marshal(call(masked))
+	requirements.NoError(err)
+	assertions.NotContains(string(maskedResult), "482913")
+	assertions.Contains(string(maskedResult), "[verification code masked]")
+
+	revealing, err := catalog.NewReader(a, catalog.ReaderOptions{UnmaskVerification: true})
+	requirements.NoError(err)
+	t.Cleanup(revealing.Close)
+	revealedResult, err := json.Marshal(call(revealing))
+	requirements.NoError(err)
+	assertions.Contains(string(revealedResult), "482913")
 }
 
 func openReaderArchive(t *testing.T) *archive.Archive {

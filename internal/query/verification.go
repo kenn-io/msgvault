@@ -2,6 +2,7 @@ package query
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/verification"
@@ -13,6 +14,9 @@ func VerificationInput(msg *MessageDetail) verification.Input {
 	in := verification.Input{
 		MessageType: msg.MessageType, Subject: msg.Subject, Snippet: msg.Snippet,
 		BodyText: msg.BodyText, BodyHTML: msg.BodyHTML, SentAt: msg.SentAt, IsFromMe: msg.IsFromMe,
+	}
+	if msg.ReceivedAt != nil {
+		in.ReceivedAt = *msg.ReceivedAt
 	}
 	if len(msg.From) > 0 {
 		in.SenderEmail = msg.From[0].Email
@@ -98,6 +102,11 @@ func PrepareVerification(msg *MessageDetail, reveal bool, now time.Time) *Messag
 // its full canonical message. It never emits canonical bodies to a search-only
 // reader. Derived excerpts with unmappable offsets are withheld on findings.
 func PrepareSummaryVerification(row MessageSummary, canonical *MessageDetail, reveal bool, now time.Time) MessageSummary {
+	if canonical == nil {
+		return row
+	}
+	row = refreshSummaryFromCanonical(row, canonical)
+	row.Verification = nil
 	in := VerificationInput(canonical)
 	f := verification.Detect(in)
 	if f == nil {
@@ -153,6 +162,73 @@ func PrepareSummaryVerification(row MessageSummary, canonical *MessageDetail, re
 	row.BodyContextSnippetsTruncated = false
 	row.Verification = verification.Describe(in, f, true, fields, now)
 	return row
+}
+
+func refreshSummaryFromCanonical(row MessageSummary, canonical *MessageDetail) MessageSummary {
+	fromEmail, fromName := "", ""
+	if len(canonical.From) > 0 {
+		fromEmail, fromName = canonical.From[0].Email, canonical.From[0].Name
+	}
+	if row.FromPhone != "" && !strings.EqualFold(strings.TrimSpace(row.FromPhone), strings.TrimSpace(fromEmail)) {
+		row.FromPhone = ""
+	}
+	attachmentNames := make([]string, 0, len(canonical.Attachments))
+	for _, attachment := range canonical.Attachments {
+		if attachment.Filename != "" {
+			attachmentNames = append(attachmentNames, attachment.Filename)
+		}
+	}
+	row.Subject, row.Snippet = canonical.Subject, canonical.Snippet
+	row.FromEmail, row.FromName = fromEmail, fromName
+	row.ConversationTitle, row.WebURL = canonical.ConversationTitle, canonical.WebURL
+	row.To, row.Cc, row.Bcc = slices.Clone(canonical.To), slices.Clone(canonical.Cc), slices.Clone(canonical.Bcc)
+	row.Labels = slices.Clone(canonical.Labels)
+	row.AttachmentNames = attachmentNames
+	if row.BodyText != canonical.BodyText {
+		row.BodyText = ""
+	}
+	if row.MatchSnippet != "" && !summaryExcerptMatchesCanonical(row.MatchSnippet, canonical) {
+		row.MatchSnippet = ""
+		row.BodyContextSnippetsTruncated = true
+	}
+	for _, excerpt := range row.BodyContextSnippets {
+		if !strings.Contains(canonical.BodyText, excerpt) {
+			row.BodyContextSnippets = nil
+			row.BodyContextSnippetsTruncated = true
+			break
+		}
+	}
+	return row
+}
+
+func summaryExcerptMatchesCanonical(excerpt string, canonical *MessageDetail) bool {
+	if excerpt == "" {
+		return true
+	}
+	for _, content := range []string{canonical.Subject, canonical.Snippet, canonical.BodyText} {
+		if containsExcerptInOrder(content, excerpt) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExcerptInOrder(content, excerpt string) bool {
+	parts := strings.Split(excerpt, "…")
+	offset := 0
+	matched := false
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		index := strings.Index(content[offset:], part)
+		if index < 0 {
+			return false
+		}
+		offset += index + len(part)
+		matched = true
+	}
+	return matched
 }
 
 func PrepareThreadVerification(row ThreadMessage, canonical *MessageDetail, reveal bool, now time.Time) ThreadMessage {

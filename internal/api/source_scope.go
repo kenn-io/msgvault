@@ -7,7 +7,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/sourcescope"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 func sourceScopedOperation(r *http.Request, operation Operation) bool {
@@ -29,7 +28,7 @@ func sourceScopedOperation(r *http.Request, operation Operation) bool {
 // one snapshot. The host's separate authorization transaction stays host-owned.
 // Caller-scoped and agent snapshots share one connection budget.
 func (s *Server) beginCallerRead(r *http.Request) (func(), *apiHTTPError) {
-	reader, ok := s.store.(*store.Store)
+	reader, ok := s.store.(agentReadSnapshotStore)
 	if !ok {
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}

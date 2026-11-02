@@ -30,6 +30,10 @@ func findChatDefinition() toolDefinition {
 }
 
 func (h *handlers) findChat(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
+
 	args := req.GetArguments()
 	source, err := positiveInt64Arg(args, toolArgSourceID)
 	if err != nil {

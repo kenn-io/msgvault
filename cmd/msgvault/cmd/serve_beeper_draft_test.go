@@ -336,3 +336,52 @@ func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
 	assert.Equal(created.DraftID, existing.DraftID)
 	assert.Nil(existing.Content)
 }
+
+func TestBeeperDraftVerificationReadGuardsContent(t *testing.T) {
+	sensitive := "Your verification code is 482913."
+
+	t.Run("creation", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		f := newBeeperDraftFixture(t)
+		grant := &agentgrant.Grant{
+			ID: "beeper-create", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources: []agentgrant.SourceRef{{Type: f.source.SourceType, Identifier: f.source.Identifier}},
+		}
+		beforeRequests, beforePatches := f.beeper.counts()
+		_, err := f.create(t, grant, sensitive)
+		assertBeeperDraftCode(t, err, "not_permitted")
+		afterRequests, afterPatches := f.beeper.counts()
+		assertions.Equal(beforeRequests, afterRequests)
+		assertions.Equal(beforePatches, afterPatches)
+		_, err = f.store.LiveBeeperDraftContext(t.Context(), f.source.ID, beeperDraftTestChat)
+		requirements.ErrorIs(err, store.ErrBeeperDraftNotFound)
+	})
+
+	editorGrant := func(f beeperDraftFixture) *agentgrant.Grant {
+		return &agentgrant.Grant{
+			ID: "beeper-edit", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit},
+			Sources: []agentgrant.SourceRef{{Type: f.source.SourceType, Identifier: f.source.Identifier}},
+		}
+	}
+	t.Run("committed content", func(t *testing.T) {
+		requirements := require.New(t)
+		f := newBeeperDraftFixture(t)
+		created, err := f.create(t, nil, sensitive)
+		requirements.NoError(err)
+		_, err = f.run(t, editorGrant(f), api.CLIRunDraftGetCommand, created.DraftID)
+		assertBeeperDraftCode(t, err, "not_permitted")
+	})
+
+	t.Run("pending candidate", func(t *testing.T) {
+		requirements := require.New(t)
+		f := newBeeperDraftFixture(t)
+		created, err := f.create(t, nil, "ordinary draft")
+		requirements.NoError(err)
+		_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision,
+			store.BeeperDraftOperationEdit, "<p>Your verification code is 482913.</p>")
+		requirements.NoError(err)
+		_, err = f.run(t, editorGrant(f), api.CLIRunDraftGetCommand, created.DraftID)
+		assertBeeperDraftCode(t, err, "not_permitted")
+	})
+}

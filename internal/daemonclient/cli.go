@@ -1554,6 +1554,30 @@ func (c *Client) OpenCLIAttachment(ctx context.Context, contentHash string) (io.
 	return verified, nil
 }
 
+// AuthorizeAttachmentContent asks the daemon to recheck current attachment
+// content policy without downloading the bytes retained by a chunk snapshot.
+func (c *Client) AuthorizeAttachmentContent(ctx context.Context, contentHash string) error {
+	resp, err := c.DoGeneratedRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"/api/v1/cli/attachment",
+		&generated.GetCLIAttachmentRequestOptions{
+			Query: &generated.GetCLIAttachmentQuery{ContentHash: contentHash},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("attachment %s: %w", contentHash, fs.ErrNotExist)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return HandleErrorResponse(resp)
+	}
+	return nil
+}
+
 type CacheBuildAccepted struct {
 	Status string                `json:"status"`
 	JobID  string                `json:"job_id"`

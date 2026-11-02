@@ -237,3 +237,143 @@ func TestParseStoredMailboxRejectsUnquotableAddress(t *testing.T) {
 		require.Error(t, err, value)
 	}
 }
+
+func TestDraftLifecycleDelegatedIMAPEditRejectsNewCredentialBeforeProviderWrite(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	var created draftReplyOutput
+	err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		api.CLIRunDraftReplyCommand, strconv.FormatInt(fixture.parentID, 10),
+		"--from", testutil.IMAPTestUsername, "--body", "ordinary reply", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		return json.Unmarshal([]byte(event.Data), &created)
+	})
+	requirements.NoError(err)
+	requirements.NotEmpty(created.DraftID)
+	_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+	requirements.NoError(err)
+	grant := &agentgrant.Grant{
+		ID: "imap-credential-edit-test", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit},
+		Sources: []agentgrant.SourceRef{{
+			ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier,
+			SenderKeys: []string{senderKey},
+		}},
+	}
+	providerCalls := 0
+	clientFactory := adapter.draftClientFactory
+	adapter.draftClientFactory = func(ctx context.Context, source *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return clientFactory(ctx, source)
+	}
+	args := []string{
+		api.CLIRunDraftEditCommand, created.DraftID,
+		"--revision", strconv.FormatInt(created.Revision, 10),
+		"--body", "Your verification code is 482913",
+	}
+	var events []api.CLIRunEvent
+	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	requirements.Error(err)
+	assertions.Equal("not_permitted", err.Error())
+	assertions.Empty(events)
+	assertions.Zero(providerCalls)
+	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(created.Revision, latest.Revision)
+	assertions.Nil(latest.Pending)
+}
+
+func TestDelegatedDraftVerificationReadProtectsCreationAndLifecycleOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		credentialRaw bool
+		candidateRaw  bool
+	}{
+		{name: "parent credential blocks delegated creation and raw output", credentialRaw: true},
+		{name: "candidate MIME is checked before output", candidateRaw: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			fixture := newDraftReplyFixture(t)
+			adapter := fixture.grantedAdapter()
+			credentialMIME := []byte("From: Sender <sender@example.com>\r\nTo: " + testutil.IMAPTestUsername +
+				"\r\nSubject: Your verification code is 482913\r\nMessage-ID: <credential@example.test>\r\n\r\nYour verification code is 482913\r\n")
+			if tc.credentialRaw {
+				requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, credentialMIME))
+			}
+
+			_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+			requirements.NoError(err)
+			grant := func(reveal bool) *agentgrant.Grant {
+				permissions := []agentgrant.Permission{agentgrant.PermissionDraftCreate}
+				if reveal {
+					permissions = append(permissions, agentgrant.PermissionVerificationRead)
+				}
+				return &agentgrant.Grant{
+					ID: "draft-verification-test", Permissions: permissions,
+					Sources: []agentgrant.SourceRef{{
+						ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier,
+						SenderKeys: []string{senderKey},
+					}},
+				}
+			}
+			args := []string{
+				api.CLIRunDraftReplyCommand, strconv.FormatInt(fixture.parentID, 10),
+				"--from", testutil.IMAPTestUsername, "--body", "synthetic reply", "--json",
+			}
+			if tc.credentialRaw {
+				var events []api.CLIRunEvent
+				err := adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: args, Grant: grant(false)}, func(event api.CLIRunEvent) error {
+					events = append(events, event)
+					return nil
+				})
+				requirements.Equal("not_permitted", err.Error())
+				assertions.Empty(events)
+			}
+
+			var created draftReplyOutput
+			err = adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+				return json.Unmarshal([]byte(event.Data), &created)
+			})
+			requirements.NoError(err)
+			requirements.NotEmpty(created.DraftID)
+			if tc.candidateRaw {
+				candidate := []byte("From: " + testutil.IMAPTestUsername + "\r\nTo: sender@example.com\r\n" +
+					"Subject: Your verification code is 482913\r\n\r\nYour verification code is 482913\r\n")
+				_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, created.Revision, store.IMAPDraftOperationEdit, candidate)
+				requirements.NoError(err)
+			}
+
+			runGet := func(g *agentgrant.Grant) ([]api.CLIRunEvent, error) {
+				var events []api.CLIRunEvent
+				err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+					Args: []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}, Grant: g,
+				}, func(event api.CLIRunEvent) error {
+					events = append(events, event)
+					return nil
+				})
+				return events, err
+			}
+			events, err := runGet(grant(false))
+			requirements.Equal("not_permitted", err.Error())
+			assertions.Empty(events)
+
+			events, err = runGet(grant(true))
+			requirements.NoError(err)
+			requirements.Len(events, 1)
+			var output draftLifecycleOutput
+			requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+			if tc.credentialRaw {
+				assertions.Contains(output.RawMIME, "482913")
+			} else {
+				assertions.Contains(output.CandidateContent, "482913")
+			}
+		})
+	}
+}

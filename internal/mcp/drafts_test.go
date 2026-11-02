@@ -29,7 +29,9 @@ func draftConfirmationSession(t *testing.T, runner *draftTestRunner, commands ..
 	t.Helper()
 	require := require.New(t)
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := newMCPServer(ServeOptions{Drafts: runner, DraftCommands: commands}, true).Connect(t.Context(), serverTransport, nil)
+	serverSession, err := newMCPServer(ServeOptions{
+		Drafts: runner, DraftCommands: commands, UnmaskVerification: true,
+	}, true).Connect(t.Context(), serverTransport, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = serverSession.Close() })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-confirmation-test", Version: "1"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
@@ -236,7 +238,9 @@ func TestDraftToolResultShapes(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			runner := &draftTestRunner{result: DraftCommandResult{Stdout: tc.stdout}, err: tc.err}
-			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-reply"}}, ToolDraftReply, map[string]any{"message_id": 7, "source_id": 9, "body": "reply", "all": false}, true)
+			result := confirmedCallTool(t, ServeOptions{
+				Drafts: runner, DraftCommands: []string{"draft-reply"}, UnmaskVerification: true,
+			}, ToolDraftReply, map[string]any{"message_id": 7, "source_id": 9, "body": "reply", "all": false}, true)
 			if tc.text != "" {
 				assert.Equal(true, result["isError"])
 				content, ok := result["content"].([]any)
@@ -265,4 +269,37 @@ func TestDraftToolResultShapes(t *testing.T) {
 		require.ErrorContains(err, "internal server error")
 		assert.NotContains(err.Error(), "private transport detail")
 	})
+}
+
+func TestOwnerDraftContentToolsRequireVerificationUnmask(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		tool    string
+		args    map[string]any
+	}{
+		{command: "draft-get", tool: ToolDraftGet, args: map[string]any{"draft_id": "draft-7"}},
+		{command: "draft-reply", tool: ToolDraftReply, args: map[string]any{"message_id": 7, "body": "reply"}},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"subject":"Your verification code is 482913"}`}}
+			call := func(unmask bool) map[string]any {
+				response := rawModernCall(t, ServeOptions{
+					Drafts: runner, DraftCommands: []string{tc.command}, UnmaskVerification: unmask,
+				}, HTTPOptions{AllowWrites: true}, "tools/call", map[string]any{
+					"name": tc.tool, "arguments": tc.args,
+				})
+				return response.Result
+			}
+			masked := call(false)
+			assertions.Equal(true, masked["isError"])
+			assertions.Contains(savedViewToolErrorText(t, masked), "verification_masked")
+			assertions.Zero(runner.calls)
+
+			unmasked := call(true)
+			requirements.NotEqual(true, unmasked["isError"], "result: %#v", unmasked)
+			assertions.Equal(1, runner.calls)
+		})
+	}
 }

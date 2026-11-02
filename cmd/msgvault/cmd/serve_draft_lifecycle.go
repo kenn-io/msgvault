@@ -17,15 +17,18 @@ import (
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 type draftLifecycleIntent struct {
-	Operation    string
-	DraftID      string
-	Revision     int64
-	Body         string
-	JSON         bool
-	MetadataOnly bool // Set by delegated authorization, never by CLI arguments.
+	Operation           string
+	DraftID             string
+	Revision            int64
+	Body                string
+	JSON                bool
+	MetadataOnly        bool // Set by delegated authorization, never by CLI arguments.
+	authorizeOutput     func(sourceID int64, rawMIME, candidate string) error
+	authorizeTextOutput func(sourceID int64, text string) error
 	// ConversationID lists a conversation's local chat drafts in place of DraftID.
 	ConversationID int64
 }
@@ -270,6 +273,11 @@ func emitDraftLifecycleOutput(
 	if emit == nil {
 		return nil
 	}
+	if intent.authorizeOutput != nil {
+		if err := intent.authorizeOutput(output.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+			return err
+		}
+	}
 	if intent.MetadataOnly {
 		output.Content = ""
 		output.RawMIME = ""
@@ -450,6 +458,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 			return err
 		}
 		intent.MetadataOnly = !canReadContent
+		a.setDraftLifecycleOutputAuthorization(ctx, &intent, req.Grant)
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
 		provider := &draftLifecycleObservation{State: "not_checked", Code: "not_checked"}
@@ -529,6 +538,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		replacement, err = imaplib.BuildIMAPDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		if err != nil {
 			return draftReplyError("invalid_draft", err)
+		}
+		if req.Grant != nil {
+			if _, err := a.authorizeDelegatedDraftContent(ctx, intent, req.Grant, source.ID, replacement.Raw); err != nil {
+				return err
+			}
 		}
 	}
 	if draft.Pending != nil {
@@ -909,6 +923,62 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftOutput(
 	return err
 }
 
+func (a *storeAPIAdapter) setDraftLifecycleOutputAuthorization(
+	ctx context.Context,
+	intent *draftLifecycleIntent,
+	grant *agentgrant.Grant,
+) {
+	if grant == nil {
+		return
+	}
+	intent.authorizeOutput = func(sourceID int64, raw, candidate string) error {
+		if intent.MetadataOnly {
+			return nil
+		}
+		return a.authorizeDelegatedDraftOutput(ctx, *intent, grant, sourceID, raw, candidate)
+	}
+}
+
+func authorizeDelegatedDraftVerificationRead(grant *agentgrant.Grant, source *store.Source, raw []byte) error {
+	if grant == nil || len(raw) == 0 {
+		return nil
+	}
+	if source == nil {
+		return draftReplyNotPermitted(errors.New("draft source is unavailable"))
+	}
+	if grant.Allows(agentgrant.PermissionVerificationRead, draftSourceRef(source)) {
+		return nil
+	}
+	parsed, err := msgmime.Parse(raw)
+	if err != nil {
+		return draftReplyNotPermitted(errors.New("verification.read is required when draft content cannot be checked"))
+	}
+	input := verification.Input{
+		Subject: parsed.Subject, BodyText: parsed.BodyText, BodyHTML: parsed.BodyHTML,
+		ListID: parsed.ListID,
+	}
+	if len(parsed.From) > 0 {
+		input.SenderEmail = parsed.From[0].Email
+	}
+	if verification.Detect(input) != nil {
+		return draftReplyNotPermitted(errors.New("verification.read is required for credential-bearing draft content"))
+	}
+	return nil
+}
+
+func authorizeDelegatedDraftTextRead(grant *agentgrant.Grant, source agentgrant.SourceRef, text string) error {
+	if grant == nil || text == "" || grant.Allows(agentgrant.PermissionVerificationRead, source) {
+		return nil
+	}
+	// Draft text can be plain chat content or Beeper's HTML composer value.
+	// Scan both forms so visible text and credential links use the same
+	// detector as archived messages.
+	if verification.Detect(verification.Input{BodyText: text, BodyHTML: text}) == nil {
+		return nil
+	}
+	return draftReplyNotPermitted(errors.New("verification.read is required for credential-bearing draft content"))
+}
+
 func (a *storeAPIAdapter) authorizeDelegatedDraftContent(
 	ctx context.Context,
 	intent draftLifecycleIntent,
@@ -930,8 +1000,14 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftContent(
 			return false, draftReplyNotPermitted(fmt.Errorf("load managed draft sender: %w", err))
 		}
 		if grant.AllowsSender(permission, ref, senderKey) {
-			return grant.AllowsSender(agentgrant.PermissionDraftCreate, ref, senderKey) ||
-				grant.AllowsSender(agentgrant.PermissionDraftEdit, ref, senderKey), nil
+			canReadContent := grant.AllowsSender(agentgrant.PermissionDraftCreate, ref, senderKey) ||
+				grant.AllowsSender(agentgrant.PermissionDraftEdit, ref, senderKey)
+			if canReadContent {
+				if err := authorizeDelegatedDraftVerificationRead(grant, source, raw); err != nil {
+					return false, err
+				}
+			}
+			return canReadContent, nil
 		}
 	}
 	return false, draftReplyNotPermitted(fmt.Errorf("source %d or sender is not in grant %s for %s", source.ID, grant.ID, intent.Operation))

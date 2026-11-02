@@ -9,9 +9,14 @@ import (
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
-// ReaderOptions selects external attachment storage. An empty AttachmentsDir
-// leaves attachment bytes unavailable; no local configuration is discovered.
-type ReaderOptions struct{ AttachmentsDir string }
+// ReaderOptions selects attachment storage and verification disclosure. An
+// empty AttachmentsDir leaves attachment bytes unavailable; no local
+// configuration is discovered. UnmaskVerification opts into exposing detected
+// verification credentials in native read results.
+type ReaderOptions struct {
+	AttachmentsDir     string
+	UnmaskVerification bool
+}
 
 // Reader runs native read tools on a caller-owned archive without a daemon or
 // listener. The caller owns authentication, admission and transport.
@@ -25,7 +30,8 @@ func NewReader(a *archive.Archive, opts ReaderOptions) (*Reader, error) {
 	if a == nil {
 		return nil, errors.New("reader requires an archive")
 	}
-	return &Reader{reader: internalmcp.NewEmbeddedReader(a.Store(), opts.AttachmentsDir)}, nil
+	return &Reader{reader: internalmcp.NewEmbeddedReader(a.Store(), opts.AttachmentsDir,
+		internalmcp.EmbeddedReaderOptions{UnmaskVerification: opts.UnmaskVerification})}, nil
 }
 
 // Call runs one tool with the supplied source IDs as an upper bound. Nil and

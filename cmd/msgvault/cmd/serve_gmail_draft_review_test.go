@@ -771,6 +771,33 @@ func TestGmailDraftDelegatedUncertainEditStaysPending(t *testing.T) {
 	}
 }
 
+func TestGmailDraftDelegatedEditRejectsNewCredentialBeforeProviderWrite(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, fixture.source.SourceType, fixture.source.Identifier)
+	args := []string{
+		api.CLIRunDraftEditCommand, draft.DraftID,
+		"--revision", strconv.FormatInt(draft.Revision, 10),
+		"--body", "Your verification code is 482913",
+	}
+	var events []api.CLIRunEvent
+	err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	requirements.Error(err)
+	assertions.Equal("not_permitted", err.Error())
+	assertions.Empty(events)
+	assertions.Zero(fixture.client.updateCalls)
+	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(draft.Revision, latest.Revision)
+	assertions.Nil(latest.Pending)
+}
+
 func TestGmailDraftLifecycleDelegatedStaleRevisionStopsBeforeProvider(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

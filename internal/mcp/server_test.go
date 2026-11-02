@@ -301,6 +301,7 @@ func TestSearchMetadata(t *testing.T) {
 				}
 				h := newTestHandlers(eng)
 				h.delegatedOnly = true
+				h.verificationProtectedByDaemon = true
 				resp := runTool[searchMetadataResponse](t, "search_metadata", h.searchMetadata, map[string]any{
 					"query": "from:alice", "limit": float64(2), "offset": float64(4),
 				})
@@ -365,7 +366,7 @@ func (s *recordingVisualSearcher) SearchVisualAttachments(
 
 func TestSearchVisualAttachmentsPreservesSharedPersonScope(t *testing.T) {
 	searcher := &recordingVisualSearcher{}
-	h := &handlers{visualSearcher: searcher}
+	h := &handlers{visualSearcher: searcher, unmaskVerification: true}
 	runTool[visual.SearchResponse](t, ToolSearchVisualAttachments, h.searchVisualAttachments, map[string]any{
 		"text": "inspection diagram", "person_id": float64(40),
 		"directions": []any{"to_person", "group"},
@@ -400,7 +401,7 @@ func (s *recordingPersonFileSearcher) SearchPersonFiles(
 func TestSearchPersonFilesPreservesScopeAndProvenance(t *testing.T) {
 	assertions := assert.New(t)
 	searcher := &recordingPersonFileSearcher{}
-	h := &handlers{personFileSearcher: searcher}
+	h := &handlers{personFileSearcher: searcher, unmaskVerification: true}
 	response := runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
 		h.searchPersonFiles, map[string]any{
 			"person_id": float64(40), "directions": []any{"from_person", "group"},
@@ -423,7 +424,7 @@ func TestSearchPersonFilesPreservesScopeAndProvenance(t *testing.T) {
 
 func TestSearchPersonFilesRejectsInvalidScopeBeforeDispatch(t *testing.T) {
 	searcher := &recordingPersonFileSearcher{}
-	h := &handlers{personFileSearcher: searcher}
+	h := &handlers{personFileSearcher: searcher, unmaskVerification: true}
 	result := runToolExpectError(t, ToolSearchPersonFiles, h.searchPersonFiles, map[string]any{
 		"person_id": float64(40), "directions": []any{"sideways"},
 	})
@@ -433,7 +434,7 @@ func TestSearchPersonFilesRejectsInvalidScopeBeforeDispatch(t *testing.T) {
 
 func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
 	searcher := &recordingPersonFileSearcher{}
-	h := &handlers{personFileSearcher: searcher}
+	h := &handlers{personFileSearcher: searcher, unmaskVerification: true}
 	runTool[generated.PersonFileSearchHTTPResponse](t, ToolSearchPersonFiles,
 		h.searchPersonFiles, map[string]any{"person_id": float64(40)})
 
@@ -465,7 +466,7 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
+	h := &handlers{documentSearcher: searcher, unmaskVerification: true}
 	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
 		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
 		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
@@ -497,7 +498,7 @@ func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
 
 func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
 	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
+	h := &handlers{documentSearcher: searcher, unmaskVerification: true}
 	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
 		"query": "carton damage", "attachment_id": math.Exp2(63),
 	})
@@ -507,7 +508,7 @@ func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
 
 func TestSearchDocumentAttachmentsRejectsSemanticCandidateLimitAboveBound(t *testing.T) {
 	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
+	h := &handlers{documentSearcher: searcher, unmaskVerification: true}
 	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
 		"query": "carton damage", "mode": "semantic", "candidate_limit": float64(1001),
 	})
@@ -886,6 +887,66 @@ func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
 	assert.Equal(messageID, body.Data[0].ID, "body hit ID")
 	require.NotEmpty(body.Data[0].Matches, "every hit has body context")
 	assert.Contains(body.Data[0].Matches[0].Snippet, "bodyonlyterm")
+}
+
+func TestSearchMessageBodiesMaskedOwnerPreservesOrdinaryContexts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	body := "An ordinary message contains statusneedle for the body search."
+	excerpt := "contains statusneedle for the body search"
+	engine := &querytest.MockEngine{
+		SearchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{withBodySearchContext(
+				query.MessageSummary{ID: 81, Subject: "Routine status"}, []string{excerpt}, true,
+			)}, nil
+		},
+		Messages: map[int64]*query.MessageDetail{
+			81: {ID: 81, Subject: "Routine status", BodyText: body},
+		},
+	}
+	h := &handlers{engine: engine, downloads: &downloadCache{}}
+
+	resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies,
+		map[string]any{"query": "statusneedle"})
+
+	requirements.Len(resp.Data, 1)
+	requirements.Len(resp.Data[0].Matches, 1)
+	assertions.Contains(resp.Data[0].Matches[0].Snippet, "statusneedle")
+	assertions.True(resp.Data[0].MatchesTruncated)
+}
+
+func TestSearchMessageBodiesMaskedOwnerPreservesContextsWithRecipientsAndAttachments(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.NewMessage().
+		WithSubject("Routine status").
+		WithSnippet("Routine preview").
+		Create(t, f.Store)
+	recipientID := f.EnsureParticipant("recipient@example.test", "Recipient", "example.test")
+	requirements.NoError(f.Store.ReplaceMessageRecipients(messageID, "to", []int64{recipientID}, []string{"Recipient"}))
+	requirements.NoError(f.Store.UpsertAttachment(
+		messageID, "report.txt", "text/plain", "synthetic/report.txt", strings.Repeat("a", 64), 17,
+	))
+	body := "An ordinary message contains statusneedle and keeps a useful context."
+	requirements.NoError(f.Store.UpsertMessageBody(messageID,
+		sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
+	_, err := f.Store.BackfillFTS(nil)
+	requirements.NoError(err, "BackfillFTS")
+
+	engine := query.NewSQLiteEngine(f.Store.DB())
+	if f.Store.IsPostgreSQL() {
+		engine = query.NewEngineWithDialect(f.Store.DB(), query.PostgreSQLQueryDialect{})
+	}
+	h := &handlers{engine: engine, downloads: &downloadCache{}}
+	resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies,
+		map[string]any{"query": "statusneedle"})
+
+	requirements.Len(resp.Data, 1)
+	requirements.Equal(messageID, resp.Data[0].ID)
+	requirements.Len(resp.Data[0].Matches, 1)
+	assertions.Contains(resp.Data[0].Matches[0].Snippet, "statusneedle")
+	assertions.False(resp.Data[0].MatchesTruncated)
 }
 
 func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
@@ -1458,6 +1519,79 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 		RetrievalMS:      7,
 		HydrationMS:      3,
 	}, resp.Timings, "phase timings")
+}
+
+func TestSemanticSearchValidatesHitMatchesAgainstCanonicalBody(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		query          string
+		canonicalBody  string
+		matchedBody    string
+		snippet        string
+		wantSnippet    string
+		wantMatchCount int
+		wantTruncated  bool
+	}{
+		{
+			name:  "current excerpt remains available",
+			query: "statusneedle", canonicalBody: "A routine message contains statusneedle.",
+			matchedBody: "A routine message contains statusneedle.", snippet: "A routine message contains statusneedle.",
+			wantSnippet:    "A routine message contains statusneedle.",
+			wantMatchCount: 1,
+		},
+		{
+			name:  "removed credential excerpt is withheld",
+			query: "482913", canonicalBody: "The edited message no longer has the code.",
+			matchedBody: "Your verification code is 482913", snippet: "Your verification code is 482913",
+			wantTruncated: true,
+		},
+		{
+			name:  "excerpt shifted from stale offset is withheld",
+			query: "ordinary", canonicalBody: "zordinary message context",
+			matchedBody: "zzordinary message context", snippet: "ordinary message context", wantTruncated: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			matchOffset := strings.Index(tc.matchedBody, tc.snippet)
+			requirements.GreaterOrEqual(matchOffset, 0)
+			line := 1
+			engine := &querytest.MockEngine{
+				Messages: map[int64]*query.MessageDetail{
+					81: {ID: 81, SourceID: 3, Subject: "Routine status", BodyText: tc.canonicalBody},
+				},
+				GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
+					requirements.Equal([]int64{81}, ids)
+					return []query.MessageSummary{{ID: 81, SourceID: 3, Subject: "Routine status"}}, nil
+				},
+			}
+			h := &handlers{
+				engine: engine,
+				hybridSearcher: hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
+					return &HybridSearchResult{Hits: []HybridSearchHit{{
+						ID: 81,
+						Matches: []HybridSearchMatch{{
+							CharOffset: &matchOffset, Line: &line, Snippet: tc.snippet, Score: 0.9,
+						}},
+					}}}, nil
+				}),
+			}
+
+			resp := runTool[searchMessageBodiesResponse](t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
+				"query": tc.query, "mode": searchModeHybrid,
+			})
+
+			requirements.Len(resp.Data, 1)
+			if tc.wantMatchCount > 0 {
+				requirements.Len(resp.Data[0].Matches, tc.wantMatchCount)
+				assertions.Equal(tc.wantSnippet, resp.Data[0].Matches[0].Snippet)
+			} else {
+				assertions.Empty(resp.Data[0].Matches)
+			}
+			assertions.Equal(tc.wantTruncated, resp.Data[0].MatchesTruncated)
+		})
+	}
 }
 
 func TestSemanticSearchMessages_DaemonIndexStaleKeepsRebuildAdvice(t *testing.T) {
@@ -4436,4 +4570,23 @@ func TestMetadataSearchLiteralORWarning(t *testing.T) {
 
 func (*fakeBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
 	return vector.EmbeddingCheckpoints{}
+}
+
+func TestAttachmentDiscoveryMaskedOwnerDoesNotDispatch(t *testing.T) {
+	assertions := assert.New(t)
+
+	visualSearcher := &recordingVisualSearcher{}
+	visualResult := runToolExpectError(t, ToolSearchVisualAttachments, (&handlers{visualSearcher: visualSearcher}).searchVisualAttachments, map[string]any{})
+	assertions.Contains(resultText(t, visualResult), "verification_masked")
+	assertions.Equal(VisualSearchRequest{}, visualSearcher.request)
+
+	personSearcher := &recordingPersonFileSearcher{}
+	personResult := runToolExpectError(t, ToolSearchPersonFiles, (&handlers{personFileSearcher: personSearcher}).searchPersonFiles, map[string]any{})
+	assertions.Contains(resultText(t, personResult), "verification_masked")
+	assertions.Equal(PersonFileSearchRequest{}, personSearcher.request)
+
+	documentSearcher := &recordingDocumentSearcher{}
+	documentResult := runToolExpectError(t, ToolSearchDocuments, (&handlers{documentSearcher: documentSearcher}).searchDocuments, map[string]any{})
+	assertions.Contains(resultText(t, documentResult), "verification_masked")
+	assertions.Equal(store.DocumentSearchRequest{}, documentSearcher.request)
 }

@@ -213,3 +213,70 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	assertions.Contains(deletedText, textDraft.DraftID)
 	assertions.NotContains(deletedText, body)
 }
+
+func TestChatDraftVerificationReadGuardsContent(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "synthetic-source")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "Synthetic channel")
+	requirements.NoError(err)
+	adapter := &storeAPIAdapter{store: st}
+	grant := &agentgrant.Grant{
+		ID: "chat-verification", Permissions: []agentgrant.Permission{
+			agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete,
+		},
+		Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier}},
+	}
+	run := func(args ...string) (string, error) {
+		var output strings.Builder
+		req := api.CLIRunRequest{Args: args, Grant: grant}
+		runner := adapter.runCLIDraftLifecycle
+		if args[0] == api.CLIRunDraftComposeCommand {
+			runner = adapter.runCLIComposeDraft
+		}
+		err := runner(t.Context(), req, func(event api.CLIRunEvent) error {
+			output.WriteString(event.Data)
+			return nil
+		})
+		return output.String(), err
+	}
+	conversation := strconv.FormatInt(conversationID, 10)
+	sensitive := "Your verification code is 482913."
+
+	created, err := run(api.CLIRunDraftComposeCommand, "--conversation", conversation, "--body", sensitive)
+	requirements.Error(err)
+	assertions.Equal("not_permitted", err.Error())
+	assertions.Empty(created)
+	drafts, err := st.ListChatDraftsContext(t.Context(), conversationID, func(string, string) error { return nil })
+	requirements.NoError(err)
+	assertions.Empty(drafts, "denied credential text must not create a draft")
+
+	credentialDraft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, sensitive, func(string, string) error { return nil })
+	requirements.NoError(err)
+	for _, args := range [][]string{
+		{api.CLIRunDraftGetCommand, credentialDraft.DraftID},
+		{api.CLIRunDraftGetCommand, "--conversation", conversation},
+		{api.CLIRunDraftDeleteCommand, credentialDraft.DraftID, "--revision", "1"},
+	} {
+		output, err := run(args...)
+		requirements.Error(err, args)
+		assertions.Equal("not_permitted", err.Error(), args)
+		assertions.Empty(output, args)
+	}
+	retained, err := st.GetChatDraftContext(t.Context(), credentialDraft.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(sensitive, retained.Body, "denied reads or deletes must preserve the draft")
+
+	otherConversationID, err := st.EnsureConversationWithType(source.ID, "C2", "channel", "Another synthetic channel")
+	requirements.NoError(err)
+	ordinaryDraft, err := st.CreateChatDraftContext(t.Context(), otherConversationID, 0, "ordinary reply", func(string, string) error { return nil })
+	requirements.NoError(err)
+	output, err := run(api.CLIRunDraftEditCommand, ordinaryDraft.DraftID, "--revision", "1", "--body", sensitive)
+	requirements.Error(err)
+	assertions.Equal("not_permitted", err.Error())
+	assertions.Empty(output)
+	retained, err = st.GetChatDraftContext(t.Context(), ordinaryDraft.DraftID)
+	requirements.NoError(err)
+	assertions.Equal("ordinary reply", retained.Body, "denied credential text must not update a draft")
+}

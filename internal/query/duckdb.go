@@ -1498,6 +1498,14 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args, duckDBDateParam(*filter.Before))
 	}
+	if filter.ReceivedAfter != nil {
+		conditions = append(conditions, "COALESCE(msg.received_at, msg.sent_at) >= CAST(? AS TIMESTAMP)")
+		args = append(args, duckDBDateParam(*filter.ReceivedAfter))
+	}
+	if filter.ReceivedBefore != nil {
+		conditions = append(conditions, "COALESCE(msg.received_at, msg.sent_at) < CAST(? AS TIMESTAMP)")
+		args = append(args, duckDBDateParam(*filter.ReceivedBefore))
+	}
 
 	if filter.WithAttachmentsOnly {
 		conditions = append(conditions, "msg.has_attachments = true")
@@ -1978,6 +1986,8 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	switch filter.Sorting.Field {
 	case MessageSortByDate:
 		orderBy = "msg.sent_at"
+	case MessageSortByReceivedAt:
+		orderBy = "COALESCE(msg.received_at, msg.sent_at)"
 	case MessageSortBySize:
 		orderBy = "msg.size_estimate"
 	case MessageSortBySubject:
@@ -2257,6 +2267,15 @@ func (e *DuckDBEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 		return e.sqliteEngine.GetAttachment(ctx, id)
 	}
 	return nil, errors.New("GetAttachment requires SQLite: pass sqliteDB to NewDuckDBEngine")
+}
+
+// GetAttachmentVerificationSnapshot retrieves attachment metadata and its
+// canonical parent message from the archive SQLite database snapshot.
+func (e *DuckDBEngine) GetAttachmentVerificationSnapshot(ctx context.Context, id int64) (*AttachmentInfo, *MessageDetail, error) {
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.GetAttachmentVerificationSnapshot(ctx, id)
+	}
+	return nil, nil, errors.New("GetAttachmentVerificationSnapshot requires SQLite: pass sqliteDB to NewDuckDBEngine")
 }
 
 // GetAttachmentsByHash retrieves attachment metadata by content hash.

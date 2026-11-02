@@ -430,10 +430,10 @@ func attachmentCASPath(contentHash string) string {
 	return contentHash[:2] + "/" + contentHash
 }
 
-// extractBodyFromRawShared extracts text body from compressed MIME data.
+// extractBodyFromRawShared extracts text and HTML bodies from compressed MIME data.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func extractBodyFromRawShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
+func extractBodyFromRawShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messageID int64) (string, string, error) {
 	var compressed []byte
 	var compression sql.NullString
 	var storedBytes int64
@@ -444,27 +444,27 @@ func extractBodyFromRawShared(ctx context.Context, db store.SQLReader, rebind re
 		SELECT %s, mr.compression, %s FROM %smessage_raw mr WHERE mr.message_id = ?
 	`, rawColumn, rawSize, tablePrefix)), messageID).Scan(&compressed, &compression, &storedBytes)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if limit > 0 && storedBytes > int64(len(compressed)) {
-		return "", ErrOriginalMessageTooLarge
+		return "", "", ErrOriginalMessageTooLarge
 	}
 	rawData, err := inflateMessageRaw(compressed, compression, limit)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	parsed, err := mime.Parse(rawData)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	body := parsed.GetBodyText()
-	// Charset decoding can grow text past the raw size checked above.
-	if limit > 0 && int64(len(body)) > limit {
-		return "", ErrOriginalMessageTooLarge
+	bodyText, bodyHTML := parsed.GetBodyText(), parsed.BodyHTML
+	// Charset decoding can grow either representation past the raw size checked above.
+	if limit > 0 && int64(len(bodyText)+len(bodyHTML)) > limit {
+		return "", "", ErrOriginalMessageTooLarge
 	}
-	return body, nil
+	return bodyText, bodyHTML, nil
 }
 
 // getMessageRawShared retrieves and decompresses raw MIME data for a message.
@@ -616,8 +616,9 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 
 	// If body is empty, try to extract from raw MIME
 	if msg.BodyText == "" && msg.BodyHTML == "" {
-		if body, err := extractBodyFromRawShared(ctx, db, rebind, tablePrefix, msg.ID); err == nil && body != "" {
-			msg.BodyText = body
+		if bodyText, bodyHTML, err := extractBodyFromRawShared(ctx, db, rebind, tablePrefix, msg.ID); err == nil && (bodyText != "" || bodyHTML != "") {
+			msg.BodyText = bodyText
+			msg.BodyHTML = bodyHTML
 		} else if errors.Is(err, ErrOriginalMessageTooLarge) {
 			return nil, err
 		}

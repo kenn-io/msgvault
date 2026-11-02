@@ -166,6 +166,9 @@ func (h *handlers) getSavedView(ctx context.Context, req toolRequest) (*toolResu
 }
 
 func (h *handlers) runSavedView(ctx context.Context, req toolRequest) (*toolResult, error) {
+	if result := h.requireOwnerVerificationUnmask(); result != nil {
+		return result, nil
+	}
 	args := req.GetArguments()
 	id, err := getIDArg(args, "id")
 	if err != nil {

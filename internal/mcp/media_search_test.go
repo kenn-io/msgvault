@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,22 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+type recordingMediaSearcher struct{ calls int }
+
+func (s *recordingMediaSearcher) SearchMedia(context.Context, daemonclient.MediaSearchOptions) (generated.MediaSearchResponse, error) {
+	s.calls++
+	return generated.MediaSearchResponse{}, nil
+}
+
+func TestMediaSearchMaskedOwnerDoesNotDispatch(t *testing.T) {
+	assertions := assert.New(t)
+	searcher := &recordingMediaSearcher{}
+	h := &handlers{mediaSearcher: searcher}
+	result := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "synthetic query"})
+	assertions.Contains(resultText(t, result), "verification_masked")
+	assertions.Zero(searcher.calls)
+}
 
 func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	assert := assert.New(t)
@@ -35,7 +52,7 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	h := &handlers{mediaSearcher: client}
+	h := &handlers{mediaSearcher: client, unmaskVerification: true}
 	response := runTool[generated.MediaSearchResponse](t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "quarterly numbers", "person_id": float64(7), "directions": []any{"from_person"}})
 	require.Len(response.Results, 1)
 	assert.Equal(int64(11), response.Results[0].MessageID)

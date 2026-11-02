@@ -36,6 +36,10 @@ func TestMCPFindChatRealArchiveAndCapability(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "fixture-message", ConversationID: chat, MessageType: "beeper", Snippet: sql.NullString{String: "Synthetic", Valid: true}})
 	requirements.NoError(err)
+	sensitiveChat, err := st.EnsureConversationWithType(source.ID, "sensitive-chat", "direct_chat", "Verification code 482913")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "sensitive-message", ConversationID: sensitiveChat, MessageType: "beeper"})
+	requirements.NoError(err)
 	daemon := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "fixture-key"}}, Store: st, Engine: engine, Logger: slog.New(slog.DiscardHandler)})
 	server := httptest.NewServer(daemon.Router())
 	t.Cleanup(server.Close)
@@ -44,6 +48,19 @@ func TestMCPFindChatRealArchiveAndCapability(t *testing.T) {
 	opts := ServeOptions{Engine: daemonclient.NewEngineAdapter(client), ChatDiscoveryBackend: client}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	requirements.Contains(tools, "find_chat")
+	masked := rawModernCall(t, opts, HTTPOptions{}, "tools/call", map[string]any{"name": "find_chat", "arguments": map[string]any{"query": "Verification", "source_id": source.ID}})
+	assertions.Equal(true, masked.Result["isError"])
+	encoded, err := json.Marshal(masked.Result)
+	requirements.NoError(err)
+	assertions.Contains(string(encoded), "verification_masked")
+	assertions.NotContains(string(encoded), "482913")
+
+	opts.UnmaskVerification = true
+	revealed := rawModernCall(t, opts, HTTPOptions{}, "tools/call", map[string]any{"name": "find_chat", "arguments": map[string]any{"query": "Verification", "source_id": source.ID}})
+	assertions.NotEqual(true, revealed.Result["isError"])
+	encoded, err = json.Marshal(toolStructuredContent(t, revealed.Result))
+	requirements.NoError(err)
+	assertions.Contains(string(encoded), "482913")
 	// A delegated session with every read grant still cannot discover chats:
 	// discovery searches all sources, so it stays owner-only.
 	delegated := opts

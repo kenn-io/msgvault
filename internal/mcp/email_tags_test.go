@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,9 +14,11 @@ import (
 type tagsToolBackend struct {
 	change *emailtags.MessageTagChange
 	fail   bool
+	calls  int
 }
 
 func (b *tagsToolBackend) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string) (*emailtags.MessageTagResult, error) {
+	b.calls++
 	b.change = change
 	result := &emailtags.MessageTagResult{MessageID: id, SourceID: 2, Provider: "imap", Tags: []string{"Next"}, Verified: true}
 	if b.fail {
@@ -23,6 +26,43 @@ func (b *tagsToolBackend) MessageTags(ctx context.Context, id int64, change *ema
 	}
 	return result, nil
 }
+
+func TestEmailTagsMaskedOwnerRequiresExplicitUnmask(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	backend := &tagsToolBackend{fail: true}
+	opts := ServeOptions{Engine: &querytest.MockEngine{}, MessageTags: backend}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{name: ToolGetMessageTags, args: map[string]any{"message_id": float64(7)}},
+		{name: ToolUpdateMessageTags, args: map[string]any{"message_id": float64(7), "add": []any{"Next"}}},
+	} {
+		response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, "tools/call", map[string]any{
+			"name": tc.name, "arguments": tc.args,
+		})
+		got := response.Result
+		assertions.Equal(true, got["isError"], tc.name)
+		assertions.Contains(fmt.Sprint(got), "verification_masked", tc.name)
+	}
+	assertions.Zero(backend.calls, "masked success and error results must not reach the backend")
+
+	opts.UnmaskVerification = true
+	for _, name := range []string{ToolGetMessageTags, ToolUpdateMessageTags} {
+		args := map[string]any{"message_id": float64(7)}
+		if name == ToolUpdateMessageTags {
+			args["add"] = []any{"Next"}
+		}
+		response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, "tools/call", map[string]any{
+			"name": name, "arguments": args,
+		})
+		got := response.Result
+		assertions.Equal(true, got["isError"], name, "unmasked calls should reach the failing backend")
+	}
+	requirements.Equal(2, backend.calls)
+}
+
 func TestEmailTagsToolsAvailabilityAndPartialResult(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

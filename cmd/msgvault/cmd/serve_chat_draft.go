@@ -93,6 +93,9 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body,
 		func(sourceType, identifier string) error {
 			err := authorize(sourceType, identifier)
+			if err == nil {
+				err = authorizeDelegatedDraftTextRead(grant, agentgrant.SourceRef{Type: sourceType, Identifier: identifier}, intent.Body)
+			}
 			authorized = err == nil
 			return err
 		})
@@ -121,6 +124,11 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		}
 		for i := range drafts {
 			drafts[i] = redactChatDraftBody(grant, drafts[i])
+			if err := authorizeDelegatedDraftTextRead(grant, agentgrant.SourceRef{
+				Type: drafts[i].SourceType, Identifier: drafts[i].SourceIdentifier,
+			}, drafts[i].Body); err != nil {
+				return err
+			}
 		}
 		return emitChatDrafts(emit, intent.JSON, true, "ok", drafts...)
 	}
@@ -130,6 +138,19 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 	}
 	if err != nil {
 		return chatDraftStoreError(err, grant)
+	}
+	sourceRef := agentgrant.SourceRef{Type: draft.SourceType, Identifier: draft.SourceIdentifier}
+	switch intent.Operation {
+	case api.CLIRunDraftGetCommand, api.CLIRunDraftDeleteCommand:
+		if grant != nil && grant.Allows(agentgrant.PermissionDraftEdit, sourceRef) {
+			if err := authorizeDelegatedDraftTextRead(grant, sourceRef, draft.Body); err != nil {
+				return err
+			}
+		}
+	case api.CLIRunDraftEditCommand:
+		if err := authorizeDelegatedDraftTextRead(grant, sourceRef, intent.Body); err != nil {
+			return err
+		}
 	}
 	status := "ok"
 	switch intent.Operation {

@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 const (
@@ -388,6 +389,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[cliInitDBResponse](apiV1, "initCLIArchive", http.MethodPost, "/cli/init-db", "Initialize the archive for CLI use", s.handleCLIInitDB)
 	registerAPIV1RawHumaJSONRoute[cliStatsResponse](apiV1, "getCLIStats", http.MethodGet, "/cli/stats", "Get CLI-compatible archive statistics", s.handleCLIStats)
 	registerAPIV1RawHumaJSONRoute[cliSearchResponse](apiV1, "searchCLI", http.MethodGet, "/cli/search", "Search messages for CLI output", s.handleCLISearch)
+	registerAPIV1RawHumaJSONRoute[verification.ArrivalPage](apiV1, "listVerifications", http.MethodGet, "/verifications", "List recent verification arrivals without revealing credentials by default", s.handleVerificationArrivals)
 	registerAPIV1RawHumaJSONRoute[cliAccountsResponse](apiV1, "listCLIAccounts", http.MethodGet, "/cli/accounts", "List accounts for CLI output", s.handleCLIAccounts)
 	registerAPIV1RawHumaJSONRoute[cliCacheStatsResponse](apiV1, "getCLICacheStats", http.MethodGet, "/cli/cache-stats", "Get CLI-compatible analytics cache statistics", s.handleCLICacheStats)
 	registerAPIV1RawHumaNDJSONRoute[CLICacheBuildEvent](apiV1, "buildCLICache", http.MethodPost, "/cli/build-cache", "Build the CLI analytics cache", s.handleCLIBuildCache)
@@ -839,6 +841,15 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 			queryStringParam("deletion_scope", "Source deletion scope: active (default), deleted, or any", false),
 		}, scopeParams()...)
+	case "listVerifications":
+		return []*huma.Param{
+			queryStringParam("since", "RFC3339 lower bound, defaults to one hour ago and is capped at 24 hours", false),
+			queryStringParam("sender", "Exact sender claim, case-insensitive", false),
+			queryStringParam("kind", "Verification kind", false),
+			queryIntegerParam("limit", "Maximum arrivals, default 20, max 100; at most 1000 candidates are scanned"),
+			queryBooleanParam("include_expired", "Include expired credentials, still masked by default"),
+			queryBooleanParam("reveal", "Owner reveal opt-in; delegated reads always use their source grant instead"),
+		}
 	case "searchMedia":
 		return []*huma.Param{
 			queryStringParam("q", "Words to find in recordings and attachments", true),

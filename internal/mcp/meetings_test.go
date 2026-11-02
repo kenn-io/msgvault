@@ -80,7 +80,7 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
+		Engine: &querytest.MockEngine{}, Meetings: backend, UnmaskVerification: true,
 	}, false).Connect(ctx, serverTransport, nil)
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
@@ -260,5 +260,40 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 }
 
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
+	return &meetingcontent.Metrics{}, nil
+}
+
+func TestMeetingContentToolsRequireOwnerUnmask(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	backend := &meetingBackendSpy{}
+	h := &handlers{meetings: backend}
+
+	contextResult := runToolExpectError(t, ToolGetMeetingContext, h.getMeetingContext, map[string]any{
+		"message_ids": []any{float64(1)}, "include_transcript": true,
+	})
+	assertions.Contains(resultText(t, contextResult), "--unmask-verification")
+	actionResult := runToolExpectError(t, ToolListMeetingActionItems, h.listMeetingActionItems, map[string]any{})
+	assertions.Contains(resultText(t, actionResult), "--unmask-verification")
+	requirements.Zero(backend.contextCalls)
+	requirements.Zero(backend.actionCalls)
+}
+
+type meetingBackendSpy struct {
+	contextCalls int
+	actionCalls  int
+}
+
+func (b *meetingBackendSpy) GetMeetingContext(context.Context, generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error) {
+	b.contextCalls++
+	return &meetingcontent.PacketResult{}, nil
+}
+
+func (b *meetingBackendSpy) ListMeetingActionItems(context.Context, generated.ListMeetingActionItemsBody) (*meetingcontent.ActionsPage, error) {
+	b.actionCalls++
+	return &meetingcontent.ActionsPage{}, nil
+}
+
+func (b *meetingBackendSpy) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
 }

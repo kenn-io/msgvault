@@ -8,6 +8,7 @@ export interface CliSearchResponse {
   index_built?: boolean;
   index_state?: string;
   indexed_messages?: number;
+  masked_hits_dropped?: number;
   results: CLIQueryMessageSummary[];
   scope_label?: string;
   scope_source_count?: number;

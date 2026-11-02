@@ -72,7 +72,7 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 				if req.digest != "" && req.digest != entry.digest {
 					return nil, errDownloadExpired
 				}
-				return entry, nil
+				return cloneDownloadSnapshot(entry), nil
 			}
 		} else {
 			c.remove(key)
@@ -116,7 +116,20 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 			c.remove(key)
 		}
 	})
-	return entry, nil
+	return cloneDownloadSnapshot(entry), nil
+}
+
+func cloneDownloadSnapshot(snapshot *downloadSnapshot) *downloadSnapshot {
+	clone := *snapshot
+	if snapshot.attachment != nil {
+		attachment := *snapshot.attachment
+		if snapshot.attachment.metadata != nil {
+			metadata := *snapshot.attachment.metadata
+			attachment.metadata = &metadata
+		}
+		clone.attachment = &attachment
+	}
+	return &clone
 }
 
 func (c *downloadCache) remove(key downloadKey) {

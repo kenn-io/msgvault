@@ -25,7 +25,16 @@ type Input struct {
 	MessageType, Subject, Snippet, BodyText, BodyHTML string
 	SenderEmail, SenderPhone, ListID                  string
 	IsFromMe                                          bool
-	SentAt                                            time.Time
+	SentAt, ReceivedAt                                time.Time
+}
+
+// EffectiveReceivedAt returns receipt time when available, falling back to
+// sent time for archives and providers that do not record it.
+func (in Input) EffectiveReceivedAt() time.Time {
+	if !in.ReceivedAt.IsZero() {
+		return in.ReceivedAt
+	}
+	return in.SentAt
 }
 
 type Secret struct {

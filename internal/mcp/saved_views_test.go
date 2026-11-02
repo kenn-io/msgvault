@@ -225,6 +225,15 @@ func TestRunSavedViewReturnsTypedExplorePage(t *testing.T) {
 	assertions.Equal("current-page", reader.runCursor)
 }
 
+func TestRunSavedViewMaskedOwnerDoesNotDispatch(t *testing.T) {
+	assertions := assert.New(t)
+	reader := &savedViewServiceFixture{page: &savedview.RunPage{ResultKind: savedview.ResultEntries}}
+	h := &handlers{savedViews: reader}
+	result := runToolExpectError(t, ToolRunSavedView, h.runSavedView, map[string]any{"id": 7})
+	assertions.Contains(resultText(t, result), "verification_masked")
+	assertions.Zero(reader.runID)
+}
+
 func TestSavedViewReadToolsReturnCleanErrors(t *testing.T) {
 	assertions := assert.New(t)
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: &savedViewServiceFixture{

@@ -10,12 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 func TestVerificationDelegatedCapabilitiesRequireCurrentDaemon(t *testing.T) {
-	for _, version := range []string{"3.9.0", "3.34.0", "3.35.0", api.APISchemaVersion} {
-		t.Run(version, func(t *testing.T) {
+	tests := []struct {
+		name                   string
+		version                string
+		wantProtectedReadDraft bool
+		wantArrivals           bool
+	}{
+		{name: "much older", version: "3.9.0"},
+		{name: "older", version: "3.34.0"},
+		{name: "before protected reads", version: "3.35.0"},
+		{name: "protected reads and drafts", version: "3.36.0", wantProtectedReadDraft: true},
+		{name: "arrivals", version: "3.37.0", wantProtectedReadDraft: true, wantArrivals: true},
+		{name: "current API", version: api.APISchemaVersion, wantProtectedReadDraft: true, wantArrivals: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 
@@ -23,9 +35,9 @@ func TestVerificationDelegatedCapabilitiesRequireCurrentDaemon(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/health":
-					requirements.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version}))
+					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": test.version}))
 				case "/api/v1/agent-tokens/self":
-					requirements.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "synthetic-grant", "permissions": []string{"message.read"}}))
+					assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "synthetic-grant", "permissions": []string{"message.read"}}))
 				default:
 					assertions.Fail("unexpected request", "%s", r.URL.Path)
 					http.NotFound(w, r)
@@ -34,13 +46,11 @@ func TestVerificationDelegatedCapabilitiesRequireCurrentDaemon(t *testing.T) {
 			opts, err := delegatedMCPServeOptions(t.Context(), client)
 			requirements.NoError(err)
 			assertions.True(opts.DelegatedOnly)
-			if daemonclient.APISchemaVersionAtLeast(version, daemonclient.VerificationMinAPISchemaVersion) {
-				assertions.NotNil(opts.Engine)
-			} else {
-				assertions.Nil(opts.Engine, "old delegated daemons must not expose unprotected reads")
-				assertions.Nil(opts.AttachmentReader)
-				assertions.NotEmpty(opts.DraftCommands)
-			}
+			assertions.Equal(test.wantArrivals, opts.Verifications != nil, "arrival capability")
+			assertions.Equal(test.wantProtectedReadDraft, opts.Engine != nil, "protected reads")
+			assertions.Equal(test.wantProtectedReadDraft, opts.AttachmentReader != nil, "protected attachments")
+			assertions.Equal(test.wantProtectedReadDraft, opts.Drafts != nil, "protected drafts")
+			assertions.Equal(test.wantProtectedReadDraft, len(opts.DraftCommands) > 0, "protected draft commands")
 		})
 	}
 }

@@ -473,11 +473,17 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return err
 	}
+	if err := authorizeDelegatedDraftVerificationRead(req.Grant, target.parentSource, target.raw); err != nil {
+		return err
+	}
 	reply, err := imaplib.BuildReplyWithOptions(target.raw, from, intent.Body, imaplib.ReplyOptions{
 		ReplyAll: intent.ReplyAll, SelfAddresses: selfAddresses,
 	}, time.Now(), "")
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
+	}
+	if err := authorizeDelegatedDraftVerificationRead(req.Grant, target.parentSource, reply.Raw); err != nil {
+		return err
 	}
 	if target.source.SourceType == "gmail" {
 		if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {

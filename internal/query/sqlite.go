@@ -360,6 +360,14 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 		conditions = append(conditions, e.dialect.DateComparison(prefix+"sent_at", "<"))
 		args = append(args, e.dialect.DateParam(*filter.Before))
 	}
+	if filter.ReceivedAfter != nil {
+		conditions = append(conditions, e.dialect.DateComparison("COALESCE("+prefix+"received_at, "+prefix+"sent_at)", ">="))
+		args = append(args, e.dialect.DateParam(*filter.ReceivedAfter))
+	}
+	if filter.ReceivedBefore != nil {
+		conditions = append(conditions, e.dialect.DateComparison("COALESCE("+prefix+"received_at, "+prefix+"sent_at)", "<"))
+		args = append(args, e.dialect.DateParam(*filter.ReceivedBefore))
+	}
 
 	if filter.WithAttachmentsOnly {
 		conditions = append(conditions, e.dialect.BoolTrueExpr(prefix+"has_attachments"))
@@ -963,6 +971,8 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	switch filter.Sorting.Field {
 	case MessageSortByDate:
 		orderBy = "m.sent_at"
+	case MessageSortByReceivedAt:
+		orderBy = e.dialect.DateOrderExpression("COALESCE(m.received_at, m.sent_at)")
 	case MessageSortBySize:
 		orderBy = "COALESCE(m.size_estimate, 0)"
 	case MessageSortBySubject:
@@ -1232,13 +1242,38 @@ func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string
 
 // GetAttachment retrieves attachment metadata by ID.
 func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error) {
+	return e.getAttachmentFromReader(ctx, store.ReadDBContext(ctx, e.db), id)
+}
+
+// GetAttachmentVerificationSnapshot retrieves attachment metadata and its
+// canonical parent message from one repeatable read snapshot.
+func (e *SQLiteEngine) GetAttachmentVerificationSnapshot(ctx context.Context, id int64) (*AttachmentInfo, *MessageDetail, error) {
+	tx, err := e.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin attachment verification snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	attachment, err := e.getAttachmentFromReader(ctx, tx, id)
+	if err != nil || attachment == nil || attachment.MessageID == 0 {
+		return attachment, nil, err
+	}
+	message, err := getMessageByQueryShared(ctx, tx, e.dialect.Rebind, "", "m.id = ?", attachment.MessageID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return attachment, message, nil
+}
+
+func (e *SQLiteEngine) getAttachmentFromReader(ctx context.Context, db store.SQLReader, id int64) (*AttachmentInfo, error) {
 	conditions, args := appendSourceFilter([]string{"a.id = ?"}, []any{id}, "m.", nil, sourcescope.IDs(ctx))
 	var att AttachmentInfo
 	var sourceAttachmentID string
-	err := e.queryRowContext(ctx, `
+	query := `
 		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.message_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
-		WHERE `+strings.Join(conditions, " AND "), args...).Scan(&att.ID, &att.SourceID, &att.MessageID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
+		WHERE ` + strings.Join(conditions, " AND ")
+	err := db.QueryRowContext(ctx, e.dialect.Rebind(query), args...).Scan(&att.ID, &att.SourceID, &att.MessageID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
@@ -1252,7 +1287,7 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 		att.ContentHash = ""
 		att.StoragePath = ""
 	}
-	refs, err := store.LoadDocbankAttachmentRefs(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", []string{receiptHash})
+	refs, err := store.LoadDocbankAttachmentRefs(ctx, db, e.dialect.Rebind, "", []string{receiptHash})
 	if err != nil {
 		return nil, err
 	}
