@@ -32,7 +32,10 @@ durable profile that groups participants and carries notes, attributes,
 relationships, and briefs. People come from 'person promote' or from
 imported CardDAV contacts.
 
-Find a contact by address (read-only):
+Find saved people without semantic search (read-only):
+  msgvault person directory --query "Alex Example"
+  msgvault person directory --address alex@example.test
+Find observed contacts, including those without a saved person (read-only):
   msgvault query "SELECT id, email_address, display_name FROM participants WHERE email_address ILIKE '%alice%'"
 Promote that participant id to a person (writes):
   msgvault person promote <participant-id> --json
@@ -152,7 +155,8 @@ var personListCmd = &cobra.Command{
 	Short: "List durable person profiles",
 	Long: `List durable people as id, participant_ids, revision, vcard_uid,
 created_at, updated_at, and display_name (when known). Addresses
-are not included: use 'person identities <id>'. Empty until a participant is
+are not included: use 'person identities <id>'. Filter saved people with
+'person directory --query <name>' or '--address <address>'. Empty until a participant is
 promoted with 'person promote' or a CardDAV contact is imported.`,
 	Example: `  msgvault person list --json`,
 	Args:    cobra.NoArgs,

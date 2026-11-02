@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/testutil/vectorcheckpoints"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -1875,4 +1876,9 @@ func TestFilteredMessageIDsRejectsLegacyListIDSchemaWithUpgradeGuidance(t *testi
 	_, err = b.filteredMessageIDs(ctx, vector.Filter{ListIDSubstrings: []string{"dev"}})
 	require.EqualError(t, err,
 		"List-Id filter requires messages.list_id; open the archive with a writable msgvault version first")
+}
+
+func TestBackendEmbeddingCheckpointLifecycle(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+	vectorcheckpoints.Lifecycle(ctx, t, b)
 }

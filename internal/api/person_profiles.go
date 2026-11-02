@@ -379,6 +379,7 @@ func (s *Server) handleDirectoryPeople(w http.ResponseWriter, r *http.Request) {
 func directoryPeopleQuery(values url.Values) (store.DirectoryPeopleQuery, error) {
 	query := store.DirectoryPeopleQuery{
 		Query:          values.Get("q"),
+		Address:        values.Get("address"),
 		Cursor:         values.Get("cursor"),
 		ContactState:   values.Get("contact_state"),
 		Category:       values.Get("category"),
@@ -551,6 +552,7 @@ func addDirectoryPeopleParameters(operation *huma.Operation) {
 	}
 	operation.Parameters = append(operation.Parameters,
 		queryStringParam("q", "Lexical query over person names, contact points, and organizations", false),
+		queryStringParam("address", "Literal case-insensitive substring of current bound participant identities or curated contact points", false),
 		queryStringParam("cursor", "Opaque cursor returned by the previous Directory page", false),
 		queryIntegerParam("limit", "Maximum rows to return (default 50, max 100)"),
 		queryStringParam("contact_state", "Current contact state: active or inactive", false),

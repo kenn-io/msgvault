@@ -23,18 +23,22 @@ func TestEmbeddingJobStatus(t *testing.T) {
 			defer func() { <-s.Stop().Done() }()
 			job := &EmbedJob{}
 			require.NoError(s.SetEmbedJob(job, "0 0 * * *", true))
-			go s.cron.Entry(s.embed.entry).Job.Run()
+			assert.Equal(JobStarted, mustStartJob(t, s, embedJobName))
 			synctest.Wait()
+			queuedAt := time.Now().UTC()
+			time.Sleep(time.Minute)
+			assert.Equal(JobCoalesced, mustStartJob(t, s, embedJobName))
 			status := s.EmbeddingStatus()
 			assert.Equal("queued", status.Job.State)
-			assert.NotNil(status.Job.QueuedAt)
+			require.NotNil(status.Job.QueuedAt)
+			assert.Equal(queuedAt, *status.Job.QueuedAt)
 			release()
 			synctest.Wait()
 			status = s.EmbeddingStatus()
 			assert.Equal("idle", status.Job.State)
 		})
 	})
-	t.Run("post-sync run inherits slot", func(t *testing.T) {
+	t.Run("post-sync run waits for the sync to release the slot", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -49,39 +53,21 @@ func TestEmbeddingJobStatus(t *testing.T) {
 			<-runner.gate
 			status := s.EmbeddingStatus()
 			assert.Equal("running", status.Job.State)
-			assert.Zero(s.embedQueued, "post-sync work must inherit its slot")
 			require.NotNil(status.Job.StartedAt)
+			synctest.Wait()
+			accounts := s.Status()
+			require.Len(accounts, 1)
+			assert.False(accounts[0].Running, "the sync finished before indexing took the slot")
 			close(runner.release)
 			synctest.Wait()
 			assert.Equal("idle", s.EmbeddingStatus().Job.State)
 		})
 	})
-	t.Run("overlapping runs report the earliest start", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			assert := assert.New(t)
-			s := New(nil)
-			defer func() { <-s.Stop().Done() }()
-			firstRelease, secondRelease := make(chan struct{}), make(chan struct{})
-			blocking := func(release chan struct{}) func(context.Context) error {
-				return func(context.Context) error {
-					<-release
-					return nil
-				}
-			}
-			go func() { _ = s.runEmbeddingJob(blocking(firstRelease), false) }()
-			synctest.Wait()
-			firstStarted := *s.EmbeddingStatus().Job.StartedAt
-			time.Sleep(time.Minute)
-			go func() { _ = s.runEmbeddingJob(blocking(secondRelease), false) }()
-			synctest.Wait()
-			close(secondRelease)
-			synctest.Wait()
-			status := s.EmbeddingStatus()
-			assert.Equal("running", status.Job.State)
-			assert.Equal(firstStarted, *status.Job.StartedAt, "the run still going started first")
-			close(firstRelease)
-			synctest.Wait()
-			assert.Equal("idle", s.EmbeddingStatus().Job.State)
-		})
-	})
+}
+
+func TestJobStatusIncludesPostSyncOnlyCallbacks(t *testing.T) {
+	s := New(nil)
+	defer func() { <-s.Stop().Done() }()
+	require.NoError(t, s.SetEmbedJob(&EmbedJob{}, "", true))
+	assert.Equal(t, []JobStatus{{Name: embedJobName}}, s.JobStatus(), "a post-sync-only job reports status without a schedule")
 }

@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const callsMinAPIVersion = "3.29.0"
+const callsMinAPIVersion = "3.35.0"
 
 type callCommandClient interface {
 	APISchemaVersion(ctx context.Context) (string, error)

@@ -17,6 +17,7 @@ export interface CliMessageResponse {
   deleted_at: string | null;
   from: CliMessageAddress[];
   has_attachments: boolean;
+  hidden_text_present: boolean;
   id: number;
   labels: string[];
   message_type?: string;

@@ -183,6 +183,12 @@ func testPGDocumentBackendContract(t *testing.T, backend document.Backend, token
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Zero(t, tokenCount("canceled-first"))
 	assert.Zero(t, tokenCount("canceled-second"), "a canceled put exposes no partial batch")
+	saved, err := backend.UnpublishedTokens(ctx, gen1, 3, []string{"token-b", "token-missing", "canceled-first"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"token-b": true}, saved, "only tokens saved in the generation are returned")
+	saved, err = backend.UnpublishedTokens(ctx, gen2, 3, []string{"token-b"})
+	require.NoError(t, err)
+	assert.Empty(t, saved, "another generation's vectors are not reused")
 
 	hits, err := backend.Search(ctx, gen1, 3, []float32{1, 0, 0}, 4)
 	require.NoError(t, err)

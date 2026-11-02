@@ -62,7 +62,7 @@ type PersonTierExplanation struct {
 	DisplayName     *string                      `json:"display_name"`
 	Tier            int                          `json:"tier"`
 	Rule            string                       `json:"rule"`
-	Exclusion       string                       `json:"exclusion"`
+	Exclusion       *string                      `json:"exclusion"`
 	Tracked         bool                         `json:"tracked"`
 	LastContactDate *string                      `json:"last_contact_date"`
 	AsOf            string                       `json:"as_of"`
@@ -191,7 +191,7 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 			return err
 		}
 		d := persontiers.Evaluate(signals[personID], options.Config)
-		explanation.Tier, explanation.Rule, explanation.Exclusion = d.Tier, d.Rule, d.Exclusion
+		explanation.Tier, explanation.Rule, explanation.Exclusion = d.Tier, d.Rule, stringPtrOrNil(d.Exclusion)
 		explanation.Thresholds = d.Thresholds
 		explanation.Signals = signals[personID]
 		explanation.Tracked = tracked[personID]
@@ -204,8 +204,9 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 	return explanation, nil
 }
 
-// personTierPlan is what a request needs: the as-of date and the settings the
-// stored rows were built under.
+// personTierPlan is what a request needs: the as-of civil date and the settings
+// the stored rows were built under. asOf holds the projection's local calendar
+// date in UTC for date-only arithmetic, not an instant in that timezone.
 type personTierPlan struct {
 	asOf       time.Time
 	projection PersonTierProjection
@@ -251,7 +252,9 @@ func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options Perso
 		at = time.Now()
 	}
 	local := at.In(location)
-	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+	// Midnight can be skipped by timezone transitions. Once the local date is
+	// chosen, use UTC so both it and window boundaries keep their civil dates.
+	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
 	return plan, nil
 }
 

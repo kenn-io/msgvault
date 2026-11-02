@@ -552,23 +552,24 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		writeJSONResponse(t, w, map[string]any{
-			"id":                 42,
-			"source_message_id":  "msg-42",
-			"conversation_id":    7,
-			"subject":            "Generated detail",
-			"conversation_title": "Team chat",
-			"message_type":       "sms",
-			"from":               "Alice <alice@example.com>",
-			"from_email":         "alice@example.com",
-			"from_name":          "Alice",
-			"to":                 []string{"bob@example.com"},
-			"sent_at":            "2024-01-15T10:30:00Z",
-			"deleted_at":         deletedAt,
-			"snippet":            "preview",
-			"labels":             []string{"INBOX"},
-			"has_attachments":    true,
-			"size_bytes":         2048,
-			"body":               "Hello, generated world!",
+			"id":                  42,
+			"source_message_id":   "msg-42",
+			"conversation_id":     7,
+			"subject":             "Generated detail",
+			"conversation_title":  "Team chat",
+			"message_type":        "sms",
+			"from":                "Alice <alice@example.com>",
+			"from_email":          "alice@example.com",
+			"from_name":           "Alice",
+			"to":                  []string{"bob@example.com"},
+			"sent_at":             "2024-01-15T10:30:00Z",
+			"deleted_at":          deletedAt,
+			"snippet":             "preview",
+			"labels":              []string{"INBOX"},
+			"has_attachments":     true,
+			"size_bytes":          2048,
+			"body":                "Hello, generated world!",
+			"hidden_text_present": true,
 			"attachments": []map[string]any{{
 				"id":           52,
 				"filename":     "doc.pdf",
@@ -589,6 +590,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	assert.Equal("Team chat", msg.ConversationTitle, "ConversationTitle")
 	assert.Equal(store.baseURL+"/messages/42", msg.WebURL)
 	assert.Equal("sms", msg.MessageType, "MessageType")
+	assert.True(msg.HiddenTextPresent)
 	require.NotNil(msg.DeletedAt, "DeletedAt")
 	assert.Equal(deletedAt, msg.DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 	assert.True(msg.HasAttachments, "HasAttachments")
@@ -1764,6 +1766,7 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 				{"filename": "a.pdf", "mime_type": "application/pdf", "size": 100},
 				{"filename": "b.txt", "mime_type": "text/plain", "size": 50},
 			},
+			"hidden_text_present": true,
 		})
 	}))
 	defer srv.Close()
@@ -1778,6 +1781,7 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.Equal("alice@example.com", s.FromEmail, "FromEmail")
 	assert.Equal(2, s.AttachmentCount, "AttachmentCount")
 	assert.True(s.HasAttachments, "HasAttachments")
+	assert.True(s.HiddenTextPresent, "HiddenTextPresent")
 }
 
 func TestEngineGetMessageSummariesByIDsPreservesDeletedAt(t *testing.T) {
@@ -2224,13 +2228,14 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 			"offset":      2,
 			"limit":       5,
 			"messages": []map[string]any{{
-				"id":         42,
-				"subject":    "body hit",
-				"from":       "sender@example.com",
-				"sent_at":    "2024-01-15T10:30:00Z",
-				"snippet":    "preview",
-				"labels":     []string{},
-				"size_bytes": 100,
+				"id":                  42,
+				"subject":             "body hit",
+				"hidden_text_present": true,
+				"from":                "sender@example.com",
+				"sent_at":             "2024-01-15T10:30:00Z",
+				"snippet":             "preview",
+				"labels":              []string{},
+				"size_bytes":          100,
 			}},
 			"body_contexts": []map[string]any{{
 				"message_id":                 42,
@@ -2249,6 +2254,7 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 	require.Len(t, messages.Messages, 1)
 	assert.Equal("unverified", messages.IndexState)
 	assert.Equal(int64(42), messages.Messages[0].ID, "body hit ID")
+	assert.True(messages.Messages[0].HiddenTextPresent)
 	assert.Equal([]string{"exact daemon context"}, messages.Messages[0].BodyContextSnippets)
 	assert.True(messages.Messages[0].BodyContextSnippetsTruncated)
 }

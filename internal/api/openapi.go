@@ -375,13 +375,19 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds authenticated streamed Muesli recording imports.
-// 3.25.0 adds owner-only call evidence import, inspection and person summaries.
-// 3.26.0 adds archived chat discovery ranked by the best matching name or title.
-// 3.27.0 adds bounded search-aware deletion resolution with an explicit
+// 3.25.0 adds archived chat discovery ranked by the best matching name or title.
+// 3.26.0 adds bounded search-aware deletion resolution with an explicit
 // max_results cap and matched_count for skipped matches.
-// 3.28.0 adds optional attachment text results and recording errors in media search.
-// 3.29.0 retains call evidence routes alongside typed calendar event details.
-const APISchemaVersion = "3.29.0"
+// 3.27.0 adds optional attachment text results and recording errors in media search.
+// 3.28.0 adds the typed calendar projection to calendar event message details.
+// 3.29.0 adds literal address filtering to the durable people Directory.
+// 3.30.0 adds the stored hidden_text_present flag to message details and search rows.
+// 3.31.0 adds literal OR warnings to full-text search responses.
+// 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
+// 3.33.0 adds the read-only person tier preview and explanation routes.
+// 3.34.0 adds answered-call counts to person tier signals.
+// 3.35.0 adds owner-only call evidence import, inspection and person summaries.
+const APISchemaVersion = "3.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
