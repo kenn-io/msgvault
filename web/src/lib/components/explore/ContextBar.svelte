@@ -28,6 +28,7 @@
   let {
     client,
     messages = false,
+    lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
     query,
@@ -48,6 +49,7 @@
   }: {
     client: APIClient;
     messages?: boolean;
+    lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
     query: string;
@@ -90,7 +92,7 @@
     ...(sort?.note ? [{ value: '__note', label: sort.note, disabled: true }] : [])
   ]);
   const hasChips = $derived(
-    Boolean(query) || filters.length > 0 || extraChips.length > 0 || groupingChain.length > 0
+    Boolean(query) || Boolean(lockedFilter) || filters.length > 0 || extraChips.length > 0 || groupingChain.length > 0
   );
 
   function selectGrouping(value: string): void {
@@ -101,7 +103,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -112,6 +114,7 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
+    {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
@@ -125,6 +128,7 @@
         onchange={selectGrouping}
       />
     </div>
+    {/if}
     {#if sort}
       <div data-sort-menu>
         <SelectDropdown
@@ -140,6 +144,11 @@
 
   {#if hasChips}
     <div class="context-chips">
+      {#if lockedFilter}
+        <Chip size="sm" uppercase={false} class="chip chip--filter">
+          {filterDimensionLabel(lockedFilter.dimension)}: {lockedFilter.values.map((value) => filterValueLabel(lockedFilter.dimension, value)).join(', ')}
+        </Chip>
+      {/if}
       {#if query}
         <Chip size="sm" uppercase={false} class="chip" title={`${searchModeLabel(searchMode)}: “${query}”`}>
           {searchModeLabel(searchMode)}: “{query}”
