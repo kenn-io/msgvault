@@ -116,6 +116,31 @@ describe('CardDAVController', () => {
     controller.destroy();
   });
 
+  it('restores sync after an idle Connections summary replaces a failed status read', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({ error: 'unavailable' }, { status: 503 });
+      if (path.endsWith('/runs')) return Response.json({ runs: [] });
+      if (path.endsWith('/sync')) return Response.json({ error: 'unavailable' }, { status: 503 });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn), document, 'default');
+    await controller.refreshFromConnection(idleStatus, controller.statusRevision);
+    await controller.sync();
+    await controller.retrySyncState();
+    expect(controller.statusError).toBe('Unable to load CardDAV status.');
+    expect(controller.syncUnknown).toBe(true);
+    expect(controller.canSync).toBe(false);
+
+    await controller.refreshFromConnection(idleStatus, controller.statusRevision);
+
+    expect(controller.syncUnknown).toBe(false);
+    expect(controller.statusError).toBeNull();
+    expect(controller.canSync).toBe(true);
+    controller.destroy();
+  });
+
   it.each(['before books settle', 'after books settle'])('loads books when a recovery poll supersedes a status retry that finishes %s', async (completion) => {
     vi.useFakeTimers();
     const retryStatus = deferredResponse();
