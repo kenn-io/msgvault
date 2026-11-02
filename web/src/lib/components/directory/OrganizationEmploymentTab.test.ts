@@ -9,6 +9,43 @@ import { requestOf, pathOf, organization, organizationProfile, employment, colle
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
 describe('OrganizationEmploymentTab', () => {
+  it('shows editable Work while an employer name is still loading', async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment()] });
+      if (path === '/api/v1/organizations/21') return pending;
+      throw new Error(`unexpected ${path}`);
+    });
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    const opening = controller.refreshEmployments();
+    try {
+      expect(await screen.findByRole('button', { name: 'Edit employment' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Organization 21' })).toBeDefined();
+      release(Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+      expect(await screen.findByRole('button', { name: 'Synthetic Org' })).toBeDefined();
+    } finally { release(Response.json(organizationProfile())); await opening; view.unmount(); controller.destroy(); }
+  });
+
+  it('opens an employer with one fresh organization read', async () => {
+    let reads = 0;
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/organizations/21') { reads += 1; return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }); }
+      throw new Error(`unexpected ${path}`);
+    });
+    controller.employments = [employment()];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Organization 21' }));
+      const name = await screen.findByRole('textbox', { name: 'Organization name' });
+      await waitFor(() => expect(name).toHaveProperty('disabled', false));
+      expect(name).toHaveProperty('value', 'Synthetic Org');
+      expect(reads).toBe(1);
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it('keeps local employment history actionable beside a reconciliation warning and recovers', async () => {
     let reads = 0;
     let resolveRefresh!: (response: Response) => void;

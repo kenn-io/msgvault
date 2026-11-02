@@ -7,7 +7,7 @@
 
   interface Props {
     controller: DirectoryEntityController;
-    organization?: Organization;
+    organization?: Pick<Organization, 'id'> & Partial<Organization>;
     onDone?: () => void;
     onClose?: () => void;
   }
