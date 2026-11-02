@@ -46,11 +46,39 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/v26.0/")
 		if f.denied[path] {
-			http.Error(w, "synthetic denial", http.StatusForbidden)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"error":{"code":200}}`)
 			return
 		}
 		if path == "me" {
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+			return
+		}
+		if !strings.Contains(path, "/") {
+			for _, obj := range f.posts {
+				if obj.ID == path {
+					blob, err := json.Marshal(obj)
+					if !assert.NoError(t, err) {
+						return
+					}
+					_, _ = w.Write(blob)
+					return
+				}
+			}
+			for _, objects := range f.comments {
+				for _, obj := range objects {
+					if obj.ID == path {
+						blob, err := json.Marshal(obj)
+						if !assert.NoError(t, err) {
+							return
+						}
+						_, _ = w.Write(blob)
+						return
+					}
+				}
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"code":100}}`)
 			return
 		}
 		var data []Object
