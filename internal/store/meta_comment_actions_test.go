@@ -171,3 +171,25 @@ func TestMetaCommentActionSchemaParityPG(t *testing.T) {
 	assert.True(t, existing)
 	assert.Equal(t, row.ID, got.ID)
 }
+
+func TestMetaCommentActionUnblockGeneration(t *testing.T) {
+	st, c := actionStoreFixture(t)
+	c.Action, c.TargetAuthorID = "unblock", "300"
+	first := finishAction(t, st, claimAction(t, st, c), "succeeded")
+	c.ActionKey = "later-failed-unblock"
+	finishAction(t, st, claimAction(t, st, c), "failed")
+	for _, tc := range []struct {
+		source             int64
+		identifier, author string
+		want               int64
+	}{
+		{c.SourceID, c.SourceIdentifier, "300", first.ID},
+		{c.SourceID + 100, c.SourceIdentifier, "300", 0},
+		{c.SourceID, "another-source", "300", 0},
+		{c.SourceID, c.SourceIdentifier, "301", 0},
+	} {
+		got, _, err := st.LatestSuccessfulMetaCommentUnblockContext(t.Context(), tc.source, tc.identifier, tc.author)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, got)
+	}
+}

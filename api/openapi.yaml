@@ -2940,6 +2940,8 @@ components:
             - delete
             - public_reply
             - private_reply
+            - block
+            - unblock
           type: string
         body:
           type: string

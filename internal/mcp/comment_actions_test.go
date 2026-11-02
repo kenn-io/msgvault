@@ -57,6 +57,13 @@ func TestMCPModerateCommentDeleteElicits(t *testing.T) {
 	assert.Positive(t, b.previews)
 }
 func TestMCPModerateCommentDeleteReinvokeMatches(t *testing.T) {
+	testMCPModerateConfirmedReinvoke(t, "delete")
+}
+func TestMCPModerateCommentBlockReinvokeMatches(t *testing.T) {
+	testMCPModerateConfirmedReinvoke(t, "block")
+}
+func testMCPModerateConfirmedReinvoke(t *testing.T, action string) {
+	t.Helper()
 	b := &commentToolBackend{}
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{CommentActions: b}, true).Connect(t.Context(), serverTransport, nil)
@@ -67,7 +74,7 @@ func TestMCPModerateCommentDeleteReinvokeMatches(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = session.Close() }()
 	assert.Equal(t, modernProtocolVersion, serverSession.InitializeParams().ProtocolVersion)
-	args := map[string]any{"message_id": float64(7), "action": "delete"}
+	args := map[string]any{"message_id": float64(7), "action": action}
 	pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolModerateComment, Arguments: args})
 	require.NoError(t, err)
 	require.True(t, pending.NeedsInput())
@@ -193,4 +200,24 @@ func TestMCPReplyToCommentAuthorWarningBeforeConfirmation(t *testing.T) {
 	})
 	assert.Equal(t, true, result["isError"])
 	assert.Zero(t, b.writes)
+}
+
+func TestMCPModerateCommentBlockElicits(t *testing.T) {
+	for _, accept := range []bool{false, true} {
+		t.Run(fmt.Sprint(accept), func(t *testing.T) {
+			b := &commentToolBackend{}
+			result := confirmedCallTool(t, ServeOptions{CommentActions: b}, ToolModerateComment, map[string]any{"message_id": float64(7), "action": "block"}, accept, func(prompt string) {
+				assert.Equal(t, "Block Example Author from Example Page using comment 100_200_300. This affects the whole Page; unblock reverses it.", prompt)
+			})
+			if accept {
+				assert.NotEqual(t, true, result["isError"])
+				assert.Equal(t, 1, b.writes)
+				assert.Equal(t, "binding", b.request.Confirm)
+			} else {
+				assert.Equal(t, true, result["isError"])
+				assert.Zero(t, b.writes)
+			}
+			assert.Positive(t, b.previews)
+		})
+	}
 }

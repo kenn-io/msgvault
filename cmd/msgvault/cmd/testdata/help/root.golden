@@ -130,7 +130,7 @@ Import local exports:
 Drafts, calendar, and Kata (write to providers):
   calendar         Control live calendar events and query availability
   comment-actions  Read action receipts for an archived comment
-  comment-moderate Hide, unhide or delete an archived Facebook comment
+  comment-moderate Moderate an archived Facebook comment or its author
   comment-queue    List archived comments by triage state
   comment-reply    Reply publicly or privately to an archived Facebook comment
   comment-triage   Set a comment's local triage state

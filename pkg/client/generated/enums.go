@@ -525,17 +525,19 @@ func (c CardDAVStatusResponseRepairReason) Validate() error {
 type CommentActionBodyAction string
 
 const (
+	Block                         CommentActionBodyAction = "block"
 	CommentActionBodyActionDelete CommentActionBodyAction = "delete"
 	Hide                          CommentActionBodyAction = "hide"
 	PrivateReply                  CommentActionBodyAction = "private_reply"
 	PublicReply                   CommentActionBodyAction = "public_reply"
+	Unblock                       CommentActionBodyAction = "unblock"
 	Unhide                        CommentActionBodyAction = "unhide"
 )
 
 // Validate checks if the CommentActionBodyAction value is valid
 func (c CommentActionBodyAction) Validate() error {
 	switch c {
-	case CommentActionBodyActionDelete, Hide, PrivateReply, PublicReply, Unhide:
+	case Block, CommentActionBodyActionDelete, Hide, PrivateReply, PublicReply, Unblock, Unhide:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommentActionBodyAction value, got: %v", c))

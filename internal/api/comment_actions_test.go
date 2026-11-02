@@ -165,3 +165,11 @@ func TestCommentActionRouteReplySchema(t *testing.T) {
 	assert.Contains(t, schema.Properties["action"].Enum, "public_reply")
 	assert.Contains(t, schema.Properties["action"].Enum, "private_reply")
 }
+
+func TestCommentActionRouteBlockSchema(t *testing.T) {
+	schema := OpenAPIDocument().Components.Schemas.Map()["CommentActionBody"]
+	require.NotNil(t, schema)
+	require.NotNil(t, schema.Properties["action"])
+	assert.Contains(t, schema.Properties["action"].Enum, "block")
+	assert.Contains(t, schema.Properties["action"].Enum, "unblock")
+}

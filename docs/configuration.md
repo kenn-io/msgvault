@@ -1711,7 +1711,7 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync and configured provider actions; manual sync remains available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
-| `actions` | `[]` | Explicit provider-write opt-ins: `hide` (also unhide), `delete`, `public_reply`, and `private_reply`; requires `enabled = true` |
+| `actions` | `[]` | Explicit provider-write opt-ins: `hide` (also unhide), `delete`, `public_reply`, `private_reply`, and `block` (also unblock); requires `enabled = true` |
 
 Configure only the actions you intend to use, such as `actions = ["hide", "public_reply"]`.
 Omitting it permits no provider writes. Local previews and triage remain

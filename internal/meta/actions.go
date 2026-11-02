@@ -90,6 +90,8 @@ type Target struct {
 	SentAt                                                                                                  time.Time
 }
 type ActionAPI interface {
+	BlockUser(context.Context, string, string) error
+	UnblockUser(context.Context, string, string) error
 	SetCommentHidden(context.Context, string, bool) error
 	DeleteComment(context.Context, string) error
 	ReplyToComment(context.Context, string, string) (Object, error)
@@ -159,6 +161,10 @@ func resolveActionTarget(ctx context.Context, st *store.Store, id int64, allowDe
 	}
 	return t, nil
 }
+func isAuthorAction(action ActionKind) bool { return action == ActionBlock || action == ActionUnblock }
+func isNonceAction(action ActionKind) bool {
+	return action == ActionHide || action == ActionUnhide || action == ActionUnblock
+}
 func actionBinding(t Target, action ActionKind, body string) string {
 	visibility := ""
 	if action == ActionPublicReply {
@@ -202,9 +208,7 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 		return nil, actionFailure("invalid_request", nil, nil)
 	}
 	switch req.Action {
-	case ActionHide, ActionUnhide, ActionDelete, ActionPublicReply, ActionPrivateReply:
-	case ActionBlock, ActionUnblock:
-		return nil, actionFailure("action_not_enabled", nil, nil)
+	case ActionHide, ActionUnhide, ActionDelete, ActionPublicReply, ActionPrivateReply, ActionBlock, ActionUnblock:
 	default:
 		return nil, actionFailure("invalid_request", nil, nil)
 	}
@@ -218,6 +222,17 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	target, err := resolveActionTarget(ctx, a.st, req.MessageID, req.Action == ActionDelete)
 	if err != nil {
 		return nil, err
+	}
+	if isAuthorAction(req.Action) {
+		if target.MessageType != SourceType {
+			return nil, actionFailure("unsupported_source", nil, nil)
+		}
+		if !safeObjectID(target.AuthorID) {
+			return nil, actionFailure("author_unknown", nil, nil)
+		}
+		if target.IsFromMe || target.AuthorID == target.Asset {
+			return nil, actionFailure("not_blockable", nil, nil)
+		}
 	}
 	result := &ActionResult{MessageID: target.MessageID, SourceID: target.SourceID, Action: req.Action, DryRun: req.DryRun, Disclosure: Disclosure{Provider: "facebook", AssetID: target.Asset, AssetName: target.AssetName, CommentID: target.CommentID, AuthorName: target.AuthorName}, Confirm: ConfirmToken(target, req.Action, req.Body)}
 	result.Disclosure.Body = req.Body
@@ -248,7 +263,7 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if !allowed {
 		return result, actionFailure("action_not_enabled", result, nil)
 	}
-	if (req.Action == ActionDelete || isReply(req.Action)) && req.Confirm != result.Confirm {
+	if (req.Action == ActionDelete || req.Action == ActionBlock || isReply(req.Action)) && req.Confirm != result.Confirm {
 		return result, actionFailure("confirmation_mismatch", result, nil)
 	}
 	execution, err := a.st.AcquireSyncExecutionContext(ctx, target.SourceID)
@@ -267,17 +282,38 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if locked != target {
 		return result, actionFailure("stale_identity", result, nil)
 	}
+	var generation int64
+	var unblockTime time.Time
+	if req.Action == ActionBlock {
+		generation, unblockTime, err = a.st.LatestSuccessfulMetaCommentUnblockContext(ctx, target.SourceID, target.SourceIdentifier, target.AuthorID)
+		if err != nil {
+			return result, err
+		}
+		if generation != 0 {
+			key += fmt.Sprintf("-after-unblock-%d", generation)
+		}
+	}
 	previous, lookupErr := a.st.GetMetaCommentActionByKeyContext(ctx, key)
-	if req.Action == ActionHide || req.Action == ActionUnhide {
+	if isNonceAction(req.Action) || req.Action == ActionBlock {
 		rows, e := a.st.ListMetaCommentActionsContext(ctx, target.SourceID, target.CommentID)
 		if e != nil {
 			return result, e
 		}
-		lookupErr = store.ErrMetaCommentActionNotFound
+		if isNonceAction(req.Action) {
+			lookupErr = store.ErrMetaCommentActionNotFound
+		}
+		// Pending attempts remain resolvable even after another action changes
+		// the current generation. Never replace uncertain evidence with a send.
+		pending := false
 		for _, row := range rows {
-			if row.Action == string(req.Action) && row.SourceIdentifier == target.SourceIdentifier && (row.State == "unknown" || row.State == "claimed" || row.State == "dispatched") {
-				previous = row
-				lookupErr = nil
+			if row.Action != string(req.Action) || row.SourceIdentifier != target.SourceIdentifier || (isAuthorAction(req.Action) && row.TargetAuthorID != target.AuthorID) {
+				continue
+			}
+			if row.State == "unknown" || row.State == "claimed" || row.State == "dispatched" {
+				previous, lookupErr, pending = row, nil, true
+			} else if !pending && req.Action == ActionBlock && row.State == "succeeded" && row.DispatchedAt != nil && (row.DispatchedAt.After(unblockTime) || (row.DispatchedAt.Equal(unblockTime) && row.ID > generation)) {
+				// Resolving an older unblock does not supersede a later block.
+				previous, lookupErr = row, nil
 			}
 		}
 	}
@@ -310,14 +346,18 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if ctx.Err() != nil {
 		return result, actionFailure(string(ClassCancelled), result, ctx.Err())
 	}
-	if req.Action == ActionHide || req.Action == ActionUnhide {
+	if isNonceAction(req.Action) {
 		var nonce [16]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return result, err
 		}
 		key += "-" + hex.EncodeToString(nonce[:])
 	}
-	row, existing, err := a.st.ClaimMetaCommentActionContext(ctx, store.MetaCommentActionClaim{ActionKey: key, SourceID: target.SourceID, SourceIdentifier: target.SourceIdentifier, MessageID: target.MessageID, TargetCommentID: target.CommentID, Action: string(req.Action), Body: req.Body})
+	authorID := ""
+	if isAuthorAction(req.Action) {
+		authorID = target.AuthorID
+	}
+	row, existing, err := a.st.ClaimMetaCommentActionContext(ctx, store.MetaCommentActionClaim{ActionKey: key, SourceID: target.SourceID, SourceIdentifier: target.SourceIdentifier, MessageID: target.MessageID, TargetCommentID: target.CommentID, TargetAuthorID: authorID, Action: string(req.Action), Body: req.Body})
 	if err != nil && !errors.Is(err, store.ErrMetaCommentActionUnknown) {
 		return result, err
 	}
@@ -337,9 +377,14 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if isReply(req.Action) {
 		return a.dispatchReply(ctx, target, req, result, row, api)
 	}
-	if req.Action == ActionDelete {
+	switch req.Action {
+	case ActionDelete:
 		err = api.DeleteComment(ctx, target.CommentID)
-	} else {
+	case ActionBlock:
+		err = api.BlockUser(ctx, target.Asset, target.AuthorID)
+	case ActionUnblock:
+		err = api.UnblockUser(ctx, target.Asset, target.AuthorID)
+	default:
 		err = api.SetCommentHidden(ctx, target.CommentID, req.Action == ActionHide)
 	}
 	return a.finish(ctx, target, result, row, err, true)

@@ -8,6 +8,11 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Block or unblock a Facebook commenter](usage/facebook-comments.md#block-or-unblock-a-commenter)
+  from an archived comment through the CLI, HTTP API, and MCP. Blocking affects
+  the whole Page and requires an explicit profile opt-in and confirmation;
+  unblock reverses it. Live identifier and permission verification remains pending.
+
 - [Facebook comment replies](usage/facebook-comments.md#public-and-private-replies)
   send public replies or one private message within seven days through the CLI,
   HTTP API, and MCP after explicit opt-in and confirmation. Receipts prevent

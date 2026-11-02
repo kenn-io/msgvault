@@ -26,9 +26,9 @@ type commentActionBackend interface {
 func newCommentCommand(name string, backend commentActionBackend) *cobra.Command {
 	var req meta.ActionRequest
 	var filter api.CommentQueueRequest
-	var hide, unhide, remove, asJSON bool
+	var hide, unhide, remove, block, unblock, asJSON bool
 	var state, expect, visibility string
-	descriptions := map[string]string{"comment-reply": "Reply publicly or privately to an archived Facebook comment", "comment-moderate": "Hide, unhide or delete an archived Facebook comment", "comment-triage": "Set a comment's local triage state", "comment-queue": "List archived comments by triage state", "comment-actions": "Read action receipts for an archived comment"}
+	descriptions := map[string]string{"comment-reply": "Reply publicly or privately to an archived Facebook comment", "comment-moderate": "Moderate an archived Facebook comment or its author", "comment-triage": "Set a comment's local triage state", "comment-queue": "List archived comments by triage state", "comment-actions": "Read action receipts for an archived comment"}
 	cmd := &cobra.Command{Use: name + " <message-id>", Short: descriptions[name], Args: cobra.ExactArgs(1)}
 	if name == "comment-queue" {
 		cmd.Use = name
@@ -49,14 +49,14 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 			for _, choice := range []struct {
 				set  bool
 				kind meta.ActionKind
-			}{{hide, meta.ActionHide}, {unhide, meta.ActionUnhide}, {remove, meta.ActionDelete}} {
+			}{{hide, meta.ActionHide}, {unhide, meta.ActionUnhide}, {remove, meta.ActionDelete}, {block, meta.ActionBlock}, {unblock, meta.ActionUnblock}} {
 				if choice.set {
 					selected++
 					req.Action = choice.kind
 				}
 			}
 			if selected != 1 {
-				return errors.New("choose exactly one of --hide, --unhide or --delete")
+				return errors.New("choose exactly one of --hide, --unhide, --delete, --block-author or --unblock-author")
 			}
 			if req.ResolveUnknown != "" && (!slices.Contains([]string{"sent", "not-sent"}, req.ResolveUnknown) || req.DryRun) {
 				return errors.New("--resolve-unknown must be sent or not-sent and cannot be combined with --dry-run")
@@ -121,6 +121,8 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 	switch name {
 	case "comment-moderate":
 		cmd.Flags().BoolVar(&hide, "hide", false, "Hide the comment")
+		cmd.Flags().BoolVar(&block, "block-author", false, "Block the comment author from the whole Facebook Page")
+		cmd.Flags().BoolVar(&unblock, "unblock-author", false, "Unblock the comment author from the Facebook Page")
 		cmd.Flags().BoolVar(&unhide, "unhide", false, "Unhide the comment")
 		cmd.Flags().BoolVar(&remove, "delete", false, "Delete from Facebook; keep archived history")
 	case "comment-reply":

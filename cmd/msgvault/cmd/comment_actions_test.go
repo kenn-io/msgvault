@@ -176,3 +176,20 @@ func TestCommentReplyAuthorWarningVisible(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Warning: A private reply to this author was already recorded in the past seven days.")
 }
+
+func TestCommentModerateBlockFlags(t *testing.T) {
+	for _, args := range [][]string{{"7", "--block-author", "--hide"}, {"7", "--block-author", "--unblock-author"}} {
+		b := &cliCommentBackend{}
+		_, err := runCommentCLI(t, b, "comment-moderate", args...)
+		require.Error(t, err)
+		assert.Zero(t, b.calls)
+		assert.Zero(t, b.checks)
+	}
+	for flag, kind := range map[string]meta.ActionKind{"--block-author": meta.ActionBlock, "--unblock-author": meta.ActionUnblock} {
+		b := &cliCommentBackend{}
+		_, err := runCommentCLI(t, b, "comment-moderate", "7", flag, "--dry-run")
+		require.NoError(t, err)
+		assert.Equal(t, kind, b.request.Action)
+		assert.True(t, b.request.DryRun)
+	}
+}

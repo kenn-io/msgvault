@@ -47,9 +47,9 @@ func commentToolDefinition(name string) toolDefinition {
 		properties["dry_run"] = booleanSchema("Preview locally without sending")
 		definition = explicitlyConfirmedWriteDefinition(name, "Reply publicly or send one private message about an archived comment. Requires explicit client confirmation. Private replies are limited to one per comment within seven days. Inspect uncertain outcomes and resolve through the CLI before retrying.", closedObject(properties, "message_id", "visibility", "body"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall, toolSecurityWrite)
 	case ToolModerateComment:
-		properties["action"] = stringSchema("Moderation action", "hide", "unhide", "delete")
+		properties["action"] = stringSchema("Moderation action", "hide", "unhide", "delete", "block", "unblock")
 		properties["dry_run"] = booleanSchema("Preview locally without changing the provider")
-		definition = destructiveWriteDefinition(name, "Hide, unhide or delete an archived Facebook comment. Delete requires client confirmation and keeps archive history. Inspect receipts and the provider after an unknown outcome; resolve through the CLI before retrying.", closedObject(properties, "message_id", "action"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall)
+		definition = destructiveWriteDefinition(name, "Moderate an archived Facebook comment or block/unblock its author across the Page. Delete and block require client confirmation; archive history is preserved. Inspect receipts and the provider after an unknown outcome; resolve through the CLI before retrying.", closedObject(properties, "message_id", "action"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall)
 	case ToolUpdateCommentTriage:
 		properties["state"] = stringSchema("New local triage state", "open", "handled", "skipped")
 		properties["expect"] = stringSchema("Require this current state", "open", "handled", "skipped")
@@ -107,7 +107,7 @@ func (h *handlers) commentActionsCall(ctx context.Context, req toolRequest) (*to
 		action, _ := args["action"].(string)
 		dry, _ := args["dry_run"].(bool)
 		input := meta.ActionRequest{MessageID: id, Action: meta.ActionKind(action), DryRun: dry}
-		if input.Action == meta.ActionDelete && !dry {
+		if (input.Action == meta.ActionDelete || input.Action == meta.ActionBlock) && !dry {
 			preview, e := h.commentActions.RunCommentAction(ctx, id, meta.ActionRequest{MessageID: id, Action: input.Action, DryRun: true})
 			if e != nil {
 				return commentToolResult(preview, e)
@@ -116,7 +116,11 @@ func (h *handlers) commentActionsCall(ctx context.Context, req toolRequest) (*to
 				return toolErrorResult("Comment preview is unavailable"), nil
 			}
 			d := preview.Disclosure
-			if e := req.confirmUserAction(ctx, fmt.Sprintf("Delete comment %s by %s on %s. History stays archived.", d.CommentID, d.AuthorName, d.AssetName)); e != nil {
+			prompt := fmt.Sprintf("Delete comment %s by %s on %s. History stays archived.", d.CommentID, d.AuthorName, d.AssetName)
+			if input.Action == meta.ActionBlock {
+				prompt = fmt.Sprintf("Block %s from %s using comment %s. This affects the whole Page; unblock reverses it.", d.AuthorName, d.AssetName, d.CommentID)
+			}
+			if e := req.confirmUserAction(ctx, prompt); e != nil {
 				return confirmationToolError(e)
 			}
 			input.Confirm = preview.Confirm

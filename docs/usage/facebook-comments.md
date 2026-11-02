@@ -99,7 +99,7 @@ to a person you already maintain. No separate customer database is created.
 
 ## Comment actions
 
-Reply to, hide, unhide, or delete an archived Facebook comment through the owner CLI,
+Reply to or moderate an archived Facebook comment, or block its author from the Page, through the owner CLI,
 HTTP API, or MCP tools. These actions require daemon API schema 3.30.0 or newer.
 Delegated agent grants and remote-client keys are refused for actions, triage,
 queue reads, and receipt reads. Delegated MCP sessions do not expose these tools.
@@ -109,10 +109,10 @@ the daemon:
 
 ```toml
 enabled = true
-actions = ["hide", "delete", "public_reply", "private_reply"]
+actions = ["hide", "delete", "public_reply", "private_reply", "block"]
 ```
 
-`hide` also permits unhide. An omitted or empty `actions` list permits no
+`hide` also permits unhide; `block` also permits unblock. An omitted or empty `actions` list permits no
 provider writes. Moderation requires `pages_manage_engagement` and
 `pages_read_user_content` to be granted to the app and token. Live permission
 and app-access checks are still pending; enabling this configuration does not
@@ -134,6 +134,30 @@ and keeps the archived history. Hide and unhide need no confirmation token.
 The target's source identity is checked again before dispatch. MCP
 `moderate_comment` previews and requests client confirmation for delete;
 hide and unhide run without that prompt.
+
+### Block or unblock a commenter
+
+Blocking affects the whole Facebook Page, not just the selected comment.
+Use the archived comment to bind the action to its original provider author:
+
+```bash
+msgvault comment-moderate 42 --block-author --dry-run --json
+msgvault comment-moderate 42 --block-author --confirm CONFIRM_TOKEN --json
+msgvault comment-moderate 42 --unblock-author --json
+```
+
+Block requires the preview token. MCP also requests client confirmation and
+states that the block affects the whole Page. Unblock reverses it without a
+confirmation token. A successful unblock permits a later confirmed block, even
+when the unblock used another archived comment by that author on the same Page.
+Missing authors and the Page's own comments are refused.
+Person links and display names never choose the block target.
+
+Meta's acceptance of the archived author ID and the exact token permission
+requirements still need live verification. Keep this action disabled until
+those checks pass. Provider block limits, re-block restrictions, and abuse
+refusals return `block_refused`; uncertain outcomes require explicit inspection
+and resolution before another attempt.
 
 ### Public and private replies
 
@@ -176,7 +200,7 @@ error means the provider may have accepted the action. msgvault does not retry
 it automatically. Inspect the provider and receipts first, then resolve the
 same action with `--resolve-unknown sent` or `--resolve-unknown not-sent`.
 Resolution records your observation without another provider call; `not-sent`
-permits a later explicit attempt. Delete and reply resolution still require
+permits a later explicit attempt. Delete, block, and reply resolution still require
 `--confirm`. Resolve a reply with the original visibility and exact body.
 An existing private reply receipt can be resolved after the seven-day send
 window closes; resolution does not send another message.

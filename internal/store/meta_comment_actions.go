@@ -190,3 +190,18 @@ func (s *Store) HasRecentPrivateCommentReplyContext(ctx context.Context, sourceI
 	}
 	return exists, nil
 }
+
+// LatestSuccessfulMetaCommentUnblockContext identifies the current block
+// generation for this exact scoped author, regardless of the initiating comment.
+func (s *Store) LatestSuccessfulMetaCommentUnblockContext(ctx context.Context, sourceID int64, identifier, author string) (int64, time.Time, error) {
+	var id int64
+	var dispatched time.Time
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT id,dispatched_at FROM meta_comment_actions WHERE source_id=? AND source_identifier=? AND target_author_id=? AND action='unblock' AND state='succeeded' AND dispatched_at IS NOT NULL ORDER BY dispatched_at DESC,id DESC LIMIT 1`), sourceID, identifier, author).Scan(&id, &dispatched)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, time.Time{}, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("read commenter unblock generation: %w", err)
+	}
+	return id, dispatched, nil
+}

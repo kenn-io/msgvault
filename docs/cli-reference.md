@@ -282,17 +282,18 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ## comment-moderate
 
-Hide, unhide, or delete an archived Facebook comment (unreleased). Requires
+Moderate an archived Facebook comment or block/unblock its author (unreleased). Requires
 owner authorization and daemon API schema 3.30.0 or newer, an enabled profile,
 and explicit [action opt-ins](configuration.md#facebook-comments). A dry run
 works without write opt-ins or a token and makes no provider request.
 
 ```bash
-msgvault comment-moderate <message-id> --hide|--unhide|--delete [--dry-run] [--confirm TOKEN] [--resolve-unknown sent|not-sent] [--json]
+msgvault comment-moderate <message-id> --hide|--unhide|--delete|--block-author|--unblock-author [--dry-run] [--confirm TOKEN] [--resolve-unknown sent|not-sent] [--json]
 ```
 
-Choose exactly one action. Delete requires the `confirm` token from a dry run
-and preserves archived history. The token binds the exact archived target and
+Choose exactly one action. Delete and block require the `confirm` token from a dry run.
+Delete preserves archived history. Block affects the whole Page and is reversible
+with unblock. The author comes only from the archived provider comment. The token binds the exact archived target and
 action. `--resolve-unknown` cannot be combined with `--dry-run`: inspect the
 provider and receipts before recording `sent` or `not-sent`. Resolution makes
 no provider call; `not-sent` allows a later explicit attempt. Unknown outcomes
