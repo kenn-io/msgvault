@@ -6,7 +6,6 @@ import (
 	"os"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -16,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cligrammar"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestCLIGrammarRealTree(t *testing.T) {
@@ -383,8 +381,7 @@ func TestCLIGrammarDatabaseVersionLoadsConfig(t *testing.T) {
 	rootCmd.SetOut(&output)
 	rootCmd.SetErr(&output)
 	rootCmd.SetArgs([]string{"--config", bad, "database", "version", "--database"})
-	require.Error(executeRootContext(t.Context(), rootCmd))
-	assert.NotEqual(t, strconv.Itoa(store.SchemaVersion)+"\n", output.String())
+	require.ErrorContains(executeRootContext(t.Context(), rootCmd), "load config: decode config:")
 }
 
 func TestCLIGrammarLauncherTree(t *testing.T) {

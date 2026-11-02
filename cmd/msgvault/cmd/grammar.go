@@ -19,7 +19,7 @@ var grammarRoot = rootCmd
 var grammarRoots sync.Map
 
 var grammarGroups = map[string]struct{ short, group string }{
-	"account":          {"List and manage source accounts", helpGroupSources},
+	cmdUseAccount:      {"List and manage source accounts", helpGroupSources},
 	"attachment":       {"Pack, restore, and maintain archived attachments", helpGroupMaintenance},
 	"cache":            {"Build and inspect the analytics cache", helpGroupIndex},
 	"chat":             {"Find archived chats", helpGroupRead},

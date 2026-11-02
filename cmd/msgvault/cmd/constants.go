@@ -51,6 +51,9 @@ const flagJSON = "json"
 // cmdUseList is the shared Cobra use/name for list subcommands.
 const cmdUseList = "list"
 
+// cmdUseAccount is the shared Cobra use/name for account commands.
+const cmdUseAccount = "account"
+
 // cmdUseResume is the shared Cobra use/name for resume subcommands.
 const cmdUseResume = "resume"
 
