@@ -9,10 +9,11 @@
   interface Props {
     client: APIClient;
     personID: number;
+    onSetUp?: () => void;
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, onSetUp, onAnnounce = () => undefined }: Props = $props();
   const controller = new PersonBriefController(untrack(() => client));
   let root = $state<HTMLElement>();
   let alsoTrack = $state(false);
@@ -142,16 +143,14 @@
 </script>
 
 <section bind:this={root} class="brief" aria-labelledby={headingID}>
-  <Card level="default" padding="sm">
+
     <div class="brief-content">
       <div class="heading-row">
         <div>
           <h3 id={headingID} tabindex="-1">Last time we talked</h3>
-          <p>
-            Catch up before your next conversation with a summary of what this person recently shared
-            in supported chat and text messages. Expand a sentence to see its sources.
-          </p>
+
         </div>
+        {#if onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Briefs" onclick={onSetUp} />{/if}
         {#if busy}
           <span class="working" aria-label="Loading the brief" aria-busy="true">
             <Spinner size={14} label="Loading the brief" />
@@ -171,12 +170,13 @@
         </div>
       {/if}
 
-      {#if controller.enrollment}
+      {#if controller.enrollment && (!onSetUp || controller.enrollment.enrolled)}
         {@const enrollment = controller.enrollment}
         <div class="enrollment-row">
           <Toggle
             bind:checked={enrolledSwitch}
             ariaLabel="Enroll this person in briefs"
+            label="Write briefs for this person"
             disabled={controller.enrollmentLoading || controller.pending !== null}
             onchange={(checked) => void changeEnrollment(checked)}
           />
@@ -196,9 +196,7 @@
         </div>
       {/if}
 
-      {#if controller.enrollment && !controller.enrollment.enrolled}
-        <p class="muted">This person is not enrolled, so no brief is generated or shown.</p>
-      {:else if controller.enrollment}
+      {#if controller.enrollment?.enrolled}
         {#if controller.briefError}
           <div class="notice notice--error" role="alert">
             <span>{controller.briefError}</span>
@@ -333,7 +331,7 @@
             <Button
               size="sm"
               label="Regenerate this brief"
-              disabled={actionsDisabled}
+              disabled={actionsDisabled || Boolean(onSetUp)}
               onclick={() => void generateBrief()}
             />
           </div>
@@ -343,7 +341,7 @@
             <Button
               size="sm"
               label="Generate a brief now"
-              disabled={actionsDisabled}
+              disabled={actionsDisabled || Boolean(onSetUp)}
               onclick={() => void generateBrief()}
             />
           </div>
@@ -395,19 +393,21 @@
         </div>
       {/if}
     </div>
-  </Card>
+
 </section>
 
 <style>
   .brief, .brief-content, .expansion, .history { display: grid; gap: var(--space-3); min-width: 0; }
+  .brief-content { gap: var(--space-2); }
   .heading-row, .enrollment-row, .notice, .actions, .history-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+  .heading-row { align-items: center; min-height: var(--control-h); }
   .heading-row > div, .history-heading { align-items: center; }
   .heading-row > div { display: grid; gap: var(--space-1); }
   .enrollment-row, .actions { align-items: center; justify-content: flex-start; flex-wrap: wrap; }
   h3, h4, p, ul { margin: 0; }
   h3 { font-size: var(--font-size-md); }
   h4 { font-size: var(--font-size-sm); }
-  .heading-row p, .muted, .version-line, .meta, .evidence span { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .muted, .version-line, .meta, .evidence span { color: var(--text-muted); font-size: var(--font-size-sm); }
   .working { display: flex; align-items: center; gap: var(--space-2); }
   .notice { align-items: center; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
   .notice--error { border-color: var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
@@ -426,7 +426,7 @@
   .version-list span { color: var(--text-muted); font-size: var(--font-size-sm); }
 
   @media (max-width: 760px) {
-    .heading-row, .notice, .history-heading { align-items: stretch; flex-direction: column; }
+    .notice, .history-heading { align-items: stretch; flex-direction: column; }
     .version-list { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

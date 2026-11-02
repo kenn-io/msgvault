@@ -2,6 +2,7 @@ import {
   clearPersonAttribute as generatedClearPersonAttribute,
   createAttributeDefinition as generatedCreateAttributeDefinition,
   deletePerson as generatedDeletePerson,
+  getPersonContactState as generatedGetPersonContactState,
   getPersonProfile as generatedGetPersonProfile,
   getPersonStructuredProfile as generatedGetPersonStructuredProfile,
   listAttributeDefinitions as generatedListAttributeDefinitions,
@@ -71,6 +72,7 @@ export class DirectoryProfileController {
   createdDefinition = $state<AttributeDefinition | null>(null);
   definitionCreationCommit = $state<DefinitionCreationCommit | null>(null);
   definitionsError = $state<string | null>(null);
+  attributesError = $state<string | null>(null);
   private bundle: DirectoryReadBundle;
   private readonly client: APIClient;
   private readonly personID: number;
@@ -135,9 +137,9 @@ export class DirectoryProfileController {
     ++this.generation;
     this.reloadAbort?.abort();
   }
-  async reload(): Promise<DirectoryProfileOperationResult> {
+  async reload(resolveDraft = true): Promise<DirectoryProfileOperationResult> {
     if (this.mutationPending) return { ok: false, code: 'mutation_in_progress' };
-    if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
+    this.reloadAbort?.abort();
     this.reloadPending = true;
     const abort = new AbortController();
     this.reloadAbort = abort;
@@ -148,27 +150,12 @@ export class DirectoryProfileController {
     const profileRequiresFreshETag = this.requiresReload('profile');
     const requestOptions = { ...this.client, signal: abort.signal };
     try {
-      const [person, structuredProfile, attributes, definitions] = await Promise.all([
+      const [person, structuredProfile, attributes, definitions, contactState] = await Promise.all([
         settle(generatedGetPersonProfile({ id: this.personID }, requestOptions)),
         settle(generatedGetPersonStructuredProfile({ id: this.personID }, requestOptions)),
-        settle(
-          generatedListPersonAttributes(
-            { id: this.personID },
-            { history: true },
-            {
-              ...requestOptions,
-            },
-          ),
-        ),
-        settle(
-          generatedListAttributeDefinitions(
-            { object_type: 'person' },
-            {
-              ...this.client,
-              signal: abort.signal,
-            },
-          ),
-        ),
+        settle(generatedListPersonAttributes({ id: this.personID }, { history: true }, requestOptions)),
+        settle(generatedListAttributeDefinitions({ object_type: 'person', include_hidden: true }, requestOptions)),
+        settle(generatedGetPersonContactState({ id: this.personID }, requestOptions)),
       ]);
       if (this.disposed || abort.signal.aborted || generation !== this.generation)
         return { ok: false, code: 'reload_in_progress' };
@@ -184,29 +171,35 @@ export class DirectoryProfileController {
         (!profileRequiresFreshETag || profileResponseETag !== profileETagBeforeReload);
       const attributesReady = attributes.data !== undefined;
       const definitionsReady = definitions.data !== undefined;
+      const errors = { ...this.bundle.errors };
       let refreshed = false;
-      if (personReady && person.data) {
-        this.person = person.data;
+      if (personReady && person.data && (resolveDraft || !personRequiresFreshETag)) {
+        this.person = person.data; delete errors.person;
         this.personETag = person.response?.headers.get('ETag') ?? null;
         refreshed = true;
       }
-      if (structuredProfileReady && structuredProfile.data) {
-        this.structuredProfile = structuredProfile.data;
+      if (structuredProfileReady && structuredProfile.data && (resolveDraft || !profileRequiresFreshETag)) {
+        this.structuredProfile = structuredProfile.data; delete errors.structuredProfile;
         this.structuredProfileETag = structuredProfile.response?.headers.get('ETag') ?? null;
         refreshed = true;
       }
       if (attributes.data) {
         this.attributes = attributes.data;
+        this.attributesError = null; delete errors.attributes;
         refreshed = true;
-      }
+      } else this.attributesError = failureMessage(attributes.error, attributes.response?.status ?? 0);
       if (definitions.data) {
         this.definitions = definitions.data.definitions ?? [];
         this.definitionsError = null;
         refreshed = true;
-      } else {
-        this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
-      }
-      this.resolveReloadDraft(
+      } else this.definitionsError = failureMessage(definitions.error, definitions.response?.status ?? 0);
+      if (contactState.data) {
+        this.bundle = { ...this.bundle, contactState: contactState.data };
+        delete errors.contactState;
+        refreshed = true;
+      } else errors.contactState = failureMessage(contactState.error, contactState.response?.status ?? 0);
+      this.bundle = { ...this.bundle, errors };
+      if (resolveDraft) this.resolveReloadDraft(
         { person, structuredProfile, attributes, definitions },
         { personReady, structuredProfileReady, attributesReady, definitionsReady },
       );
@@ -238,7 +231,7 @@ export class DirectoryProfileController {
         },
       );
       if (response.response.status === 204) {
-        this.completeMutation(draftGeneration, true);
+        await this.completeMutation(draftGeneration, false);
         deleted = true;
       } else {
         this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -266,7 +259,6 @@ export class DirectoryProfileController {
         this.structuredProfileETag = etag;
         this.person = response.data.person;
         this.personETag = etag;
-        this.completeMutation(draftGeneration, true);
         this.publish();
         await this.invalidateRow(
           body.categories
@@ -276,6 +268,7 @@ export class DirectoryProfileController {
             : undefined,
           body.names !== undefined || body.contact_points !== undefined,
         );
+        await this.completeMutation(draftGeneration, true);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -314,9 +307,7 @@ export class DirectoryProfileController {
         this.client,
       );
       if (response.data) {
-        this.applyAttributeWrite(slug, response.data.value, response.data.superseded);
-        if (slug !== 'primary_channel') await this.invalidateRow();
-        this.completeMutation(draftGeneration, true);
+        await this.completeAttributeWrite(slug, response.data, draftGeneration);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -326,9 +317,9 @@ export class DirectoryProfileController {
       this.finishMutation(draftGeneration);
     }
   }
-  async reloadDefinitions(expectedDraftGeneration?: number): Promise<boolean> {
-    const response = await settle(generatedListAttributeDefinitions({ object_type: 'person' }, this.client));
-    if (this.disposed) return false;
+  async reloadDefinitions(expectedDraftGeneration = this.draftGeneration): Promise<boolean> {
+    const response = await settle(generatedListAttributeDefinitions({ object_type: 'person', include_hidden: true }, this.client));
+    if (this.disposed || this.draftGeneration !== expectedDraftGeneration) return false;
     if (response.data) {
       this.definitions = response.data.definitions ?? [];
       this.definitionsError = null;
@@ -337,10 +328,7 @@ export class DirectoryProfileController {
         this.publish();
         return reconciled;
       }
-      if (
-        this.draft?.kind === 'createDefinition' &&
-        (expectedDraftGeneration === undefined || this.draftGeneration === expectedDraftGeneration)
-      ) {
+      if (this.draft?.kind === 'createDefinition') {
         this.draft = null;
         this.conflict = null;
       }
@@ -348,10 +336,7 @@ export class DirectoryProfileController {
       return true;
     }
     this.definitionsError = failureMessage(response.error, response.response?.status ?? 0);
-    if (
-      this.draft?.kind === 'createDefinition' &&
-      (expectedDraftGeneration === undefined || this.draftGeneration === expectedDraftGeneration)
-    ) {
+    if (this.draft?.kind === 'createDefinition') {
       this.captureFailure(response.error, response.response?.status ?? 0);
     }
     return false;
@@ -438,9 +423,9 @@ export class DirectoryProfileController {
         this.personETag = etag;
         this.structuredProfileETag = etag;
         if (this.structuredProfile) this.structuredProfile = { ...this.structuredProfile, person: response.data };
-        this.completeMutation(draftGeneration, true);
         this.publish();
         await this.invalidateRow(undefined, true);
+        await this.completeMutation(draftGeneration, true);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -460,9 +445,7 @@ export class DirectoryProfileController {
         this.client,
       );
       if (response.data) {
-        this.applyAttributeWrite(slug, response.data.value, response.data.superseded);
-        if (slug !== 'primary_channel') await this.invalidateRow();
-        this.completeMutation(draftGeneration, true);
+        await this.completeAttributeWrite(slug, response.data, draftGeneration);
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
@@ -471,6 +454,11 @@ export class DirectoryProfileController {
     } finally {
       this.finishMutation(draftGeneration);
     }
+  }
+  private async completeAttributeWrite(slug: string, response: { value?: PersonAttributeValue; superseded?: PersonAttributeValue }, draftGeneration: number): Promise<void> {
+    this.applyAttributeWrite(slug, response.value, response.superseded);
+    if (slug !== 'primary_channel') await this.invalidateRow();
+    await this.completeMutation(draftGeneration, true);
   }
   private prepareMutation(draft: DirectoryProfileDraft): number | DirectoryProfileOperationBlocked {
     if (this.reloadPending) return { ok: false, code: 'reload_in_progress' };
@@ -493,10 +481,10 @@ export class DirectoryProfileController {
     this.mutationPending = true;
     this.activeMutationGeneration = draftGeneration;
   }
-  private completeMutation(draftGeneration: number, succeeded: boolean): void {
-    if (!succeeded || this.draftGeneration !== draftGeneration) return;
-    this.draft = null;
-    this.conflict = null;
+  private async completeMutation(draftGeneration: number, refresh: boolean): Promise<void> {
+    if (this.draftGeneration === draftGeneration) { this.draft = null; this.conflict = null; }
+    this.finishMutation(draftGeneration);
+    if (refresh) await this.reload(false);
   }
   private finishMutation(draftGeneration: number): void {
     if (this.activeMutationGeneration !== draftGeneration) return;
