@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,6 +20,65 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	xapi "go.kenn.io/msgvault/internal/x"
 )
+
+func TestRegisterXDelayedProtectedProfilePreservesNewerPublicContent(t *testing.T) {
+	for _, mode := range []string{"new source", "existing source"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := xTestConfig(t)
+			st := testutil.NewTestStore(t)
+			if mode == "existing source" {
+				_, err := st.GetOrCreateSource("x", "1001")
+				require.NoError(err)
+			}
+			foreign, err := st.GetOrCreateSource("x", "2001")
+			require.NoError(err)
+			require.NoError(xapi.NewTokenManager(xStagedTokensDir(cfg)).Save(t.Context(), xTestRecord("example-access")))
+			started := time.Now().UTC().Truncate(time.Second)
+			var clock atomic.Int64
+			clock.Store(started.UnixNano())
+			var meCalls atomic.Int32
+			var messageID atomic.Int64
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				meCalls.Add(1)
+				assert.Equal("/2/users/me", r.URL.Path)
+				// Another account records explicit public evidence while the
+				// older protected-profile response is still in flight.
+				publicAt := started.Add(time.Minute)
+				saved, err := st.PersistXPostContext(r.Context(), store.XPersistPostInput{
+					SourceID: foreign.ID, OwnerID: "2001", PostID: "700", AuthorID: "1001", ConversationID: "700",
+					EditHistory: []string{"700"}, Text: "synthetic newer public content", CreatedAt: started.Add(-time.Hour), FetchedAt: publicAt,
+					Availability: "public", Author: &store.XAuthorInput{UserID: "1001", Username: "example_owner", DisplayName: "Example Owner", FetchedAt: publicAt},
+				})
+				if !assert.NoError(err) {
+					http.Error(w, "synthetic observation failed", http.StatusInternalServerError)
+					return
+				}
+				messageID.Store(saved.MessageID)
+				clock.Store(started.Add(2 * time.Minute).UnixNano())
+				_, _ = fmt.Fprint(w, `{"data":{"id":"1001","username":"example_owner","name":"Example Owner","protected":true}}`)
+			}))
+			defer provider.Close()
+			deps := xCommandDeps{apiBaseURL: provider.URL + "/2", httpClient: provider.Client(), oauthOptions: xapi.OAuthOptions{Now: func() time.Time { return time.Unix(0, clock.Load()).UTC() }}}
+			source, err := registerXAccountWithDeps(t.Context(), st, cfg, "1001", deps)
+			require.NoError(err)
+			require.NotNil(source)
+			assert.Equal("1001", source.Identifier)
+			assert.Equal(int32(1), meCalls.Load(), "new-source registration must reuse the verified result with its original observation time")
+			require.Positive(messageID.Load())
+			body, err := st.GetMessageBodyText(messageID.Load())
+			require.NoError(err)
+			assert.Equal("synthetic newer public content", body)
+			target, err := st.ResolveXPostContext(t.Context(), foreign.ID, "700")
+			require.NoError(err)
+			assert.Equal("public", target.Availability)
+			pending, err := st.XCleanupPendingContext(t.Context())
+			require.NoError(err)
+			assert.False(pending, "delayed protected evidence must not queue removal of newer public content")
+		})
+	}
+}
 
 func TestRegisterXCleanupFailureCannotReinstallRotatedStage(t *testing.T) {
 	testXRegistrationRecovery(t, false)

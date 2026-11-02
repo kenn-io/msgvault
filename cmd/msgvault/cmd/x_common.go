@@ -84,6 +84,12 @@ func withXCredentialOwnership(ctx context.Context, main, staged *xapi.TokenManag
 	return main.WithLifecycleLock(ctx, userID, func() error { return staged.WithLifecycleLock(ctx, userID, fn) })
 }
 func verifyXCredential(ctx context.Context, d xCommandDeps, candidate xCredentialCandidate, userID string) (xVerifiedCredential, error) {
+	// Preserve request-start evidence time, including when registration caches
+	// this result before creating the source. A slow response is not newer proof.
+	now := time.Now()
+	if d.oauthOptions.Now != nil {
+		now = d.oauthOptions.Now()
+	}
 	user, err := xapi.NewClient(d.baseURL(), candidate.record.BearerClient(d.httpClient)).Me(ctx)
 	if err != nil {
 		return xVerifiedCredential{}, xRegisterError("credential_verification_failed", err)
@@ -91,11 +97,7 @@ func verifyXCredential(ctx context.Context, d xCommandDeps, candidate xCredentia
 	if user.ID != userID || candidate.record.OwnerID != userID {
 		return xVerifiedCredential{}, xRegisterError("credential_owner_mismatch", errors.New("x credential owner does not match requested source"))
 	}
-	now := time.Now()
-	if d.oauthOptions.Now != nil {
-		now = d.oauthOptions.Now()
-	}
-	return xVerifiedCredential{candidate: candidate, user: user, fetchedAt: now}, nil
+	return xVerifiedCredential{candidate: candidate, user: user, fetchedAt: now.UTC()}, nil
 }
 
 func registerXAccountWithDeps(ctx context.Context, st *store.Store, cfg *config.Config, userID string, d xCommandDeps) (result *store.Source, retErr error) {
