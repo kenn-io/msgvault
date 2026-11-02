@@ -1,4 +1,5 @@
 import { pathOf } from './entity-fixtures.test-support';
+import { emptyProfile } from './profile-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -18,7 +19,7 @@ function person(id = 7, revision = 3, displayName = 'Test User') {
 }
 
 function profile(id = 7, revision = 3) {
-  return { person: person(id, revision), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] };
+  return emptyProfile(person(id, revision));
 }
 
 function attributes(id = 7) {

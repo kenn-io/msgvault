@@ -6,6 +6,7 @@ import type { PersonContactPoint as GeneratedPersonContactPoint } from '../../ap
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import StructuredProfileEditor from './StructuredProfileEditor.svelte';
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 
 type PersonContactPoint = GeneratedPersonContactPoint;
 
@@ -24,15 +25,7 @@ function person(revision = 3) {
 }
 
 function profile(revision = 3) {
-  return {
-    person: person(revision),
-    names: [],
-    contact_points: [],
-    addresses: [],
-    dates: [],
-    categories: [],
-    media: [],
-  };
+  return emptyProfile(person(revision));
 }
 
 function bundle(): DirectoryReadBundle {

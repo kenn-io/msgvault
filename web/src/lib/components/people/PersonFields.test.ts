@@ -5,11 +5,12 @@ import { DirectoryProfileController } from '../../directory/profile-controller.s
 import type { AttributeDefinition } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import PersonFields from './PersonFields.svelte';
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 
 const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
-function profile() { return { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } as NonNullable<DirectoryReadBundle['structuredProfile']>; }
+function profile() { return emptyProfile(person); }
 function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle> } = {}) {
   let stored = initial;
   const writes: Request[] = [];
