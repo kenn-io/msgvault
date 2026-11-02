@@ -6,12 +6,40 @@
   import {
     type EndpointSummary,
     endpointKey,
-  } from '../../people/duplicates.svelte';
+  } from '../../people/duplicates';
   import { formatRelativeTime, messageCount } from '../../util/format';
-  import { basisLine, blockerLine, joinParts } from '../../people/format';
+  import { identityBasisLabel } from '../../relationships/identity-chip';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import { IDENTITY_REVIEW_PAGE_LIMIT, type DirectoryReviewController } from '../../directory/review-controller.svelte';
   import IdentityCandidateCard from '../directory/IdentityCandidateCard.svelte';
+
+  /** The names and values that identify a match, joined for one quiet line. */
+  function joinParts(parts: Array<string | null | undefined | false>): string {
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  /** The reason and matched value on a pair card. */
+  function basisLine(candidate: {
+    basis: string;
+    normalized_value?: string;
+  }): string {
+    const basis = identityBasisLabel(candidate.basis);
+    const label = basis.replace(/^./, letter => letter.toUpperCase());
+    return candidate.normalized_value ? `${label}: ${candidate.normalized_value}` : label;
+  }
+
+  /** A readable reason a conflict can't apply as it stands. */
+  function blockerLine(blocker: string | undefined): string {
+    switch (blocker) {
+      case 'person_merge_required':
+        return 'Both are saved as different people, so merging needs a choice of which to keep.';
+      case undefined:
+      case '':
+        return 'This match needs a decision first.';
+      default:
+        return blocker.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()) + '.';
+    }
+  }
 
   interface Props {
     controller: DirectoryReviewController;

@@ -1,4 +1,4 @@
-import { ENDPOINT_NAMES, endpointKey, type EndpointSummary } from '../people/duplicates.svelte';
+import { ENDPOINT_NAMES, endpointKey, type EndpointSummary } from '../people/duplicates';
 import {
   getParticipant as generatedGetParticipant,
   getPersonProfile as generatedGetPersonProfile,
