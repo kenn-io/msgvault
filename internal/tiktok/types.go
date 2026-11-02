@@ -71,7 +71,7 @@ type Video struct {
 	Caption    string                    `json:"caption,omitempty"`
 	CreateTime Integer                   `json:"create_time,omitempty"`
 	ShareURL   string                    `json:"share_url,omitempty"`
-	Extra      map[string]jsontext.Value `json:",unknown"`
+	Extra      map[string]jsontext.Value `json:",embed"`
 }
 
 type Comment struct {
@@ -87,7 +87,7 @@ type Comment struct {
 	Status      string                    `json:"status,omitempty"`
 	Owner       bool                      `json:"owner,omitempty"`
 	ImageURL    string                    `json:"image_url,omitempty"`
-	Extra       map[string]jsontext.Value `json:",unknown"`
+	Extra       map[string]jsontext.Value `json:",embed"`
 }
 
 type VideoPage struct {

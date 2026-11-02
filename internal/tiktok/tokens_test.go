@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -71,7 +72,9 @@ func TestManagedTokenRefreshSurvivesRestart(t *testing.T) {
 	requirements.Len(files, 1)
 	info, err := os.Stat(files[0])
 	requirements.NoError(err)
-	assertions.Equal(os.FileMode(0600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		assertions.Equal(os.FileMode(0600), info.Mode().Perm())
+	}
 	data, err := os.ReadFile(files[0])
 	requirements.NoError(err)
 	assertions.Contains(string(data), "fixture-new-refresh")

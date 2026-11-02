@@ -139,7 +139,7 @@ func (c *Client) request(ctx context.Context, path string, query url.Values, pay
 				return errors.Join(ErrRateLimited, c.limiter.Block(ctx))
 			}
 			// Retry safe reads only. Refresh calls have attempts=1.
-			if !(resp.StatusCode >= 500 && attempt+1 < attempts) {
+			if resp.StatusCode < 500 || attempt+1 >= attempts {
 				if resp.StatusCode < 200 || resp.StatusCode >= 300 || (envelope.Code != nil && code != 0) {
 					return &APIError{Status: resp.StatusCode, Code: code}
 				}
