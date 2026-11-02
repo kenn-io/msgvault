@@ -16,6 +16,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | Local source | What to provide |
 |---|---|
 | [WhatsApp](#import-whatsapp) | Decrypted Android `msgstore.db` or Apple `ChatStorage.sqlite` |
+| [Signal](#import-signal) | Signal Android backup decrypted by signalbackup-tools |
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
@@ -127,6 +128,80 @@ Supply your own phone number with `--phone` for either format. msgvault records
 it as the source's confirmed “me” identity unless you pass
 `--no-default-identity`. This confirmation also happens after a completed run
 that reports recoverable message errors.
+
+## import-signal
+
+Import direct and group chats from a Signal Android backup. Signal encrypts
+its backup files, so first unpack one with
+[signalbackup-tools](https://github.com/bepaald/signalbackup-tools), using the
+30-digit passphrase Signal showed when you turned on chat backups:
+
+```bash
+signalbackup-tools signal-2026-01-01-00-00-00.backup <passphrase> --output ~/signal-backup
+msgvault import-signal ~/signal-backup --phone +14155551234
+```
+
+The output directory holds `database.sqlite` and one `Attachment_*.bin` file per
+attachment. Pass the directory or the `database.sqlite` file. Add `--onlydb` to
+the signalbackup-tools command to skip the attachment files; the messages still
+import, and their attachments count as missing.
+
+### Flags
+
+| Flag | Required | Description |
+|---|---|---|
+| `--phone` | Yes | Your Signal phone number in E.164 format (must start with `+`) |
+| `--attachments-dir` | No | Directory holding the `Attachment_*.bin` files (default: the database's directory) |
+| `--display-name` | No | Display name for the phone owner |
+| `--limit` | No | Limit number of messages (for testing) |
+| `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
+
+msgvault refuses a backup whose own account has a different number than
+`--phone`.
+
+### What is imported
+
+- **Chats:** direct chats and groups, with group titles and current members.
+- **Messages:** text with `@` mentions spelled out, sender, and sent and received
+  times.
+- **Edits:** an edited message keeps one archive entry with its newest text and
+  is marked as edited.
+- **Replies:** a reply links to the message it quotes when that message is in
+  the archive.
+- **Reactions:** emoji reactions with who reacted.
+- **Attachments:** files from the backup directory, with captions added to the
+  message text. Stickers are marked as stickers.
+
+Contacts whose number Signal knows are matched by number, so they join the same
+person as their WhatsApp or SMS messages. Contacts Signal knows only by their
+account ID are recorded with a `signal_aci` identifier.
+
+### Run it again
+
+Run the command with each newer backup. Every message is identified by its
+author's Signal account ID and its sent timestamp, the way Signal itself
+identifies messages, so a rerun adds new messages and updates existing ones
+(edits, reactions, attachments) without duplicating them. This holds for a
+backup restored on a new phone. A contact Signal knows only by number gets the
+number in place of the account ID. Messages deleted in Signal stay in your
+archive.
+
+### Format limits
+
+msgvault reads Signal Android database version 185 and newer. An older
+database stops the import with an error that names the missing table or
+column; restore the backup in a current Signal Android release and make a new
+backup.
+
+These are left out:
+
+- SMS and MMS that Signal stored as the phone's SMS app, and calls. Import those
+  from an SMS backup with [`import-synctech-sms`](#import-synctech-sms).
+- Group and safety-number updates, timer changes, payments, and other events.
+- Stories and story replies, messages deleted for everyone, scheduled messages
+  that were not sent yet, and earlier versions of edited messages.
+- Legacy groups that were never migrated to new groups, and MMS groups.
+- Signal Desktop and iOS databases.
 
 ## import-imessage
 

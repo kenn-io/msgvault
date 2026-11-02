@@ -10,7 +10,7 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
-  eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
+  eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp', signal: 'Signal',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
   'google-groups': 'Google Groups'
 };
