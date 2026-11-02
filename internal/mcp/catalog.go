@@ -217,6 +217,20 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 }
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
+	definitions := operationDefinitions(capabilities)
+	available := definitions[:0]
+	for _, definition := range definitions {
+		if definition.availability(capabilities) {
+			available = append(available, definition)
+		}
+	}
+	sort.Slice(available, func(i, j int) bool {
+		return available[i].name < available[j].name
+	})
+	return available
+}
+
+func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
@@ -278,16 +292,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	}
 	definitions = append(definitions, kataDefinitions(capabilities.kataDocbank)...)
 
-	available := definitions[:0]
-	for _, definition := range definitions {
-		if definition.availability(capabilities) {
-			available = append(available, definition)
-		}
-	}
-	sort.Slice(available, func(i, j int) bool {
-		return available[i].name < available[j].name
-	})
-	return available
+	return definitions
 }
 
 func querySQLDefinition() toolDefinition {

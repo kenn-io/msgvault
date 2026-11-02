@@ -3,9 +3,15 @@ package main
 
 import (
 	"bytes"
+	"cmp"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
+
+	"go.kenn.io/msgvault/internal/mcp"
 )
 
 func main() {
@@ -22,18 +28,64 @@ func run(check bool) error {
 	if err != nil {
 		return err
 	}
-	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
-	const destination = "docs/guides/agent-quickstart.md"
-	if check {
-		published, err := os.ReadFile(destination)
-		if err != nil {
+	generated, err := updateToolTable(source, mcp.ToolSummaries())
+	if err != nil {
+		return err
+	}
+	for _, path := range []string{"internal/agentguide/quickstart.md", "docs/guides/agent-quickstart.md"} {
+		if err := syncFile(path, generated, check); err != nil {
 			return err
 		}
-		if !bytes.Equal(source, bytes.ReplaceAll(published, []byte("\r\n"), []byte("\n"))) {
-			return fmt.Errorf("%s is stale; run make agent-guide", destination)
+	}
+	return nil
+}
+
+const (
+	beginTools = "<!-- BEGIN GENERATED tools -->"
+	endTools   = "<!-- END GENERATED tools -->"
+)
+
+func updateToolTable(source []byte, tools []mcp.ToolSummary) ([]byte, error) {
+	text := strings.ReplaceAll(string(source), "\r\n", "\n")
+	if strings.Count(text, beginTools) != 1 || strings.Count(text, endTools) != 1 {
+		return nil, errors.New("guide must contain exactly one tools marker pair")
+	}
+	prefix, rest, _ := strings.Cut(text, beginTools)
+	_, suffix, ok := strings.Cut(rest, endTools)
+	if !ok {
+		return nil, errors.New("tools markers are reversed")
+	}
+	tools = slices.Clone(tools)
+	slices.SortFunc(tools, func(a, b mcp.ToolSummary) int {
+		return cmp.Or(cmp.Compare(a.Security, b.Security), cmp.Compare(a.Name, b.Name))
+	})
+	var table strings.Builder
+	table.WriteString("\n| Tool | Class | Opt-in flag | Delegated access |\n| --- | --- | --- | --- |\n")
+	for _, tool := range tools {
+		flag := "—"
+		if tool.Flag != "" {
+			flag = "`" + markdownCell(tool.Flag) + "`"
 		}
+		fmt.Fprintf(&table, "| `%s` | %s | %s | %s |\n", markdownCell(tool.Name), markdownCell(tool.Security), flag, markdownCell(tool.GrantPermission))
+	}
+	return []byte(prefix + beginTools + table.String() + endTools + suffix), nil
+}
+
+func markdownCell(value string) string {
+	return strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "|", "\\|", "`", "&#96;").Replace(value)
+}
+
+func syncFile(path string, generated []byte, check bool) error {
+	current, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if bytes.Equal(bytes.ReplaceAll(current, []byte("\r\n"), []byte("\n")), generated) {
 		return nil
 	}
-	// #nosec G703 -- destination is a fixed repository path, never selected by guide contents.
-	return os.WriteFile(destination, source, 0o600)
+	if check {
+		return fmt.Errorf("%s is stale; run make agent-guide", path)
+	}
+	// #nosec G703 -- callers supply repository paths; guide contents never select a path.
+	return os.WriteFile(path, generated, 0o600)
 }

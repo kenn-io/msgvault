@@ -165,6 +165,9 @@ jobs:
       - name: Check OpenAPI artifacts
         run: make openapi-check
 
+      - name: Check MCP guide
+        run: make agent-guide-check
+
       - name: Lint
         run: make lint-ci
 

@@ -103,7 +103,7 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
 NOCGO_LINT_PKGS := ./pkg/archive/... ./pkg/mcp/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/agentguide/gen ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -126,10 +126,10 @@ GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
 # The embedded guide is canonical; publish the same source in the docs site.
 agent-guide:
-	go run ./internal/agentguide/gen
+	go run -tags "$(BUILD_TAGS)" ./internal/agentguide/gen
 
 agent-guide-check:
-	go run ./internal/agentguide/gen -check
+	go run -tags "$(BUILD_TAGS)" ./internal/agentguide/gen -check
 
 # Build the binary (debug)
 build: web-embed
