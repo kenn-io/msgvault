@@ -106,6 +106,7 @@ export class CardDAVController {
       const statusCommit = ++this.statusCommitGeneration;
       this.status = status;
       this.statusLoading = false;
+      this.statusError = null;
       this.pollFingerprint = statusFingerprint(status);
       this.recordSuccessfulStatusCommit(statusCommit);
     }
