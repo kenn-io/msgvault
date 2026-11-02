@@ -185,7 +185,7 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 			writeStatsHTTPDaemonRuntime(t, dataDir, server)
 			cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
 			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true})
-			cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: showMessageCmd.Args}
+			cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: cobra.ExactArgs(1)}
 			var stdout, stderr bytes.Buffer
 			cmd.SetOut(&stdout)
 			cmd.SetErr(&stderr)
