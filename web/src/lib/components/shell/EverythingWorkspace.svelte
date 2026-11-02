@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tasksSettingsDestination } from './navigation';
   import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
@@ -40,7 +41,7 @@
   import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
-  import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import PageHeader from './PageHeader.svelte';
   import {
     exploreMeetingScope,
@@ -626,6 +627,7 @@
   </PageHeader>
 
   <ContextBar
+    messages
     {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
@@ -698,7 +700,7 @@
 
   {#if meetingScope}
     <div class="meeting-overview">
-      <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+      <MessageMeetingSummary {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
   {/if}
@@ -842,8 +844,8 @@
             onClose={closeReadingPane}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
-            onOpenSettings={() => commitWorkspace('settings')}
-            onOpenRelationship={openRelationship}
+            onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+            onOpenPerson={openRelationship}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />

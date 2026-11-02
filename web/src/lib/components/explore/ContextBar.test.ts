@@ -7,7 +7,7 @@ import ContextBar from './ContextBar.svelte';
 const sort = { options: [{ value: 'newest', label: 'Newest first' }], value: 'newest' };
 
 describe('ContextBar presentation control', () => {
-  it('exposes Table, Timeline, and Files as one keyboard-operable Show-as control', async () => {
+  it('shows presentation and sort choices and changes Table to Timeline', async () => {
     const onPresentationChange = vi.fn();
     render(ContextBar, {
       client: createAPIClient(vi.fn<typeof fetch>()),
