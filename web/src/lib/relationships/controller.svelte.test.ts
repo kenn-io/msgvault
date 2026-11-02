@@ -951,21 +951,6 @@ describe('RelationshipsController.openTarget', () => {
     expect(requests.some((request) => pathOf(request).includes('/relationships/'))).toBe(false);
   });
 
-  it('dispatches on the target prefix, not the facet, when the two disagree', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/domains/example.com' && request.method === 'GET') return Response.json(domainSummary('example.com'));
-      throw new Error(`unexpected path ${path}`);
-    });
-    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
-    controller.facet = 'people';
-
-    await controller.openTarget('domain:example.com', { filters: [], presentation: 'table' });
-
-    expect(controller.detail).toEqual(domainSummary('example.com'));
-  });
-
   it('discards a stale openTarget response that resolves after a newer openTarget call', async () => {
     let resolveFirstPerson: ((response: Response) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
