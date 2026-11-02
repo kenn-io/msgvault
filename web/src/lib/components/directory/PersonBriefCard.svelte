@@ -9,11 +9,12 @@
   interface Props {
     client: APIClient;
     personID: number;
+    refreshKey?: string;
     onSetUp?: () => void;
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, onSetUp, onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, refreshKey, onSetUp, onAnnounce = () => undefined }: Props = $props();
   const controller = new PersonBriefController(untrack(() => client));
   let root = $state<HTMLElement>();
   let alsoTrack = $state(false);
@@ -32,7 +33,7 @@
   const actionsDisabled = $derived(controller.pending !== null || controller.briefLoading);
 
   $effect.pre(() => {
-    const nextPersonID = personID;
+    const nextPersonID = personID; refreshKey;
     alsoTrack = false;
     rejectReason = '';
     expandedSentence = null;

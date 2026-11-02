@@ -392,6 +392,8 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
       if (operation === 'link' || merged) { changed = true; return Response.json({ identity_revision: 8, cache_state: 'ready' }); }
       return Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: one }, { etag: '"person-9-r2"', person: two }] }, { status: 409 });
     },
+    '/api/v1/people/7/brief-enrollment': () => Response.json({ person_id: 7, enrolled: merged, enabled_at: merged ? when : null, actor: 'api' }),
+    '/api/v1/people/7/brief': () => Response.json({ error: 'person_brief_not_found', message: 'Person brief not found' }, { status: 404 }),
     '/api/v1/people/7/merge': () => { merged = true; changed = true; return Response.json({ cache_state: 'ready', identity_revision: 8, review_candidates: [], person: survivor, merge: { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9', survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5, actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when } }, { headers: { ETag: '"person-7-r5"' } }); },
   });
   const state = new ExploreState(null);
@@ -413,6 +415,7 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
     if (operation === 'merge') await list.findByText('Synthetic Two');
     await waitFor(() => expect(directory.detailLoading).toBe(false));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await waitFor(() => expect((screen.getByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement).checked).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
     const draft = screen.getByRole('textbox', { name: 'Contact value' });
     await fireEvent.input(draft, { target: { value: '+12025550123' } });
@@ -437,6 +440,7 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
     expect(screen.getByRole('textbox', { name: 'Contact value' })).toBe(draft);
     expect(draft).toHaveProperty('value', '+12025550123');
     if (operation === 'merge') await screen.findByText('absorbed@example.com');
+    if (operation === 'merge') await waitFor(() => expect((screen.getByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement).checked).toBe(true));
     expect(sawLoadingPerson).toBe(false);
     await list.findByText('2021');
     view.unmount();
@@ -590,6 +594,8 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
     '/api/v1/people/7': () => Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
     '/api/v1/people/7/profile': () => Response.json(emptyProfile(saved()), { headers: { ETag: `"person-7-r${saved().revision}"` } }),
     '/api/v1/people/7/profile/history': () => Response.json(emptyProfile(saved())),
+    '/api/v1/people/7/brief-enrollment': () => Response.json({ person_id: 7, enrolled: !split, enabled_at: split ? null : when, actor: 'api' }),
+    '/api/v1/people/7/brief': () => Response.json({ error: 'person_brief_not_found', message: 'Person brief not found' }, { status: 404 }),
     '/api/v1/people/7/merges': () => Response.json({ merges: [{ merge, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }] }),
     '/api/v1/person-merges/41': () => Response.json({ merge, participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], rows: [], splits: [], review_candidates: [] }),
     '/api/v1/people/7/split': () => { split = true; return Response.json({ source_person: saved(), new_person: profile(9, 1, [1]), split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'synthetic-9', source_revision_before: 4, source_revision_after: 5, exact_reversal: false, actor: 'web', created_at: when }, exact_reversal: false, ambiguous_rows: [{ table_name: 'person_names', original_row_key: 'synthetic-row', action: 'ambiguous' }], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }); },
@@ -601,6 +607,9 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
   await controller.openTarget('cluster:1', {});
   const view = render(PeopleWorkspace, { props: { client, directory, controller, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: patch => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget })); }, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    const enrollment = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    await waitFor(() => expect(enrollment.checked).toBe(true));
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
@@ -611,6 +620,7 @@ it.each([true, false])('keeps the split receipt visible after its source loses t
     await waitFor(() => expect(controller.detail).toMatchObject({ profile: { id: 9 } }));
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
     expect(state.current.relationshipTarget).toBeNull();
+    await waitFor(() => expect((screen.getByLabelText('Enroll this person in briefs') as HTMLInputElement).checked).toBe(false));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
