@@ -196,8 +196,8 @@ test('pending decisions block Escape and global shortcuts, while failure retains
     request.method === 'POST' && request.path.endsWith('/18/review/reject'))).toHaveLength(2);
 });
 
-test('merge handoff inspects both profiles separately without mutating', async ({ page }) => {
-  for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthetic Two' }]) {
+for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthetic Two' }]) {
+  test(`merge handoff inspects ${profile.name} separately without mutating`, async ({ page }) => {
     const fixture = await installDirectoryReviewArchive(page);
     await page.goto(reviewURL());
     const merge = await openMergeModal(page);
@@ -213,8 +213,8 @@ test('merge handoff inspects both profiles separately without mutating', async (
     await expect(page.getByRole('list', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
-  }
-});
+  });
+}
 
 test('History wraps long provenance at phone width', async ({ page }) => {
   await installDirectoryReviewArchive(page);

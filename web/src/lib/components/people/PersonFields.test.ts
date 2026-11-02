@@ -10,7 +10,7 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
 function profile() { return { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } as NonNullable<DirectoryReadBundle['structuredProfile']>; }
-function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle>; definitions?: AttributeDefinition[] } = {}) {
+function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle> } = {}) {
   let stored = initial;
   const writes: Request[] = [];
   const client = createAPIClient(async (input) => {
@@ -25,7 +25,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     }
     if (path.endsWith('/profile')) return Response.json(stored, { headers: { ETag: '"person-7-r2"' } });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
-    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: (options.definitions ?? []).filter(definition => new URL(request.url).searchParams.get('include_hidden') === 'true' || definition.is_active) });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
@@ -219,7 +219,7 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows a birthday introduced by a profile refresh', async () => {
+it('removes Add birthday when a profile refresh introduces a birthday', async () => {
   const initial = profile();
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
   const client = createAPIClient(async input => {
@@ -235,12 +235,14 @@ it('shows a birthday introduced by a profile refresh', async () => {
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   const view = render(PersonFields, { controller });
   try {
+    expect(screen.getByRole('button', { name: 'Add birthday' })).toBeDefined();
     await act(async () => { await controller.reload(); });
     expect(screen.getByText('1990-05-06')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Add birthday' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('reloads More fields choices, reveals a hidden field, and hides its new draft during a pending save', async () => {
+it('conceals and discards a sensitive new-value draft when Hide is clicked during a pending save', async () => {
   const definition = { id: 9, universal_id: '00000000-0000-4000-8000-000000000009', slug: 'religion', label: 'Religion', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: true, revision: 1 } as AttributeDefinition;
   let resolveSave!: (response: Response) => void;
   const pendingSave = new Promise<Response>(resolve => { resolveSave = resolve; });

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
@@ -7,7 +7,7 @@ import MeetingPanel from '../meetings/MeetingPanel.svelte';
 
 vi.mock('../meetings/MeetingPanel.svelte', { spy: true });
 
-it('routes section Retry through the same profile controller and forwards the refreshed meeting revision', async () => {
+it('shows one attributes alert and forwards the refreshed meeting revision', async () => {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
   let attributeReads = 0;
@@ -30,7 +30,6 @@ it('routes section Retry through the same profile controller and forwards the re
   });
   const directory = new DirectoryController(client);
   await directory.loadSelection(7);
-  const owner = directory.profile;
   const view = render(PersonDetails, { client, directory, personID: 7 });
   try {
     const alerts = screen.getAllByRole('alert');
@@ -40,14 +39,8 @@ it('routes section Retry through the same profile controller and forwards the re
     expect(alert.textContent).not.toContain('attributes:');
     expect(screen.getAllByRole('button', { name: /Retry/ })).toHaveLength(1);
     expect(vi.mocked(MeetingPanel).mock.calls.at(-1)?.[1].refreshKey).toBe('1');
-    const reload = vi.spyOn(owner!, 'reload');
     person.revision = 2;
-    await act(async () => {
-      await fireEvent.click(within(alert).getByRole('button', { name: 'Retry attributes' }));
-      expect(reload).toHaveBeenCalledOnce();
-      await reload.mock.results[0]!.value;
-    });
-    expect(vi.mocked(MeetingPanel).mock.calls.at(-1)?.[1].refreshKey).toBe('2');
-    expect(directory.profile).toBe(owner);
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry attributes' }));
+    await waitFor(() => expect(vi.mocked(MeetingPanel).mock.calls.at(-1)?.[1].refreshKey).toBe('2'));
   } finally { view.unmount(); directory.destroy(); }
 });

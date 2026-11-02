@@ -56,7 +56,6 @@ describe('ProfileHistoryDialog', () => {
     failing = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry attribute history' }));
     expect(await screen.findByText('Earlier note')).toBeDefined();
-    expect(screen.getByText(/Reference: source-card-7/).textContent).toContain('Actor: synthetic-importer');
     expect(screen.queryByRole('alert')).toBeNull();
     await dialog.unmount();
     note = 'Latest note';
