@@ -41,10 +41,10 @@ type CalDAVMetadata struct {
 }
 
 type CalDAVEvent struct {
-	Event                                 Event
-	ExplicitAttendees                     []gcalmodel.Attendee
-	Summary, OrganizerName                string
-	Description, Location, OrganizerEmail string
+	Event                                      Event
+	ExplicitAttendees                          []gcalmodel.Attendee
+	Summary, OrganizerName                     string
+	Description, Location, URL, OrganizerEmail string
 }
 
 // Keep one decoded resource while its components pass through the projection writer.
@@ -196,7 +196,7 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			}
 		}
 	}
-	for _, name := range []string{"UID", "RECURRENCE-ID", "DTSTART", "DTEND", "DURATION", "SEQUENCE", "STATUS"} {
+	for _, name := range []string{"UID", "RECURRENCE-ID", "DTSTART", "DTEND", "DURATION", "SEQUENCE", "STATUS", "URL"} {
 		if len(p[name]) > 1 {
 			return CalDAVEvent{}, fmt.Errorf("duplicate CalDAV %s", name)
 		}
@@ -217,6 +217,13 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			return item, fmt.Errorf("CalDAV %s: %w", field.name, err)
 		}
 		*field.out = strings.Join(values, ",")
+	}
+	if prop := p.Get("URL"); prop != nil {
+		joinURL, err := prop.URI()
+		if err != nil {
+			return item, fmt.Errorf("CalDAV URL: %w", err)
+		}
+		item.URL = joinURL.String()
 	}
 	if uid == "" {
 		return item, errors.New("CalDAV event has no UID")

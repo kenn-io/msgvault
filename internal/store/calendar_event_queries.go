@@ -595,20 +595,21 @@ func inheritCalendarCancellation(ctx context.Context, r contextRowQuerier, row, 
 type calendarCancellationEvidence struct {
 	raw        []byte
 	format     string
+	metadata   []byte
 	fields     map[string]any
 	sparse     bool
 	diagnostic string
 }
 
 func readCalendarCancellationEvidence(ctx context.Context, r contextRowQuerier, messageID int64) (*calendarCancellationEvidence, error) {
-	raw, format, err := readCalendarRaw(ctx, r, messageID)
+	raw, format, metadata, err := readCalendarRaw(ctx, r, messageID)
 	if err != nil {
 		if errors.Is(err, errMeetingRawTooLarge) || errors.Is(err, ErrInvalidMessageRaw) {
 			return &calendarCancellationEvidence{diagnostic: fmt.Sprintf("decode cancellation evidence: %s", err)}, nil
 		}
 		return nil, err
 	}
-	evidence := &calendarCancellationEvidence{raw: raw, format: format}
+	evidence := &calendarCancellationEvidence{raw: raw, format: format, metadata: metadata}
 	var fields map[string]any
 	switch format {
 	case rawFormatICS:

@@ -85,7 +85,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			c.unavailable("anchor")
 			return target, nil
 		}
-		q := store.BurstQuery{FromDate: ref.LocalDate, ToDate: ref.LocalDate, ConversationID: ref.ConversationID, Limit: 5000, Filters: c.filters()}
+		q := store.BurstQuery{FromDate: ref.LocalDate, ToDate: ref.LocalDate, ConversationID: ref.ConversationID, Limit: 5000, Filters: c.filters(), MergeCopies: c.req.IncludeCold}
 		q.Filters.IncludeNoise = true
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
 			return c.src.Activity.ListActivityBurstsContext(ctx, q)
@@ -139,7 +139,7 @@ func anchorWindow(at time.Time, loc *time.Location) Window {
 func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	from := target.at.In(c.loc).AddDate(0, 0, -days)
 	to := target.at.In(c.loc).AddDate(0, 0, days).Add(time.Nanosecond)
-	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts}
+	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, MergeCopies: c.req.IncludeCold}
 	if c.req.Conversation {
 		q.ConversationID = target.conversationID
 	}

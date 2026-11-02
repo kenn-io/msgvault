@@ -552,6 +552,9 @@ func TestICalendarRecurrenceErrorsFromRaw(t *testing.T) {
 			requirements.Len(page.Unexpandable, 1)
 			assertions.Equal(first.MessageIDs[0], page.Unexpandable[0].MessageID)
 			assertions.Empty(page.Occurrences)
+
+			_, err = st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270314T090000Z", first.MessageIDs[0]))
+			requirements.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
 		})
 	}
 }

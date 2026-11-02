@@ -186,6 +186,11 @@ func entryRow(e Entry, loc *time.Location) string {
 			clock = "all-day"
 		}
 		body = clock + " " + textLine(m.Title, 80)
+		if m.DeletedFromSource {
+			body += " (deleted from source)"
+		} else if strings.EqualFold(m.Status, "cancelled") {
+			body += " (cancelled)"
+		}
 		if m.Attended {
 			body += " ✓"
 		}

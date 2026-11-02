@@ -117,7 +117,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
-	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
+	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts, MergeCopies: c.req.IncludeCold}
 	parallel(c.ctx,
 		func() {
 			if c.src.Activity != nil {

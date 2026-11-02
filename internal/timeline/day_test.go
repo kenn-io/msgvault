@@ -193,6 +193,29 @@ func TestBuildDayIncludeColdMergesByMessageID(t *testing.T) {
 	assertions.Empty(allDayEntries(hidden))
 	assertions.Equal(1, hidden.Omitted.Cold)
 }
+
+func TestBuildDayIncludeColdCollapsesCanonicalEmailCopies(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	warmID := f.PersistEmail(storetest.EmailSpec{Thread: "warm-copy", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Shared message", Body: "Synthetic copy", SentAt: f.now.Add(-time.Hour)})
+	coldID := f.PersistEmail(storetest.EmailSpec{Thread: "cold-copy", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Shared message", Body: "Synthetic copy", SentAt: f.now.Add(-time.Hour)})
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET rfc822_message_id=? WHERE id IN (?,?)`), "<shared@example.test>", warmID, coldID)
+	requirements.NoError(err)
+	requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-copy"))
+	f.project()
+
+	req := dayRequest()
+	req.IncludeCold = true
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.Equal(1, entries[0].Burst.Inbound)
+	assertions.Len(entries[0].Burst.LatestMessageIDs, 1)
+	assertions.Equal(2, entries[0].Burst.Copies[entries[0].Burst.LatestMessageIDs[0]])
+}
+
 func TestBuildDayUpcomingNext48h(t *testing.T) {
 	f := newTimelineFixture(t)
 	for i, at := range []string{"2026-10-23T11:00:00Z", "2026-10-24T11:00:00Z", "2026-10-24T13:00:00Z"} {
@@ -201,6 +224,96 @@ func TestBuildDayUpcomingNext48h(t *testing.T) {
 	got, err := Build(t.Context(), f.src, dayRequest())
 	require.NoError(t, err)
 	assert.Len(t, got.Upcoming, 2)
+}
+func TestBuildDaySubjectFilterAppliesToEntriesAndUpcoming(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	aliceMessage := f.PersistEmail(storetest.EmailSpec{Thread: "alice-thread", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Alice update", Body: "Synthetic Alice message", SentAt: f.now.Add(-time.Hour)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "bob-thread", From: "bob@example.com", To: []string{storetest.OwnerAddress}, Subject: "Bob update", Body: "Synthetic Bob message", SentAt: f.now.Add(-2 * time.Hour)})
+	f.calendar("alice-meeting", `{"id":"alice-meeting","summary":"Alice planning","start":{"dateTime":"2026-10-22T13:00:00Z"},"end":{"dateTime":"2026-10-22T14:00:00Z"},"attendees":[{"email":"alice@example.com","displayName":"Alice"}]}`)
+	f.calendar("bob-meeting", `{"id":"bob-meeting","summary":"Bob planning","start":{"dateTime":"2026-10-22T14:00:00Z"},"end":{"dateTime":"2026-10-22T15:00:00Z"},"attendees":[{"email":"bob@example.com","displayName":"Bob"}]}`)
+	person := f.savePerson()
+	f.project()
+
+	req := dayRequest()
+	req.Mode = ModeDay
+	req.With = fmt.Sprintf("person:%d", person)
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+
+	entries := allDayEntries(got)
+	var messageIDs []int64
+	var meetingTitles []string
+	for _, entry := range entries {
+		if entry.Burst != nil {
+			messageIDs = append(messageIDs, entry.Burst.LatestMessageIDs...)
+		}
+		if entry.Kind == "meeting" && entry.Meeting != nil {
+			meetingTitles = append(meetingTitles, entry.Meeting.Title.Text)
+		}
+	}
+	assertions.Equal([]int64{aliceMessage}, messageIDs)
+	assertions.Equal([]string{"Alice planning"}, meetingTitles)
+	requirements.Len(got.Upcoming, 1)
+	assertions.Equal("Alice planning", got.Upcoming[0].Meeting.Title.Text)
+}
+func TestBuildDayPreservesCalendarCancellationAndExcludesCancelledUpcoming(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	f.calendar("past-cancelled", `{"id":"past-cancelled","summary":"Past cancellation","status":"cancelled","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T10:30:00Z"}}`)
+	f.calendar("future-cancelled", `{"id":"future-cancelled","summary":"Future cancellation","status":"cancelled","start":{"dateTime":"2026-10-22T13:00:00Z"},"end":{"dateTime":"2026-10-22T13:30:00Z"}}`)
+	f.calendar("future-deleted", `{"id":"future-deleted","summary":"Future source deletion","start":{"dateTime":"2026-10-22T13:30:00Z"},"end":{"dateTime":"2026-10-22T14:00:00Z"}}`)
+	f.calendar("future-active", `{"id":"future-active","summary":"Active planning","start":{"dateTime":"2026-10-22T14:00:00Z"},"end":{"dateTime":"2026-10-22T14:30:00Z"}}`)
+	calendarSource, err := f.Store.GetOrCreateSource("gcal", "calendar@example.com")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.MarkMessagesDeletedBatch(calendarSource.ID, []string{"future-deleted"}))
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+
+	statuses := map[string]string{}
+	for _, entry := range allDayEntries(got) {
+		if entry.Kind == "meeting" && entry.Meeting != nil {
+			statuses[entry.Meeting.Title.Text] = entry.Meeting.Status
+		}
+	}
+	assertions.Equal("cancelled", statuses["Past cancellation"])
+	assertions.Equal("cancelled", statuses["Future cancellation"])
+	var deletedEvent *MeetingEntry
+	for _, entry := range allDayEntries(got) {
+		if entry.Meeting != nil && entry.Meeting.Title.Text == "Future source deletion" {
+			deletedEvent = entry.Meeting
+		}
+	}
+	requirements.NotNil(deletedEvent)
+	assertions.True(deletedEvent.DeletedFromSource)
+	requirements.Len(got.Upcoming, 1)
+	assertions.Equal("Active planning", got.Upcoming[0].Meeting.Title.Text)
+	assertions.Contains(Markdown(got), "Past cancellation (cancelled)")
+	assertions.Contains(Markdown(got), "Future cancellation (cancelled)")
+	assertions.Contains(Markdown(got), "Future source deletion (deleted from source)")
+}
+
+func TestBuildDayAllDayEventUsesActivityZoneForBothBounds(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	f.src.Location = time.FixedZone("TestPlusNine", 9*60*60)
+	f.calendar("all-day", `{"id":"all-day","summary":"All day planning","start":{"date":"2026-10-22"},"end":{"date":"2026-10-23"}}`)
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	var meeting *MeetingEntry
+	for _, entry := range allDayEntries(got) {
+		if entry.Meeting != nil && entry.Meeting.Title.Text == "All day planning" {
+			meeting = entry.Meeting
+		}
+	}
+	requirements.NotNil(meeting)
+	assertions.Equal(time.Date(2026, 10, 22, 0, 0, 0, 0, f.src.Location), meeting.Start)
+	assertions.Equal(time.Date(2026, 10, 23, 0, 0, 0, 0, f.src.Location), meeting.End)
+	assertions.True(meeting.End.After(meeting.Start))
 }
 func TestBuildDayReportsUnexpandableSeries(t *testing.T) {
 	f := newTimelineFixture(t)
@@ -540,4 +653,21 @@ func TestBuildLoopsRetainsSettlementFromSourceDeletedReply(t *testing.T) {
 			assertions.NotContains(entry.Burst.LatestMessageIDs, reply)
 		}
 	}
+}
+
+func TestBuildLoopsRetainsSourceDeletedQuestionAnchor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	question := f.PersistEmail(storetest.EmailSpec{Thread: "source-deleted-question", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Schedule", Body: "Can you send the schedule?", SentAt: f.now.Add(-48 * time.Hour)})
+	f.project()
+	message, err := f.Store.GetMessage(question)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.MarkMessageDeleted(message.SourceID, message.SourceMessageID))
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	requirements.NotNil(got.OpenLoops)
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(messageRef(question), got.OpenLoops.Items[0].Ref)
 }
