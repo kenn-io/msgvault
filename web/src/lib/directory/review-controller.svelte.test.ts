@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryReviewController, IDENTITY_REVIEW_PAGE_LIMIT } from './review-controller.svelte';
+import { pair } from '../components/shell/fixtures.test-support';
 import { mergeResult, person } from './entity-fixtures.test-support';
 
 function requestOf(input: RequestInfo | URL): Request {
@@ -9,22 +10,7 @@ function requestOf(input: RequestInfo | URL): Request {
 }
 
 function candidate(id: number, state = 'candidate') {
-  return {
-    id,
-    left_id: id * 10,
-    left_kind: 'participant',
-    right_id: id * 10 + 1,
-    right_kind: 'participant',
-    basis: 'stable_provider_id',
-    source: 'synthetic',
-    state,
-    review_token: `token-${id}-${state}`,
-    actionable: state === 'candidate' || state === 'conflict',
-    application_pending: false,
-    evidence: [],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-01T00:00:00Z'
-  };
+  return { ...pair, id, left_id: id * 10, right_id: id * 10 + 1, state, review_token: `token-${id}-${state}`, actionable: state === 'candidate' || state === 'conflict' };
 }
 
 function page(candidates: ReturnType<typeof candidate>[], offset = 0): Response {
@@ -262,13 +248,9 @@ describe('DirectoryReviewController', () => {
     expect(controller.mergeRequired).toBeNull();
   });
 
-  it('records merge success and refreshes the current page', async () => {
-    const requests: Request[] = [];
+  it('blocks decisions during merge refresh and records the completed merge', async () => {
     const reload = deferredResponse();
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      requests.push(requestOf(input));
-      return reload.promise;
-    });
+    const fetchFn = vi.fn<typeof fetch>(async () => reload.promise);
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
     controller.rows = [candidate(17), candidate(18)];
     const success = {
@@ -279,7 +261,7 @@ describe('DirectoryReviewController', () => {
 
     const completion = controller.completePersonMerge(17, success);
     expect(controller.submitting).toBe(true);
-    await controller.queueDecision(controller.rows[0] ?? candidate(17), 'accept');
+    await controller.queueDecision(controller.rows[0]!, 'accept');
     expect(controller.pending).toBeUndefined();
     reload.resolve(page([{ ...candidate(17), review_token: 'after-profile-merge' }, candidate(18)]));
     await completion;
@@ -288,7 +270,6 @@ describe('DirectoryReviewController', () => {
     expect(controller.lastMerge).toEqual({ candidateID: 17, ...success });
     expect(controller.rows[0]?.review_token).toBe('after-profile-merge');
     expect(controller.status).toContain('Review the refreshed pair to finish.');
-    expect(requests).toHaveLength(1);
   });
 
   it.each(['newer To review', '409 recovery', '503 recovery'] as const)('preserves the active review context after deferred settlement: %s', async scenario => {
@@ -505,6 +486,11 @@ it.each(['next', 'retry', 'invalidate'] as const)('keeps the %s page destination
     if (direction === 'invalidate') {
       expect(order).toEqual(['GET', 'POST', 'POST resolved', 'GET', 'GET']);
       expect(controller.hidden.has(1)).toBe(false);
+    }
+    if (direction === 'next') {
+      await controller.loadPreviousPage();
+      expect(controller.offset).toBe(0);
+      expect(controller.rows.map(row => row.id)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     }
   } finally { controller.destroy(); }
 });

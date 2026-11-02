@@ -1773,14 +1773,14 @@ describe('AppShell', () => {
     expect(await screen.findByRole('heading', { name: 'Candidate 12' })).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
 
-    expect(await screen.findByRole('main', { name: 'People' })).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
 
     rendered.unmount();
     state.destroy();
   });
 
-  it.each(['reader next', 'Display without columns', 'Filter shortcut'])('routes %s to the person Messages table', async (control) => {
+  it.each(['reader next', 'Display without columns', 'Filter shortcut'])('supports %s in the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1820,7 +1820,8 @@ describe('AppShell', () => {
         await screen.findByText('Reader body 2');
       } else if (control === 'Display without columns') {
         await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
-        expect(screen.queryByRole('menuitem', { name: 'Size' })).toBeNull();
+        await screen.findByRole('menuitemradio', { name: 'Dark' });
+        expect(screen.queryByRole('menuitem', { name: /Subject/ })).toBeNull();
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });

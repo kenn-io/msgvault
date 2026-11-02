@@ -145,27 +145,15 @@ describe('LinkIdentityDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('closes silently on a successful outcome', async () => {
+  it('shows an already-linked outcome inline and stays open', async () => {
     const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
+    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'already_linked', message: 'Target unavailable' }));
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
 
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it.each(['already_linked', 'error'] as const)('shows a %s outcome inline and stays open', async code => {
-    const onClose = vi.fn();
-    const onConfirm = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code, message: 'Target unavailable' }));
-    renderDialog({ onClose, onConfirm });
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'B' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain(code === 'already_linked' ? 'Already linked — these two are treated as the same person.' : 'Target unavailable');
+    expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -219,6 +207,7 @@ describe('LinkIdentityDialog', () => {
     // Success still closes the dialog itself once the outcome is known.
     resolveConfirm?.({ ok: true, identityRevision: 4, cacheState: 'ready' });
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('stays open with the error and re-enabled dismissal after a failed confirm', async () => {

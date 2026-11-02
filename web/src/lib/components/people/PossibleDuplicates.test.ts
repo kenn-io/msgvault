@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
@@ -45,38 +45,5 @@ it('keeps an accepted pair read-only when refreshing the queue fails', async () 
     expect(screen.queryByRole('button', { name: 'Keep separate' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull();
     expect(screen.getByText(/Merged/)).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-it('Next shows the unseen pair after settling a decision that removes the first row', async () => {
-  const remaining = Array.from({ length: 12 }, (_, index) => ({ ...pair, id: index + 1, left_id: (index + 1) * 10, right_id: (index + 1) * 10 + 1, review_token: `pair-${index + 1}` }));
-  const controller = new DirectoryReviewController(createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const url = new URL(request.url);
-    if (request.method === 'POST') {
-      const id = Number(url.pathname.split('/').at(-3));
-      const removed = remaining.splice(remaining.findIndex(row => row.id === id), 1)[0];
-      return Response.json({ candidate: { ...removed, state: 'accepted', actionable: false }, cache_state: 'ready' });
-    }
-    if (url.pathname.endsWith('/identity/match-candidates')) {
-      const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit'));
-      return Response.json({ candidates: remaining.slice(offset, offset + limit), offset, limit });
-    }
-    return Response.json({ id: Number(url.pathname.split('/').at(-1)), display_label: 'Synthetic participant', identifiers: [], activity_count: 1 });
-  }));
-  await controller.loadIdentityPage();
-  const view = render(PossibleDuplicates, { controller, onDecide: (row, decision) => void controller.queueDecision(row, decision) });
-  try {
-    expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(Array.from({ length: 10 }, (_, index) => `duplicate-${index + 1}`));
-    await fireEvent.click(within(document.getElementById('duplicate-1')!).getByRole('button', { name: 'Merge' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(['duplicate-11', 'duplicate-12']));
-    expect.soft(screen.getByRole('navigation', { name: 'Duplicate pages' }).textContent).toContain('Page 2');
-    await fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
-    await waitFor(() => expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(Array.from({ length: 10 }, (_, index) => `duplicate-${index + 2}`)));
-    expect(screen.getByText('Page 1', { exact: true })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect([...document.querySelectorAll('li[id^="duplicate-"]')].map(row => row.id)).toEqual(['duplicate-12']));
-    expect(screen.getByText('Page 2', { exact: true })).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });

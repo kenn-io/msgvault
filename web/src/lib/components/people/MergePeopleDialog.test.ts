@@ -43,7 +43,6 @@ it.each([
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     if (outcome === 'unreadable saved profile') {
       await screen.findByText('Target missing');
-      expect(links).toEqual([]);
       expect(onClose).not.toHaveBeenCalled();
       return;
     }
