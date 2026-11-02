@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, sourceMailbox, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -8,7 +8,7 @@ const run = (status: string, errors = 0) => ({
 
 describe('source labels', () => {
   it.each([
-    ['gmail', 'Gmail'], ['imap', 'IMAP'], ['msmail', 'Microsoft mail'], ['teams', 'Teams'],
+    ['gmail', 'Gmail'], ['imap', 'IMAP', 'imaps://work%40example.com@imap.example.com', 'work@example.com'], ['msmail', 'Microsoft mail'], ['teams', 'Teams'],
     ['discord', 'Discord'], ['meeting_import', 'Meeting import'], ['synctech_sms', 'SMS backup'],
     ['imazing_csv', 'iMazing CSV'], ['circleback', 'Circleback'], ['gcal', 'Google Calendar'],
     ['plaud', 'Plaud'], ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'], ['twilio', 'Twilio'], ['twenty', 'Twenty'],
@@ -17,7 +17,10 @@ describe('source labels', () => {
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
-  ])('names source type %j', (code, want) => expect(sourceTypeLabel(code)).toBe(want));
+  ])('names source type %j and its mailbox when supplied', (code, want, identifier?: string, mailbox?: string) => {
+    expect(sourceTypeLabel(code)).toBe(want);
+    if (identifier) expect(sourceMailbox(identifier)).toBe(mailbox);
+  });
 
   it.each([
     ['source_not_schedulable', 'Imported file — nothing to sync'],

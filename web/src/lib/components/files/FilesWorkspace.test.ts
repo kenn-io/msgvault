@@ -242,7 +242,7 @@ describe('FilesWorkspace', () => {
     const result = response();
     const first = result.files[0]!;
     first.source_type = 'imap';
-    first.source_identifier = 'imaps://work%40example.com@imap.example.com';
+    first.source_identifier = 'imap://work@example.com@imap.example.com';
     result.files.push({ ...first, id: 8, key: 'file:8', source_type: 'slack', source_identifier: 'https://chat.example.com/archive' });
     result.total_count = 2;
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(result));

@@ -70,13 +70,13 @@ export class ShellData {
     this.#controller?.abort();
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
-    const deletions = this.refreshDeletions();
+    void this.refreshDeletions();
     const duplicates = this.refreshDuplicates(controller.signal);
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
     if (views) this.#ordered = views;
-    await Promise.all([deletions, duplicates]);
+    await duplicates;
   }
 
   async refreshDuplicates(signal?: AbortSignal): Promise<void> {

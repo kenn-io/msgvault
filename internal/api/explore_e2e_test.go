@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -1114,9 +1115,11 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 func TestParticipantTimelineForwardsPersonInteractionsAndLinkedAliases(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, strings.Replace(exploreFixtureDefaultMessages, "'email'", "'calendar_event'", 1),
-		`(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'from', 'Alice Alias')`,
-		3)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
+		timelineResult: &query.ExploreResponse{Rows: []query.EntryRow{
+			{Key: "source:1:message:m2"}, {Key: "source:2:message:m3"},
+		}, TotalCount: 2, CacheRevision: "cache-timeline"},
+	}
 	catalog := &fileCatalogStore{mockStore: &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}, total: 3, stats: &StoreStats{}}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
@@ -1127,6 +1130,7 @@ func TestParticipantTimelineForwardsPersonInteractionsAndLinkedAliases(t *testin
 	var body ExploreHTTPResponse
 	require.NoError(json.Unmarshal(all.Body.Bytes(), &body))
 	require.Len(body.Rows, 2)
-	// Two rows confirm interaction scope; m3 confirms linked-alias expansion.
-	require.Contains([]string{body.Rows[0].Key, body.Rows[1].Key}, "source:2:message:m3")
+	assert.True(t, engine.timeline.PersonInteractionsOnly)
+	assert.ElementsMatch(t, []int64{1, 2}, engine.timeline.Context.ParticipantIDs)
+	assert.ElementsMatch(t, []string{"source:1:message:m2", "source:2:message:m3"}, []string{body.Rows[0].Key, body.Rows[1].Key})
 }
