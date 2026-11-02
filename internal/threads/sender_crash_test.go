@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestThreadsOnePublishAcrossCrashes(t *testing.T) {
-	for _, mode := range []string{"drop", "500", "after-barrier"} {
+	for _, mode := range []string{"drop", "500", "after-barrier", "cancel-after-barrier"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -22,14 +23,19 @@ func TestThreadsOnePublishAcrossCrashes(t *testing.T) {
 			if mode == "after-barrier" {
 				sender.afterDispatch = func() error { return errors.New("synthetic process death") }
 			}
-			result, err := sender.Send(t.Context(), f.request())
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "cancel-after-barrier" {
+				sender.afterDispatch = func() error { cancel(); return ctx.Err() }
+			}
+			result, err := sender.Send(ctx, f.request())
 			require.Error(err)
 			assert.Equal("remote_unknown", result.Status)
 			r, err := f.st.GetThreadsReplySendContext(t.Context(), f.draft.DraftID)
 			require.NoError(err)
 			assert.NotNil(r.PublishDispatchedAt)
 			expected := int32(1)
-			if mode == "after-barrier" {
+			if mode == "after-barrier" || mode == "cancel-after-barrier" {
 				expected = 0
 			}
 			assert.Equal(expected, f.publishes.Load())
@@ -238,4 +244,73 @@ func TestThreadsOnePublishBudgetBeforeBarrierRegression(t *testing.T) {
 	assert.Equal("500", result.MediaID)
 	assert.Equal(int32(1), f.creates.Load())
 	assert.Equal(int32(1), f.publishes.Load())
+}
+
+func TestThreadsOnePublishLimiterTimeBeforeBarrier(t *testing.T) {
+	for _, tc := range []struct{ remaining, oversleep time.Duration }{
+		{remaining: 250 * time.Millisecond},
+		{remaining: 500 * time.Millisecond},
+		{remaining: 750 * time.Millisecond},
+		{remaining: 750 * time.Millisecond, oversleep: 500 * time.Millisecond},
+	} {
+		name := tc.remaining.String()
+		if tc.oversleep > 0 {
+			name += "-delayed-wake"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := newSendFixture(t)
+				base, httpClient := f.api.base.String(), f.api.http
+				started := f.clock.Now()
+				oversleep := tc.oversleep
+				limiter := NewRateLimiter(f.clock.Now, func(ctx context.Context, delay time.Duration) error {
+					// Model a delayed wake deterministically, without relying on host scheduling.
+					if !f.clock.Now().Before(started.Add(31 * time.Second)) {
+						delay += oversleep
+						oversleep = 0
+					}
+					return f.clock.Wait(ctx, delay)
+				})
+				// Quota and create occur at 0.5s and 1s; the first status is at 31s.
+				// That status leaves a half-second limiter delay before publication.
+				budget := NewRequestBudget(BudgetOptions{MaxAttempts: 20, MaxDuration: 31*time.Second + tc.remaining, Now: f.clock.Now, Wait: f.clock.Wait, Limiter: limiter})
+				var err error
+				f.api, err = NewClient(ClientOptions{BaseURL: base, HTTPClient: httpClient, AccessToken: testToken, Budget: budget})
+				require.NoError(err)
+				result, err := NewSender(f.st, f.options).Send(t.Context(), f.request())
+				if tc.remaining > 500*time.Millisecond && tc.oversleep == 0 {
+					require.NoError(err)
+					assert.Equal("sent", result.RemoteStatus)
+					assert.Equal(int32(1), f.publishes.Load())
+					assert.Equal(4, budget.Attempts())
+					return
+				}
+				var pause *PauseError
+				require.ErrorAs(err, &pause)
+				assert.Equal("time_limit", pause.Reason)
+				assert.Equal("ready", result.Status)
+				assert.Equal("unpublished", result.RemoteStatus)
+				assert.Equal(3, budget.Attempts(), "refused publication must not consume a transport attempt")
+				assert.Zero(f.publishes.Load())
+				receipt, err := f.st.GetThreadsReplySendContext(t.Context(), f.draft.DraftID)
+				require.NoError(err)
+				assert.Nil(receipt.PublishDispatchedAt, "no publish request occurred; the draft must remain resumable")
+				assert.Equal("400", receipt.ContainerID)
+				// A fresh run retains the source limiter and publishes the existing container once.
+				resumed := NewRequestBudget(BudgetOptions{MaxAttempts: 20, Now: f.clock.Now, Wait: f.clock.Wait, Limiter: limiter})
+				f.api, err = NewClient(ClientOptions{BaseURL: base, HTTPClient: httpClient, AccessToken: testToken, Budget: resumed})
+				require.NoError(err)
+				result, err = NewSender(f.st, f.options).Send(t.Context(), f.request())
+				require.NoError(err)
+				assert.Equal("500", result.MediaID)
+				assert.Equal(int32(1), f.creates.Load())
+				assert.Equal(int32(1), f.publishes.Load())
+				_, err = NewSender(f.st, f.options).Send(t.Context(), f.request())
+				require.NoError(err)
+				assert.Equal(int32(1), f.publishes.Load(), "replaying the receipt cannot dispatch again")
+			})
+		})
+	}
 }

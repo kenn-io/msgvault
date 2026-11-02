@@ -53,7 +53,7 @@ func (c *Client) CreateReply(ctx context.Context, parent, body string) (string, 
 	var wire struct {
 		ID string `json:"id"`
 	}
-	err := c.postJSON(ctx, "/me/threads", url.Values{"media_type": {"TEXT"}, "reply_to_id": {parent}, "text": {body}}, &wire)
+	err := c.postJSON(ctx, "/me/threads", url.Values{"media_type": {"TEXT"}, "reply_to_id": {parent}, "text": {body}}, &wire, nil)
 	if err != nil && (!isPause(err) || wire.ID == "") {
 		return "", err
 	}
@@ -84,14 +84,14 @@ func (c *Client) ContainerStatus(ctx context.Context, id string) (string, error)
 	}
 	return "", ErrDecodeResponse
 }
-func (c *Client) PublishReply(ctx context.Context, owner, container string) (string, error) {
+func (c *Client) PublishReply(ctx context.Context, owner, container string, beforeDispatch func(context.Context) error) (string, error) {
 	if !validID(owner) || !validID(container) {
 		return "", errors.New("invalid Threads publish identity")
 	}
 	var wire struct {
 		ID string `json:"id"`
 	}
-	err := c.postJSON(ctx, "/"+owner+"/threads_publish", url.Values{"creation_id": {container}}, &wire)
+	err := c.postJSON(ctx, "/"+owner+"/threads_publish", url.Values{"creation_id": {container}}, &wire, beforeDispatch)
 	if err != nil && (!isPause(err) || wire.ID == "") {
 		return "", err
 	}
@@ -103,7 +103,7 @@ func (c *Client) PublishReply(ctx context.Context, owner, container string) (str
 
 // postJSON makes exactly one dispatch. The shared transport also refuses
 // redirects, connection replay and hidden retries. No idempotency key is used.
-func (c *Client) postJSON(ctx context.Context, path string, params url.Values, out any) error {
+func (c *Client) postJSON(ctx context.Context, path string, params url.Values, out any, beforeDispatch func(context.Context) error) error {
 	u := *c.base
 	u.Path += path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), strings.NewReader(params.Encode()))
@@ -114,7 +114,20 @@ func (c *Client) postJSON(ctx context.Context, path string, params url.Values, o
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	response, err := c.http.Do(req)
+	client := c.http
+	if beforeDispatch != nil {
+		transport, ok := client.Transport.(*budgetTransport)
+		if !ok {
+			return errors.New("threads publish transport does not support admission")
+		}
+		// The callback belongs to this request, never to the shared client.
+		preparedTransport := *transport
+		preparedTransport.beforeDispatch = beforeDispatch
+		preparedClient := *client
+		preparedClient.Transport = &preparedTransport
+		client = &preparedClient
+	}
+	response, err := client.Do(req)
 	if err != nil {
 		return safeRequestError(ctx, err)
 	}
@@ -135,15 +148,4 @@ func (c *Client) postJSON(ctx context.Context, path string, params url.Values, o
 		return &PauseError{Reason: "high_usage"}
 	}
 	return nil
-}
-
-// Admission remains separate from transport accounting. A known exhausted
-// workload must pause before committing the irreversible publish barrier.
-func (c *Client) checkPublishBudget(ctx context.Context) error {
-	if ctx.Err() != nil {
-		return safeRequestError(ctx, ctx.Err())
-	}
-	c.budget.mu.Lock()
-	defer c.budget.mu.Unlock()
-	return c.budget.check()
 }

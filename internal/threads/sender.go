@@ -431,29 +431,33 @@ func (s *Sender) markUnknown(ctx context.Context, r store.ThreadsReplySend) (sto
 	return next, nil
 }
 func (s *Sender) dispatch(ctx context.Context, r store.ThreadsReplySend, api PublishAPI) (SendResult, error) {
-	if budgeted, ok := api.(interface {
-		checkPublishBudget(ctx context.Context) error
-	}); ok {
-		if err := budgeted.checkPublishBudget(ctx); err != nil {
-			return replyResult(r), err
-		}
-	}
-	locked, won, err := s.dispatchBarrier(ctx, r)
-	if err != nil || !won {
-		return replyResult(locked), err
-	}
-	r = locked
-	if s.afterDispatch != nil {
-		if err = s.afterDispatch(); err != nil {
-			unknown, saveErr := s.markUnknown(ctx, r)
-			return replyResult(unknown), errors.Join(err, saveErr)
-		}
-	}
 	_, owner, err := ParseSourceIdentifier(r.SourceIdentifier)
 	if err != nil {
 		return replyResult(r), err
 	}
-	media, publishErr := api.PublishReply(ctx, owner, r.ContainerID)
+	var reached, won bool
+	var barrierErr error
+	media, publishErr := api.PublishReply(ctx, owner, r.ContainerID, func(dispatchCtx context.Context) error {
+		reached = true
+		r, won, barrierErr = s.dispatchBarrier(dispatchCtx, r)
+		if barrierErr == nil && won && s.afterDispatch != nil {
+			barrierErr = s.afterDispatch()
+		}
+		return barrierErr
+	})
+	if !reached {
+		// Admission failed with no durable barrier and no transport dispatch.
+		return replyResult(r), publishErr
+	}
+	if !won {
+		return replyResult(r), barrierErr
+	}
+	if barrierErr != nil {
+		publishErr = barrierErr
+	}
+
+	// After a confirmed barrier commit, cancellation or a crash keeps the
+	// outcome uncertain even if the provider may not have received the request.
 	if !validID(media) {
 		if publishErr == nil {
 			publishErr = ErrDecodeResponse

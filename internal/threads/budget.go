@@ -130,41 +130,61 @@ func (b *RequestBudget) check() error {
 }
 
 func (b *RequestBudget) acquire(ctx context.Context) error {
+	release, err := b.reserve(ctx)
+	if release != nil {
+		release()
+	}
+	return err
+}
+
+// reserve holds the source limiter until release. A publish keeps this lease
+// through its durable barrier and transport call, so no later acquire can fail
+// after committing the barrier or take its slot in the meantime.
+func (b *RequestBudget) reserve(ctx context.Context) (release func(), err error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	b.mu.Lock()
-	err := b.check()
+	err = b.check()
 	l := b.limiter
 	b.mu.Unlock()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	select {
 	case l.gate <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
-	defer func() { <-l.gate }()
+	defer func() {
+		if release == nil {
+			<-l.gate
+		}
+	}()
 	if delay := l.next.Sub(l.now()); delay > 0 {
 		if delay >= b.Remaining() {
-			return &PauseError{Reason: "time_limit"}
+			return nil, &PauseError{Reason: "time_limit"}
 		}
 		if err := l.wait(ctx, delay); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if err := b.check(); err != nil {
-		return err
+		return nil, err
 	}
 	l.next = l.now().Add(time.Second / 2)
 	b.attempts++
-	return nil
+	return func() {
+		// Include time spent committing the barrier and contacting the provider.
+		// This can only make the shared limiter more conservative.
+		l.next = l.now().Add(time.Second / 2)
+		<-l.gate
+	}, nil
 }
 
 // NewBudgetedHTTPClient preserves the provided transport and settings on a
@@ -202,13 +222,24 @@ func NewBudgetedHTTPClient(c *http.Client, b *RequestBudget) *http.Client {
 }
 
 type budgetTransport struct {
-	base   http.RoundTripper
-	budget *RequestBudget
+	base           http.RoundTripper
+	budget         *RequestBudget
+	beforeDispatch func(context.Context) error
 }
 
 func (t *budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(r.Context(), t.budget.Remaining())
-	if err := t.budget.acquire(ctx); err != nil {
+	var err error
+	if t.beforeDispatch == nil {
+		err = t.budget.acquire(ctx)
+	} else {
+		var release func()
+		release, err = t.budget.reserve(ctx)
+		if release != nil {
+			defer release()
+		}
+	}
+	if err != nil {
 		cancel()
 		if pause := workloadPause(r.Context()); pause != nil {
 			return nil, pause
@@ -220,6 +251,12 @@ func (t *budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			return nil, &PauseError{Reason: "time_limit"}
 		}
 		return nil, err
+	}
+	if t.beforeDispatch != nil {
+		if err := t.beforeDispatch(ctx); err != nil {
+			cancel()
+			return nil, err
+		}
 	}
 	response, err := t.base.RoundTrip(r.Clone(ctx))
 	if err != nil {

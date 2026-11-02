@@ -166,7 +166,8 @@ type PublishAPI interface {
 	ReplyQuota(ctx context.Context) (ReplyQuota, error)
 	CreateReply(ctx context.Context, parent, body string) (string, error)
 	ContainerStatus(ctx context.Context, id string) (string, error)
-	PublishReply(ctx context.Context, owner, container string) (string, error)
+	// PublishReply calls beforeDispatch after admission, before its single dispatch.
+	PublishReply(ctx context.Context, owner, container string, beforeDispatch func(context.Context) error) (string, error)
 }
 
 type ReplyQuota struct {

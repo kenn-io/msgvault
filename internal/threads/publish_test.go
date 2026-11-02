@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +63,7 @@ func TestThreadsPublishProtocolHTTP(t *testing.T) {
 	status, err := client.ContainerStatus(t.Context(), container)
 	require.NoError(err)
 	assert.Equal("FINISHED", status)
-	media, err := client.PublishReply(t.Context(), "456", container)
+	media, err := client.PublishReply(t.Context(), "456", container, nil)
 	require.NoError(err)
 	assert.Equal(testID, media)
 	assert.Equal(4, budget.Attempts())
@@ -104,7 +106,7 @@ func TestThreadsPublishProtocolNeverRetriesPosts(t *testing.T) {
 				if method == "create" {
 					_, err = client.CreateReply(t.Context(), "100", "reviewed")
 				} else {
-					_, err = client.PublishReply(t.Context(), "456", "400")
+					_, err = client.PublishReply(t.Context(), "456", "400", nil)
 				}
 				require.Error(t, err)
 				assert.NotContains(fmt.Sprint(err), "synthetic-secret-body")
@@ -135,7 +137,7 @@ func TestThreadsPublishProtocolPreservesBudgetPause(t *testing.T) {
 	_, err = client.CreateReply(t.Context(), "100", "reviewed")
 	_, paused := errors.AsType[*PauseError](err)
 	assert.True(paused, "%v", err)
-	_, err = client.PublishReply(t.Context(), "456", "400")
+	_, err = client.PublishReply(t.Context(), "456", "400", nil)
 	_, paused = errors.AsType[*PauseError](err)
 	assert.True(paused, "%v", err)
 	assert.Equal(int32(1), calls.Load())
@@ -155,7 +157,7 @@ func TestThreadsPublishProtocolHighUsageRetainsReturnedID(t *testing.T) {
 				if method == "create" {
 					return client.CreateReply(t.Context(), "100", "reviewed")
 				}
-				return client.PublishReply(t.Context(), "456", "400")
+				return client.PublishReply(t.Context(), "456", "400", nil)
 			}
 			id, err := call()
 			assert.Equal(testID, id)
@@ -168,4 +170,110 @@ func TestThreadsPublishProtocolHighUsageRetainsReturnedID(t *testing.T) {
 			assert.Equal(int32(1), calls.Load())
 		})
 	}
+}
+
+func TestThreadsPublishAdmissionHoldsSourceSlot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		started := time.Now()
+		limiter := NewRateLimiter(nil, nil)
+		budget := NewRequestBudget(BudgetOptions{MaxDuration: time.Second, Limiter: limiter})
+		type requestStart struct {
+			path string
+			at   time.Time
+		}
+		requests := make(chan requestStart, 2)
+		// A single-dispatch transport supplies synthetic provider responses while
+		// synctest controls limiter waits and time spent committing the barrier.
+		httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			requests <- requestStart{r.URL.Path, time.Now()}
+			response := httptest.NewRecorder()
+			if r.URL.Path == "/v1.0/456/threads_publish" {
+				respond(response, 200, `{"id":"500"}`)
+			} else {
+				respond(response, 200, `{"data":[{"reply_quota_usage":0,"reply_config":{"quota_total":1000,"quota_duration":86400}}]}`)
+			}
+			return response.Result(), nil
+		})}
+		client, err := NewClient(ClientOptions{HTTPClient: httpClient, BaseURL: "https://example.com/v1.0", AccessToken: testToken, Budget: budget})
+		require.NoError(err)
+		other, err := NewClient(ClientOptions{HTTPClient: httpClient, BaseURL: "https://example.com/v1.0", AccessToken: testToken, Budget: NewRequestBudget(BudgetOptions{Limiter: limiter})})
+		require.NoError(err)
+		otherDone := make(chan error, 1)
+		media, err := client.PublishReply(t.Context(), "456", "400", func(context.Context) error {
+			go func() {
+				_, err := other.ReplyQuota(t.Context())
+				otherDone <- err
+			}()
+			synctest.Wait()
+			time.Sleep(250 * time.Millisecond)
+			return nil
+		})
+		require.NoError(err)
+		assert.Equal("500", media)
+		require.NoError(<-otherDone)
+		first, second := <-requests, <-requests
+		assert.Equal("/v1.0/456/threads_publish", first.path)
+		assert.Equal(started.Add(750*time.Millisecond), first.at)
+		assert.Equal("/v1.0/me/threads_publishing_limit", second.path)
+		assert.GreaterOrEqual(second.at.Sub(first.at), 500*time.Millisecond, "a shared-budget request cannot steal the publish slot during the barrier")
+		assert.Equal(1, budget.Attempts(), "publish admission and dispatch consume one slot")
+	})
+}
+
+func TestThreadsPublishAdmissionCallerDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var calls atomic.Int32
+		budget := NewRequestBudget(BudgetOptions{})
+		client, err := NewClient(ClientOptions{BaseURL: "https://example.com/v1.0", AccessToken: testToken, Budget: budget, HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, errors.New("unexpected dispatch")
+		})}})
+		require.NoError(err)
+		ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+		defer cancel()
+		barrier := false
+		_, err = client.PublishReply(ctx, "456", "400", func(context.Context) error {
+			barrier = true
+			return nil
+		})
+		require.ErrorIs(err, context.DeadlineExceeded)
+		assert.False(barrier, "a caller deadline during admission must not commit a barrier")
+		assert.Zero(calls.Load())
+		assert.Zero(budget.Attempts())
+	})
+}
+
+func TestThreadsPublishAdmissionDeadlineAfterBarrier(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var dispatches atomic.Int32
+		budget := NewRequestBudget(BudgetOptions{MaxDuration: time.Second})
+		client, err := NewClient(ClientOptions{BaseURL: "https://example.com/v1.0", AccessToken: testToken, Budget: budget, HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			// A transport can reject an expired context before sending bytes.
+			if err := r.Context().Err(); err != nil {
+				return nil, err
+			}
+			dispatches.Add(1)
+			return nil, errors.New("unexpected dispatch")
+		})}})
+		require.NoError(err)
+		barrier := false
+		_, err = client.PublishReply(t.Context(), "456", "400", func(context.Context) error {
+			barrier = true
+			// Model expiry after commit, e.g. during the durable-state readback.
+			time.Sleep(time.Second)
+			return nil
+		})
+		var pause *PauseError
+		require.ErrorAs(err, &pause)
+		assert.Equal("time_limit", pause.Reason)
+		assert.True(barrier, "a lease cannot make commit and HTTP dispatch atomic")
+		assert.Zero(dispatches.Load())
+		assert.Equal(1, budget.Attempts(), "an admitted publish consumes one slot without reacquiring")
+	})
 }
