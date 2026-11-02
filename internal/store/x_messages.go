@@ -240,6 +240,12 @@ func (s *Store) persistXPostTx(ctx context.Context, tx *loggedTx, p XPersistPost
 	if p.Author == nil && p.Availability == "public" {
 		p.Availability = "unverified"
 	}
+	if plan.SuppressedAt.Valid || plan.CleanupPending {
+		// Replayed suppressed content only supports numeric/protection evidence.
+		// It cannot republish profile values erased by completed cleanup.
+		author.Username = ""
+		author.DisplayName = ""
+	}
 	pid, err := s.recordXAuthorTx(ctx, tx, author)
 	if err != nil {
 		return XPersistPostResult{}, err

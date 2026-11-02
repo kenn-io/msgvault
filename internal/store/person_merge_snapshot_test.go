@@ -122,6 +122,47 @@ func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *test
 	assertPersonMergeTableInventory(t, newPGStoreInternal(t, dbURL))
 }
 
+const postgresPersonMergeReferenceQuery = `SELECT child.relname, column_info.attname
+	FROM pg_catalog.pg_constraint reference
+	JOIN pg_catalog.pg_class child ON child.oid = reference.conrelid
+	JOIN pg_catalog.pg_namespace child_schema ON child_schema.oid = child.relnamespace
+	JOIN pg_catalog.pg_class target ON target.oid = reference.confrelid
+	JOIN pg_catalog.pg_namespace target_schema ON target_schema.oid = target.relnamespace
+	CROSS JOIN LATERAL unnest(reference.conkey) AS key_column(attnum)
+	JOIN pg_catalog.pg_attribute column_info
+	  ON column_info.attrelid = child.oid AND column_info.attnum = key_column.attnum
+	WHERE reference.contype = 'f' AND child_schema.nspname = current_schema()
+	  AND target_schema.nspname = current_schema() AND target.relname = 'persons'
+	ORDER BY child.relname, column_info.attname`
+
+func TestPostgresPersonMergeInventoryIncludesCompositeColumns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	_, err := st.db.Exec(`CREATE UNIQUE INDEX test_person_inventory_identity ON persons(id,vcard_uid)`)
+	require.NoError(err)
+	_, err = st.db.Exec(`CREATE TABLE test_person_inventory_composite (
+		person_id BIGINT,
+		person_uid TEXT,
+		FOREIGN KEY (person_id,person_uid) REFERENCES persons(id,vcard_uid)
+	)`)
+	require.NoError(err)
+	rows, err := st.db.Query(postgresPersonMergeReferenceQuery)
+	require.NoError(err)
+	defer func() { assert.NoError(rows.Close()) }()
+	var columns []string
+	for rows.Next() {
+		var table, column string
+		require.NoError(rows.Scan(&table, &column))
+		if table == "test_person_inventory_composite" {
+			columns = append(columns, column)
+		}
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"person_id", "person_uid"}, columns)
+}
+
 func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 	t.Helper()
 	require := require.New(t)
@@ -135,21 +176,7 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		query = `SELECT constraints.table_name, columns.column_name
-			FROM information_schema.table_constraints constraints
-			JOIN information_schema.key_column_usage columns
-			  ON columns.constraint_catalog = constraints.constraint_catalog
-			 AND columns.constraint_schema = constraints.constraint_schema
-			 AND columns.constraint_name = constraints.constraint_name
-			JOIN information_schema.constraint_column_usage target
-			  ON target.constraint_catalog = constraints.constraint_catalog
-			 AND target.constraint_schema = constraints.constraint_schema
-			 AND target.constraint_name = constraints.constraint_name
-			WHERE constraints.constraint_type = 'FOREIGN KEY'
-			  AND constraints.table_schema = current_schema()
-			  AND target.table_schema = current_schema()
-			  AND target.table_name = 'persons'
-			ORDER BY constraints.table_name, columns.column_name`
+		query = postgresPersonMergeReferenceQuery
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)

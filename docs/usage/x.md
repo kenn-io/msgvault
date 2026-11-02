@@ -195,6 +195,10 @@ X refresh, local removal, and removal-record export use
 Snapshot recovery remains the generic `msgvault backup restore` command with
 the current X removal record and head.
 
+An expanded-author lookup failure does not prove that a post was deleted.
+Automatic deletion needs a resource-not-found error explicitly identifying a
+post. Errors with an unknown resource type leave page coverage unresolved.
+
 The owner handles written removal requests within 24 hours; polling is not a
 promise to discover every deletion within that time. Read-only source status
 shows the last complete refresh sweep, oldest unchecked time, outstanding work

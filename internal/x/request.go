@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/httpretry"
 )
 
-var ErrReadRetryDelay = errors.New("X read retry would exceed fifteen minutes of waiting")
+var ErrReadRetryDelay = errors.New("x read retry would exceed fifteen minutes of waiting")
 
 func xReadRetryDelay(apiError *APIError, attempt int, now time.Time) (time.Duration, error) {
 	delay := time.Duration(0)

@@ -476,7 +476,7 @@ func TestXReadPreservesAllResourcesAndIncompleteSettlement(t *testing.T) {
 	_testRequire := require.New(t)
 
 	f := newBudgetFixture(t, func(_ *budgetFixture, w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`,`+rootJSON+`,`+rootJSON+`],"includes":{"users":[{"id":"1001","username":"example_user","name":"Example User"}]},"errors":[{"resource_id":"9999","title":"Synthetic partial error"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`,`+rootJSON+`,`+rootJSON+`],"includes":{"users":[{"id":"1001","username":"example_user","name":"Example User"}]},"errors":[{"resource_type":"tweet","resource_id":"9999","title":"Synthetic partial error"}]}`)
 	})
 	page, err := f.api.Timeline(t.Context(), TimelineRequest{OwnerID: "100", MaxResults: 5})
 	_testRequire.NoError(err)

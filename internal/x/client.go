@@ -25,12 +25,12 @@ const (
 )
 
 var (
-	ErrDecodeResponse = errors.New("X API response could not be decoded; check API field compatibility")
-	ErrResponseShape  = errors.New("X API returned resources beyond the admitted request shape")
+	ErrDecodeResponse = errors.New("x API response could not be decoded; check API field compatibility")
+	ErrResponseShape  = errors.New("x API returned resources beyond the admitted request shape")
 	// ErrReadModelExceeded distinguishes billable count excess from malformed
 	// objects and unexpected IDs, which do not establish a pricing-model excess.
-	ErrReadModelExceeded = fmt.Errorf("X read resource count exceeds the admitted model: %w", ErrResponseShape)
-	ErrTransport         = errors.New("X API transport failed; request outcome may be unknown")
+	ErrReadModelExceeded = fmt.Errorf("x read resource count exceeds the admitted model: %w", ErrResponseShape)
+	ErrTransport         = errors.New("x API transport failed; request outcome may be unknown")
 )
 
 // APIError omits provider-controlled text, URLs, and credentials.
@@ -63,7 +63,7 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 	c := &Client{baseURL: strings.TrimRight(baseURL, "/")}
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && (u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()))) {
-		c.initErr = errors.New("X API base URL must be HTTPS or a loopback test endpoint")
+		c.initErr = errors.New("x API base URL must be HTTPS or a loopback test endpoint")
 	}
 	c.http = singleRequestHTTPClient(httpClient)
 	return c
@@ -164,7 +164,7 @@ func fields() url.Values {
 }
 func bounds(q url.Values, after, before time.Time) error {
 	if !after.IsZero() && !before.IsZero() && !after.Before(before) {
-		return errors.New("X time bounds must increase")
+		return errors.New("x time bounds must increase")
 	}
 	if !after.IsZero() {
 		q.Set("start_time", after.UTC().Format(time.RFC3339Nano))
@@ -237,12 +237,12 @@ func (c *Client) SearchAll(ctx context.Context, r SearchRequest) (Page, error) {
 }
 func (c *Client) Lookup(ctx context.Context, ids []string) (Page, error) {
 	if len(ids) < 1 || len(ids) > 100 {
-		return Page{}, errors.New("X lookup requires 1–100 unique IDs")
+		return Page{}, errors.New("x lookup requires 1–100 unique IDs")
 	}
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if ValidateID(id) != nil || seen[id] {
-			return Page{}, errors.New("X lookup requires valid unique IDs")
+			return Page{}, errors.New("x lookup requires valid unique IDs")
 		}
 		seen[id] = true
 	}
@@ -397,10 +397,11 @@ func decodePage(b []byte, maxResults int) (Page, error) {
 			ResultCount *int   `json:"result_count"`
 		} `json:"meta"`
 		Errors []struct {
-			ID    string `json:"resource_id"`
-			Value string `json:"value"`
-			Type  string `json:"type"`
-			Title string `json:"title"`
+			ID           string `json:"resource_id"`
+			ResourceType string `json:"resource_type"`
+			Value        string `json:"value"`
+			Type         string `json:"type"`
+			Title        string `json:"title"`
 		} `json:"errors"`
 	}
 	if json.Unmarshal(b, &env) != nil {
@@ -461,13 +462,14 @@ func decodePage(b []byte, maxResults int) (Page, error) {
 		if id != "" && ValidateID(id) != nil {
 			return Page{}, ErrDecodeResponse
 		}
-		// Only explicit item-level resource-not-found evidence confirms removal.
-		unavailable := item.Type == "https://api.x.com/2/problems/resource-not-found" || item.Type == "https://api.twitter.com/2/problems/resource-not-found"
+		// Expanded-author failures and untyped errors cannot prove post deletion.
+		postResource := item.ResourceType == "tweet" || item.ResourceType == "post"
+		unavailable := postResource && (item.Type == "https://api.x.com/2/problems/resource-not-found" || item.Type == "https://api.twitter.com/2/problems/resource-not-found")
 		code := "item_unresolved"
 		if unavailable {
 			code = "unavailable"
 		}
-		page.Errors = append(page.Errors, ItemError{ID: id, Code: code, Unavailable: unavailable && id != ""})
+		page.Errors = append(page.Errors, ItemError{ID: id, ResourceType: item.ResourceType, Code: code, Unavailable: unavailable && id != ""})
 	}
 	return page, nil
 }

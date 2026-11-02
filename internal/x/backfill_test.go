@@ -372,7 +372,7 @@ func TestXArchivePartialItemRepairUsesSameJob(t *testing.T) {
 		}
 		pages.Add(1)
 		if r.URL.Query().Get("next_token") == "" {
-			_, _ = fmt.Fprintf(w, `{"data":[%s],"includes":{"users":[{"id":"1001","username":"example_owner","protected":false}]},"errors":[{"resource_id":"101","title":"Synthetic transient item"}],"meta":{"next_token":"second"}}`, wireOwnPost("102", now.Add(-time.Minute)))
+			_, _ = fmt.Fprintf(w, `{"data":[%s],"includes":{"users":[{"id":"1001","username":"example_owner","protected":false}]},"errors":[{"resource_type":"tweet","resource_id":"101","title":"Synthetic transient item"}],"meta":{"next_token":"second"}}`, wireOwnPost("102", now.Add(-time.Minute)))
 			return
 		}
 		wireImportPage(w, []string{wireOwnPost("100", now.Add(-3*time.Minute))}, "")

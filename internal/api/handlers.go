@@ -3922,8 +3922,6 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const messageBodySearchScope = "body"
-
 // handleDeepSearch performs composite full-text search, or exact body-only
 // search when scope=body is requested.
 // GET /api/v1/search/deep?q=invoice&scope=body&offset=0&limit=100&source_id=1&hide_deleted=true.

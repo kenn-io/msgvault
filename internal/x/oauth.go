@@ -204,7 +204,7 @@ func Authorize(parent context.Context, opts OAuthOptions) (TokenRecord, error) {
 	case <-ctx.Done():
 		return TokenRecord{}, ctx.Err()
 	case <-serveDone:
-		return TokenRecord{}, errors.New("X authorization callback server stopped")
+		return TokenRecord{}, errors.New("x authorization callback server stopped")
 	}
 }
 
@@ -240,12 +240,12 @@ func recordFromToken(previous TokenRecord, token *oauth2.Token, now time.Time, i
 	if initial {
 		for _, required := range readScopes {
 			if !slices.Contains(scopes, required) {
-				return TokenRecord{}, errors.New("X authorization did not grant required read scopes")
+				return TokenRecord{}, errors.New("x authorization did not grant required read scopes")
 			}
 		}
 	}
 	if len(scopes) == 0 {
-		return TokenRecord{}, errors.New("X token response has no granted scopes")
+		return TokenRecord{}, errors.New("x token response has no granted scopes")
 	}
 	refresh := token.RefreshToken
 	if refresh == "" {
@@ -274,7 +274,7 @@ func validateOAuthEndpoint(raw string) error {
 			return nil
 		}
 	}
-	return errors.New("X OAuth endpoints require HTTPS or a loopback test server")
+	return errors.New("x OAuth endpoints require HTTPS or a loopback test server")
 }
 func oauthHTTPClient(base *http.Client) *http.Client {
 	client := singleRequestHTTPClient(base)

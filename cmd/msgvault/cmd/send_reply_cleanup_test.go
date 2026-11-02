@@ -169,7 +169,7 @@ func TestXReplyMismatchKeepsUnavailableAdoptionEvidence(t *testing.T) {
 				}
 				_testAssert.Equal("9001", r.URL.Query().Get("ids"))
 				if reason == "deleted" {
-					_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"9001","type":"https://api.x.com/2/problems/resource-not-found"},{"resource_id":"9002","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+					_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"9001","type":"https://api.x.com/2/problems/resource-not-found"},{"resource_type":"tweet","resource_id":"9002","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
 					return
 				}
 				_, _ = fmt.Fprint(w, `{"data":[{"id":"9001","author_id":"1001","conversation_id":"100","text":"owner reply","created_at":"2026-10-31T06:00:00Z","edit_history_tweet_ids":["9001"],"referenced_tweets":[{"type":"replied_to","id":"102"}],"withheld":{"copyright":true}}]}`)

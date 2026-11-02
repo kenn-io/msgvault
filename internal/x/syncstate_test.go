@@ -73,7 +73,7 @@ func TestXWalkItemObligationsPreventPublication(t *testing.T) {
 	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
 	walk, err := prepareTimelineWalk("1001", "timeline", nil, time.Time{}, now)
 	_testRequire.NoError(err)
-	partial, err := advanceWalk(walk, Page{Posts: []Post{{ID: "102", CreatedAt: now.Add(-time.Minute)}}, Errors: []ItemError{{ID: "101", Code: "temporary"}}})
+	partial, err := advanceWalk(walk, Page{Posts: []Post{{ID: "102", CreatedAt: now.Add(-time.Minute)}}, Errors: []ItemError{{ResourceType: "tweet", ID: "101", Code: "temporary"}}})
 	_testRequire.NoError(err)
 	_testAssert.Equal([]string{"101"}, partial.UnresolvedIDs)
 	_testAssert.True(walkExhausted(partial))
@@ -142,7 +142,7 @@ func TestXWalkIgnoresAboveCeilingAndBoundsObligations(t *testing.T) {
 	for i := range full.UnresolvedIDs {
 		full.UnresolvedIDs[i] = "101"
 	}
-	_, err = advanceWalk(&full, Page{Errors: []ItemError{{ID: "102"}}})
+	_, err = advanceWalk(&full, Page{Errors: []ItemError{{ResourceType: "tweet", ID: "102"}}})
 	_testRequire.Error(err)
 	_testAssert.Len(full.UnresolvedIDs, store.XMaxUnresolvedIDs)
 }
@@ -154,7 +154,7 @@ func TestXWalkItemLookupPublishesItsObservedID(t *testing.T) {
 	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
 	walk, err := prepareTimelineWalk("1001", "timeline", nil, time.Time{}, now)
 	_testRequire.NoError(err)
-	partial, err := advanceWalk(walk, Page{Posts: []Post{{ID: "50", CreatedAt: now.Add(-time.Minute)}}, Errors: []ItemError{{ID: "101", Code: "temporary"}}})
+	partial, err := advanceWalk(walk, Page{Posts: []Post{{ID: "50", CreatedAt: now.Add(-time.Minute)}}, Errors: []ItemError{{ResourceType: "tweet", ID: "101", Code: "temporary"}}})
 	_testRequire.NoError(err)
 	resolved, err := resolveWalkItems(partial, []string{"101"}, Post{ID: "101", CreatedAt: now.Add(-time.Minute)})
 	_testRequire.NoError(err)

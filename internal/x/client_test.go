@@ -123,7 +123,7 @@ func TestClientRequestContracts(t *testing.T) {
 			assert.Equal(t, "5", q.Get("max_results"))
 			assert.Equal(t, "2026-10-29T13:00:00Z", q.Get("end_time"))
 			assert.Empty(t, q.Get("exclude")) // Owner replies must remain eligible.
-			_, _ = fmt.Fprint(w, `{"data":[],"meta":{"next_token":"page-3"},"errors":[{"resource_id":"91","title":"Temporary error"}]}`)
+			_, _ = fmt.Fprint(w, `{"data":[],"meta":{"next_token":"page-3"},"errors":[{"resource_type":"tweet","resource_id":"91","title":"Temporary error"}]}`)
 		case "/tweets/search/all":
 			assert.Equal(t, "recency", q.Get("sort_order"))
 			assert.Equal(t, "from:example_author -is:retweet", q.Get("query"))

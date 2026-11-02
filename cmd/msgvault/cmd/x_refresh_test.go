@@ -85,7 +85,7 @@ func TestXRefreshDistinguishesRemovalFromUnknown(t *testing.T) {
 				assert.Equal(t, "102", r.URL.Query().Get("ids"))
 				switch tc.mode {
 				case "deleted":
-					_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}],"meta":{"result_count":0}}`)
+					_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}],"meta":{"result_count":0}}`)
 				case "unauthorized":
 					w.WriteHeader(http.StatusUnauthorized)
 				case "forbidden":
@@ -199,7 +199,7 @@ func TestXRefreshRequiresActualCleanupAndResumesWithoutReadAccess(t *testing.T) 
 			var calls atomic.Int32
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
-				_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}],"meta":{"result_count":0}}`)
+				_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}],"meta":{"result_count":0}}`)
 			}))
 			t.Cleanup(provider.Close)
 			policy, err := f.cfg.XAccount("1001")
@@ -336,7 +336,7 @@ func TestXCollectionCleanupResolvesTerminalItemsWithoutPaidReplay(t *testing.T) 
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/tweets" {
 					lookups.Add(1)
-					_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+					_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
 					return
 				}
 				if r.URL.Path != "/users/1001/mentions" || r.URL.Query().Get("start_time") != "" {
@@ -345,7 +345,7 @@ func TestXCollectionCleanupResolvesTerminalItemsWithoutPaidReplay(t *testing.T) 
 				}
 				mentions.Add(1)
 				if mode == "deleted" {
-					_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+					_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
 					return
 				}
 				withheld := ""
@@ -427,7 +427,7 @@ func TestXCollectionOwnerResumesForeignCopyAfterReleasingExecution(t *testing.T)
 		}
 		if r.URL.Path == "/users/1001/mentions" && r.URL.Query().Get("start_time") == "" {
 			mentions.Add(1)
-			_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+			_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
 			return
 		}
 		_, _ = fmt.Fprint(w, `{"data":[]}`)

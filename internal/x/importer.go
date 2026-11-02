@@ -15,11 +15,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-var ErrIncompleteCoverage = errors.New("X collection has unresolved coverage")
+var ErrIncompleteCoverage = errors.New("x collection has unresolved coverage")
 
-var ErrArchiveRefreshRequired = errors.New("X refresh is due or incomplete")
+var ErrArchiveRefreshRequired = errors.New("x refresh is due or incomplete")
 
-var errRunCostEstimate = errors.New("X run cost estimate cannot be reconciled")
+var errRunCostEstimate = errors.New("x run cost estimate cannot be reconciled")
 
 // ImportOptions pins collection to an existing verified numeric account.
 type ImportOptions struct {
@@ -79,20 +79,20 @@ func NewImporter(st *store.Store, api API, policy config.XAccountConfig, credent
 // short. The raw API is wrapped exactly once; checkpoints are diagnostic only.
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *ImportSummary, retErr error) {
 	if imp == nil || imp.store == nil || imp.api == nil || imp.credentials == nil || opts.SourceID <= 0 || ValidateID(opts.OwnerID) != nil {
-		return nil, errors.New("X import requires a source, verified owner, API and credentials")
+		return nil, errors.New("x import requires a source, verified owner, API and credentials")
 	}
 	if err := imp.policy.Validate(opts.OwnerID); err != nil {
 		return nil, err
 	}
 	if !opts.Archive && (opts.MaxSpendMicros != nil || opts.JobID != "" || opts.NewJob) {
-		return nil, errors.New("X archive job options require archive mode")
+		return nil, errors.New("x archive job options require archive mode")
 	}
 	source, err := imp.store.GetSourceByIDContext(ctx, opts.SourceID)
 	if err != nil {
 		return nil, err
 	}
 	if source.SourceType != "x" || source.Identifier != opts.OwnerID || source.MergedIntoSourceID != 0 {
-		return nil, errors.New("X import source does not match its numeric owner")
+		return nil, errors.New("x import source does not match its numeric owner")
 	}
 	summary = &ImportSummary{SourceID: source.ID, Status: "partial", Mode: "collection"}
 	if opts.Archive {
@@ -205,7 +205,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	var failures []error
 	for _, entry := range walks {
 		if err := imp.collectWalk(ctx, admitted, summary, opts.OwnerID, entry.segment, entry.walk); err != nil {
-			failures = append(failures, fmt.Errorf("X %s walk: %w", entry.segment, err))
+			failures = append(failures, fmt.Errorf("x %s walk: %w", entry.segment, err))
 			var rejected *APIError
 			if errors.As(err, &rejected) && rejected.StatusCode == http.StatusPaymentRequired {
 				// Credits belong to the account. Trying its other endpoint
@@ -284,7 +284,7 @@ func (imp *Importer) collectWalk(ctx context.Context, api API, summary *ImportSu
 			}
 		}
 		if len(walk.SeenTokens) >= 1000 {
-			return errors.New("X page checkpoint capacity reached")
+			return errors.New("x page checkpoint capacity reached")
 		}
 		var page Page
 		var err error
@@ -313,7 +313,7 @@ func (imp *Importer) collectWalk(ctx context.Context, api API, summary *ImportSu
 		progress.Errors = slices.Clone(page.Errors)
 		for _, post := range page.Posts {
 			if postUnavailable(post, page.Users) {
-				progress.Errors = append(progress.Errors, ItemError{ID: post.ID, Code: "unavailable", Unavailable: true})
+				progress.Errors = append(progress.Errors, ItemError{ID: post.ID, ResourceType: "tweet", Code: "unavailable", Unavailable: true})
 			}
 		}
 		next, err := advanceWalk(walk, progress)

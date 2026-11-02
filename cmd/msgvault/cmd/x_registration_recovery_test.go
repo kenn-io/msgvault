@@ -72,14 +72,14 @@ func testXRegistrationRecovery(t *testing.T, beforePublication bool) {
 			mu.Unlock()
 			if token == "example-refresh" && count > 1 {
 				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprint(w, `{"error":"invalid_grant"}`)
+				_, _ = fmt.Fprint(w, `{"error":"invalid_grant"}`)
 				return
 			}
 			switch token {
 			case "example-refresh":
-				fmt.Fprint(w, `{"access_token":"rotated-access-2","refresh_token":"rotated-refresh-2","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access"}`)
+				_, _ = fmt.Fprint(w, `{"access_token":"rotated-access-2","refresh_token":"rotated-refresh-2","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access"}`)
 			case "rotated-refresh-2":
-				fmt.Fprint(w, `{"access_token":"rotated-access-3","refresh_token":"rotated-refresh-3","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access"}`)
+				_, _ = fmt.Fprint(w, `{"access_token":"rotated-access-3","refresh_token":"rotated-refresh-3","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access"}`)
 			default:
 				assert.Fail(t, "unexpected synthetic refresh token")
 				w.WriteHeader(http.StatusBadRequest)
@@ -96,7 +96,7 @@ func testXRegistrationRecovery(t *testing.T, beforePublication bool) {
 			assert.NoError(t, os.Chmod(stageDir, 0500))
 		}
 		// Old access remains valid after refresh, matching the proposed sequence.
-		fmt.Fprint(w, `{"data":{"id":"1001","username":"example_user","name":"Example Author","protected":false}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":"1001","username":"example_user","name":"Example Author","protected":false}}`)
 	}))
 	t.Cleanup(provider.Close)
 	deps := xCommandDeps{apiBaseURL: provider.URL + "/2", httpClient: provider.Client(), oauthOptions: xapi.OAuthOptions{TokenURL: provider.URL + "/token"}}

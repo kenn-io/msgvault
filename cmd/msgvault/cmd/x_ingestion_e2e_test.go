@@ -359,7 +359,7 @@ func TestXFirstSeenWithheldPostPurgesConnectedCopiesBeforeRetry(t *testing.T) {
 	_testAssert.Zero(lookups.Load(), "a completed cleanup resolves the saved walk without another lookup")
 }
 
-func TestXFirstSeenProtectedPostQueuesAliasAfterImporterPersistence(t *testing.T) {
+func TestXFirstSeenProtectedPostCommitsCleanupWithAlias(t *testing.T) {
 	_testAssert := assert.New(t)
 	_testRequire := require.New(t)
 
@@ -373,7 +373,7 @@ func TestXFirstSeenProtectedPostQueuesAliasAfterImporterPersistence(t *testing.T
 		Author: &store.XAuthorInput{UserID: "1002", FetchedAt: f.at},
 	})
 	_testRequire.NoError(err)
-	installXAliasCleanupOrderProbe(t, f.st)
+	installXAliasPersistenceProbe(t, f.st)
 
 	var mentionPages, lookups atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -389,7 +389,7 @@ func TestXFirstSeenProtectedPostQueuesAliasAfterImporterPersistence(t *testing.T
 			_, _ = fmt.Fprintf(w, `{"data":[{"id":"700","author_id":"1002","conversation_id":"100","created_at":%q,"text":"synthetic protected reply","edit_history_tweet_ids":["700"]}],"includes":{"users":[{"id":"1002","username":"protected_author","protected":true}]},"meta":{"result_count":1}}`, f.at.Format(time.RFC3339Nano))
 		case "/2/tweets":
 			lookups.Add(1)
-			_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"700","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+			_, _ = fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"700","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -406,14 +406,16 @@ func TestXFirstSeenProtectedPostQueuesAliasAfterImporterPersistence(t *testing.T
 		"foreign protected-author copies drain only after the importer releases source ownership")
 	_testRequire.NotNil(firstSummary)
 	_testAssert.Zero(lookups.Load(), "protected evidence must not need another provider lookup")
-	var inserted, queued int64
+	var suppressed bool
+	var cleanupPending int
+	var reason string
 	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT
-		COALESCE(MIN(CASE WHEN action='alias' THEN ordinal END),0),
-		COALESCE(MIN(CASE WHEN action='pending' THEN ordinal END),0)
-		FROM x_test_alias_cleanup_order WHERE source_id=? AND post_id='700'`),
-		f.source.ID).Scan(&inserted, &queued))
-	_testAssert.Positive(inserted, "Importer page persistence must create the first-seen protected alias")
-	_testAssert.Greater(queued, inserted, "per-post cleanup must queue only after the alias is persisted")
+		suppressed, cleanup_pending, suppression_reason
+		FROM x_test_alias_persistence WHERE source_id=? AND post_id='700'`),
+		f.source.ID).Scan(&suppressed, &cleanupPending, &reason))
+	_testAssert.True(suppressed, "the first alias INSERT must already suppress protected content")
+	_testAssert.Equal(1, cleanupPending, "the first alias INSERT must durably queue cleanup")
+	_testAssert.Equal("protected", reason, "the first alias INSERT must retain the provider reason")
 	pending, err := f.st.XCleanupPendingContext(t.Context())
 	_testRequire.NoError(err)
 	_testAssert.False(pending, "the owner coordinator drains protected-author copies after sync releases")
@@ -525,53 +527,46 @@ func TestXImporterBatchesSamePageUnavailableCleanup(t *testing.T) {
 	}
 }
 
-func installXAliasCleanupOrderProbe(t *testing.T, st *store.Store) {
+func installXAliasPersistenceProbe(t *testing.T, st *store.Store) {
 	t.Helper()
 	require := require.New(t)
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE TABLE x_test_alias_cleanup_order (
-			ordinal BIGSERIAL PRIMARY KEY,
-			action TEXT NOT NULL,
+		_, err := st.DB().Exec(`CREATE TABLE x_test_alias_persistence (
 			source_id BIGINT NOT NULL,
-			post_id TEXT NOT NULL
+			post_id TEXT NOT NULL,
+			suppressed BOOLEAN NOT NULL,
+			cleanup_pending INTEGER NOT NULL,
+			suppression_reason TEXT,
+			PRIMARY KEY (source_id, post_id)
 		)`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE FUNCTION x_test_record_alias_cleanup_order() RETURNS trigger
+		_, err = st.DB().Exec(`CREATE FUNCTION x_test_record_alias_persistence() RETURNS trigger
 			LANGUAGE plpgsql AS $$
 			BEGIN
-				INSERT INTO x_test_alias_cleanup_order(action,source_id,post_id)
-				VALUES (CASE WHEN TG_OP='INSERT' THEN 'alias' ELSE 'pending' END, NEW.source_id, NEW.post_id);
+				INSERT INTO x_test_alias_persistence(source_id,post_id,suppressed,cleanup_pending,suppression_reason)
+				VALUES (NEW.source_id, NEW.post_id, NEW.suppressed_at IS NOT NULL, NEW.cleanup_pending, NEW.suppression_reason);
 				RETURN NEW;
 			END;
 			$$`)
 		require.NoError(err)
 		_, err = st.DB().Exec(`CREATE TRIGGER x_test_alias_insert AFTER INSERT ON x_post_versions
-			FOR EACH ROW EXECUTE FUNCTION x_test_record_alias_cleanup_order()`)
-		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER x_test_alias_pending BEFORE UPDATE OF cleanup_pending ON x_post_versions
-			FOR EACH ROW WHEN (OLD.cleanup_pending=0 AND NEW.cleanup_pending=1)
-			EXECUTE FUNCTION x_test_record_alias_cleanup_order()`)
+			FOR EACH ROW EXECUTE FUNCTION x_test_record_alias_persistence()`)
 		require.NoError(err)
 		return
 	}
-	_, err := st.DB().Exec(`CREATE TABLE x_test_alias_cleanup_order (
-		ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
-		action TEXT NOT NULL,
+	_, err := st.DB().Exec(`CREATE TABLE x_test_alias_persistence (
 		source_id INTEGER NOT NULL,
-		post_id TEXT NOT NULL
+		post_id TEXT NOT NULL,
+		suppressed BOOLEAN NOT NULL,
+		cleanup_pending INTEGER NOT NULL,
+		suppression_reason TEXT,
+		PRIMARY KEY (source_id, post_id)
 	)`)
 	require.NoError(err)
 	_, err = st.DB().Exec(`CREATE TRIGGER x_test_alias_insert AFTER INSERT ON x_post_versions
 		BEGIN
-			INSERT INTO x_test_alias_cleanup_order(action,source_id,post_id)
-			VALUES('alias',NEW.source_id,NEW.post_id);
-		END`)
-	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER x_test_alias_pending BEFORE UPDATE OF cleanup_pending ON x_post_versions
-		WHEN OLD.cleanup_pending=0 AND NEW.cleanup_pending=1
-		BEGIN
-			INSERT INTO x_test_alias_cleanup_order(action,source_id,post_id)
-			VALUES('pending',NEW.source_id,NEW.post_id);
+			INSERT INTO x_test_alias_persistence(source_id,post_id,suppressed,cleanup_pending,suppression_reason)
+			VALUES(NEW.source_id,NEW.post_id,NEW.suppressed_at IS NOT NULL,NEW.cleanup_pending,NEW.suppression_reason);
 		END`)
 	require.NoError(err)
 }
@@ -627,7 +622,7 @@ func TestXScheduledSyncRetiresDaemonReaders(t *testing.T) {
 		reads.Add(1)
 		if r.URL.Path == "/2/tweets" {
 			assert.Equal(t, "301", r.URL.Query().Get("ids"))
-			_, writeErr := fmt.Fprint(w, `{"errors":[{"resource_id":"301","type":"https://api.x.com/2/problems/resource-not-found"}],"meta":{"result_count":0}}`)
+			_, writeErr := fmt.Fprint(w, `{"errors":[{"resource_type":"tweet","resource_id":"301","type":"https://api.x.com/2/problems/resource-not-found"}],"meta":{"result_count":0}}`)
 			assert.NoError(t, writeErr)
 		} else {
 			assert.Contains(t, []string{"/2/users/1001/tweets", "/2/users/1001/mentions"}, r.URL.Path)

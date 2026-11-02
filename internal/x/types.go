@@ -92,10 +92,16 @@ type Post struct {
 }
 
 type ItemError struct {
-	ID          string
-	Code        string
-	Unavailable bool
+	ID           string
+	ResourceType string
+	Code         string
+	Unavailable  bool
 }
+
+func (e ItemError) isPostResource() bool {
+	return e.ResourceType == "tweet" || e.ResourceType == "post"
+}
+
 type Page struct {
 	// RequestedIDs distinguishes a budget-reduced lookup from unavailable IDs.
 	RequestedIDs     []string `json:"-"`

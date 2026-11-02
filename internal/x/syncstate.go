@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	ErrRepeatedPageToken = errors.New("X pagination token repeated")
-	ErrUnresolvedPage    = errors.New("X page has unidentified unresolved results")
+	ErrRepeatedPageToken = errors.New("x pagination token repeated")
+	ErrUnresolvedPage    = errors.New("x page has unidentified unresolved results")
 )
 
 func prepareTimelineWalk(owner, endpoint string, previous *store.XWalk, after, now time.Time) (*store.XWalk, error) {
@@ -30,7 +30,7 @@ func prepareTimelineWalk(owner, endpoint string, previous *store.XWalk, after, n
 	}
 	before := now.UTC().Truncate(time.Second)
 	if !after.IsZero() && !after.Before(before) {
-		return nil, errors.New("X lower bound must precede the frozen upper bound")
+		return nil, errors.New("x lower bound must precede the frozen upper bound")
 	}
 	result := &store.XWalk{Endpoint: endpoint, Query: owner, After: after, Before: before}
 	if previous != nil {
@@ -46,7 +46,7 @@ func prepareTimelineWalk(owner, endpoint string, previous *store.XWalk, after, n
 
 func advanceWalk(walk *store.XWalk, page Page) (*store.XWalk, error) {
 	if walk == nil || walk.Complete || len(walk.SeenTokens) >= 1000 {
-		return nil, errors.New("X walk is complete or has reached page capacity")
+		return nil, errors.New("x walk is complete or has reached page capacity")
 	}
 	if page.NextToken != "" && (page.NextToken == walk.Token || slices.Contains(walk.SeenTokens, page.NextToken)) {
 		return nil, ErrRepeatedPageToken
@@ -56,17 +56,22 @@ func advanceWalk(walk *store.XWalk, page Page) (*store.XWalk, error) {
 		return nil, err
 	}
 	result.UnresolvedPage = false
+	postErrors := 0
 	for _, item := range page.Errors {
-		if item.ID == "" {
+		if item.ResourceType == "user" {
+			continue
+		}
+		if !item.isPostResource() || item.ID == "" {
 			result.UnresolvedPage = true
 			continue
 		}
+		postErrors++
 		if ValidateID(item.ID) != nil {
 			return nil, errors.New("invalid X unresolved item ID")
 		}
 		if !slices.Contains(result.UnresolvedIDs, item.ID) {
 			if len(result.UnresolvedIDs) >= store.XMaxUnresolvedIDs {
-				return nil, errors.New("X unresolved item capacity reached")
+				return nil, errors.New("x unresolved item capacity reached")
 			}
 			result.UnresolvedIDs = append(result.UnresolvedIDs, item.ID)
 		}
@@ -76,7 +81,7 @@ func advanceWalk(walk *store.XWalk, page Page) (*store.XWalk, error) {
 		// exact page rather than advancing past the unidentified missing result.
 		return result, nil
 	}
-	result.ObservedResults += int64(len(page.Posts) + len(page.Errors))
+	result.ObservedResults += int64(len(page.Posts) + postErrors)
 	reach := int64(0)
 	switch walk.Endpoint {
 	case "timeline":
@@ -123,7 +128,7 @@ func resolveWalkItems(walk *store.XWalk, ids []string, posts ...Post) (*store.XW
 	}
 	for _, id := range ids {
 		if ValidateID(id) != nil || !slices.Contains(walk.UnresolvedIDs, id) {
-			return nil, errors.New("X item is not an outstanding obligation")
+			return nil, errors.New("x item is not an outstanding obligation")
 		}
 	}
 	result := cloneWalk(walk)
@@ -153,7 +158,7 @@ func prepareOverlapWalk(owner string, previous *store.XWalk, now time.Time) (*st
 
 func nextOverlapEndpoint(walk *store.XWalk) (*store.XWalk, error) {
 	if walk == nil || !walk.Complete || walk.Endpoint != "timeline" {
-		return nil, errors.New("X overlap own-post walk is not complete")
+		return nil, errors.New("x overlap own-post walk is not complete")
 	}
 	if err := validateTimelineWalk(walk, walk.Query, "timeline"); err != nil {
 		return nil, err
@@ -201,7 +206,7 @@ func walkFingerprint(walk *store.XWalk) string {
 
 func validateTimelineWalk(walk *store.XWalk, owner, endpoint string) error {
 	if walk.Query != owner || walk.Endpoint != endpoint || walk.Before.IsZero() || walk.Fingerprint != walkFingerprint(walk) {
-		return errors.New("X saved walk does not match its frozen request")
+		return errors.New("x saved walk does not match its frozen request")
 	}
 	if !walk.After.IsZero() && !walk.After.Before(walk.Before) {
 		return errors.New("invalid X saved walk bounds")
@@ -212,7 +217,7 @@ func validateTimelineWalk(walk *store.XWalk, owner, endpoint string) error {
 		}
 	}
 	if walk.Complete && (walk.Token != "" || walk.UnresolvedPage || len(walk.UnresolvedIDs) != 0) {
-		return errors.New("X complete walk has outstanding work")
+		return errors.New("x complete walk has outstanding work")
 	}
 	return nil
 }

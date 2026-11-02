@@ -338,7 +338,7 @@ func TestXPartialItemObligationsSurviveRestart(t *testing.T) {
 			}
 			livePages.Add(1)
 			if r.URL.Query().Get("pagination_token") == "" {
-				_, _ = fmt.Fprintf(w, `{"data":[%s],"includes":{"users":[{"id":"1001","username":"example_owner","protected":false}]},"errors":[{"resource_id":"101","title":"Synthetic transient item"}],"meta":{"next_token":"second"}}`, wireOwnPost("102", now.Add(-time.Minute)))
+				_, _ = fmt.Fprintf(w, `{"data":[%s],"includes":{"users":[{"id":"1001","username":"example_owner","protected":false}]},"errors":[{"resource_type":"tweet","resource_id":"101","title":"Synthetic transient item"}],"meta":{"next_token":"second"}}`, wireOwnPost("102", now.Add(-time.Minute)))
 				return
 			}
 			assert.Equal(t, "second", r.URL.Query().Get("pagination_token"))

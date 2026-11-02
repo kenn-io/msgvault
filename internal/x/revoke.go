@@ -15,7 +15,7 @@ const DefaultRevokeURL = "https://api.x.com/2/oauth2/revoke"
 // refreshes a grant, probes an authentication style, redirects or retries.
 func RevokeCredential(ctx context.Context, record TokenRecord, endpoint string, client *http.Client) error {
 	if ValidateID(record.OwnerID) != nil || record.ClientID == "" || record.RefreshToken() == "" {
-		return errors.New("X revocation credential is unavailable")
+		return errors.New("x revocation credential is unavailable")
 	}
 	if endpoint == "" {
 		endpoint = DefaultRevokeURL
@@ -36,11 +36,11 @@ func RevokeCredential(ctx context.Context, record TokenRecord, endpoint string, 
 	}
 	response, err := singleRequestHTTPClient(client).Do(request)
 	if err != nil {
-		return errors.Join(errors.New("X credential revocation failed"), ctx.Err())
+		return errors.Join(errors.New("x credential revocation failed"), ctx.Err())
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return errors.New("X credential revocation was not confirmed")
+		return errors.New("x credential revocation was not confirmed")
 	}
 	return nil
 }

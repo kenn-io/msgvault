@@ -141,7 +141,7 @@ func (m *TokenManager) Save(ctx context.Context, record TokenRecord) error {
 			return errors.New("stale X credential generation")
 		}
 		if current.Generation == math.MaxInt64 {
-			return errors.New("X credential generation exhausted")
+			return errors.New("x credential generation exhausted")
 		}
 		record.Generation = current.Generation + 1
 		return m.writeLocked(record)
@@ -171,7 +171,7 @@ func (m *TokenManager) InstallVerified(ctx context.Context, record TokenRecord, 
 		}
 		generation := max(current.Generation, generationFloor)
 		if generation == math.MaxInt64 {
-			return errors.New("X credential generation exhausted")
+			return errors.New("x credential generation exhausted")
 		}
 		record.Generation = generation + 1
 		if err := m.writeLocked(record); err != nil {
@@ -205,7 +205,7 @@ func (m *TokenManager) refresh(ctx context.Context, userID string, rejected int6
 			return nil
 		}
 		if current.Generation == math.MaxInt64 {
-			return errors.New("X credential generation exhausted")
+			return errors.New("x credential generation exhausted")
 		}
 		cfg, e := tokenConfig(current, m.options.TokenURL)
 		if e != nil {
@@ -223,7 +223,7 @@ func (m *TokenManager) refresh(ctx context.Context, userID string, rejected int6
 			if errors.As(e, &rejectedGrant) && rejectedGrant.ErrorCode == "invalid_grant" {
 				return &InvalidGrantError{OwnerID: current.OwnerID, Generation: current.Generation}
 			}
-			return errors.New("X token refresh failed")
+			return errors.New("x token refresh failed")
 		}
 		next, e := recordFromToken(current, token, m.options.Now(), false)
 		if e != nil {
@@ -269,7 +269,7 @@ func (m *TokenManager) loadLocked(userID string) (TokenRecord, error) {
 		return TokenRecord{}, err
 	}
 	if record.OwnerID != userID || record.Generation <= 0 {
-		return TokenRecord{}, errors.New("X credential file binding or generation mismatch")
+		return TokenRecord{}, errors.New("x credential file binding or generation mismatch")
 	}
 	return record, nil
 }
@@ -285,7 +285,7 @@ func (m *TokenManager) writeLocked(record TokenRecord) error {
 		return errors.New("cannot encode X credential")
 	}
 	if len(data) > 64<<10 {
-		return errors.New("X credential exceeds file limit")
+		return errors.New("x credential exceeds file limit")
 	}
 	if err := fileutil.SecureReplaceFile(m.tokenPath(record.OwnerID), data, 0600); err != nil {
 		return fmt.Errorf("persist X credential: %w", err)
@@ -309,7 +309,7 @@ func validateRecord(r TokenRecord) error {
 		return errors.New("missing or invalid X credential tokens")
 	}
 	if r.ClientType == ConfidentialClient && r.ClientSecret() == "" || r.ClientType == PublicClient && r.ClientSecret() != "" {
-		return errors.New("X OAuth client secret does not match client type")
+		return errors.New("x OAuth client secret does not match client type")
 	}
 	if len(r.GrantedScopes) == 0 {
 		return errors.New("missing X granted scopes")
@@ -347,7 +347,7 @@ func (m *TokenManager) withLock(ctx context.Context, name string, fn func() erro
 		return err
 	}
 	if !os.SameFile(before, after) {
-		return errors.New("X credential directory changed while locking")
+		return errors.New("x credential directory changed while locking")
 	}
 	if err := privatePath(path, false); err != nil {
 		return err
@@ -386,7 +386,7 @@ func (m *TokenManager) inspectRoot() (os.FileInfo, error) {
 		return nil, err
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("X credential directory permissions must be private")
+		return nil, errors.New("x credential directory permissions must be private")
 	}
 	return info, nil
 }
@@ -399,10 +399,10 @@ func privatePath(path string, missingOK bool) error {
 		return err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("X credential path must be a regular file")
+		return errors.New("x credential path must be a regular file")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 && info.Mode().Perm() != 0400 {
-		return errors.New("X credential file permissions must be 0600 or 0400")
+		return errors.New("x credential file permissions must be 0600 or 0400")
 	}
 	return nil
 }
@@ -482,7 +482,7 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if req.Body != nil {
 			_ = req.Body.Close()
 		}
-		return nil, errors.New("X credentials require successful preflight")
+		return nil, errors.New("x credentials require successful preflight")
 	}
 	clone := req.Clone(req.Context())
 	clone.Header.Set("Authorization", "Bearer "+access)

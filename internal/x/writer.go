@@ -32,7 +32,7 @@ func WritePageWithSummary(ctx context.Context, st *store.Store, sourceID int64, 
 		fetchedAt = page.FetchedAt
 	}
 	if fetchedAt.IsZero() {
-		return summary, errors.New("X page requires its original fetch time")
+		return summary, errors.New("x page requires its original fetch time")
 	}
 	users := make(map[string]User, len(page.Users))
 	for _, u := range page.Users {
@@ -130,7 +130,7 @@ func WritePageWithSummary(ctx context.Context, st *store.Store, sourceID int64, 
 			break
 		}
 		if next <= cursor {
-			return summary, errors.New("X parent resolution did not advance")
+			return summary, errors.New("x parent resolution did not advance")
 		}
 		cursor = next
 	}

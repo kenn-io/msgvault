@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-var ErrContentCleanupRequired = errors.New("X content cleanup is required before refresh can complete")
+var ErrContentCleanupRequired = errors.New("x content cleanup is required before refresh can complete")
 
 type RefreshOptions struct {
 	SourceID  int64
@@ -45,7 +45,7 @@ func (imp *Importer) SetContentCleanupBatch(fn func(context.Context, []store.XRe
 // scanned to select work and no database transaction spans provider or file I/O.
 func (imp *Importer) Refresh(ctx context.Context, opts RefreshOptions) (summary RefreshSummary, retErr error) {
 	if imp == nil || imp.store == nil || opts.SourceID <= 0 || ValidateID(opts.OwnerID) != nil {
-		return summary, errors.New("X refresh requires an existing numeric account")
+		return summary, errors.New("x refresh requires an existing numeric account")
 	}
 	if err := imp.policy.Validate(opts.OwnerID); err != nil {
 		return summary, err
@@ -54,14 +54,14 @@ func (imp *Importer) Refresh(ctx context.Context, opts RefreshOptions) (summary 
 		opts.BatchSize = imp.policy.RefreshBatchSize
 	}
 	if opts.BatchSize < 1 || opts.BatchSize > 100 {
-		return summary, errors.New("X refresh batch must contain 1 through 100 IDs")
+		return summary, errors.New("x refresh batch must contain 1 through 100 IDs")
 	}
 	source, err := imp.store.GetSourceByIDContext(ctx, opts.SourceID)
 	if err != nil {
 		return summary, err
 	}
 	if source.SourceType != "x" || source.Identifier != opts.OwnerID || source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return summary, errors.New("X refresh source does not match its active numeric owner")
+		return summary, errors.New("x refresh source does not match its active numeric owner")
 	}
 	execution, err := imp.store.AcquireSyncExecutionContext(ctx, source.ID)
 	if err != nil {
@@ -263,7 +263,7 @@ func ReadRefreshStatus(ctx context.Context, st *store.Store, sourceID int64, now
 		return summary, err
 	}
 	if source.SourceType != "x" || ValidateID(source.Identifier) != nil {
-		return summary, errors.New("X refresh status requires a numeric X source")
+		return summary, errors.New("x refresh status requires a numeric X source")
 	}
 	state, err := st.LoadXControlContext(ctx, sourceID)
 	if err != nil {
@@ -328,7 +328,7 @@ func (imp *Importer) queueUnavailableResults(ctx context.Context, sourceID int64
 func queueUnavailablePageResults(ctx context.Context, st *store.Store, sourceID int64, page Page) error {
 	terminal := make(map[string]string)
 	for _, item := range page.Errors {
-		if item.Unavailable && item.ID != "" && (len(page.RequestedIDs) == 0 || slices.Contains(page.RequestedIDs, item.ID)) {
+		if item.isPostResource() && item.Unavailable && item.ID != "" && (len(page.RequestedIDs) == 0 || slices.Contains(page.RequestedIDs, item.ID)) {
 			terminal[item.ID] = "deleted"
 		}
 	}

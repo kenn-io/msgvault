@@ -1,6 +1,7 @@
 package x
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -13,6 +14,67 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestXExpandedAuthorErrorCannotRemoveCollidingPost(t *testing.T) {
+	for _, endpoint := range []string{"timeline", "search", "lookup"} {
+		t.Run(endpoint, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("x", "1001")
+			require.NoError(err)
+			at := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+			saved, err := st.PersistXPostContext(t.Context(), store.XPersistPostInput{
+				SourceID: source.ID, OwnerID: "1001", PostID: "1002", AuthorID: "1003", ConversationID: "1002",
+				EditHistory: []string{"1002"}, Text: "unrelated retained post", CreatedAt: at, FetchedAt: at,
+				Availability: "public", Author: &store.XAuthorInput{UserID: "1003", Username: "example_author", FetchedAt: at},
+			})
+			require.NoError(err)
+			client, _ := servePage(t, `{"data":[{"id":"700","author_id":"1002","conversation_id":"700","text":"unverified reply","created_at":"2026-10-30T12:00:00Z"}],"errors":[{"resource_type":"user","resource_id":"1002","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+			requests := map[string]func(context.Context) (Page, error){
+				"timeline": func(ctx context.Context) (Page, error) {
+					return client.Timeline(ctx, TimelineRequest{OwnerID: "1001", MaxResults: 5})
+				},
+				"search": func(ctx context.Context) (Page, error) {
+					return client.SearchAll(ctx, SearchRequest{Query: "from:example_author", MaxResults: 10})
+				},
+				"lookup": func(ctx context.Context) (Page, error) { return client.Lookup(ctx, []string{"700"}) },
+			}
+			page, err := requests[endpoint](t.Context())
+			require.NoError(err)
+			require.Len(page.Errors, 1)
+			assert.False(page.Errors[0].Unavailable, "an author expansion failure is not post deletion evidence")
+			require.NoError(queueUnavailablePageResults(t.Context(), st, source.ID, page))
+			pending, err := st.XCleanupPendingContext(t.Context())
+			require.NoError(err)
+			assert.False(pending)
+			body, err := st.GetMessageBodyText(saved.MessageID)
+			require.NoError(err)
+			assert.Equal("unrelated retained post", body)
+			walk, err := prepareTimelineWalk("1001", "mentions", nil, time.Time{}, at.Add(time.Hour))
+			require.NoError(err)
+			next, err := advanceWalk(walk, page)
+			require.NoError(err)
+			assert.Empty(next.UnresolvedIDs, "author IDs must not become missing-post obligations")
+			assert.Equal(int64(1), next.ObservedResults, "expansion errors do not count toward post endpoint reach")
+			assert.True(next.Complete)
+		})
+	}
+}
+
+func TestXDeletionRequiresExplicitPostResource(t *testing.T) {
+	for _, resource := range []string{"tweet", "post", "user", "list", ""} {
+		t.Run("resource="+resource, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			client, _ := servePage(t, fmt.Sprintf(`{"errors":[{"resource_type":%q,"resource_id":"1002","type":"https://api.x.com/2/problems/resource-not-found"}]}`, resource))
+			page, err := client.Lookup(t.Context(), []string{"1002"})
+			require.NoError(err)
+			require.Len(page.Errors, 1)
+			assert.Equal(resource == "tweet" || resource == "post", page.Errors[0].Unavailable)
+		})
+	}
+}
 
 func TestXDelayedProtectedPagePreservesNewerPublicEvidence(t *testing.T) {
 	assert := assert.New(t)
