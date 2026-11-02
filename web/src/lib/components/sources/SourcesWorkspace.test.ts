@@ -63,6 +63,46 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it('shows a scheduler handoff as queued without concealing a real failure', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
+      source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: run('cancelled', 5) }),
+      source({ id: 2, display_name: 'Broken archive', scheduled: true, scheduler_queued: true,
+        can_sync: false, sync_unavailable_reason: 'sync_already_running',
+        latest_sync: run('failed', 0, { errors_count: 1, error_message: 'Channel unavailable' }) })
+    ] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    expect(await screen.findByText('Queued')).toBeDefined();
+    expect(screen.getByText('Failed')).toBeDefined();
+    expect(screen.getAllByText('Sync queued')).toHaveLength(2);
+    expect(screen.queryByText('Sync in progress')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Broken archive' }));
+    expect(await screen.findByText('Channel unavailable')).toBeDefined();
+  });
+
+  it('shows a scheduled sync that queues after the page opens until it starts', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const queuedAt = '2026-10-01T15:04:00Z';
+    let current = source({ scheduled: true });
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [current] }));
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await screen.findByText('Archive');
+    expect(screen.queryByText('Queued since', { exact: false })).toBeNull();
+
+    current = source({ scheduled: true, scheduler_queued: true, scheduler_queued_at: queuedAt,
+      can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const queued = screen.getByText('Queued since', { exact: false });
+    expect(queued.querySelector('time')?.getAttribute('datetime')).toBe(queuedAt);
+
+    current = source({ scheduled: true, can_sync: false, sync_unavailable_reason: 'sync_already_running',
+      active_sync: run('running', 7) });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(screen.getByText('7 processed')).toBeDefined();
+    expect(screen.queryByText('Queued since', { exact: false })).toBeNull();
+    rendered.unmount();
+  });
+
   it.each(['after accepted sync', 'manual refresh'])('recovers a status-load failure in the open source panel: %s', async action => {
     let statusReads = 0;
     const fetchFn = api([source()], (url, request) => {
@@ -772,7 +812,7 @@ describe('SourcesWorkspace', () => {
   it.each(['table', 'panel'])('recovers capped polling from the source %s', async surface => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running', scheduler_queued: true });
+    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
     const fetchFn = api([], url => url.pathname.endsWith('/sources/status')
       ? Response.json({ sources: [++reads <= 4 ? held : source({ latest_sync: run('completed', 7) })] }) : undefined);
     const rendered = render(SourcesWorkspace, {
@@ -785,7 +825,7 @@ describe('SourcesWorkspace', () => {
     }
     const panel = surface === 'panel' ? screen.getByRole('dialog', { name: 'Archive' }) : undefined;
     const scope = within(panel ?? rendered.container);
-    if (panel) expect(scope.getByText('Queued')).toBeDefined();
+    if (panel) expect(scope.getByText('Never synced')).toBeDefined();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(reads).toBe(4);
     const message = 'Automatic refresh paused. Source status may be stale.';
@@ -797,7 +837,7 @@ describe('SourcesWorkspace', () => {
     else await waitFor(() => expect(reads).toBe(5));
     expect(reads).toBe(5);
     await waitFor(() => expect(scope.queryByText(message)).toBeNull());
-    if (panel) expect(scope.queryByText('Queued')).toBeNull();
+    if (panel) expect(scope.queryByText('Never synced')).toBeNull();
     if (panel) expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
     rendered.unmount();
   });

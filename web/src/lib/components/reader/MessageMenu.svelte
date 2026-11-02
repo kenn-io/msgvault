@@ -18,11 +18,11 @@
     viewMode,
     onViewModeChange,
     onError = undefined,
-    onTasksChange = undefined,
+    onTaskDialogClose = undefined,
     onOpenSettings = undefined,
   }: {
     client?: APIClient;
-    onTasksChange?: () => void;
+    onTaskDialogClose?: () => void;
     onOpenSettings?: () => void;
     message: ArchiveMessageDetail;
     /** The message has an HTML body the reader can show, so the format can switch. */
@@ -89,8 +89,7 @@
     title={message.subject || 'Follow up on this message'}
     email={hasOriginal}
     onsettings={onOpenSettings}
-    onclose={() => taskOpen = false}
-    onchanged={onTasksChange}
+    onclose={() => { taskOpen = false; onTaskDialogClose?.(); }}
   />
 {/if}
 {#if client && exportOpen}

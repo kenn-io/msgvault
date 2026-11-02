@@ -7,6 +7,8 @@ import { chooseSelectOption } from '../../../test/kit-ui';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import AppShell from '../shell/AppShell.svelte';
+import { defaultOperationsState } from '../../operations/controller.svelte';
+import canonical from '../../../../tests/e2e/fixtures/operations-public.json';
 
 const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript body', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Archived' };
 const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at, archive_path: '/api/v1/messages/42' },
@@ -92,7 +94,7 @@ describe('meeting archive reader navigation', () => {
     [false, 'metrics', false], [false, 'metrics', true],
     [true, 'message', false], [true, 'message', true],
     [true, 'metrics', false], [true, 'metrics', true]
-  ] as const)('keeps an archived meeting request through Past runs, deep=%s pending=%s close=%s', async (deep, pending, close) => {
+  ] as const)('keeps an archived meeting request through Past runs, deep=%s pending=%s closeBeforeLoad=%s', async (deep, pending, close) => {
     let finish!: () => void;
     let pendingRequest!: Request;
     const { client: baseClient, requests } = handler();
@@ -126,18 +128,46 @@ describe('meeting archive reader navigation', () => {
       }
       expect(pendingRequest.signal.aborted).toBe(false);
       finish();
-      await waitFor(() => expect(state.current.selectedRow).toBe('archive-meeting:42'));
-      if (close) {
-        const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
-        expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
-      } else {
+      if (!close) {
+        // The request completes while Past runs stays open; closing it must not discard the meeting.
         await waitFor(() => expect(screen.queryByText('Loading archived meeting…')).toBeNull());
         await waitFor(() => expect(history.contains(document.activeElement)).toBe(true));
         expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull();
+        await fireEvent.click(within(history).getByRole('button', { name: 'Close' }));
       }
+      await waitFor(() => expect(state.current.selectedRow).toBe('archive-meeting:42'));
+      const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
+      expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
       expect(requests.filter(request => new URL(request.url).pathname.endsWith('/messages/42'))).toHaveLength(1);
     } finally {
       finish?.();
+      view.unmount(); state.destroy();
+    }
+  });
+
+  it.each([
+    ['listSourceStatus', 'Open Sources status', { workspace: 'sources' }],
+    ['getCardDAVStatus', 'Open CardDAV settings', { workspace: 'settings', settingsCategory: 'carddav' }],
+  ] as const)('does not reopen an archived meeting over %s opened from Past runs', async (authority, label, expected) => {
+    const run = canonical.runs.find(candidate => candidate.kind === 'source_sync')!;
+    const { client: baseClient } = handler();
+    const client = createAPIClient(async (input, init) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/operations/runs')) return Response.json({ runs: [run], unavailable_kinds: [], membership_revision: 1 });
+      if (path.includes('/operations/runs/')) return Response.json({ ...run, related_status: authority, supported_actions: [] });
+      return baseClient.fetch(input, init);
+    });
+    const state = stateWithMeetingFilter('archive-meeting:42');
+    const view = render(AppShell, { client, state });
+    try {
+      await screen.findByRole('dialog', { name: 'Archived meeting' });
+      state.openOperationHistory({ ...defaultOperationsState('source_sync'), operationRunID: run.id });
+      const history = await screen.findByRole('dialog', { name: 'Past runs' });
+      await fireEvent.click(await within(history).findByRole('button', { name: label }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Past runs' })).toBeNull());
+      expect(state.current).toMatchObject({ ...expected, selectedRow: null, conversationAnchor: null });
+      expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull();
+    } finally {
       view.unmount(); state.destroy();
     }
   });
