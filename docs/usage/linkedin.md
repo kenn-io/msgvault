@@ -48,6 +48,9 @@ ZIP entries are read in place. Directory imports skip symbolic links. Recipient
 URL lists retain empty positions. When names and URLs cannot be aligned, a
 record error stops the import instead of dropping recipients.
 
+Comments use standard CSV quoting when it parses successfully. The importer
+uses the legacy backslash form only when standard CSV parsing fails.
+
 Message attachment URLs, post links, shared URLs, and media URLs remain link
 attachments. msgvault does not download their content, and the links may
 expire. Unknown export columns are retained in the archived raw row.

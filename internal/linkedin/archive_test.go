@@ -1,6 +1,8 @@
 package linkedin
 
 import (
+	"bytes"
+	"encoding/csv"
 	"io"
 	"os"
 	"path/filepath"
@@ -59,4 +61,21 @@ func TestDiscoverSkipsCSVFileSymlinks(t *testing.T) {
 	}
 	_, _, err := discover(root)
 	require.ErrorContains(err, "no supported CSV")
+}
+
+func TestReadCommentsPrefersStandardCSV(t *testing.T) {
+	for _, value := range []string{`Comma, trailing backslash \`, `Backslash before \"doubled quotes\"`, `Comma, literal C:\new\thing`} {
+		t.Run(value, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var data bytes.Buffer
+			writer := csv.NewWriter(&data)
+			require.NoError(writer.WriteAll([][]string{{"Date", "Link", "Message"}, {"2026-10-02 12:00:00 UTC", "https://example.com/post", value}}))
+			file := csvFile{kind: "comments.csv", open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data.Bytes())), nil }}
+			var rows []row
+			require.NoError(readRows(t.Context(), file, func(r row, _ int) error { rows = append(rows, r); return nil }))
+			require.Len(rows, 1)
+			assert.Equal(value, rows[0]["message"])
+		})
+	}
 }

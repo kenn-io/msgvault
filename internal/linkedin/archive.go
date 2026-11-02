@@ -123,7 +123,13 @@ func readRows(ctx context.Context, file csvFile, visit func(row, int) error) err
 		}
 	}
 	if file.kind == "comments.csv" {
-		data = unescapeComments(data)
+		standard, err := validCSV(ctx, data)
+		if err != nil {
+			return err
+		}
+		if !standard {
+			data = unescapeComments(data)
+		}
 	}
 	csvReader := csv.NewReader(bytes.NewReader(data))
 	csvReader.FieldsPerRecord = -1
@@ -174,6 +180,25 @@ func hasHeader(fields []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// validCSV checks quoting without retaining rows. A backslash next to a valid
+// closing or doubled CSV quote is literal text, not evidence of legacy escaping.
+func validCSV(ctx context.Context, data []byte) (bool, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+	reader.FieldsPerRecord = -1
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		_, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			return true, nil
+		}
+		if err != nil {
+			return false, nil
+		}
+	}
 }
 
 // Convert LinkedIn's backslash escapes inside quoted comment fields to CSV
