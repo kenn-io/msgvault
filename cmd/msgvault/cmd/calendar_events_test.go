@@ -116,6 +116,18 @@ func TestCalendarEventsCommand(t *testing.T) {
 		})
 	}
 }
+func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
+	root := newCalendarControlCmd(nil)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"events", "--help"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "--from")
+	for _, name := range []string{"--account", "--dry-run", "--read-only", "--send-updates"} {
+		assert.NotContains(t, out.String(), name)
+	}
+}
+
 func TestCalendarEventsRFC3339Bounds(t *testing.T) {
 	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })

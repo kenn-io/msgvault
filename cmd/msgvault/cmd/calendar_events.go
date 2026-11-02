@@ -40,8 +40,18 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print occurrences and attendees as JSON")
 	_ = command.MarkFlagRequired("from")
 	_ = command.MarkFlagRequired("to")
+	// Shadow the live-command flags with hidden local copies so help does not
+	// offer them; RunE still rejects them if passed.
+	liveOnly := []string{"account", "dry-run", "read-only", "send-updates"}
+	command.Flags().String("account", "", "")
+	command.Flags().String("send-updates", "", "")
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().Bool("read-only", false, "")
+	for _, name := range liveOnly {
+		_ = command.Flags().MarkHidden(name)
+	}
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		for _, name := range []string{"account", "dry-run", "read-only", "send-updates"} {
+		for _, name := range liveOnly {
 			if cmd.Flags().Changed(name) {
 				return usageErr(cmd, fmt.Errorf("--%s is only valid for live calendar commands", name))
 			}
