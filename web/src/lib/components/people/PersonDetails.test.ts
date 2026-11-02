@@ -13,7 +13,7 @@ it('shows one alert for an attributes failure', async () => {
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
-async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; pins?: 'save' | 'clear'; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -22,6 +22,12 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    if (path === '/api/v1/integrations/kata/status' && options.taskChange) return Response.json({ state: 'ready' });
+    if (path === '/api/v1/people/7/agenda' && options.taskChange) {
+      const hasTask = options.taskChange === 'merge' ? person.revision > 1 : person.revision === 1;
+      return Response.json({ project: 'msgvault', items: hasTask ? [{ uid: 'task-one', ref: 'one', title: 'Ask about the proposal', list: 'agenda', state: 'open', status: 'open' }] : [] });
+    }
+    if (path === '/api/v1/people/directory') return Response.json({ people: [person] });
     if (path.endsWith('/attributes/location') && request.method === 'PUT') { pinned = true; return Response.json({ value }); }
     if (path.endsWith('/attributes/location') && request.method === 'DELETE') { pinned = true; return Response.json({ superseded: { ...value, active_until: when } }); }
     if (path.endsWith('/person-fact-targets')) return Response.json({ fingerprint: 'synthetic', version: '1', targets: [{ kind: 'attribute', key: definition.universal_id, revision: `sha256:${'a'.repeat(64)}`, description: 'Location', value_type: 'string', cardinality: 'single', sensitive: false, choices: null, fields: null, slug: definition.slug, universal_id: definition.universal_id }] });
@@ -82,6 +88,22 @@ it('forwards the refreshed meeting revision and ignores a superseded meeting res
   });
   expect(screen.queryByText('Revision 1 follow-up')).toBeNull();
   expect(screen.getByText('Revision 2 follow-up')).toBeDefined();
+});
+
+it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation while preserving pending task input', async operation => {
+  const { person, directory } = await renderDetails([5], { taskChange: operation });
+  await screen.findByText(operation === 'merge' ? 'No tasks yet' : 'Ask about the proposal');
+  await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send meeting notes' } });
+  await fireEvent.input(screen.getByLabelText('List'), { target: { value: 'Follow ups' } });
+
+  person.revision = 2;
+  if (operation === 'merge') await directory.refreshSelectedPerson();
+  else await directory.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
+
+  expect(await screen.findByText(operation === 'merge' ? 'Ask about the proposal' : 'No tasks yet')).toBeDefined();
+  if (operation === 'split') expect(screen.queryByText('Ask about the proposal')).toBeNull();
+  expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', 'Send meeting notes');
+  expect(screen.getByLabelText('List')).toHaveProperty('value', 'Follow ups');
 });
 
 it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute %s without changing the ledger section', async operation => {
