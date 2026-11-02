@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	emersionimap "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,14 @@ func TestDraftComposeArgs(t *testing.T) {
 	assertions.Equal([]string{"hidden@example.test"}, intent.Bcc)
 	assertions.True(intent.JSON)
 
+	bounded, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "42", "--to", "synthetic-chat", "--body", "Synthetic response", "--beeper-max-requests", "2", "--beeper-timeout", "1.5s"})
+	requirements.NoError(err)
+	assertions.Equal(2, bounded.BeeperMaxRequests)
+	assertions.Equal(1500*time.Millisecond, bounded.BeeperTimeout)
 	for _, args := range [][]string{
+		{"draft-compose", "--source-id", "42", "--to", "synthetic-chat", "--beeper-max-requests", "2"},
+		{"draft-compose", "--source-id", "42", "--to", "synthetic-chat", "--beeper-max-requests", "129", "--beeper-timeout", "1s"},
+		{"draft-compose", "--conversation", "42", "--body", "Synthetic", "--beeper-max-requests", "2", "--beeper-timeout", "1s"},
 		{"draft-compose", "--source-id", "0", "--to", "to@example.test"},
 		{"draft-compose", "--to", "to@example.test"},
 		{"draft-compose", "--source-id", "42"},

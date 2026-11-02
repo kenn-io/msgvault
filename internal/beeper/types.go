@@ -101,15 +101,18 @@ type ChatMerge struct {
 
 // Chat is a conversation on one account.
 type Chat struct {
-	Merge            *ChatMerge       `json:"merge"`
-	MergedIntoChatID string           `json:"mergedIntoChatID"`
-	ID               string           `json:"id"` // Matrix room ID, globally unique
-	AccountID        string           `json:"accountID"`
-	Network          string           `json:"network"`
-	Title            string           `json:"title"`
-	Type             string           `json:"type"` // "single" | "group"
-	Participants     ChatParticipants `json:"participants"`
-	LastActivity     time.Time        `json:"lastActivity"`
+	Labels           []Label           `json:"labels"`
+	IsArchived       *bool             `json:"isArchived"`
+	Capabilities     *ChatCapabilities `json:"capabilities"`
+	Merge            *ChatMerge        `json:"merge"`
+	MergedIntoChatID string            `json:"mergedIntoChatID"`
+	ID               string            `json:"id"` // Matrix room ID, globally unique
+	AccountID        string            `json:"accountID"`
+	Network          string            `json:"network"`
+	Title            string            `json:"title"`
+	Type             string            `json:"type"` // "single" | "group"
+	Participants     ChatParticipants  `json:"participants"`
+	LastActivity     time.Time         `json:"lastActivity"`
 	// Draft is the composer draft as sent: absent, null, or an object.
 	Draft jsontext.Value `json:"draft"`
 }

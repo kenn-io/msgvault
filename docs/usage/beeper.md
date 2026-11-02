@@ -17,6 +17,122 @@ per source to place text in Beeper's message box for review. msgvault never
 sends it. Writes stop if the box already contains unrelated text, but text
 typed between the check and write can still be lost.
 
+## GTD and morning triage (unreleased)
+
+Keep todo, waiting, delegated and reference categories in msgvault, with an
+independent answer-needed flag. These are local user settings, separate from
+native Beeper labels. Answer-needed chats remain available after you archive
+them in Beeper and after a daemon restart.
+
+```bash
+msgvault beeper triage --source-id 42 --refresh --json
+msgvault beeper context --conversation 57 --json
+msgvault beeper classify --conversation 57 --category todo --needs-answer=true --json
+# Apply the local classification after reviewing the preview.
+msgvault beeper classify --conversation 57 --category todo --needs-answer=true --apply --json
+msgvault beeper triage --source-id 42 --needs-answer --json
+```
+
+For an unclassified chat, `todo` defaults to answer-needed and other categories
+to false. Recategorization preserves an omitted answer flag; set
+`--needs-answer` to change it. `--clear --apply` resets
+local classification and review metadata, preserving an unresolved archive
+hold. Local classification needs no Beeper token or connection. The triage
+list includes unclassified and archived conversations; follow `next_after`
+with `--after` while `has_more` is true. Live enrichment is optional and never
+removes local rows when Beeper is unavailable or the source is ineligible.
+`--refresh` makes one native read per returned row, including the full
+participant response. The page size defaults to 50 and caps at 200; each
+response body is capped at 1 MiB. Oversized or failed observations are marked
+unavailable while local rows remain visible. A successful read with a foreign
+account or merged chat reports `freshness=identity_mismatch` and omits native
+metadata.
+
+All `beeper` operations emit JSON. `--json` is accepted for script compatibility,
+including `--json=false`; it does not change the output format.
+
+`beeper labels --source-id 42 --json` reads the installation-wide native label
+catalog. Triage displays native observations separately. Missing label data
+does not prove labels are disabled or absent. The documented native API has
+no label create/assign/remove operation; msgvault does not pretend local
+categories change those labels. No native inbox/label filter CLI is promised.
+
+Source merges retain answer-needed and uncertainty flags on the surviving chat.
+Conflicting categories refuse consolidation until you resolve them. Consolidated
+review evidence must be captured again before archive.
+
+### Review live text and archive explicitly
+
+`beeper context` reads directly from Beeper for one exact archived conversation.
+Its initial scope is the latest 50 visible events, plus required reply context,
+within 200 events, 128 KiB and 64 HTTP requests. The packet says when older
+history was omitted by that policy. Later review covers the bounded delta
+since the saved reviewed head. Incomplete pagination, changed identity, missing
+reply context and overflow are held, never presented as complete. The API's
+`hasMore` flag alone is not proof of completion. This does not certify archive
+sync coverage or observe every historical edit.
+
+Before applying classification, recapture the same scope and require matching
+content, head and activity. Capturing context alone applies no decision.
+Archiving requires first applying the actual reviewed packet's activity and
+current classification revision; the offline classification example above
+does not authorize archive. Manual callers must supply the packet's `--context-stamp`,
+`--reviewed-head-json`, `--observed-activity` and expected `--revision` to
+classification; revision zero means no prior classification. Do not substitute
+a newer unreviewed activity timestamp.
+
+Then preview `beeper archive --conversation ID --revision N
+--observed-activity TIME --json` using those exact returned values. `TIME` is
+the actual reviewed packet's activity, and `N` is the revision returned by
+the applied classification; they are not arbitrary example timestamps.
+
+Archive itself recaptures the original scope and checks the saved content stamp,
+head and activity. An activity timestamp alone cannot authorize a POST. For an
+initial window other than 50, pass its original `--initial-context-messages N`;
+for a delta, pass the original `--lower-anchor-json JSON`, not the newer saved
+reviewed head. With no lower anchor, archive uses the initial window whether
+or not `--initial-review` is written. Context uses that flag to choose an initial
+window instead of its saved-head delta. Both commands reject it with a lower
+anchor. The context event/byte/request/time bounds also apply to archive; see
+[the CLI reference](../cli-reference.md#beeper-unreleased) for output fields and
+reserved archive attempts. Drift, invalid review evidence or exhausted bounds
+withholds archive before POST. A refusal can be a held JSON outcome or a command
+error.
+
+`--required-draft-id ID --required-draft-revision N` additionally requires that
+same active managed draft, without a pending operation, to match the native
+composer before an ordinary successful outcome. Early retained or already-
+archived outcomes use the preflight observation; the final observation, when
+reached, also checks equality. These checks add no provider read or composer
+write. Reconciliation accepts no draft controls. Removed, sent or replaced drafts hold
+archive; they are never repaired by overwriting a composer. Offline `draft-get`
+remains a local read, not proof of current native composer state.
+`draft_held` covers a missing, unreadable or otherwise unverifiable required
+managed/native draft, including a storage error while reading that draft.
+Archive-state reconciliation alone cannot settle this preparation warning.
+
+Archive previews by default. Add `--apply` to write. Default
+`--policy retain-actionable` holds todo, waiting, delegated and every
+answer-needed chat. Explicit `--policy archive-selected` also permits reviewed
+actionable chats, preserving their local categories and answer-needed state.
+Unclassified, stale, ambiguous or unsupported targets are held. Archive never
+sends, marks read, clears a draft or deletes the local archive.
+
+An eligible applied archive sends at most one POST and attempts one readback.
+Preflight refusals and confirmed already-archived outcomes send none. Unknown
+outcomes keep a local archive hold across runs; they are not automatically
+replayed. A later confirmed archived state can reconcile the hold without a
+POST. Use `beeper archive --conversation ID --revision N --reconcile --apply --json`
+for this read/confirm path. It cannot send an archive even if the hold or
+provider state changes in the meantime.
+Inspect a remaining hold before explicitly acknowledging it with
+`beeper archive --conversation 57 --resolve-hold --apply --json`; this action
+does not archive. Ordinary classification/reset does not clear holds.
+
+Beeper has no conditional archive operation. A message can arrive after the
+final check and before the write. The local source lock does not prevent this
+race or guarantee a transactional provider snapshot.
+
 ## Prerequisites
 
 - Beeper Desktop installed and running on the same machine as the msgvault

@@ -1340,6 +1340,18 @@ CREATE TABLE IF NOT EXISTS conversations (
     UNIQUE(source_id, source_conversation_id)
 );
 
+CREATE TABLE IF NOT EXISTS conversation_gtd (
+    conversation_id BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    category TEXT CHECK (category IS NULL OR category IN ('todo','waiting','delegated','reference')),
+    needs_answer BOOLEAN NOT NULL DEFAULT FALSE,
+    observed_activity_at TEXT,
+    reviewed_context_stamp TEXT,
+    reviewed_head TEXT,
+    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+    archive_hold BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS conversation_participants (
     conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     participant_id BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,

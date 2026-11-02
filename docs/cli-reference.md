@@ -505,6 +505,12 @@ report chat drafts, `chat_not_found` that Beeper has no chat with that ID,
 reached, and `provider_identity_mismatch` that Beeper answered
 for another chat or account.
 
+For bounded native creation, paired `--beeper-max-requests N --beeper-timeout D`
+controls limit native Beeper creation. They are refused for other source types
+or local chat drafts. A new native composer needs two requests (GET and PATCH);
+managed reuse can need none. These opt-in calls use private HTTP/1, no redirects
+or request replay; ordinary compose defaults and offline `draft-get` are unchanged.
+
 ---
 
 ## draft-forward
@@ -563,6 +569,104 @@ a `reason`, plus `filename`, `part_key`, and `detail` when available:
 | `unrepresented_attachment` | A catalog row has no corresponding original attachment. |
 | `attachment_reader_unavailable` | The daemon cannot access the attachment store. |
 | `unrepresentable_attachment` | An attachment's metadata or bytes cannot be forwarded, or the generated draft cannot retain its catalog reference. |
+
+## beeper (unreleased)
+
+Review Beeper through the daemon using owner authentication. Restricted agent
+grants, including draft grants, cannot invoke this family. GTD classifications
+are msgvault user state, independent of native labels. Native label writes and
+native threaded-reply drafts are unsupported.
+
+All operations emit JSON. `--json` is accepted for script compatibility,
+including `--json=false`; it does not change the output format.
+Beeper-specific boolean flags accept the lowercase literals `true` and `false`;
+a bare flag means `true`. Numeric and uppercase aliases are rejected.
+
+| Command | Result |
+|---|---|
+| `beeper labels --source-id ID --json` | Installation-wide native label catalog |
+| `beeper triage --source-id ID [--after ID --limit N --needs-answer --refresh] --json` | Persistent local categories, independent answer-needed flag and existing draft handles; optional native observations |
+| `beeper triage --source-id ID --catalog [--catalog-cursor CURSOR] --json` | One bounded native chat catalog page and exact archive identity matches; does not narrow local groups |
+| `beeper context --conversation ID --json` | Bounded live text packet with scope, head, activity, content stamp and completeness |
+| `beeper classify --conversation ID --category CATEGORY [--needs-answer=true\|false] [--apply] --json` | Preview or set todo/waiting/delegated/reference locally |
+| `beeper classify --conversation ID --clear [--revision N] [--apply] --json` | Reset local classification/review metadata, preserving archive holds |
+| `beeper archive --conversation ID --observed-activity TIME --revision N [--policy POLICY] [--apply] --json` | Preview or archive one exact reviewed native chat |
+| `beeper archive --conversation ID --resolve-hold --apply --json` | Explicitly acknowledge uncertainty without archiving |
+| `beeper archive --conversation ID --revision N --reconcile [--apply] --json` | Read/confirm current state only; optionally clear a confirmed archived hold, never POST |
+
+`--limit` controls local conversation pages. Native catalog mode rejects explicitly supplied local controls `--limit`,
+`--refresh`, `--after` and `--needs-answer`, including zero/false/default values;
+use the returned provider cursor for continuation.
+
+Triage defaults to 50 conversations, maximum 200, and reports `has_more`,
+`next_after` and the current source ceiling. `--needs-answer` includes all
+categories and already archived chats. Failed/unsupported live enrichment
+leaves local rows readable. Native catalog continuations are opaque and
+separate from archive conversation cursors; coverage is not a sync certificate.
+Catalog output includes `omitted_count` and `coverage_incomplete` for unusable
+identities omitted on that page, independently of `has_more`/`next_cursor`.
+Missing or foreign identities count as omissions. Valid duplicate IDs are
+returned once and do not themselves make coverage incomplete.
+`--refresh` reads each returned chat separately, requesting its full participant
+response; see the [Beeper guide](usage/beeper.md#gtd-and-morning-triage-unreleased)
+for the per-page and response limits.
+
+Context defaults to an authorized initial recent-50-event scope, then complete
+bounded deltas since the saved reviewed head, plus linked reply ancestors.
+`older_history_omitted` distinguishes the initial policy from incomplete
+pagination. Optional bounds are `--initial-context-messages N`, `--max-events N`
+(default 200), `--max-bytes N` (128 KiB), `--max-requests N` (64) and
+`--timeout D` (30s). `--max-requests` accepts 1–128, but an accepted allowance
+is not a guarantee that the selected scope can be completed. Context uses
+HTTP/1 with one attempt per read and no redirects.
+For context, `--initial-review` selects the initial window instead of deriving
+a delta from the saved reviewed head. `--lower-anchor-json JSON` repeats the
+original delta boundary. They are mutually exclusive. Archive accepts these
+same bounds/scope controls and
+recaptures that original scope against the stored review stamp/head/activity.
+Its default is the initial recent-50 scope; a delta requires its original lower,
+and a nondefault initial window requires its original size. For archive without
+a lower anchor, `--initial-review` explicitly spells the same initial default;
+omitting that flag does not change the scope. Reconcile/resolve-hold refuse
+these review controls. Archive's request/time allowance covers all its
+preflight, capture, final observation, POST and readback calls. A new archive
+write accounts for four attempts around recapture: the first chat read, final
+chat read, POST and readback. After the first read, the other three are reserved
+before capture. Insufficient remaining capture allowance holds before POST;
+an allowance of five does not promise a complete capture. Optional paired
+`--required-draft-id ID --required-draft-revision N` requires the exact active
+managed draft to match the native composer before an ordinary successful
+outcome. It uses the existing preflight and, when reached, final chat
+observation, without another read or composer write. Reconciliation accepts no
+draft controls.
+Missing, foreign, stalled, overflowing or changed context
+is held. The packet is live context, not proof of complete imported history.
+The byte cap covers the serialized JSON packet, including metadata. Oversized
+held results omit context; if even result metadata cannot fit, the command fails.
+Context and archive JSON expose `requests`, the physical HTTP attempts made by
+that command, including archive POST/readback. Unused reservations do not
+increase this count. The field does not certify complete imported history.
+
+To save reviewed context, supply the packet's `--observed-activity TIME`,
+`--context-stamp STAMP`, `--reviewed-head-json JSON` and expected `--revision N`
+(zero for absent state). A changed revision refuses the update. First
+classification defaults todo to answer-needed and other categories to false.
+Recategorization preserves an omitted answer flag; `--needs-answer` overrides
+it, and `--clear` resets it. Classification is local-only and previews by default. A
+classification without review metadata clears earlier evidence; preview exposes
+the proposed `observed_activity`, `context_stamp` and `reviewed_head` values.
+
+Archive policy defaults to `retain-actionable`, which holds todo, waiting,
+delegated and every answer-needed item. Explicit `archive-selected` allows
+reviewed actionable selections. Unclassified, stale, ambiguous or unsupported
+targets remain held. An eligible applied archive sends at most one POST and
+attempts one readback; an unknown outcome persists as `archive_hold` across runs, without automatic
+retry. Confirmed archived state can reconcile a hold without POST. Ordinary
+`archive --apply` also clears a hold when its identity-qualified initial read
+confirms the chat is already archived and any required managed draft matches. A new
+message can arrive between the last read and write because Beeper has no
+conditional archive operation. Archive never sends, marks read, changes drafts
+or deletes local messages.
 
 ## draft-get, draft-edit, draft-delete, and draft-recover
 

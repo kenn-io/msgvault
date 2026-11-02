@@ -1695,6 +1695,16 @@ func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	if args[0] == "beeper" {
+		if len(args) < 2 {
+			return false
+		}
+		switch args[1] {
+		case "labels", "triage", "context", "classify", "archive":
+			return true
+		}
+		return false
+	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.
 	if len(args) > 1 && strings.HasPrefix(args[1], "__") {

@@ -425,6 +425,7 @@ func buildSourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, r
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return plan, err
 	}
+	plannedCategories := make(map[int64]string)
 	for i := range plan.conversations {
 		c := &plan.conversations[i]
 		c.destination = c.id
@@ -446,6 +447,11 @@ func buildSourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, r
 						return plan, invalidSourceMerge("shared conversation has incompatible provider identity")
 					}
 				}
+			}
+		}
+		if c.destination != c.id {
+			if err := validateConversationGTDMergeContext(ctx, tx, c.id, c.destination, plannedCategories); err != nil {
+				return plan, err
 			}
 		}
 		if c.destination == c.id {

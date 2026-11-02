@@ -24,6 +24,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 				return err
 			}
 		} else {
+			if err := mergeConversationGTDContext(ctx, tx, c.id, c.destination); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id, participant_id, role, joined_at, left_at)
  SELECT ?, participant_id, role, joined_at, left_at FROM conversation_participants WHERE conversation_id = ?
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {

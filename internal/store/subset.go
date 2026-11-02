@@ -442,6 +442,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("conversations rows affected: %w", err)
 	}
 
+	if exists, err := sourceTableExists(tx, "conversation_gtd"); err != nil {
+		return nil, fmt.Errorf("check conversation GTD schema: %w", err)
+	} else if exists {
+		if _, err := copyByName(tx, "conversation_gtd", `conversation_id IN (SELECT id FROM conversations)`); err != nil {
+			return nil, fmt.Errorf("copy conversation GTD: %w", err)
+		}
+	}
+
 	if exists, err := sourceTableExists(tx, "conversation_policy"); err != nil {
 		return nil, fmt.Errorf("check conversation policy schema: %w", err)
 	} else if exists {

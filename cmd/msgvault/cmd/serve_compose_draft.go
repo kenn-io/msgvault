@@ -14,16 +14,18 @@ import (
 )
 
 type draftComposeIntent struct {
-	From        string
-	Account     string
-	SourceID    int64
-	SourceIDSet bool
-	To          []string
-	Cc          []string
-	Bcc         []string
-	Subject     string
-	Body        string
-	JSON        bool
+	From              string
+	Account           string
+	SourceID          int64
+	SourceIDSet       bool
+	To                []string
+	Cc                []string
+	Bcc               []string
+	Subject           string
+	Body              string
+	BeeperMaxRequests int
+	BeeperTimeout     time.Duration
+	JSON              bool
 	// ConversationID selects a local chat draft instead of an IMAP draft.
 	ConversationID int64
 	ReplyTo        int64
@@ -38,7 +40,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		return invalidDraftComposeArgs("expected %s as the first argument", api.CLIRunDraftComposeCommand)
 	}
 	var intent draftComposeIntent
-	var fromSet, accountSet, sourceIDSet, subjectSet, bodySet, jsonSet bool
+	var fromSet, accountSet, sourceIDSet, subjectSet, bodySet, jsonSet, beeperRequestsSet, beeperTimeoutSet bool
 	rest := args[1:]
 	for len(rest) > 0 {
 		arg := rest[0]
@@ -49,7 +51,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		}
 		name, value, hasValue := strings.Cut(nameValue, "=")
 		switch name {
-		case draftFromFlag, "account", "source-id", "subject", "body", "to", "cc", "bcc", "conversation", "reply-to":
+		case draftFromFlag, "account", "source-id", "subject", "body", "to", "cc", "bcc", "conversation", "reply-to", beeperMaxRequestsFlag, beeperTimeoutFlag:
 			if !hasValue {
 				if len(rest) == 0 {
 					return invalidDraftComposeArgs("--%s requires a value", name)
@@ -92,6 +94,18 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 					return invalidDraftComposeArgs("--%s given more than once", name)
 				}
 				*target = id
+			case beeperMaxRequestsFlag:
+				n, err := strconv.Atoi(value)
+				if err != nil || n < 1 || n > 128 || beeperRequestsSet {
+					return invalidDraftComposeArgs("invalid beeper-max-requests")
+				}
+				intent.BeeperMaxRequests, beeperRequestsSet = n, true
+			case beeperTimeoutFlag:
+				d, err := time.ParseDuration(value)
+				if err != nil || d <= 0 || d > 2*time.Minute || beeperTimeoutSet {
+					return invalidDraftComposeArgs("invalid beeper-timeout")
+				}
+				intent.BeeperTimeout, beeperTimeoutSet = d, true
 			case "subject":
 				if subjectSet {
 					return invalidDraftComposeArgs("--subject given more than once")
@@ -131,8 +145,11 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 			return invalidDraftComposeArgs("unknown flag --%s", name)
 		}
 	}
+	if beeperRequestsSet != beeperTimeoutSet {
+		return invalidDraftComposeArgs("beeper request/time controls must be paired")
+	}
 	if intent.ConversationID != 0 {
-		if fromSet || accountSet || sourceIDSet || subjectSet || len(intent.To)+len(intent.Cc)+len(intent.Bcc) > 0 {
+		if fromSet || accountSet || sourceIDSet || subjectSet || beeperRequestsSet || len(intent.To)+len(intent.Cc)+len(intent.Bcc) > 0 {
 			return invalidDraftComposeArgs("--conversation accepts only --body, --reply-to, and --json")
 		}
 		return intent, nil
@@ -167,10 +184,22 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if intent.ConversationID != 0 {
 		return a.runCLIChatDraftCreate(ctx, intent, req.Grant, emit)
 	}
-	if source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{
+	source, resolveErr := sourceops.ResolveExactOne(a.store, sourceops.Selector{
 		Account: intent.Account, SourceID: intent.SourceID, SourceIDSet: intent.SourceIDSet,
-	}); err == nil && source.SourceType == "beeper" {
+	})
+	if resolveErr == nil && source.SourceType == "beeper" {
 		return a.runBeeperDraftCreate(ctx, req.Grant, intent, source, emit)
+	}
+	if intent.BeeperMaxRequests != 0 {
+		if req.Grant != nil {
+			if resolveErr != nil {
+				return draftReplyNotPermitted(errors.New("destination source is not available"))
+			}
+			if err := authorizeDelegatedDraftSource(req.Grant, source); err != nil {
+				return err
+			}
+		}
+		return draftReplyError("invalid_args", errors.New("beeper controls require an exact native Beeper source"))
 	}
 	target, from, _, err := a.resolveDraftTarget(
 		ctx, nil, intent.Account, intent.SourceID, intent.SourceIDSet, intent.From, req.Grant, false,

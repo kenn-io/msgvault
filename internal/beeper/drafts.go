@@ -87,6 +87,9 @@ func (c *Client) SetDraft(ctx context.Context, chatID string, text *string) (*Ch
 	if err != nil {
 		return nil, err
 	}
+	if c.requestBudget != nil {
+		req.GetBody = nil
+	} // Bounded create must never replay a PATCH.
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")

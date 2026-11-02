@@ -81,7 +81,7 @@ These tools run the matching CLI commands through your selected daemon. They req
 | Tool | Command | Parameters |
 |---|---|---|
 | `draft_reply` | `draft-reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
-| `draft_compose` | `draft-compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to` |
+| `draft_compose` | `draft-compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to`, paired `beeper_max_requests` (1–128) and `beeper_timeout` (positive, up to `2m`) for native Beeper drafts |
 | `draft_forward` | `draft-forward` | Required `message_id`; optional `from`, `to`, `cc`, `bcc`, `account`, `source_id`, `body` |
 | `draft_get` | `draft-get` | `draft_id` or `conversation` |
 | `draft_edit` | `draft-edit` | Required `draft_id`, `revision`, `body` |

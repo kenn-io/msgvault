@@ -1389,6 +1389,19 @@ CREATE TABLE IF NOT EXISTS conversations (
     UNIQUE(source_id, source_conversation_id)
 );
 
+-- User-owned chat triage state, independent of native labels and import data.
+CREATE TABLE IF NOT EXISTS conversation_gtd (
+    conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    category TEXT CHECK (category IS NULL OR category IN ('todo','waiting','delegated','reference')),
+    needs_answer BOOLEAN NOT NULL DEFAULT FALSE,
+    observed_activity_at TEXT,
+    reviewed_context_stamp TEXT,
+    reviewed_head TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    archive_hold BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Conversation participants (who's in each conversation)
 CREATE TABLE IF NOT EXISTS conversation_participants (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
