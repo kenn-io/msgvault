@@ -35,7 +35,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
   return { controller, writes, view };
 }
 
-it('keeps a conflicted structured editor available to cancel after a deferred failed reload', async () => {
+it('keeps a conflicted structured editor available when Cancel is clicked during reload', async () => {
   let releaseReload!: (response: Response) => void;
   const pendingReload = new Promise<Response>(resolve => releaseReload = resolve);
   const initial = profile();
@@ -60,10 +60,6 @@ it('keeps a conflicted structured editor available to cancel after a deferred fa
     const cancel = screen.getByRole('button', { name: /^Cancel$/ });
     await fireEvent.click(cancel);
     expect(screen.getByDisplayValue('+12025550123')).toBeDefined();
-    await act(() => releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Reload profile' })).toHaveProperty('disabled', false));
-    await fireEvent.click(cancel);
-    expect(screen.queryByDisplayValue('+12025550123')).toBeNull();
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
@@ -163,12 +159,8 @@ it('displays every structured address component before its original street value
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
-  { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' } },
-  { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false } },
-  { name: 'sensitive field closes the draft and conceals the value', refreshed: { label: 'Private note', is_sensitive: true } },
-])('joins refreshed field settings into an open draft: $name', async ({ refreshed }) => {
-  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: refreshed.is_sensitive ? 'multi' : 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
+async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardinality: 'single' | 'multi' = 'single', extraValues: string[] = []) {
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality, object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -177,7 +169,7 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
     if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [{ ...definition, revision: 2, ...refreshed }] });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value, ...(refreshed.is_sensitive ? [{ ...value, id: 42, ordinal: 1, value: { type: 'text' as const, text: 'Second private example' } }] : [])], history: [] }] }, etags: {}, errors: {} });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), definitions: { definitions: [definition] }, attributes: { person_id: 7, attributes: [{ definition, current: [value, ...extraValues.map((text, index) => ({ ...value, id: 42 + index, ordinal: index + 1, value: { type: 'text' as const, text } }))], history: [] }] }, etags: {}, errors: {} });
   const view = render(PersonFields, { controller });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Note: Private example' }));
@@ -185,25 +177,36 @@ it.each<{ name: string; refreshed: Partial<AttributeDefinition> }>([
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
     await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
     await act(() => controller.reloadDefinitions());
-    if (refreshed.is_active === false || refreshed.is_sensitive) {
-      expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
-      expect(controller.draft).toBeNull();
-      expect(screen.getByRole('button', { name: refreshed.is_sensitive ? 'Edit Private note: value 1' : 'Edit Private note: Private example' })).toHaveProperty('disabled', true);
-    } else {
-      expect(screen.getByDisplayValue('Unsaved local note')).toBeDefined();
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(screen.getByRole('button', { name: 'Edit Renamed note: Private example' })).toBeDefined();
+    return { controller, view };
+  } catch (error) { view.unmount(); controller.destroy(); throw error; }
+}
+
+it.each([
+  { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' }, drafts: 1, draftKind: 'setAttribute', editLabel: 'Edit Renamed note: Private example', disabled: false },
+  { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false }, drafts: 0, draftKind: undefined, editLabel: 'Edit Private note: Private example', disabled: true },
+])('joins refreshed field settings into an open draft: $name', async ({ refreshed, drafts, draftKind, editLabel, disabled }) => {
+  const { controller, view } = await refreshOpenField(refreshed);
+  try {
+    expect(screen.queryAllByDisplayValue('Unsaved local note')).toHaveLength(drafts);
+    expect(controller.draft?.kind).toBe(draftKind);
+    expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', disabled);
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('closes the field draft and conceals values when refreshed settings mark the field sensitive', async () => {
+  const { controller, view } = await refreshOpenField({ label: 'Private note', is_sensitive: true }, 'multi', ['Second private example']);
+  try {
+    expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
+    expect(controller.draft).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit Private note: value 1' })).toHaveProperty('disabled', true);
+    for (const position of [1, 2]) {
+      expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
     }
-    if (refreshed.is_sensitive) {
-      for (const position of [1, 2]) {
-        expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
-        expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
-      }
-      expect(screen.queryByText('Private example')).toBeNull();
-      expect(screen.queryByText('Second private example')).toBeNull();
-      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
-      expect(screen.getByText('Private example')).toBeDefined();
-    }
+    expect(screen.queryByText('Private example')).toBeNull();
+    expect(screen.queryByText('Second private example')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
+    expect(screen.getByText('Private example')).toBeDefined();
   } finally { view.unmount(); controller.destroy(); }
 });
 

@@ -329,6 +329,7 @@ describe('PersonBriefCard', () => {
       await waitFor(() => {
         expect(bodies).toHaveLength(previousCount + 1);
         expect(toggle.disabled).toBe(false);
+        expect(toggle.checked).toBe(nextEnrolled);
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');

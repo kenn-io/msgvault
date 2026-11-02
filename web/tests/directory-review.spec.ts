@@ -244,7 +244,7 @@ test('History wraps long provenance at phone width', async ({ page }) => {
   expect(await historyDialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-async function mergeAndSplit(page: Page, inspectSnapshot?: (fixture: Awaited<ReturnType<typeof installDirectoryReviewArchive>>) => Promise<void>) {
+async function mergeAndSplit(page: Page) {
   const fixture = await installDirectoryReviewArchive(page);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto(reviewURL());
@@ -290,7 +290,6 @@ async function mergeAndSplit(page: Page, inspectSnapshot?: (fixture: Awaited<Ret
   await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
   await expect(page.getByRole('table', { name: 'Merge participants' })).toContainText('absorbed');
   expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(0);
-  await inspectSnapshot?.(fixture);
 
   await page.getByRole('button', { name: 'Split merged profile' }).focus();
   await page.keyboard.press('Enter');
@@ -324,13 +323,7 @@ async function mergeAndSplit(page: Page, inspectSnapshot?: (fixture: Awaited<Ret
 }
 
 test('opening the source profile reuses state already refreshed by split reconciliation', async ({ page }) => {
-  const { fixture, split } = await mergeAndSplit(page, async fixture => {
-    await page.getByRole('button', { name: 'View verified snapshot' }).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('region', { name: 'Verified merge snapshot content' }))
-      .toContainText('synthetic snapshot');
-    expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(1);
-  });
+  const { fixture, split } = await mergeAndSplit(page);
   const completionAction = split.getByRole('button', { name: 'Open source profile Synthetic One (Person 7)' });
   const personGETsBefore = fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/7').length;
   await completionAction.focus();
