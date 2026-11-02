@@ -13,7 +13,7 @@ describe('OrganizationEmploymentTab', () => {
     let reads = 0;
     let resolveRefresh!: (response: Response) => void;
     const pendingRefresh = new Promise<Response>((resolve) => { resolveRefresh = resolve; });
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/people/7/employments') {
         reads += 1;
@@ -51,7 +51,7 @@ describe('OrganizationEmploymentTab', () => {
     const employerID = search ? 51 : 21;
     const employerName = search ? 'Zebra Example' : 'Synthetic Org';
     let employmentReads = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
@@ -99,7 +99,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 
   it('rejects a year-less employment date and keeps Create disabled until it is fixed', async () => {
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
@@ -140,7 +140,7 @@ describe('OrganizationEmploymentTab', () => {
       { person_id: 9, organization_id: 23, source: 'extraction', source_ref: 'conflict-current', address_id: 33, confidence: 0.33 },
       { person_id: 10, organization_id: 24, source: 'enrichment', source_ref: 'retry-fresh', address_id: 44, confidence: 0.44 }
     ];
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
@@ -204,7 +204,7 @@ describe('OrganizationEmploymentTab', () => {
 
   it('loads the exact organization label for a disabled existing-employment selector', async () => {
     const requests: Request[] = [];
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
@@ -226,7 +226,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 
   it('reads a row as title at organization with period, department, and ordered actions', () => {
-    const controller = controllerWith(vi.fn<typeof fetch>());
+    const { controller } = controllerWith(vi.fn<typeof fetch>());
     controller.organizations = [organization()];
     controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true, is_primary: false }), employment(12, 1, { is_current: false, is_primary: false, title: 'Historical role' })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
@@ -244,7 +244,7 @@ describe('OrganizationEmploymentTab', () => {
 
   it('makes a current employment primary', async () => {
     const requests: Request[] = [];
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
@@ -264,7 +264,7 @@ describe('OrganizationEmploymentTab', () => {
   it('retains a make-primary conflict and renders the complete refreshed employment', async () => {
     let reads = 0;
     let primaryWrites = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/employments/11' && request.method === 'GET') {
@@ -308,7 +308,7 @@ describe('OrganizationEmploymentTab', () => {
     const requests: Request[] = [];
     let revision = 1;
     let deleted = false;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
@@ -346,7 +346,7 @@ describe('OrganizationEmploymentTab', () => {
 
   it('blocks an unknown employment create until explicit refresh and keeps the modal draft open', async () => {
     let posts = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
@@ -380,7 +380,7 @@ describe('OrganizationEmploymentTab', () => {
     let deletes = 0;
     const rootShortcut = vi.fn();
     const unregister = appShortcuts.register('x', rootShortcut);
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/employments/11' && request.method === 'GET') {
@@ -424,7 +424,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 
   it('uses retained employer records for Work row names after organization search', async () => {
-    const controller = controllerWith(async input => {
+    const { controller } = controllerWith(async input => {
       const path = pathOf(requestOf(input));
       if (path.startsWith('/api/v1/organizations')) return Response.json({ organizations: [organization(99, 1, 'Search Result')], total: 1, limit: 50, offset: 0 });
       throw new Error(`unexpected ${path}`);

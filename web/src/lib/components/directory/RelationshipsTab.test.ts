@@ -1,9 +1,7 @@
-import { requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
+import { requestOf, pathOf, controllerWith } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
-import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
 
@@ -36,11 +34,6 @@ function relationshipType(overrides: Record<string, unknown> = {}) {
     is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
     created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
   };
-}
-
-function controllerWith(fetchFn: typeof fetch, personID = 7): { client: ReturnType<typeof createAPIClient>; controller: DirectoryEntityController } {
-  const client = createAPIClient(fetchFn);
-  return { client, controller: new DirectoryEntityController(client, personID) };
 }
 
 describe('RelationshipsTab', () => {

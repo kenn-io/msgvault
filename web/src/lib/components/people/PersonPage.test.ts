@@ -313,8 +313,7 @@ it.each([
   const target = bindings.length ? 'cluster:1' : null;
   await directory.loadSelection(7);
   if (target) await controller.openTarget(target, predicate);
-  const onFiltersChange = vi.fn();
-  const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target, filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange, onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
+  const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target, filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
     if (activity > 0) {
       expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');

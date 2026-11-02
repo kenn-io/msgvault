@@ -445,7 +445,19 @@ test('saved people keep durable IDs separate from participants and open profiles
     { id: 93, participant_ids: [3], display_name: 'Draft Contact', organizations: [], categories: [], contact_state: 'active', revision: 1, carddav_bindings: [], vcard_uid: 'example-93' },
   ];
   await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
-  await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
+  await page.route('**/api/v1/people/*/**', route => {
+    const url = new URL(route.request().url());
+    const id = Number(url.pathname.split('/')[4]);
+    const section = url.pathname.split('/')[5];
+    const bodies: Record<string, unknown> = {
+      attributes: { person_id: id, attributes: [] },
+      'contact-state': { person_id: id, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false },
+      employments: { employments: [] }, relationships: { relationships: [] },
+      network: { root_person_id: id, depth: 1, nodes: [], edges: [], truncated: false },
+      files: { files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} },
+    };
+    return section && section in bodies ? route.fulfill({ json: bodies[section] }) : route.fallback();
+  });
   for (const person of profiles) {
     await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
     await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
@@ -624,7 +636,19 @@ for (const previous of ['Alice', 'no person']) {
       { id: 92, display_name: 'Bob Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [2], carddav_bindings: [], vcard_uid: 'example-92' },
     ];
     await page.route('**/api/v1/people/directory**', route => route.fulfill({ json: { people: profiles } }));
-    await page.route('**/api/v1/people/*/**', route => route.fulfill({ status: 404, json: { error: 'not_found', message: 'Synthetic optional section unavailable.' } }));
+    await page.route('**/api/v1/people/*/**', route => {
+      const url = new URL(route.request().url());
+      const id = Number(url.pathname.split('/')[4]);
+      const section = url.pathname.split('/')[5];
+      const bodies: Record<string, unknown> = {
+        attributes: { person_id: id, attributes: [] },
+        'contact-state': { person_id: id, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false },
+        employments: { employments: [] }, relationships: { relationships: [] },
+        network: { root_person_id: id, depth: 1, nodes: [], edges: [], truncated: false },
+        files: { files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} },
+      };
+      return section && section in bodies ? route.fulfill({ json: bodies[section] }) : route.fallback();
+    });
     for (const person of profiles) {
       await page.route(`**/api/v1/people/${person.id}`, route => route.fulfill({ json: person }));
       await page.route(`**/api/v1/people/${person.id}/profile`, route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));

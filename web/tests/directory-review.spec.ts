@@ -248,7 +248,7 @@ test('History wraps long provenance at phone width', async ({ page }) => {
   expect(await historyDialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-async function mergeAndSplit(page: Page, inspectSnapshot: (fixture: Awaited<ReturnType<typeof installDirectoryReviewArchive>>) => Promise<void>) {
+async function mergeAndSplit(page: Page, inspectSnapshot?: (fixture: Awaited<ReturnType<typeof installDirectoryReviewArchive>>) => Promise<void>) {
   const fixture = await installDirectoryReviewArchive(page);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto(reviewURL());
@@ -294,7 +294,7 @@ async function mergeAndSplit(page: Page, inspectSnapshot: (fixture: Awaited<Retu
   await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
   await expect(page.getByRole('table', { name: 'Merge participants' })).toContainText('absorbed');
   expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(0);
-  await inspectSnapshot(fixture);
+  await inspectSnapshot?.(fixture);
 
   await page.getByRole('button', { name: 'Split merged profile' }).focus();
   await page.keyboard.press('Enter');
@@ -351,9 +351,7 @@ test('explicit merge and partial split open Synthetic One with fresh server stat
 });
 
 test('explicit merge and partial split open Synthetic Restored with fresh server state', async ({ page }) => {
-  const { fixture, split } = await mergeAndSplit(page, async fixture => {
-    expect(fixture.requests.filter(request => request.path.endsWith('/snapshot'))).toHaveLength(0);
-  });
+  const { fixture, split } = await mergeAndSplit(page);
   const completionAction = split.getByRole('button', { name: 'Open restored profile Synthetic Restored (Person 19)' });
   const personGETsBefore = fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/19').length;
   await completionAction.focus();

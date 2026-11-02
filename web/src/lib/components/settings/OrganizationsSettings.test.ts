@@ -8,7 +8,7 @@ describe('OrganizationsSettings', () => {
     let resolveSearch!: (response: Response) => void;
     const search = new Promise<Response>((resolve) => { resolveSearch = resolve; });
     let searches = 0;
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/organizations/21') return Response.json(organizationProfile(1), { headers: { ETag: '"organization-21-r1"' } });
       if (pathOf(request) === '/api/v1/organizations') {
@@ -16,7 +16,7 @@ describe('OrganizationsSettings', () => {
         return searches === 1 ? search : Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
       }
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }));
+    }), 0);
     render(OrganizationsSettings, { controller });
 
     expect((await screen.findByRole('status')).textContent).toContain('Loading organizations');

@@ -5,7 +5,7 @@ import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'POST') {
@@ -31,7 +31,7 @@ describe('OrganizationEditor', () => {
   it.each(['create', 'rename', 'delete'])('%s an unused organization', async operation => {
     const requests: Request[] = [];
     let organizations = [organization()];
-    const controller = controllerWith(async input => {
+    const { controller } = controllerWith(async input => {
       const request = requestOf(input); requests.push(request.clone());
       const path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations, total: organizations.length, limit: 50, offset: 0 });
@@ -91,7 +91,7 @@ describe('OrganizationEditor', () => {
       ],
       categories: [baseline.categories[0], ...rich.categories]
     };
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const path = pathOf(request);
@@ -161,7 +161,7 @@ describe('OrganizationEditor', () => {
   it('keeps an editor open during submission', async () => {
     let resolveCreate!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveCreate = resolve; });
-    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return pending;
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);

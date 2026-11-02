@@ -206,18 +206,12 @@ describe('RelationshipHeader', () => {
     expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
   });
 
-  it('offers no person actions group for a domain', () => {
-    render(RelationshipHeader, baseProps({ detail: domain() }));
-
-    expect(screen.queryByRole('group', { name: 'Person actions' })).toBeNull();
-  });
-
   it.each([0, 9])('renders domain counts and dates for %i items without person actions', activity => {
     render(RelationshipHeader, baseProps({ showIdentity: false, detail: { ...domain(), activity_count: activity, person_count: 3, first_at: '2026-06-01T12:00:00Z' } }));
 
     expect(screen.getByText(/items/).textContent?.replace(/\s+/g, ' ').trim()).toBe(activity === 0 ? '0 items · 3 people' : '9 items · Jun 1, 2026 – Jul 19, 2026 · 3 people');
     expect(screen.queryByLabelText('Linked identities')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Person actions' })).toBeNull();
   });
 
   it('opens the Same person dialog for a person, titled with their name, and Esc closes it', async () => {

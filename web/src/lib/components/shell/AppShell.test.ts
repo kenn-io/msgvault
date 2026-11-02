@@ -1248,7 +1248,7 @@ describe('AppShell', () => {
     }
   });
 
-  it('owns the selected-person fact ledger and reloads the same person on history restoration', async () => {
+  it('owns person-scoped Facts navigation and reloads the ledger on history restoration', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate', directoryPersonID: 42
     }))}`);
@@ -1257,6 +1257,15 @@ describe('AppShell', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = new URL(request.url).pathname;
+      const person = { id: 42, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-42', created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z' };
+      if (path === '/api/v1/people/42') return Response.json(person);
+      if (path.endsWith('/profile')) return Response.json({ person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 42, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 42, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-07-19T10:00:00Z', stale: false });
+      if (path.endsWith('/employments')) return Response.json({ employments: [] });
+      if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
+      if (path.endsWith('/network')) return Response.json({ root_person_id: 42, depth: 1, nodes: [], edges: [], truncated: false });
       if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
       if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
       if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
@@ -1274,6 +1283,8 @@ describe('AppShell', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open person profile' }));
     expect(state.current).toMatchObject({ workspace: 'relationships', directoryPersonID: 42 });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review facts' }));
+    expect(state.current).toMatchObject({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 42 });
     rendered.unmount();
     state.destroy();
   });
