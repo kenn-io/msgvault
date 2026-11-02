@@ -480,7 +480,7 @@ func (s *Store) projectLineMembershipTx(ctx context.Context, tx *loggedTx, sourc
 		leave = time.UnixMilli(latestLeave).UTC()
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id,participant_id,role,joined_at,left_at)
-  VALUES (?,?,'member',?,?) ON CONFLICT(conversation_id,participant_id) DO UPDATE SET joined_at=excluded.joined_at,left_at=excluded.left_at`, conversationID, participantID, join, leave)
+  VALUES (?,?,'member',?,?) ON CONFLICT(conversation_id,participant_id) DO UPDATE SET joined_at=excluded.joined_at,left_at=excluded.left_at WHERE conversation_participants.left_at IS DISTINCT FROM excluded.left_at`, conversationID, participantID, join, leave)
 	return err
 }
 

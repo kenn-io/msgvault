@@ -162,6 +162,66 @@ func TestLineMembershipOutOfOrder(t *testing.T) {
 	checks.False(left.Valid, "a rejoined participant must be active to existing messaging-route queries")
 }
 
+func TestLineMessagePresenceSkipsUnchangedMembership(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000001")
+	must.NoError(err)
+	member := "channel:2000000001:user:U00000000000000000000000000000001"
+	participant, err := st.EnsureParticipantByIdentifier("line_user_id", member, "Synthetic sender")
+	must.NoError(err)
+	base := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	persist := func(id string, at time.Time) int64 {
+		t.Helper()
+		messageID, err := st.PersistLineGroupMessageContext(ctx, &store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: "line", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: "group:C00000000000000000000000000000001", ConversationType: "group_chat", Participants: []store.ConversationParticipantRef{{ParticipantID: participant, Role: "member"}}, PreserveExistingParticipants: true},
+			BodyText:     sql.NullString{String: "synthetic message", Valid: true},
+		}, member)
+		must.NoError(err)
+		return messageID
+	}
+	first := persist("first", base)
+	var conversation int64
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), first).Scan(&conversation))
+	type projection struct {
+		joined, left sql.NullTime
+		revision     int64
+	}
+	snapshot := func() projection {
+		t.Helper()
+		var state projection
+		must.NoError(st.DB().QueryRow(st.Rebind(`SELECT cp.joined_at,cp.left_at,q.revision FROM conversation_participants cp
+ JOIN activity_projection_queue q ON q.message_id=? WHERE cp.conversation_id=? AND cp.participant_id=?`), first, conversation, participant).Scan(&state.joined, &state.left, &state.revision))
+		return state
+	}
+	initial := snapshot()
+	persist("second", base.Add(time.Minute))
+	checks.Equal(initial, snapshot(), "an active sender's next message must preserve membership and leave existing history queued at the same revision")
+	var presence int64
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT joined_at FROM line_memberships WHERE source_id=? AND member_identifier=?`), source.ID, member).Scan(&presence))
+	checks.Equal(base.Add(time.Minute).UnixMilli(), presence, "the operational presence clock still advances")
+
+	leave := base.Add(2 * time.Minute)
+	must.NoError(st.SetLineMembershipContext(ctx, conversation, participant, member, false, leave))
+	departed := snapshot()
+	must.True(departed.left.Valid)
+	checks.Equal(leave.UnixMilli(), departed.left.Time.UnixMilli())
+	checks.Greater(departed.revision, initial.revision, "a real leave invalidates history")
+	must.NoError(st.SetLineMembershipContext(ctx, conversation, participant, member, false, leave))
+	checks.Equal(departed, snapshot(), "replaying a leave must preserve membership and queue revisions")
+	join := base.Add(3 * time.Minute)
+	must.NoError(st.SetLineMembershipContext(ctx, conversation, participant, member, true, join))
+	rejoined := snapshot()
+	checks.False(rejoined.left.Valid)
+	checks.Equal(join.UnixMilli(), rejoined.joined.Time.UnixMilli())
+	checks.Greater(rejoined.revision, departed.revision, "a real rejoin invalidates history")
+	must.NoError(st.SetLineMembershipContext(ctx, conversation, participant, member, true, join))
+	checks.Equal(rejoined, snapshot(), "replaying a join must preserve membership and queue revisions")
+}
+
 func TestLineBotConfigMerge(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
