@@ -667,7 +667,7 @@ func (s *Store) UpdateLineParticipantNameContext(ctx context.Context, participan
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		result, err := tx.ExecContext(ctx, `UPDATE participants SET display_name=?,updated_at=`+s.dialect.Now()+`
-   WHERE id=? AND (COALESCE(display_name,'')='' OR display_name=?) AND COALESCE(display_name,'')<>?`, name, participantID, previousName, name)
+   WHERE id=? AND display_name=? AND COALESCE(display_name,'')<>?`, name, participantID, previousName, name)
 		if err != nil {
 			return err
 		}

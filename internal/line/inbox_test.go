@@ -793,6 +793,45 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 	checks.Equal(1, clocks, "recovery persists text and its per-identity membership evidence together")
 }
 
+func TestReviewProfileRefreshUpdatesNewMessageSenderSearch(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.enqueue(t, f.message("before-rename", "first message", f.now.UnixMilli()), time.Time{})
+	f.run(t)
+	f.now = f.now.Add(25 * time.Hour)
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusOK, Body: `{"userId":"` + testUser + `","displayName":"RenamedSender"}`})
+	f.enqueue(t, f.message("after-rename", "second message", f.now.UnixMilli()), time.Time{})
+	f.run(t)
+	var name string
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT mr.display_name FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.source_id=? AND m.source_message_id=? AND mr.recipient_type='from'`), f.source.ID, "after-rename").Scan(&name))
+	checks.Equal("RenamedSender", name)
+	_, total, err := f.st.SearchMessagesContext(t.Context(), "RenamedSender", 0, 10)
+	must.NoError(err)
+	checks.Equal(int64(1), total)
+}
+
+func TestReviewMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	other := "U00000000000000000000000000000003"
+	firstPath := "/v2/bot/group/" + testGroup + "/member/" + testUser
+	otherPath := "/v2/bot/group/" + testGroup + "/member/" + other
+	f.api.Enqueue(http.MethodGet, firstPath, lineapi.Response{Status: http.StatusNotFound}, lineapi.Response{Status: http.StatusNotFound})
+	f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "members-joined", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: other}}}}, time.Time{})
+	f.run(t)
+	status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
+	must.NoError(err)
+	checks.Equal(int64(1), status.Pending, "the failed profile remains scheduled for retry")
+	f.now = f.now.Add(24 * time.Hour)
+	f.run(t)
+	var name sql.NullString
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
+	checks.Equal("Example User", name.String)
+	checks.Equal(1, f.api.Count(http.MethodGet, otherPath))
+}
+
 func TestProcessorProfileCacheSurvivesRestartAndExpires(t *testing.T) {
 	checks := assert.New(t)
 

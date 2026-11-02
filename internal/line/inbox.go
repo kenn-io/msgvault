@@ -481,14 +481,14 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 	}
 	// Persist every member transition before the first optional provider request.
 	// A failed lookup may delay presentation, never another member's membership.
+	var enrichmentErr error
 	if joined {
 		for _, userID := range users {
 			if userID != p.botID {
-				if _, err = p.profile(ctx, e.Source, userID); err != nil {
-					return fmt.Errorf("LINE member enrichment: %w", err)
-				}
+				_, err = p.profile(ctx, e.Source, userID)
+				enrichmentErr = errors.Join(enrichmentErr, err)
 			}
 		}
 	}
-	return nil
+	return enrichmentErr
 }

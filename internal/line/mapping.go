@@ -119,11 +119,11 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 	} else {
 		name := ""
 		if e.Source.UserID != "" {
-			cached, _, err := p.cachedProfile(ctx, e.Source.UserID)
-			if err != nil {
+			if cached, fresh, err := p.cachedProfile(ctx, e.Source.UserID); err != nil {
 				return err
+			} else if fresh {
+				name = cached.DisplayName
 			}
-			name = cached.DisplayName
 		}
 		pid, err := p.participant(ctx, key, e.Source.UserID, name)
 		if err != nil {
