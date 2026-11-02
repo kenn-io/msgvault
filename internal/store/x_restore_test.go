@@ -65,7 +65,7 @@ func TestXRemovalRecordCapturesCompleteBoundedIdentitySet(t *testing.T) {
 	_testRequire.NoError(err)
 	record, head, err := st.ExportXRemovalRecordContext(t.Context())
 	_testRequire.NoError(err)
-	_testAssert.Equal(3, record.Version)
+	_testAssert.Equal(4, record.Version)
 	_testAssert.Equal(uid, record.ArchiveUID)
 	_testRequire.Len(record.Sources, 2)
 	_testAssert.Equal(source, record.Sources[0].SourceID)
@@ -102,7 +102,7 @@ func TestXRemovalRecordRejectsPendingOrUnboundSource(t *testing.T) {
 }
 
 func TestXRemovalRecordRequiresIndependentCompleteHead(t *testing.T) {
-	record := store.XRemovalRecord{Version: 3, ArchiveUID: strings.Repeat("c", 64), Sources: []store.XRemovalRecordSource{{SourceID: 42, OwnerID: "1001", InstanceID: strings.Repeat("a", 64), FinancialHead: strings.Repeat("e", 64), TargetHead: strings.Repeat("f", 64), RemovedIDs: []string{"100", "102"}}}}
+	record := store.XRemovalRecord{Version: 4, ArchiveUID: strings.Repeat("c", 64), ProtectedAuthors: []store.XRemovalRecordAuthor{}, Sources: []store.XRemovalRecordSource{{SourceID: 42, OwnerID: "1001", InstanceID: strings.Repeat("a", 64), FinancialHead: strings.Repeat("e", 64), TargetHead: strings.Repeat("f", 64), RemovedIDs: []string{"100", "102"}}}}
 	encoded, err := json.Marshal(record)
 	require.NoError(t, err)
 	digest := sha256.Sum256(encoded)
@@ -120,8 +120,16 @@ func TestXRemovalRecordRequiresIndependentCompleteHead(t *testing.T) {
 		{"duplicate ID", func(r *store.XRemovalRecord) { r.Sources[0].RemovedIDs = []string{"100", "100", "102"} }, true},
 		{"noncanonical ID", func(r *store.XRemovalRecord) { r.Sources[0].RemovedIDs = []string{"0100", "102"} }, true},
 		{"duplicate source", func(r *store.XRemovalRecord) { r.Sources = append(r.Sources, r.Sources[0]) }, true},
-		{"old version", func(r *store.XRemovalRecord) { r.Version = 2 }, true},
-		{"future version", func(r *store.XRemovalRecord) { r.Version = 4 }, true},
+		{"invalid protected author", func(r *store.XRemovalRecord) {
+			r.ProtectedAuthors = []store.XRemovalRecordAuthor{{UserID: "0100", ProtectedAt: time.Now()}}
+		}, true},
+		{"missing protection time", func(r *store.XRemovalRecord) { r.ProtectedAuthors = []store.XRemovalRecordAuthor{{UserID: "1001"}} }, true},
+		{"duplicate protected author", func(r *store.XRemovalRecord) {
+			a := store.XRemovalRecordAuthor{UserID: "1001", ProtectedAt: time.Now()}
+			r.ProtectedAuthors = []store.XRemovalRecordAuthor{a, a}
+		}, true},
+		{"old version", func(r *store.XRemovalRecord) { r.Version-- }, true},
+		{"future version", func(r *store.XRemovalRecord) { r.Version++ }, true},
 		{"missing financial head", func(r *store.XRemovalRecord) { r.Sources[0].FinancialHead = "" }, true},
 		{"missing target head", func(r *store.XRemovalRecord) { r.Sources[0].TargetHead = "" }, true},
 	} {
@@ -321,4 +329,27 @@ func TestXRestoreTargetHeadTracksLatestChain(t *testing.T) {
 			_testRequire.NoError(st.ValidateXRemovalRecordContext(t.Context(), before, xRestoreRecordHead(t, before)))
 		})
 	}
+}
+
+func TestXRemovalRecordRetainsAuthorProtectionAfterSourceRemoval(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source := xPostFixture(t)
+	seedXRestoreInstance(t, st, source, strings.Repeat("a", 64))
+	before, head, err := st.ExportXRemovalRecordContext(t.Context())
+	require.NoError(err)
+	at := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	_, err = st.RecordXAuthorContext(t.Context(), store.XAuthorInput{SourceID: source, UserID: "2001", Protected: true, FetchedAt: at})
+	require.NoError(err)
+	require.ErrorContains(st.ValidateXRemovalRecordContext(t.Context(), before, head), "omits protection known to the snapshot")
+	record, _, err := st.ExportXRemovalRecordContext(t.Context())
+	require.NoError(err)
+	require.Len(record.ProtectedAuthors, 1)
+	assert.Equal("2001", record.ProtectedAuthors[0].UserID)
+	assert.True(at.Equal(record.ProtectedAuthors[0].ProtectedAt))
+	require.NoError(st.RemoveSource(source))
+	after, _, err := st.ExportXRemovalRecordContext(t.Context())
+	require.NoError(err)
+	assert.Empty(after.Sources)
+	assert.Equal(record.ProtectedAuthors, after.ProtectedAuthors)
 }

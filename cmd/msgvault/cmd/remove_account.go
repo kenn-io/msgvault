@@ -179,7 +179,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	}
 	if err := s.CheckSourceRemovalAllowedContext(cmd.Context(), source.ID); err != nil {
 		cleanup()
-		return err
+		return xSourceRemovalError(err)
 	}
 	dryRun, err := cmd.Flags().GetBool("dry-run")
 	if err != nil {
@@ -263,7 +263,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	if source.SourceType == sourceTypeX {
 		release, err := s.AcquireSourceRemovalLockContext(cmd.Context(), source.ID)
 		if err != nil {
-			return fmt.Errorf("prepare X account removal: %w", err)
+			return fmt.Errorf("prepare X account removal: %w", xSourceRemovalError(err))
 		}
 		defer func() { retErr = errors.Join(retErr, release()) }()
 	}

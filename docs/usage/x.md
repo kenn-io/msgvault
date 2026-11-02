@@ -198,7 +198,10 @@ disabled. No outcome recovery replays an uncertain POST.
 X refresh, local removal, and removal-record export use
 `msgvault source x sync`; local removal and export are options on that command.
 Snapshot recovery remains the generic `msgvault backup restore` command with
-the current X removal record and head.
+the current X removal record and head. The current record includes numeric author
+protection timestamps, so recovery also removes unsupported profiles from older
+snapshots with no posts by that author. Export a fresh record after updating the
+daemon; earlier record formats cannot authorize this recovery.
 
 An expanded-author lookup failure does not prove that a post was deleted.
 Automatic deletion needs a resource-not-found error explicitly identifying a
@@ -209,6 +212,12 @@ promise to discover every deletion within that time. Read-only source status
 shows the last complete refresh sweep, oldest unchecked time, outstanding work
 and overdue coverage, even with a paused schedule or revoked credential. A
 small budget may be insufficient for the archive's refresh target.
+
+A confirmed protected author also retires unsupported provider usernames and
+labels when no posts were collected. Cleanup keeps numeric identity anchors and
+independently supported or curated facts. Delayed public responses cannot restore
+labels erased by newer protected evidence, including after the observing account
+is removed. A genuinely newer public observation can supply new profile facts.
 
 Apply a confirmed local removal without contacting X or waiting for read budget:
 

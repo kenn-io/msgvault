@@ -103,7 +103,11 @@ func replayRestoredXRemovals(ctx context.Context, dbPath string, opts xRestoreOp
 		default:
 			record, inspectErr = readXRemovalRecord(opts.RecordPath)
 			if inspectErr == nil {
-				inspectErr = readOnly.ValidateXRemovalRecordContext(ctx, record, opts.Head)
+				if !hasX && len(record.ProtectedAuthors) > 0 {
+					inspectErr = errors.New("x author privacy cannot be retained without a restored X source")
+				} else {
+					inspectErr = readOnly.ValidateXRemovalRecordContext(ctx, record, opts.Head)
+				}
 			}
 		}
 	}
@@ -142,6 +146,20 @@ func replayRestoredXRemovals(ctx context.Context, dbPath string, opts xRestoreOp
 	for _, source := range sources {
 		present[source.ID] = true
 		anchor = min(anchor, source.ID)
+	}
+	if len(record.ProtectedAuthors) > 0 {
+		execution, err := st.AcquireSyncExecutionContext(ctx, anchor)
+		if err != nil {
+			return err
+		}
+		for _, author := range record.ProtectedAuthors {
+			if err := st.QueueXAuthorRemovalContext(ctx, anchor, author.UserID, author.ProtectedAt); err != nil {
+				return errors.Join(err, execution.Release())
+			}
+		}
+		if err := execution.Release(); err != nil {
+			return err
+		}
 	}
 	for _, source := range record.Sources {
 		sourceID := source.SourceID

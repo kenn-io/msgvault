@@ -12,6 +12,13 @@ import (
 	xapi "go.kenn.io/msgvault/internal/x"
 )
 
+func xSourceRemovalError(err error) error {
+	if errors.Is(err, store.ErrXRemovalPending) {
+		return fmt.Errorf("x content cleanup must finish before removing this account: %w\nhint: run 'msgvault source x sync' and retry removal", err)
+	}
+	return err
+}
+
 // removeXSource keeps execution and both credential lifecycle fences through
 // the existing source cascade. owned is used by remove-account, which must take
 // execution before its analytics-cache lock, matching importer lock ordering.
@@ -22,7 +29,7 @@ func removeXSource(ctx context.Context, st *store.Store, cfg *config.Config, sou
 	if !owned {
 		release, err := st.AcquireSourceRemovalLockContext(ctx, source.ID)
 		if err != nil {
-			return false, 0, err
+			return false, 0, xSourceRemovalError(err)
 		}
 		defer func() { retErr = errors.Join(retErr, release()) }()
 	}
@@ -46,11 +53,9 @@ func removeXSource(ctx context.Context, st *store.Store, cfg *config.Config, sou
 		}
 		hadActive, packed, err = st.RemoveSourceSerialized(ctx, source.ID)
 		if err != nil {
-			if errors.Is(err, store.ErrXRemovalPending) {
-				return fmt.Errorf("x content cleanup must finish before removing this account: %w\nhint: run 'msgvault source x sync' and retry removal", err)
-			}
-			return err
+			return xSourceRemovalError(err)
 		}
+
 		// Once the cascade commits, cancellation or provider denial must not retain
 		// credentials. Revocation uses no refresh/probe/retry and is bounded once.
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)

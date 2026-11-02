@@ -136,8 +136,8 @@ func (c *XContentCleanup) removeXContents(ctx context.Context, input store.XRemo
 // removeXContentsBatch owns the content/cache publication fence once for all
 // pending groups. It does not acquire source execution; its caller must hold
 // every source named by every group's target set.
-func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []store.XRemovalGroup) (work store.XRemovalWork, retErr error) {
-	if len(groups) == 0 {
+func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []store.XRemovalGroup, profiles ...store.XAuthorProfileRemovalWork) (work store.XRemovalWork, retErr error) {
+	if len(groups) == 0 && len(profiles) == 0 {
 		return work, errors.New("x removal batch is empty")
 	}
 	release, err := c.lock(ctx, true)
@@ -167,7 +167,12 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return work, statErr
 	}
-	root := groups[0].Root
+	var root store.XRemovalWork
+	if len(groups) > 0 {
+		root = groups[0].Root
+	} else {
+		root.SourceID, root.Reason = profiles[0].SourceID, "protected"
+	}
 	rootReason := root.Reason
 	if rootReason == "" {
 		rootReason = "removed"
@@ -243,6 +248,14 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 		}
 		work.CacheRevision = max(work.CacheRevision, local.CacheRevision)
 	}
+	for _, profile := range profiles {
+		local, err := c.store.RemoveXAuthorProfileContext(ctx, profile)
+		if err != nil {
+			return work, err
+		}
+		work.EvidenceIDs = append(work.EvidenceIDs, local.EvidenceIDs...)
+		work.CacheRevision = max(work.CacheRevision, local.CacheRevision)
+	}
 	checkTargets := func() error {
 		for _, group := range groups {
 			current, err := c.store.XRemovalTargetsContext(ctx, group.Root.SourceID, group.Root.CanonicalID)
@@ -266,27 +279,29 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 			return work, err
 		}
 	}
-	backend, closeBackend, err := c.cleanupBackend(ctx)
-	if err != nil {
-		return work, err
-	}
-	if closeBackend != nil {
-		defer closeBackend()
-	}
-	if backend != nil {
-		lister, ok := backend.(interface {
-			GenerationIDs(ctx context.Context) ([]vector.GenerationID, error)
-		})
-		if !ok {
-			return work, errors.New("vector backend cannot enumerate cleanup generations")
-		}
-		generations, err := lister.GenerationIDs(ctx)
+	if len(work.MessageIDs) > 0 {
+		backend, closeBackend, err := c.cleanupBackend(ctx)
 		if err != nil {
 			return work, err
 		}
-		for _, gen := range generations {
-			if err := backend.Delete(ctx, gen, work.MessageIDs); err != nil {
-				return work, fmt.Errorf("delete X vectors generation %d: %w", gen, err)
+		if closeBackend != nil {
+			defer closeBackend()
+		}
+		if backend != nil {
+			lister, ok := backend.(interface {
+				GenerationIDs(ctx context.Context) ([]vector.GenerationID, error)
+			})
+			if !ok {
+				return work, errors.New("vector backend cannot enumerate cleanup generations")
+			}
+			generations, err := lister.GenerationIDs(ctx)
+			if err != nil {
+				return work, err
+			}
+			for _, gen := range generations {
+				if err := backend.Delete(ctx, gen, work.MessageIDs); err != nil {
+					return work, fmt.Errorf("delete X vectors generation %d: %w", gen, err)
+				}
 			}
 		}
 	}
@@ -386,6 +401,12 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 			return work, err
 		}
 	}
+	for _, profile := range profiles {
+		profile.DerivedComplete = true
+		if err := c.store.FinishXAuthorProfileRemovalContext(ctx, profile); err != nil {
+			return work, err
+		}
+	}
 	work.DerivedComplete = true
 	work.Pending = false
 	return work, nil
@@ -433,7 +454,23 @@ func (c *XContentCleanup) Resume(ctx context.Context) error {
 			return err
 		}
 		if len(pending) == 0 {
-			return nil
+			profiles, err := c.store.PendingXAuthorProfileRemovalsContext(ctx)
+			if err != nil || len(profiles) == 0 {
+				return err
+			}
+			// Profile facts share the attribution lock across sources. Only the
+			// observing source owns the durable obligation and its completion.
+			sourceID := profiles[0].SourceID
+			profiles = slices.DeleteFunc(profiles, func(work store.XAuthorProfileRemovalWork) bool { return work.SourceID != sourceID })
+			execution, err := c.store.AcquireSyncExecutionContext(ctx, sourceID)
+			if err != nil {
+				return err
+			}
+			_, cleanupErr := c.removeXContentsBatch(ctx, nil, profiles...)
+			if err := errors.Join(cleanupErr, execution.Release()); err != nil {
+				return err
+			}
+			continue
 		}
 		execution, err := c.store.AcquireXRemovalExecutionBatchContext(ctx, pending)
 		if err != nil {

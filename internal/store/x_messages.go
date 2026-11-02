@@ -514,6 +514,10 @@ func (s *Store) persistXPostTx(ctx context.Context, tx *loggedTx, p XPersistPost
 // xAuthorProtectionTimesAcrossSourcesTx returns the newest protected and
 // explicit-public provider observations for a numeric X author across sources.
 func (s *Store) xAuthorProtectionTimesAcrossSourcesTx(ctx context.Context, tx *loggedTx, authorID string) (sql.NullTime, sql.NullTime, error) {
+	protectedAt, err := xProtectedAuthorFloor(ctx, tx, s.Rebind, authorID)
+	if err != nil {
+		return sql.NullTime{}, sql.NullTime{}, err
+	}
 	anchor := beeperidentity.ProviderIdentityKey("x", "service", "", authorID)
 	rows, err := tx.QueryContext(ctx, `SELECT o.observed_at,o.type_tokens
 		FROM participant_contact_observations o
@@ -523,7 +527,7 @@ func (s *Store) xAuthorProtectionTimesAcrossSourcesTx(ctx context.Context, tx *l
 	if err != nil {
 		return sql.NullTime{}, sql.NullTime{}, err
 	}
-	var protectedAt, publicAt sql.NullTime
+	var publicAt sql.NullTime
 	for rows.Next() {
 		var observedAt sql.NullTime
 		var tokens sql.NullString

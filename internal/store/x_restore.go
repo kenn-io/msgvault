@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 const XMaxRemovalRecordBytes = 8 << 20
@@ -16,9 +17,15 @@ const XMaxRemovalRecordBytes = 8 << 20
 // XRemovalRecord binds permanent suppressions and a content-free fingerprint
 // of spending and send authority to the current archive before restoration.
 type XRemovalRecord struct {
-	Version    int                    `json:"version"`
-	ArchiveUID string                 `json:"archive_uid"`
-	Sources    []XRemovalRecordSource `json:"sources"`
+	Version          int                    `json:"version"`
+	ArchiveUID       string                 `json:"archive_uid"`
+	Sources          []XRemovalRecordSource `json:"sources"`
+	ProtectedAuthors []XRemovalRecordAuthor `json:"protected_authors"`
+}
+
+type XRemovalRecordAuthor struct {
+	UserID      string    `json:"user_id"`
+	ProtectedAt time.Time `json:"protected_at"`
 }
 
 type XRemovalRecordSource struct {
@@ -164,6 +171,15 @@ func (s *Store) ValidateXRemovalRecordContext(ctx context.Context, record XRemov
 				}
 			}
 		}
+		authorFloors := make(map[string]time.Time, len(normalized.ProtectedAuthors))
+		for _, author := range normalized.ProtectedAuthors {
+			authorFloors[author.UserID] = author.ProtectedAt
+		}
+		for _, author := range current.ProtectedAuthors {
+			if at, ok := authorFloors[author.UserID]; !ok || at.Before(author.ProtectedAt) {
+				return errors.New("x removal record omits protection known to the snapshot")
+			}
+		}
 		for _, source := range bySource {
 			if source.FinancialHead != emptyXRestoreFinancialHead() {
 				return errors.New("x snapshot omits a source with spending or send authority; create a current snapshot")
@@ -174,13 +190,15 @@ func (s *Store) ValidateXRemovalRecordContext(ctx context.Context, record XRemov
 }
 
 func (s *Store) xRemovalRecordTx(ctx context.Context, tx *loggedTx, requireComplete bool) (XRemovalRecord, error) {
-	record := XRemovalRecord{Version: 3, Sources: []XRemovalRecordSource{}}
+	record := XRemovalRecord{Version: 4, Sources: []XRemovalRecordSource{}, ProtectedAuthors: []XRemovalRecordAuthor{}}
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key=?`, archiveUIDKey).Scan(&record.ArchiveUID); err != nil {
 		return record, err
 	}
 	if requireComplete {
 		var pending bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM x_post_versions WHERE cleanup_pending<>0)`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM x_post_versions WHERE cleanup_pending<>0)
+ OR EXISTS(SELECT 1 FROM participant_contact_observations o
+ WHERE o.source_id IN (SELECT id FROM sources WHERE source_type='x') AND `+xProfileCleanupCondition+`)`).Scan(&pending); err != nil {
 			return record, err
 		}
 		if pending {
@@ -247,12 +265,19 @@ func (s *Store) xRemovalRecordTx(ctx context.Context, tx *loggedTx, requireCompl
 			return record, err
 		}
 	}
+	{
+		var err error
+		record.ProtectedAuthors, err = s.xProtectedAuthorRecordTx(ctx, tx, len(record.Sources) > 0)
+		if err != nil {
+			return record, err
+		}
+	}
 	return record, nil
 }
 
 func normalizeXRemovalRecord(record XRemovalRecord) (XRemovalRecord, []byte, error) {
 	invalid := errors.New("invalid or incomplete X removal record")
-	if record.Version != 3 || !validXRemovalDigest(record.ArchiveUID) || len(record.Sources) > XMaxRemovalRecordBytes/128 {
+	if record.Version != 4 || !validXRemovalDigest(record.ArchiveUID) || len(record.Sources) > XMaxRemovalRecordBytes/128 || len(record.ProtectedAuthors) > XMaxRemovalRecordBytes/128 {
 		return XRemovalRecord{}, nil, invalid
 	}
 	result := record
@@ -290,6 +315,15 @@ func normalizeXRemovalRecord(record XRemovalRecord) (XRemovalRecord, []byte, err
 		}
 		return 0
 	})
+	result.ProtectedAuthors = append([]XRemovalRecordAuthor{}, record.ProtectedAuthors...)
+	slices.SortFunc(result.ProtectedAuthors, func(a, b XRemovalRecordAuthor) int { return compareXPostIDs(a.UserID, b.UserID) })
+	for i := range result.ProtectedAuthors {
+		author := &result.ProtectedAuthors[i]
+		if !validXAuthorID(author.UserID) || author.ProtectedAt.IsZero() || (i > 0 && result.ProtectedAuthors[i-1].UserID == author.UserID) {
+			return XRemovalRecord{}, nil, invalid
+		}
+		author.ProtectedAt = author.ProtectedAt.UTC()
+	}
 	encoded, err := json.Marshal(result)
 	if err != nil || len(encoded) > XMaxRemovalRecordBytes {
 		return XRemovalRecord{}, nil, invalid

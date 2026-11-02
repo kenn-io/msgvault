@@ -48,11 +48,12 @@ func validXAuthorID(value string) bool {
 // xAuthorUnknown and xAuthorProtected are content-free profile-evidence
 // markers, preventing equal-time/stale pages from reopening protected labels.
 const (
-	xAuthorUnknown   = "x_author_unknown"
-	xAuthorProtected = "x_author_protected"
+	xAuthorUnknown        = "x_author_unknown"
+	xAuthorProtected      = "x_author_protected"
+	xAuthorProfilePending = "x_author_profile_cleanup_pending"
 )
 
-func (s *Store) recordXAuthorTx(ctx context.Context, tx *loggedTx, input XAuthorInput) (int64, error) {
+func (s *Store) recordXAuthorTx(ctx context.Context, tx *loggedTx, input XAuthorInput) (pid int64, retErr error) {
 	if err := s.requireSyncSource(input.SourceID); err != nil {
 		return 0, err
 	}
@@ -66,8 +67,20 @@ func (s *Store) recordXAuthorTx(ctx context.Context, tx *loggedTx, input XAuthor
 	if sourceType != "x" || !validXAuthorID(ownerID) {
 		return 0, errors.New("x author source does not match a numeric X account")
 	}
+	if input.Protected {
+		if err := s.preserveXAuthorFloor(ctx, tx.ExecContext, input.UserID, input.FetchedAt); err != nil {
+			return 0, err
+		}
+	}
+	protectedAt, _, err := s.xAuthorProtectionTimesAcrossSourcesTx(ctx, tx, input.UserID)
+	if err != nil {
+		return 0, err
+	}
+	if !input.Protected && protectedAt.Valid && !input.FetchedAt.After(protectedAt.Time) {
+		input.Username, input.DisplayName = "", ""
+	}
 	// Delay name backfill until the response's freshness has been checked.
-	pid, err := s.ensureParticipantByIdentifierTx(ctx, tx, "x_user_id", input.UserID, "")
+	pid, err = s.ensureParticipantByIdentifierTx(ctx, tx, "x_user_id", input.UserID, "")
 	if err != nil {
 		return 0, err
 	}
@@ -87,6 +100,13 @@ func (s *Store) recordXAuthorTx(ctx context.Context, tx *loggedTx, input XAuthor
 	providerResult, err := s.recordContactObservationTx(ctx, tx, pid, provider)
 	if err != nil {
 		return 0, err
+	}
+	if input.Protected {
+		defer func() {
+			if retErr == nil {
+				retErr = s.markXAuthorProfileCleanupTx(ctx, tx, providerResult.Observation.Envelope.ID, input.UserID)
+			}
+		}()
 	}
 	prior := providerResult.Observation
 	observations, err := queryProfileRowsTx(ctx, tx, participantObservationSelect+` WHERE o.participant_id=? AND o.source_id=? AND o.address_kind='username' AND o.provider_user_id=? AND o.source='archive_observation' AND o.active_until IS NULL AND o.superseded_at IS NULL ORDER BY o.id`, scanParticipantObservation, pid, input.SourceID, anchor)
@@ -110,6 +130,10 @@ func (s *Store) recordXAuthorTx(ctx context.Context, tx *loggedTx, input XAuthor
 	// the last explicit protected observation, though the numeric anchor remains.
 	if !profileKnown {
 		return pid, nil
+	}
+	// A newer observation cannot finish an in-flight erasure's derived cleanup.
+	if slices.Contains(prior.Envelope.TypeTokens, xAuthorProfilePending) {
+		provider.Envelope.TypeTokens = append(provider.Envelope.TypeTokens, xAuthorProfilePending)
 	}
 	if prior.Envelope.Source == ProvenanceArchiveObservation {
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET observed_at=?,type_tokens=?,updated_at=`+s.dialect.Now()+` WHERE id=?`, observedAt, joinTypeTokens(provider.Envelope.TypeTokens), prior.Envelope.ID); err != nil {

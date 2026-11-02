@@ -67,6 +67,8 @@ func TestXSchemaUpgradeAndReceiptLifetime(t *testing.T) {
 			_testRequire.NoError(st.DB().QueryRow("SELECT message_id,post_id FROM x_post_versions").Scan(&linked, &postID))
 			_testAssert.False(linked.Valid)
 			_testAssert.Equal("200", postID)
+			_testRequire.ErrorIs(st.RemoveSource(source.ID), store.ErrXRemovalPending)
+			_testRequire.NoError(st.FinishXRemovalContext(t.Context(), source.ID, store.XRemovalWork{SourceID: source.ID, CanonicalID: "200", DerivedComplete: true}))
 			_testRequire.NoError(st.RemoveSource(source.ID))
 			_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM x_reply_attempts").Scan(&count))
 			_testAssert.Zero(count)

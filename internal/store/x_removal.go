@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
 )
@@ -147,24 +148,25 @@ func (s *Store) RemoveXPostContentContext(ctx context.Context, sourceID int64, n
 
 // removeUnsupportedXProfileTx retains numeric anchors, curated observations and
 // observations supported by other sources or remaining public X versions.
-func (s *Store) removeUnsupportedXProfileTx(ctx context.Context, tx *loggedTx, sourceID int64, author string) ([]int64, error) {
+func (s *Store) removeUnsupportedXProfileTx(ctx context.Context, tx *loggedTx, sourceID int64, author string, floors ...time.Time) ([]int64, error) {
 	var supported bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM x_post_versions WHERE source_id=? AND author_id=? AND suppressed_at IS NULL AND availability='public' AND message_id IS NOT NULL)`, sourceID, author).Scan(&supported); err != nil || supported {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM x_post_versions WHERE source_id=? AND author_id=? AND suppressed_at IS NULL AND availability='public' AND message_id IS NOT NULL)`, sourceID, author).Scan(&supported); err != nil || (supported && len(floors) == 0) {
 		return nil, err
 	}
 	anchor := beeperidentity.ProviderIdentityKey("x", "service", "", author)
-	rows, err := tx.QueryContext(ctx, `SELECT id,participant_id,normalized_value FROM participant_contact_observations WHERE source_id=? AND provider_user_id=? AND address_kind='username' AND source='archive_observation'`, sourceID, anchor)
+	rows, err := tx.QueryContext(ctx, `SELECT id,participant_id,normalized_value,observed_at FROM participant_contact_observations WHERE source_id=? AND provider_user_id=? AND address_kind='username' AND source='archive_observation'`, sourceID, anchor)
 	if err != nil {
 		return nil, err
 	}
 	type evidence struct {
 		id, pid int64
 		value   string
+		at      sql.NullTime
 	}
 	var records []evidence
 	for rows.Next() {
 		var e evidence
-		if err := rows.Scan(&e.id, &e.pid, &e.value); err != nil {
+		if err := rows.Scan(&e.id, &e.pid, &e.value, &e.at); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -175,6 +177,9 @@ func (s *Store) removeUnsupportedXProfileTx(ctx context.Context, tx *loggedTx, s
 	}
 	var ids []int64
 	for _, e := range records {
+		if len(floors) > 0 && e.at.Valid && e.at.Time.After(floors[0]) {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM participant_contact_observations WHERE id=?`, e.id); err != nil {
 			return nil, err
 		}
@@ -269,7 +274,9 @@ func (s *Store) PendingXRemovalsContext(ctx context.Context, sourceID int64) ([]
 
 func (s *Store) XCleanupPendingContext(ctx context.Context) (bool, error) {
 	var pending bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM x_post_versions WHERE cleanup_pending=1)`).Scan(&pending)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM x_post_versions WHERE cleanup_pending=1)
+ OR EXISTS(SELECT 1 FROM participant_contact_observations o
+ WHERE o.source_id IN (SELECT id FROM sources WHERE source_type='x') AND `+xProfileCleanupCondition+`)`).Scan(&pending)
 	return pending, err
 }
 
