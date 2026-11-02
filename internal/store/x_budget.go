@@ -341,6 +341,32 @@ func (s *Store) settleXRequestTx(ctx context.Context, tx *loggedTx, sourceID int
 	return err
 }
 
+// PublishXCredentialGenerationContext records a successfully prepared token
+// before spending admission. It never clears a credential error or replaces a
+// newer generation, so rejected requests retain the authority of a refresh.
+func (s *Store) PublishXCredentialGenerationContext(ctx context.Context, sourceID int64, ownerID string, generation int64) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	if generation <= 0 {
+		return ErrXBudgetIdentity
+	}
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error { return s.lockSyncSourceTx(ctx, tx, sourceID) }, func(tx *loggedTx) error {
+		state, err := s.loadXControlTx(ctx, tx, sourceID)
+		if err != nil {
+			return err
+		}
+		if state.OwnerID != ownerID || generation < state.Generation {
+			return ErrXBudgetIdentity
+		}
+		if generation == state.Generation {
+			return nil
+		}
+		_, err = s.updateXControlTx(ctx, tx, sourceID, state.Revision, XControlPatch{OwnerID: ownerID, Generation: &generation})
+		return err
+	})
+}
+
 // RecordXCredentialErrorContext records a sanitized credential failure for only the
 // failing generation. A late failure cannot disable replacement credentials.
 func (s *Store) RecordXCredentialErrorContext(ctx context.Context, sourceID int64, ownerID string, generation int64, code string) error {

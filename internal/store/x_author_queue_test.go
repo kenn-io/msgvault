@@ -33,7 +33,7 @@ func TestXAuthorQueueCoversForeignOnlyChainsWithoutForeignPurge(t *testing.T) {
 	}
 	_, err = st.ResolveXPostContext(t.Context(), selected.ID, "601")
 	_testRequire.ErrorIs(err, store.ErrXPostNotFound)
-	err = st.QueueXAuthorRemovalContext(t.Context(), wrong.ID, "1001")
+	err = st.QueueXAuthorRemovalContext(t.Context(), wrong.ID, "1001", at)
 	_testRequire.Error(err, "a non-X source cannot authorize global X author suppression")
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), selected.ID)
 	_testRequire.NoError(err)
@@ -41,12 +41,12 @@ func TestXAuthorQueueCoversForeignOnlyChainsWithoutForeignPurge(t *testing.T) {
 	run, err := execution.StartSyncContext(t.Context(), "x", "")
 	_testRequire.NoError(err)
 	scoped := st.ScopedToSync(selected.ID, run)
-	err = scoped.QueueXAuthorRemovalContext(t.Context(), foreign.ID, "1001")
+	err = scoped.QueueXAuthorRemovalContext(t.Context(), foreign.ID, "1001", at)
 	_testRequire.Error(err, "retain the selected source generation guard")
 	pending, err := st.XCleanupPendingContext(t.Context())
 	_testRequire.NoError(err)
 	_testAssert.False(pending)
-	_testRequire.NoError(scoped.QueueXAuthorRemovalContext(t.Context(), selected.ID, "1001"))
+	_testRequire.NoError(scoped.QueueXAuthorRemovalContext(t.Context(), selected.ID, "1001", at))
 	// Pending work must keep its durable reason even if row availability differs.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET availability='removed' WHERE source_id=? AND post_id='601'`), foreign.ID)
 	_testRequire.NoError(err)

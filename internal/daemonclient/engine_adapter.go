@@ -626,6 +626,7 @@ func querySummaryFromAPIMessage(msg store.APIMessage) query.MessageSummary {
 		Snippet:              msg.Snippet,
 		Labels:               msg.Labels,
 		HasAttachments:       msg.HasAttachments,
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		SizeEstimate:         msg.SizeEstimate,
 	}
 }
@@ -826,6 +827,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 	detail := &query.MessageDetail{
 		RelatedMessageID:     msg.RelatedMessageID,
 		ID:                   msg.ID,
+		IsFromMe:             msg.IsFromMe,
 		Calendar:             msg.Calendar,
 		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
@@ -839,6 +841,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		DeletedAt:            msg.DeletedAt,
 		SizeEstimate:         msg.SizeEstimate,
 		HasAttachments:       msg.HasAttachments,
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		Labels:               msg.Labels,
 		BodyText:             msg.Body,
 		From:                 apiMessageFromAddress(msg),
@@ -926,6 +929,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 			DeletedAt:            md.DeletedAt,
 			SizeEstimate:         md.SizeEstimate,
 			HasAttachments:       md.HasAttachments,
+			HiddenTextPresent:    md.HiddenTextPresent,
 			AttachmentCount:      len(md.Attachments),
 			Labels:               md.Labels,
 		}

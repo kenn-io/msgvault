@@ -201,6 +201,82 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 	}
 }
 
+func TestShowThreadHiddenHTMLText(t *testing.T) {
+	for _, tc := range []struct {
+		name, html     string
+		asJSON, hidden bool
+	}{
+		{"hidden text warning once", `<div hidden>Hidden text</div>`, false, true},
+		{"visible text", `<p>Visible text</p>`, false, false},
+		{"hidden JSON", `<div hidden>Hidden text</div>`, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.3.0"}))
+				case "/api/v1/cli/message/thread":
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+						"conversation_id": 7, "total": 3, "messages": []map[string]any{{"id": 1}, {"id": 2}, {"id": 3}},
+					}))
+				case "/api/v1/cli/message":
+					id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+					assert.NoError(err)
+					bodyHTML := tc.html
+					if id == 1 {
+						bodyHTML = "<p>Visible text</p>"
+					}
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+						"id": id, "conversation_id": 7, "body_text": "Archived text", "body_html": bodyHTML,
+						"hidden_text_present": id != 1 && tc.hidden,
+					}))
+				case "/api/v1/telemetry/events":
+					w.WriteHeader(http.StatusAccepted)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			cfg := &config.Config{}
+			cfg.Remote.URL = srv.URL
+			cfg.Remote.AllowInsecure = true
+			root := newTestRootCmd()
+			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			root.AddCommand(newShowThreadCmd())
+			args := []string{"show-thread", "1"}
+			if tc.asJSON {
+				args = append(args, "--json")
+			}
+			root.SetArgs(args)
+			var stdout, stderr bytes.Buffer
+			root.SetOut(&stdout)
+			root.SetErr(&stderr)
+			require.NoError(root.Execute())
+			if tc.asJSON {
+				var page struct {
+					Messages []map[string]any `json:"messages"`
+				}
+				require.NoError(json.Unmarshal(stdout.Bytes(), &page))
+				require.Len(page.Messages, 3)
+				assert.Equal(false, page.Messages[0]["hidden_text_present"])
+				for _, msg := range page.Messages[1:] {
+					assert.Equal(tc.hidden, msg["hidden_text_present"])
+				}
+			} else {
+				assert.Contains(stdout.String(), "Archived text")
+				assert.NotContains(stdout.String(), "Warning:")
+			}
+			if tc.hidden && !tc.asJSON {
+				assert.Equal("Warning: this message's HTML may hide text.\n", stderr.String())
+			} else {
+				assert.Empty(stderr.String())
+			}
+		})
+	}
+}
+
 func TestShowThreadInvalidPaginationShowsUsage(t *testing.T) {
 	for _, args := range [][]string{{"--limit", "0"}, {"--limit", "501"}, {"--offset", "-1"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

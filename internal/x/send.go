@@ -336,6 +336,9 @@ func (s *Sender) Send(ctx context.Context, req SendRequest) (result SendResult, 
 		if snapshot.OwnerID != d.SourceIdentifier {
 			return replyStoreError(store.ErrXBudgetIdentity)
 		}
+		if err := publishCredentialSnapshot(ctx, s.store, d.SourceID, snapshot); err != nil {
+			return replyStoreError(err)
+		}
 		cost := store.XRequestCost{Kind: store.XRequestCreate, OwnerID: snapshot.OwnerID, Generation: snapshot.Generation, GrantedScopes: snapshot.GrantedScopes, MonthlyBudgetMicros: s.policy.MonthlyBudgetMicros, CreateReservationMicros: s.policy.CreateReservationMicros, AllowSend: s.policy.AllowSend, At: s.now().UTC()}
 		admitted, err := s.store.AdmitXReplyContext(ctx, store.XReplyAdmission{SourceID: d.SourceID, OwnerID: d.SourceIdentifier, DraftID: d.DraftID, Revision: d.Revision, TargetPostID: d.ReplyToSourceMessageID, Cost: cost})
 		if err != nil {
@@ -459,7 +462,7 @@ func (s *Sender) lookupAdoption(ctx context.Context, req SendRequest, a store.XR
 	// independently of whether this post matches the requested association.
 	for _, user := range page.Users {
 		if user.Protected {
-			if err := s.store.QueueXAuthorRemovalContext(ctx, a.SourceID, user.ID); err != nil {
+			if err := s.store.QueueXAuthorRemovalContext(ctx, a.SourceID, user.ID, page.FetchedAt); err != nil {
 				return Post{}, replyStoreError(err)
 			}
 		}

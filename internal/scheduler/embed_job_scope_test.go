@@ -62,7 +62,7 @@ func TestEmbedJobScopeChangeFailsClosedBeforeWorkerRuns(t *testing.T) {
 		OnScopeDrift: func(detail string) { driftDetail = detail },
 	}
 
-	job.Run(context.Background())
+	_ = job.Run(context.Background())
 	assert.Equal(0, runner.runCalls, "changed source mapping must stop before embedding")
 	assert.Equal(0, runner.reclaimCalls, "changed source mapping must stop before any worker write")
 	assert.Contains(driftDetail, "src-9", "drift signal names the newly resolved scope")
@@ -86,7 +86,7 @@ func TestEmbedJobScopeErrorDoesNotSignalDrift(t *testing.T) {
 		OnScopeDrift: func(string) { drifts++ },
 	}
 
-	job.Run(context.Background())
+	_ = job.Run(context.Background())
 	assert.Equal(0, runner.runCalls, "resolution failure must stop before embedding")
 	assert.Zero(drifts, "a transient resolution error is not scope drift")
 }
@@ -112,7 +112,7 @@ func TestEmbedJobUnresolvableScopeSignalsDrift(t *testing.T) {
 		OnScopeDrift: func(detail string) { driftDetail = detail },
 	}
 
-	job.Run(context.Background())
+	_ = job.Run(context.Background())
 	assert.Equal(0, runner.runCalls, "unresolvable scope must stop before embedding")
 	assert.Contains(driftDetail, "gone@example.com", "the latch detail names the unresolvable account")
 	assert.Contains(driftDetail, "[vector.embed.scope]", "the latch detail names the recovery path")

@@ -368,6 +368,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
+| `preview_person_tiers` | List saved people in tier 1 or 2 from archived two-way messages and meetings, with the matching rule, tracking state, and the latest day that counted. Read-only; it never tracks anyone. See [profile automation](/docs/usage/people-automation/). | — |
+| `explain_person_tier` | Show every count behind one saved person's tier against its threshold, including tier 3 and any exclusion. Read-only. | `person_id` (int, required) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `address` requires API schema 3.29.0 or newer and matches a literal, case-insensitive substring of current bound participant addresses and identifiers or curated contact points on saved people. Sparse or absent address matches can scan all saved people; combine a known `query` to narrow candidates. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `address`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
@@ -451,6 +453,21 @@ For a calendar event, `get_message` also returns `calendar` with `status`,
 assistant can tell a cancelled or moved event from a confirmed one. A field
 is `null` when the stored event does not carry it; calendar sync does not
 store a `sequence` of 0, so a `null` sequence usually means 0.
+
+On newer `main` builds, `get_message` and `search_in_message` include
+the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
+readable text. False does not guarantee that text is visible. Many newsletters
+hide a preview line, called a preheader, and those set the flag too. The flag
+marks hidden text rather than malicious intent.
+The CLI readers `show-message` and `show-thread` return
+the same flag in JSON and warn on stderr for text output. The check uses a set
+of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
+HTML that may hide letters or digits, including for mail with a plain-text
+alternative. Non-blank HTML that fails to parse also sets the flag.
+Message bodies stay unchanged. The check excludes stylesheets and browser
+layout. CLI search JSON and MCP `search_message_bodies` also include the stored
+flag on every result row. Archive schema 16 flags older mail during a one-time
+backfill at archive initialization; new HTML writes refresh the flag.
 
 ### Find a person's messaging routes
 

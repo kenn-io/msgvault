@@ -160,7 +160,7 @@ func (imp *Importer) refreshScoped(ctx context.Context, opts RefreshOptions, api
 }
 
 func (imp *Importer) applyRefreshPage(ctx context.Context, sourceID int64, owner string, page Page) error {
-	if err := imp.queueProtectedAuthors(ctx, sourceID, page.Users); err != nil {
+	if err := imp.queueProtectedAuthors(ctx, sourceID, page.Users, page.FetchedAt); err != nil {
 		return err
 	}
 	if err := WritePage(ctx, imp.store, sourceID, owner, page, page.FetchedAt); err != nil {
@@ -311,10 +311,10 @@ func (imp *Importer) refreshDue(ctx context.Context, opts RefreshOptions, api AP
 	return err
 }
 
-func (imp *Importer) queueProtectedAuthors(ctx context.Context, sourceID int64, users []User) error {
+func (imp *Importer) queueProtectedAuthors(ctx context.Context, sourceID int64, users []User, fetchedAt time.Time) error {
 	for _, user := range users {
 		if user.Protected {
-			if err := imp.store.QueueXAuthorRemovalContext(ctx, sourceID, user.ID); err != nil {
+			if err := imp.store.QueueXAuthorRemovalContext(ctx, sourceID, user.ID, fetchedAt); err != nil {
 				return err
 			}
 		}
@@ -332,18 +332,9 @@ func queueUnavailablePageResults(ctx context.Context, st *store.Store, sourceID 
 			terminal[item.ID] = "deleted"
 		}
 	}
-	protectedAuthors := make(map[string]bool, len(page.Users))
-	for _, user := range page.Users {
-		if user.Protected {
-			protectedAuthors[user.ID] = true
-		}
-	}
 	for _, post := range page.Posts {
 		if len(page.RequestedIDs) != 0 && !slices.Contains(page.RequestedIDs, post.ID) {
 			continue
-		}
-		if protectedAuthors[post.AuthorID] {
-			terminal[post.ID] = "protected"
 		}
 		if post.Withheld {
 			terminal[post.ID] = "withheld"

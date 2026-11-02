@@ -110,11 +110,11 @@ func (s *Store) MarkXPostsUnverifiedContext(ctx context.Context, sourceID int64,
 // the observation's authority, including its sync-generation guard. This only
 // queues suppression; the owner coordinator purges each source after acquiring
 // its execution, outside the observing source's execution and SQL transaction.
-func (s *Store) QueueXAuthorRemovalContext(ctx context.Context, sourceID int64, authorID string) error {
+func (s *Store) QueueXAuthorRemovalContext(ctx context.Context, sourceID int64, authorID string, observedAt time.Time) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	if sourceID <= 0 || !validXControlID(authorID) {
+	if sourceID <= 0 || !validXControlID(authorID) || observedAt.IsZero() {
 		return errors.New("invalid X author removal")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
@@ -128,7 +128,17 @@ func (s *Store) QueueXAuthorRemovalContext(ctx context.Context, sourceID int64, 
 		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE x_post_versions SET suppressed_at=COALESCE(suppressed_at,`+s.dialect.Now()+`),
+		if _, err := s.recordXAuthorTx(ctx, tx, XAuthorInput{SourceID: sourceID, UserID: authorID, Protected: true, FetchedAt: observedAt}); err != nil {
+			return err
+		}
+		protectedAt, publicAt, err := s.xAuthorProtectionTimesAcrossSourcesTx(ctx, tx, authorID)
+		if err != nil {
+			return err
+		}
+		if publicAt.Valid && (!protectedAt.Valid || publicAt.Time.After(protectedAt.Time)) {
+			return nil
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE x_post_versions SET suppressed_at=COALESCE(suppressed_at,`+s.dialect.Now()+`),
  suppression_reason='protected',availability='protected',cleanup_pending=1
  WHERE (suppressed_at IS NULL OR cleanup_pending=1) AND (source_id,canonical_id) IN
  (SELECT v.source_id,v.canonical_id FROM x_post_versions v WHERE v.author_id=?

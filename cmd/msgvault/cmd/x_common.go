@@ -200,7 +200,7 @@ func registerXAccountWithDeps(ctx context.Context, st *store.Store, cfg *config.
 			// Queue every known owner chain before publishing any profile/token
 			// replacement. A failed or cross-source cleanup remains durably fenced.
 			needsCleanup = true
-			if err := st.QueueXAuthorRemovalContext(ctx, source.ID, userID); err != nil {
+			if err := st.QueueXAuthorRemovalContext(ctx, source.ID, userID, verified.fetchedAt); err != nil {
 				return err
 			}
 			pending, err := st.PendingXRemovalsContext(ctx, source.ID)

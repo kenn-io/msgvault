@@ -191,7 +191,7 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 	_, _ = fmt.Fprintln(w, "Hosted document embedding disclosure:")
 	_, _ = fmt.Fprintf(w, "Corpus fingerprint: %s\n", spec.Fingerprint)
 	_, _ = fmt.Fprintf(w, "Egress fingerprint: %s\n", spec.EgressFingerprint)
-	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(cfg.Vector.Embeddings.Endpoint))
+	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(cfg.Vector.Embeddings.Endpoint, cfg.Vector.Embeddings.LocalOnly))
 	_, _ = fmt.Fprintf(w, "Authentication: %s\n", authentication)
 	_, _ = fmt.Fprintf(w, "API format: %s\n", cfg.Vector.Embeddings.EffectiveAPIFormat())
 	_, _ = fmt.Fprintf(w, "Model: %s\n", spec.Model)
@@ -204,7 +204,10 @@ func printDocumentVectorConsentDisclosure(w io.Writer, spec store.DocumentVector
 	}
 }
 
-func documentVectorConsentEndpoint(endpoint string) string {
+func documentVectorConsentEndpoint(endpoint string, local bool) string {
+	if local {
+		return "shared local embedding server"
+	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "[configured endpoint omitted: invalid URL]"

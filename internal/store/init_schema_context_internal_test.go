@@ -122,6 +122,41 @@ func TestInitSchemaAddsVersionToLegacyLedger(t *testing.T) {
 	assert.Equal(legacyAppliedAt, gotAppliedAt, "legacy applied timestamp must survive")
 }
 
+func TestHiddenTextBackfillCancellation(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, err := OpenForTest(filepath.Join(t.TempDir(), "hidden-text.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "thread", "")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "hidden-html", MessageType: "email",
+	})
+	require.NoError(err)
+	_, err = st.db.Exec(`INSERT INTO message_bodies (message_id, body_html) VALUES (?, ?)`, id, `<div hidden>Hidden text</div>`)
+	require.NoError(err)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMessagesHiddenTextBackfill)
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	trigger := cancelAtStatement{
+		after: "SELECT id FROM messages ORDER BY id LIMIT", stop: "SELECT body_html FROM message_bodies", cancel: cancel,
+	}
+	trigger.install(st.db)
+	require.ErrorIs(st.InitSchemaContext(ctx), context.Canceled)
+	assert.True(trigger.fired)
+	applied, err := st.IsMigrationApplied(migrationMessagesHiddenTextBackfill)
+	require.NoError(err)
+	assert.False(applied, "a cancelled backfill must remain retryable")
+	require.NoError(st.InitSchemaContext(t.Context()))
+	var hidden bool
+	require.NoError(st.db.QueryRow(`SELECT hidden_text_present FROM messages WHERE id = ?`, id).Scan(&hidden))
+	assert.True(hidden)
+}
+
 // cancelAtStatement cancels the initialisation the moment a chosen statement is
 // about to be issued, by intercepting the store's placeholder-rebind step —
 // which every statement passes through on its way to the driver, whichever

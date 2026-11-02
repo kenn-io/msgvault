@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +76,15 @@ func TestXContentPendingFencesEveryAuthenticatedReader(t *testing.T) {
 			assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 			assert.NotContains(t, response.Body.String(), "fixture constellation")
 		})
+	}
+	for _, queryPath := range []string{"/api/v1/query", "/api/v1/query/archive"} {
+		request := httptest.NewRequest(http.MethodPost, queryPath, strings.NewReader(`{"sql":"SELECT snippet FROM messages"}`))
+		request.Header.Set("X-Api-Key", cfg.Server.APIKey)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Router().ServeHTTP(response, request)
+		_testAssert.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		_testAssert.Contains(response.Body.String(), "x_content_cleanup_pending")
 	}
 	unauthorized := read("X-Api-Key", "", path)
 	_testAssert.Equal(http.StatusUnauthorized, unauthorized.Code, unauthorized.Body.String())

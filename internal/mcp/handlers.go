@@ -152,6 +152,7 @@ type handlers struct {
 	meetings             MeetingBackend
 	calendar             CalendarBackend
 	personAgendaBackend  PersonAgendaBackend
+	personTierBackend    PersonTierBackend
 	kata                 KataBackend
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
@@ -784,14 +785,14 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
-			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState,
+			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
 		})
 	}
-	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState)
+	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, search.LiteralORWarnings(queryStr))
 }
 
-func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string) (*toolResult, error) {
-	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state})
+func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, warnings []string) (*toolResult, error) {
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Warnings: warnings})
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -1653,6 +1654,7 @@ type getMessageResponse struct {
 	Bcc                  []query.Address           `json:"bcc"`
 	BodyText             string                    `json:"body_text"`
 	BodyHTML             string                    `json:"body_html"`
+	HiddenTextPresent    bool                      `json:"hidden_text_present"`
 	BodyFormat           string                    `json:"body_format,omitempty"`
 	BodyLength           int                       `json:"body_length"`
 	BodyReturned         int                       `json:"body_returned"`
@@ -1750,6 +1752,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		Bcc:                  msg.Bcc,
 		BodyText:             bodyText,
 		BodyHTML:             bodyHTML,
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		BodyFormat:           bodyFormat,
 		BodyLength:           bodyLen,
 		BodyReturned:         len(bodySlice),
@@ -1843,7 +1846,10 @@ func (h *handlers) vectorMatchesInMessage(
 
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
-		return jsonResult(searchInMessageResponse(newPaginatedResponse([]messageMatch{}, total, offset)))
+		return jsonResult(searchInMessageResponse{
+			paginatedResponse: newPaginatedResponse([]messageMatch{}, total, offset),
+			HiddenTextPresent: msg.HiddenTextPresent,
+		})
 	}
 	end := min(offset+limit, len(allMatches))
 	page := allMatches[offset:end]
@@ -1851,7 +1857,10 @@ func (h *handlers) vectorMatchesInMessage(
 	if len(page) > limit {
 		page = page[:limit]
 	}
-	return jsonResult(searchInMessageResponse(newPaginatedResponse(page, total, offset)))
+	return jsonResult(searchInMessageResponse{
+		paginatedResponse: newPaginatedResponse(page, total, offset),
+		HiddenTextPresent: msg.HiddenTextPresent,
+	})
 }
 
 func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -1894,10 +1903,16 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 	allMatches := findTermMatches(msg.BodyText, queryStr)
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
-		return jsonResult(searchInMessageResponse(newPaginatedResponse([]messageMatch{}, total, offset)))
+		return jsonResult(searchInMessageResponse{
+			paginatedResponse: newPaginatedResponse([]messageMatch{}, total, offset),
+			HiddenTextPresent: msg.HiddenTextPresent,
+		})
 	}
 	end := min(offset+limit, len(allMatches))
-	return jsonResult(searchInMessageResponse(newPaginatedResponse(allMatches[offset:end], total, offset)))
+	return jsonResult(searchInMessageResponse{
+		paginatedResponse: newPaginatedResponse(allMatches[offset:end], total, offset),
+		HiddenTextPresent: msg.HiddenTextPresent,
+	})
 }
 
 func findTermMatches(body, term string) []messageMatch {

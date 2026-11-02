@@ -11,7 +11,8 @@ import (
 // finished, including cached/inline bytes loaded before a destructive mutation.
 func (s *Server) contentReadMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		read := r.Method == http.MethodGet || r.Method == http.MethodHead || readOnlyPostRouteRequest(r)
+		sqlRead := r.Method == http.MethodPost && (r.URL.Path == "/api/v1/query" || r.URL.Path == "/api/v1/query/archive")
+		read := r.Method == http.MethodGet || r.Method == http.MethodHead || readOnlyPostRouteRequest(r) || sqlRead
 		if !read || s.contentReadGuard == nil || r.URL.Path == "/health" || r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/ping" || r.URL.Path == "/api/v1/sources/status" {
 			next.ServeHTTP(w, r)
 			return

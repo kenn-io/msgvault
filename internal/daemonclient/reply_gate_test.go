@@ -17,7 +17,7 @@ func TestSendReplyRequiresDaemonHealthCapability(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			_, _ = fmt.Fprint(w, `{"status":"ok","api_schema_version":"3.28.0"}`)
+			_, _ = fmt.Fprint(w, `{"status":"ok","api_schema_version":"3.34.0"}`)
 			return
 		}
 		runs.Add(1)

@@ -338,7 +338,7 @@ func (imp *Importer) collectWalk(ctx context.Context, api API, summary *ImportSu
 }
 
 func (imp *Importer) persistPage(ctx context.Context, summary *ImportSummary, owner string, walk *store.XWalk, page Page) error {
-	if err := imp.queueProtectedAuthors(ctx, summary.SourceID, page.Users); err != nil {
+	if err := imp.queueProtectedAuthors(ctx, summary.SourceID, page.Users, page.FetchedAt); err != nil {
 		return err
 	}
 	filtered := page

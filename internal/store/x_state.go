@@ -164,7 +164,7 @@ func (s *Store) PrepareXArchiveJobContext(ctx context.Context, sourceID int64, s
 			return ErrXArchiveScope
 		}
 		if !validXArchiveUsername(state.Username) {
-			return errors.New("X archive requires a cached verified username; reconnect the account")
+			return errors.New("x archive requires a cached verified username; reconnect the account")
 		}
 		job := XArchiveJob{Username: state.Username, After: spec.After, Before: before}
 		job.Own = &XWalk{Endpoint: XRequestSearch, Query: "from:" + job.Username + " -is:retweet", After: job.After, Before: job.Before}

@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrConnectVerificationRequired = errors.New("X account verification is connect-only; use the separately disclosed verification read")
-	ErrSendAdmissionRequired       = errors.New("X replies require explicit send admission")
+	ErrConnectVerificationRequired = errors.New("x account verification is connect-only; use the separately disclosed verification read")
+	ErrSendAdmissionRequired       = errors.New("x replies require explicit send admission")
 )
 
 // ReadScope pins the lifetime cap for every archive read and retry. Empty JobID
@@ -135,6 +135,9 @@ func (a *admittedAPI) read(ctx context.Context, spec store.XRequestCost, request
 	for {
 		if snapshot.OwnerID != a.policy.UserID {
 			return Page{}, store.ErrXBudgetIdentity
+		}
+		if err := publishCredentialSnapshot(ctx, a.st, a.sourceID, snapshot); err != nil {
+			return Page{}, err
 		}
 		cost := spec
 		cost.OwnerID = snapshot.OwnerID
@@ -270,4 +273,12 @@ func (a *admittedAPI) credentialPreflight(ctx context.Context) error {
 		return store.ErrXBudgetIdentity
 	}
 	return nil
+}
+
+// Token rotation is already durable when Prepare succeeds. Publish its
+// generation even if cancellation or spending admission stops the request.
+func publishCredentialSnapshot(ctx context.Context, st *store.Store, sourceID int64, snapshot CredentialSnapshot) error {
+	publication, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return st.PublishXCredentialGenerationContext(publication, sourceID, snapshot.OwnerID, snapshot.Generation)
 }

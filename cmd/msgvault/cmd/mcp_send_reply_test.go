@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 	"go.kenn.io/msgvault/internal/store"
 
@@ -24,6 +25,39 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
+
+func TestMCPSendReplyRequiresCurrentXDaemon(t *testing.T) {
+	for _, version := range []string{"3.29.0", "3.34.0", "3.35.0"} {
+		t.Run(version, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(server.Close)
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.Data.DataDir = cfg.HomeDir
+			cfg.Remote = config.RemoteConfig{URL: server.URL, APIKey: "example-owner-key", AllowInsecure: true}
+			session := mcpDraftTestSession(withStoreResolverConfig(t, cfg), t)
+			listed, err := session.ListTools(t.Context(), nil)
+			require.NoError(err)
+			var names []string
+			for _, tool := range listed.Tools {
+				names = append(names, tool.Name)
+			}
+			if version == "3.35.0" {
+				assert.Contains(names, "send_reply")
+			} else {
+				assert.NotContains(names, "send_reply")
+			}
+		})
+	}
+}
 
 func replyMCPSession(t *testing.T, f *replySurfaceFixture) *sdkmcp.ClientSession {
 	t.Helper()

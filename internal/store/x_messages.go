@@ -209,16 +209,6 @@ func (s *Store) persistXPostTx(ctx context.Context, tx *loggedTx, p XPersistPost
 	if err != nil {
 		return XPersistPostResult{}, err
 	}
-	if plan.SuppressedAt.Valid || plan.CleanupPending {
-		availability := "removed"
-		if !plan.SuppressedAt.Valid && prior.Metadata.Availability != "" {
-			availability = prior.Metadata.Availability
-		}
-		if err := s.saveXAliasesTx(ctx, tx, p, &plan, plan.MessageID, availability, true); err != nil {
-			return XPersistPostResult{}, err
-		}
-		return XPersistPostResult{MessageID: plan.MessageID, Skipped: true}, nil
-	}
 	// Unknown availability is ID-only evidence even for normalized direct Store
 	// callers. It cannot clear Task6's last explicit protected observation.
 	author := XAuthorInput{SourceID: p.SourceID, UserID: p.AuthorID, FetchedAt: p.FetchedAt}
@@ -234,6 +224,9 @@ func (s *Store) persistXPostTx(ctx context.Context, tx *loggedTx, p XPersistPost
 	protectedAt, publicAt, err := s.xAuthorProtectionTimesAcrossSourcesTx(ctx, tx, p.AuthorID)
 	if err != nil {
 		return XPersistPostResult{}, err
+	}
+	if p.Availability == "protected" && publicAt.Valid && publicAt.Time.After(p.FetchedAt) && (!protectedAt.Valid || publicAt.Time.After(protectedAt.Time)) {
+		return XPersistPostResult{MessageID: plan.MessageID, Skipped: true}, nil
 	}
 	priorProtected := protectedAt.Valid && (!publicAt.Valid || !publicAt.Time.After(protectedAt.Time))
 	explicitPublic := p.Availability == "public" && p.Author != nil && !p.Author.Protected && (p.Author.Username != "" || p.Author.DisplayName != "")
@@ -257,6 +250,16 @@ func (s *Store) persistXPostTx(ctx context.Context, tx *loggedTx, p XPersistPost
 	}
 	if protectedAt.Valid && (!publicAt.Valid || !publicAt.Time.After(protectedAt.Time)) {
 		p.Availability = "protected"
+	}
+	if plan.SuppressedAt.Valid || plan.CleanupPending {
+		availability := "removed"
+		if !plan.SuppressedAt.Valid && prior.Metadata.Availability != "" {
+			availability = prior.Metadata.Availability
+		}
+		if err := s.saveXAliasesTx(ctx, tx, p, &plan, plan.MessageID, availability, true); err != nil {
+			return XPersistPostResult{}, err
+		}
+		return XPersistPostResult{MessageID: plan.MessageID, Skipped: true}, nil
 	}
 	if p.Availability != "public" && p.Availability != "unverified" {
 		if err := s.saveXAliasesTx(ctx, tx, p, &plan, plan.MessageID, p.Availability, true); err != nil {
@@ -679,10 +682,15 @@ func (s *Store) saveXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPost
 			a.CreatedAt = sql.NullTime{Time: p.CreatedAt.UTC(), Valid: true}
 			a.NativeConversation = sql.NullString{String: p.ConversationID, Valid: true}
 		}
+		var suppressionReason sql.NullString
 		if unavailable {
 			a.Availability = availability
-			if plan.CleanupPending || (messageID != 0 && !plan.SuppressedAt.Valid) {
+			if plan.CleanupPending || !plan.SuppressedAt.Valid {
 				a.CleanupPending = 1
+			}
+			if !plan.SuppressedAt.Valid {
+				a.SuppressedAt = sql.NullTime{Time: p.FetchedAt.UTC(), Valid: true}
+				suppressionReason = sql.NullString{String: availability, Valid: true}
 			}
 		}
 		if plan.SuppressedAt.Valid {
@@ -692,7 +700,7 @@ func (s *Store) saveXAliasesTx(ctx context.Context, tx *loggedTx, p XPersistPost
 		if availability == "removed" || availability == "deleted" {
 			a.SuppressedAt = sql.NullTime{Time: p.FetchedAt.UTC(), Valid: true}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO x_post_versions(source_id,post_id,canonical_id,message_id,version_position,author_id,source_conversation_id,availability,suppressed_at,last_checked_at,fetched_at,version_created_at,cleanup_pending) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id,post_id) DO UPDATE SET canonical_id=excluded.canonical_id,message_id=excluded.message_id,version_position=excluded.version_position,author_id=excluded.author_id,source_conversation_id=excluded.source_conversation_id,availability=excluded.availability,suppressed_at=excluded.suppressed_at,last_checked_at=excluded.last_checked_at,fetched_at=excluded.fetched_at,version_created_at=excluded.version_created_at,cleanup_pending=excluded.cleanup_pending`, p.SourceID, id, plan.Canonical, sql.NullInt64{Int64: messageID, Valid: messageID != 0}, position, a.AuthorID, a.NativeConversation, a.Availability, a.SuppressedAt, a.CheckedAt, a.FetchedAt, a.CreatedAt, a.CleanupPending)
+		_, err := tx.ExecContext(ctx, `INSERT INTO x_post_versions(source_id,post_id,canonical_id,message_id,version_position,author_id,source_conversation_id,availability,suppressed_at,last_checked_at,fetched_at,version_created_at,cleanup_pending,suppression_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id,post_id) DO UPDATE SET canonical_id=excluded.canonical_id,message_id=excluded.message_id,version_position=excluded.version_position,author_id=excluded.author_id,source_conversation_id=excluded.source_conversation_id,availability=excluded.availability,suppressed_at=excluded.suppressed_at,last_checked_at=excluded.last_checked_at,fetched_at=excluded.fetched_at,version_created_at=excluded.version_created_at,cleanup_pending=excluded.cleanup_pending,suppression_reason=COALESCE(x_post_versions.suppression_reason,excluded.suppression_reason)`, p.SourceID, id, plan.Canonical, sql.NullInt64{Int64: messageID, Valid: messageID != 0}, position, a.AuthorID, a.NativeConversation, a.Availability, a.SuppressedAt, a.CheckedAt, a.FetchedAt, a.CreatedAt, a.CleanupPending, suppressionReason)
 		if err != nil {
 			return err
 		}

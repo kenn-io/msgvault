@@ -631,7 +631,7 @@ func TestXScheduledSyncRetiresDaemonReaders(t *testing.T) {
 			assert.NoError(t, writeErr)
 		} else {
 			assert.Contains(t, []string{"/2/users/1001/tweets", "/2/users/1001/mentions"}, r.URL.Path)
-			fmt.Fprint(w, `{"meta":{"result_count":0}}`)
+			_, _ = fmt.Fprint(w, `{"meta":{"result_count":0}}`)
 		}
 	}))
 	t.Cleanup(provider.Close)

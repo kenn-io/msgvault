@@ -427,10 +427,10 @@ func TestXCollectionOwnerResumesForeignCopyAfterReleasingExecution(t *testing.T)
 		}
 		if r.URL.Path == "/users/1001/mentions" && r.URL.Query().Get("start_time") == "" {
 			mentions.Add(1)
-			fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
+			_, _ = fmt.Fprint(w, `{"errors":[{"resource_id":"102","type":"https://api.x.com/2/problems/resource-not-found"}]}`)
 			return
 		}
-		fmt.Fprint(w, `{"data":[]}`)
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
 	}))
 	defer provider.Close()
 	policy, err := f.cfg.XAccount("1001")
