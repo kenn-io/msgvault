@@ -246,7 +246,7 @@ it('resetting People filters commits one complete navigation', async () => {
 it.each(['list', 'deep link'])('opens a saved person from %s in its person page', async entry => {
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
-  const saved = { ...profile(7, 1, [1]), display_name: 'Saved Person', categories: [], organizations: [], contact_state: 'active' };
+  const saved = { ...profile(7, 1, [1]), display_name: 'Saved Person' };
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(saved.id, { revision: saved.revision, display_name: saved.display_name })] }),
     '/api/v1/people/7': () => entry === 'deep link' ? pending : Response.json(saved, { headers: { ETag: '"person-7-r1"' } }),
@@ -277,16 +277,16 @@ it.each(['list', 'deep link'])('opens a saved person from %s in its person page'
 
 it('reads a saved profile once before Details opens', async () => {
   const paths: string[] = [];
-  const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
+  const saved = { ...profile(91, 1, [1]), display_name: 'Saved Example', vcard_uid: 'example-91', created_at: '2026-07-18T12:00:00Z', updated_at: '2026-07-18T12:00:00Z' };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     paths.push(path);
-    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(profile.id, { revision: profile.revision, display_name: profile.display_name })] });
-    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
+    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(saved.id, { revision: saved.revision, display_name: saved.display_name })] });
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Example', profile: saved, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
     if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
-    if (path === '/api/v1/people/91') return Response.json(profile);
-    if (path === '/api/v1/people/91/profile') return Response.json({ person: profile, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    if (path === '/api/v1/people/91') return Response.json(saved);
+    if (path === '/api/v1/people/91/profile') return Response.json({ person: saved, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     if (path === '/api/v1/people/91/attributes') return Response.json({ person_id: 91, attributes: [] });
     if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
     if (path === '/api/v1/people/91/contact-state') return Response.json({ person_id: 91, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
@@ -332,7 +332,7 @@ it('opens the checkbox-clicked person when Enter follows the selection', async (
 
 it("passes the saved person's durable ID to Files when the first binding is draft-only", async () => {
   const at = '2026-07-19T10:00:00Z';
-  const profile = { id: 91, display_name: 'Saved Example', participant_ids: [1, 2], organizations: [], categories: [], contact_state: 'active', revision: 1, vcard_uid: 'example-91', created_at: at, updated_at: at };
+  const saved = { ...profile(91, 1, [1, 2]), display_name: 'Saved Example', vcard_uid: 'example-91', created_at: at, updated_at: at };
   const file = (id: number, filename: string) => ({ id, key: `file:${id}`, entry_key: `message:${id}`, message_id: id, conversation_id: id, occurred_at: at, source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', containing_title: 'Archived message', filename, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 123, participant_labels: ['Saved Example'], participant_domains: ['example.com'], content_state: 'metadata_only', content_available: false, person_provenance: { participant_ids: [id], roles: ['from'], directions: ['from_person'] } });
   const first = file(1, 'first-address.pdf');
   const second = file(2, 'second-address.pdf');
@@ -341,8 +341,8 @@ it("passes the saved person's durable ID to Files when the first binding is draf
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     requests.push(path);
-    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(profile.id, { revision: profile.revision, display_name: profile.display_name })] });
-    if (path === '/api/v1/people/91') return Response.json(profile);
+    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(saved.id, { revision: saved.revision, display_name: saved.display_name })] });
+    if (path === '/api/v1/people/91') return Response.json(saved);
     if (path === '/api/v1/participants/1') return Response.json({ error: 'not_found' }, { status: 404 });
     if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar(2026));
     if (path === '/api/v1/participants/1/files/search') return Response.json({ files: [first], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
@@ -477,7 +477,7 @@ it.each(['link', 'merge'])('refreshes the selected profile and Saved list after 
 });
 
 it('clears the saved selection when opening an observed person', async () => {
-  const saved = { ...profile(92, 1, []), display_name: 'Saved Contact', organizations: [], categories: [], contact_state: 'active' };
+  const saved = { ...profile(92, 1, []), display_name: 'Saved Contact' };
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => release = resolve);
   const client = clientFor({

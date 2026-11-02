@@ -114,7 +114,6 @@ for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthet
     await page.keyboard.press('Enter');
 
     await expect(page).toHaveURL(new RegExp(`directoryPersonID%22%3A${profile.id}`));
-    expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
   });
 }

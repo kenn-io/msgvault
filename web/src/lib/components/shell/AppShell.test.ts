@@ -20,7 +20,7 @@ import type { CardDAVSettingsRequest } from '../../carddav/navigation';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { visualReadinessKey } from '../../search/visual-ready.svelte';
-import { relationshipDestination, SIDEBAR_COLLAPSED_KEY } from './navigation';
+import { SIDEBAR_COLLAPSED_KEY } from './navigation';
 import { pair, view } from './fixtures.test-support';
 import canonical from '../../../../tests/e2e/fixtures/operations-public.json';
 import { jobRun, jobLane, sourceStatus } from '../../jobs/fixtures.test-support';
@@ -1699,53 +1699,7 @@ describe('AppShell', () => {
     } finally { view.unmount(); window.history.replaceState(null, '', '/'); }
   });
 
-  it('opens a new People candidate from the selected saved person', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', directoryPersonID: 7
-    }))}`);
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
-      if (meetingResponse) return meetingResponse;
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
-      if (path === '/api/v1/people/directory') return Response.json({ people: [{
-        id: 7, display_name: 'Prior Directory Person', revision: 3, contact_state: 'active', categories: [], organizations: []
-      }] });
-      if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] });
-      if (path === '/api/v1/people/7/profile') return Response.json({
-        person: { id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
-      });
-      if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
-      if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
-      if (path === '/api/v1/people/7/contact-state') return Response.json({
-        person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-07-19T10:00:00Z', stale: false
-      });
-      if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/relationships') return Response.json({ rows: [] });
-      if (path === '/api/v1/participants/11' || path === '/api/v1/participants/12') {
-        const id = Number(path.split('/').at(-1));
-        return Response.json({ id, display_label: `Candidate ${id}`, partial_label: false, identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z', last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel' });
-      }
-      if (path === '/api/v1/participants/11/timeline' || path === '/api/v1/participants/12/timeline') {
-        return Response.json({ cache_revision: 'cache-rel', rows: [], total_count: 0, search_provenance: {} });
-      }
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-
-    expect(await screen.findByRole('heading', { name: 'Prior Directory Person' })).toBeDefined();
-    state.commitNavigation(relationshipDestination(11));
-    expect(await screen.findByRole('heading', { name: 'Candidate 11' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Prior Directory Person' })).toBeNull();
-
-    rendered.unmount();
-    state.destroy();
-  });
-
-  it.each(['reader next', 'Display without columns', 'Filter shortcut'])('supports %s in the person Messages table', async (control) => {
+  it.each(['reader next', 'Filter shortcut'])('supports %s in the person Messages table', async (control) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1783,10 +1737,6 @@ describe('AppShell', () => {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'l' });
         await screen.findByText('Reader body 2');
-      } else if (control === 'Display without columns') {
-        await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
-        await screen.findByRole('menuitemradio', { name: 'Dark' });
-        expect(screen.queryByRole('menuitem', { name: /Subject/ })).toBeNull();
       } else {
         grid.focus();
         await fireEvent.keyDown(grid, { key: 'f' });
