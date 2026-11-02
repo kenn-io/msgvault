@@ -314,6 +314,7 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 			room, err := a.f.Store.EnsureConversationWithType(a.f.Source.ID, "copy-controls", tc.kind, "Copy controls")
 			require.NoError(err)
 			guest := a.f.EnsureParticipant("guest@example.com", "Guest", "example.com")
+			var firstID int64
 			for i := range 2 {
 				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
 				m.ConversationID = room
@@ -335,15 +336,24 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 					to = append(to, guest)
 				}
 				require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", to, nil))
-				if tc.deleted && i == 0 {
-					_, err = a.f.Store.DB().ExecContext(t.Context(), a.f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), a.asOf, id)
-					require.NoError(err)
+				if i == 0 {
+					firstID = id
 				}
 			}
 			projectTierSignals(t, a.f, "UTC", 1)
+			if tc.deleted {
+				var projected int
+				require.NoError(a.f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&projected))
+				require.Equal(2, projected, "both copies must exist in the projection before deletion")
+				_, err = a.f.Store.DB().ExecContext(t.Context(), a.f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), a.asOf, firstID)
+				require.NoError(err)
+			}
 			defer store.SetPersonTierRowPage(1)()
 			signals := tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
 			assert.Equal(tc.want, signals.InboundShort)
+			if tc.deleted {
+				assert.Equal(a.asOf.AddDate(0, 0, -1).Format("2006-01-02"), signals.LastDate)
+			}
 			if tc.list {
 				assert.Equal(1, signals.ExcludedListEvents)
 			}
