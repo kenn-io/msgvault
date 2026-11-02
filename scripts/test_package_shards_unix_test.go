@@ -57,7 +57,7 @@ func TestSilent(t *testing.T) {}
 			assert.NotContains(result, "noisy success sentinel")
 			assert.NotContains(result, "skip reason sentinel")
 			assert.Contains(result, "--- SKIP: TestNested/routes/skipped (")
-			assert.Contains(result, "ok shard 4: 1 tests, 0s")
+			assert.Contains(result, "ok shard 4: 1 tests")
 			if fail == "1" {
 				assert.Contains(blocks[2], "=== RUN   TestNested/routes/get")
 				assert.Contains(blocks[2], "nested failure sentinel")

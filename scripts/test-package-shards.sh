@@ -4,9 +4,9 @@
 # A package's tests run one at a time inside a single test binary, so a package
 # with thousands of tests sets the wall clock for the whole job no matter how
 # many cores the runner has. This compiles the package once, lists its tests,
-# deals them into shards, and runs each shard as its own process
-# with -test.run pinned to exactly its names. The tests, their order within a
-# shard, and the binary are unchanged; only the process boundary is new.
+# deals them by recorded duration if the package has a weights file for the
+# selected database, or round-robin otherwise. Each shard runs with -test.run
+# pinned to its names; tests, order within shards, and binary stay unchanged.
 #
 # Every shard's test2json events are collected in gotestsum/<suite>.json under
 # the current directory, the file CI uploads as an artifact. The suite defaults
