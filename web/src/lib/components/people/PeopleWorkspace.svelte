@@ -47,7 +47,7 @@
   const sort = $derived(urlState.relationshipSort);
   let confirmDelete = $state(false);
   $effect(() => { if (confirmDelete) return appShortcuts.pushScope('people-bulk-delete'); });
-  const selectedSaved = $derived([...selection.explicitKeys].filter(key => key.startsWith('person:')).map(key => Number(key.slice(7))));
+  const selectedSaved = $derived(directory.rows.filter(person => selection.isSelected(`person:${person.id}`)));
   let bulkPending = $state(false);
   let bulkMessage = $state<string | null>(null);
   let bulkConflict = $state<ValidatedPersonMergeRequired>();
@@ -144,10 +144,10 @@
   ] : []);
   function loadMore(): void { if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
   async function deleteSelected(): Promise<void> {
-    if (bulkPending) return;
+    if (bulkPending || selectedSaved.length === 0) return;
     bulkPending = true;
     const deleted: number[] = [], failures: string[] = [];
-    for (const profile of directory.rows.filter(row => selectedSaved.includes(row.id))) {
+    for (const profile of selectedSaved) {
       const id = profile.id;
       try {
         const result = await deletePerson({ id }, { ...page.client, headers: { 'If-Match': `"person-${id}-r${profile.revision}"` } });
@@ -233,7 +233,7 @@
         error={directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={directoryMode ? null : controller.degraded}
         {facet} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}
         sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }, ...(directoryMode || sort === 'last_contact_asc' ? [{ value: 'last_contact_asc', label: 'Least recently contacted' }] : [])]}
-        canDelete={selectedSaved.length > 0 && selectedSaved.length === selection.count} onDelete={() => confirmDelete = true}
+        canDelete={selectedSaved.length > 0 && [...selection.explicitKeys].every(key => key.startsWith('person:'))} onDelete={() => confirmDelete = true}
         canMerge={selection.count >= 2 && [...selection.explicitKeys].every((key) => key.startsWith('cluster:'))}
         onFacetChange={(value) => onNavigate({ relationshipFacet: value, directoryPersonID: null, relationshipTarget: null, relationshipFiles: false })} onSortChange={(value) => onNavigate({ relationshipSort: value as ExploreURLState['relationshipSort'] })} onOpen={(key) => void open(key)}
         onLoadMore={loadMore} onRetry={() => directoryMode ? void directory.reloadFirstPage() : void controller.loadList(page.predicate)} onMerge={() => void startBulk()} />

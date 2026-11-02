@@ -811,3 +811,43 @@ it('blocks a second bulk link while an identity cache retry is in flight', async
     view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
   }
 });
+
+it('counts only loaded saved profiles for deletion after Details unlinks an identity', async () => {
+  const saved = profile(9, 2, [1, 2]);
+  let unlinked = false;
+  const deletes: number[] = [];
+  const client = clientFor({
+    '/api/v1/people/directory': request => Response.json({ people: [directoryPerson(new URL(request.url).searchParams.has('cursor') ? 9 : 7)], ...(new URL(request.url).searchParams.has('cursor') ? {} : { next_cursor: 'second' }) }),
+    '/api/v1/people/7': request => { expect(request.method).toBe('DELETE'); deletes.push(7); return new Response(null, { status: 204 }); },
+    '/api/v1/people/9': request => { if (request.method === 'DELETE') { deletes.push(9); return new Response(null, { status: 204 }); } return Response.json(saved, { headers: { ETag: '"person-9-r2"' } }); },
+    '/api/v1/people/9/profile': () => Response.json(emptyProfile(saved), { headers: { ETag: '"person-9-r2"' } }),
+    '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic Two', profile: saved, identifiers: [{ participant_id: 2, type: 'email', value: 'other@example.com', is_primary: false, provenance: 'participant_identifiers' }], cluster: { member_ids: [1, 2], members: [], edges: unlinked ? [] : [{ participant_a: 1, participant_b: 2 }] }, first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
+    '/api/v1/relationships/1/calendar': async request => Response.json(emptyCalendar((await request.json()).year)),
+    '/api/v1/identity/unlinks': async request => { expect(await request.json()).toEqual({ participant_a: 1, participant_b: 2 }); unlinked = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); },
+  });
+  const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC'), state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const navigate = (patch: Parameters<typeof state.commitNavigation>[0]) => { state.commitNavigation(patch); void view.rerender({ urlState: state.current, target: state.current.relationshipTarget }); if (patch.relationshipTarget) void controller.openTarget(patch.relationshipTarget, {}); };
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: navigate, onReplaceNavigation: navigate, onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await screen.findByRole('checkbox', { name: 'Select Synthetic One' });
+    await directory.loadNextPage();
+    await fireEvent.click(within(screen.getByRole('grid', { name: 'People results' })).getByText('Synthetic Two'));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Synthetic Two' }));
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDefined();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink other@example.com' }));
+    await fireEvent.click(within(screen.getByRole('group', { name: 'Confirm unlinking other@example.com' })).getByRole('button', { name: 'Unlink' }));
+    await waitFor(() => expect(unlinked).toBe(true));
+    await waitFor(() => expect(directory.rows.map(row => row.id)).toEqual([7]));
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(deletes).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Synthetic One' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete people' });
+    expect(dialog.textContent).toContain('This permanently deletes 1 saved profiles');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm delete' }));
+    await waitFor(() => expect(deletes).toEqual([7]));
+  } finally { view.unmount(); directory.destroy(); controller.destroy(); state.destroy(); }
+});
