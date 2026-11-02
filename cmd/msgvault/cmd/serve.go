@@ -1032,6 +1032,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 	var serverStartupErr error
+	var metaWebhooks *metaWebhookRuntime
+	var metaWebhookErrors <-chan error
 	startErr := apiServer.WaitStarted(ctx)
 	if startErr != nil {
 		if ctx.Err() == nil {
@@ -1050,6 +1052,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	} else {
 		listenerReserved = false
 		analyticsServerStarted = true
+		metaWebhooks, err = startMetaWebhooks(ctx, cfg, s)
+		if err != nil {
+			serverStartupErr = fmt.Errorf("start Meta webhooks: %w", err)
+			cancel()
+		} else {
+			metaWebhookErrors = metaWebhooks.errors
+		}
 		resourceCleanupSafe = false
 		if analyticsAsync {
 			analyticsInit = startDaemonAnalyticsInitializer(
@@ -1111,6 +1120,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("API server error", "error", err)
 			fmt.Printf("\nAPI server error: %v\n", err)
 			serverStartupErr = err
+		case err := <-metaWebhookErrors:
+			logger.Error("Meta webhook receiver error", "error", err)
+			serverStartupErr = fmt.Errorf("Meta webhook receiver: %w", err)
+			cancel()
 		case err := <-analyticsInit.Fatal():
 			if ctx.Err() == nil {
 				logger.Error("analytics initialization error", "error", err)
@@ -1129,7 +1142,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
-	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	metaWebhookShutdownErr := metaWebhooks.Shutdown(shutdownCtx)
+	shutdownErr := errors.Join(metaWebhookShutdownErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
