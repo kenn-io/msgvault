@@ -34,6 +34,7 @@ type fakeGraph struct {
 	folders    []string            // folder IDs, in list order
 	names      map[string]string   // folder ID -> display name, when not derived from the ID
 	folder     map[string]string   // message ID -> folder ID; absent when deleted
+	rawBodies  map[string]string   // message ID -> explicit MIME source body
 	log        []change            // one entry per change
 	expired    map[string]bool     // folder IDs whose next delta reports an expired token
 	gone       map[string]bool     // folder IDs whose every delta answers 410
@@ -66,7 +67,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2, stopStatus: http.StatusBadRequest}
+	f := &fakeGraph{t: t, folder: map[string]string{}, rawBodies: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2, stopStatus: http.StatusBadRequest}
 	f.folders = []string{"inbox", "archive"}
 	f.expiredStatus = http.StatusGone
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -172,6 +173,9 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		body := raw(id, f.version[id])
 		if f.withAttachment[id] {
 			body = rawWithAttachment(id, f.shifted[id], f.attachmentBody[id])
+		}
+		if f.rawBodies[id] != "" {
+			body = f.rawBodies[id]
 		}
 		if f.broken[id] {
 			body = "From: a@example.com\r\nSubject: " + id + "\r\nMIME-Version: 1.0\r\n" +
@@ -398,6 +402,25 @@ func TestImportFirstSyncThenNoChange(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(0, sum.Added)
 	assert.EqualValues(0, f.mimeCalls.Load())
+}
+
+func TestImportSentItemsEstablishesKnownSenderRelationship(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "sentitems")
+	f.put("sent-message", "sentitems")
+	f.rawBodies["sent-message"] = "From: me@example.com\r\nTo: target@example.com\r\n" +
+		"Subject: sent message\r\nMessage-ID: <sent-message@example.com>\r\n" +
+		"Date: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody\r\n"
+
+	_, err := f.sync(t, st)
+	requirements.NoError(err)
+
+	got, err := st.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.com"])
 }
 
 func TestImportMoveAndDelete(t *testing.T) {
