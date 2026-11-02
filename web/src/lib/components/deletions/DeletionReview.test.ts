@@ -41,7 +41,7 @@ it('disables staging and says why when nothing qualifies', async () => {
   expect((stage as HTMLButtonElement).disabled).toBe(true);
 });
 
-it('keeps all-matching exclusions and its token through failed preview and staging retries', async () => {
+it('keeps all-matching exclusions and its token through failed review load and failed staging', async () => {
   const matching: ExploreSelection = { ...selection, mode: 'all_matching', row_keys: undefined, exclusions: ['message:2'], predicate: { query: 'budget', search_mode: 'semantic', presentation: 'table' }, candidate_snapshot_id: 'snapshot-1' };
   const posts: unknown[] = [];
   let failStage = true, reads = 0;
@@ -58,6 +58,7 @@ it('keeps all-matching exclusions and its token through failed preview and stagi
   await fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
   await screen.findByText('2 eligible · 1 skipped');
   await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+  expect(await screen.findByText('Dry run: Matched: 3 · Staged: 2 · Skipped: 1 in outlook@example.com')).toBeDefined();
   await waitFor(() => expect((screen.getByRole('button', { name: 'Stage 2 messages' }) as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(screen.getByRole('button', { name: 'Stage 2 messages' }));
   await screen.findByText('Review expired');
@@ -93,17 +94,22 @@ it('handles a pending stage when the review stays mounted', async () => {
   expect(onclose).toHaveBeenCalledOnce();
 });
 
-it('ignores a pending stage after the review unmounts', async () => {
-  let finish!: (response: Response) => void;
+it('aborts a pending stage after the review unmounts', async () => {
+  let staging: Promise<Response> | undefined;
   const onStaged = vi.fn();
-  const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight')
-    ? Response.json(preflight())
-    : new Promise<Response>(resolve => { finish = resolve; }));
+  const client = createAPIClient(async input => {
+    const request = input as Request;
+    if (request.url.endsWith('/preflight')) return Response.json(preflight());
+    staging = new Promise<Response>((_resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    });
+    return staging;
+  });
   const view = render(DeletionReview, { client, selection, onclose: vi.fn(), onStaged });
   await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
-  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  await waitFor(() => expect(staging).toBeDefined());
+  const aborted = expect(staging).rejects.toMatchObject({ name: 'AbortError' });
   view.unmount();
-  finish(Response.json({ id: 'late', message_count: 2, dry_run: false }, { status: 201 }));
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await aborted;
   expect(onStaged).not.toHaveBeenCalled();
 });
