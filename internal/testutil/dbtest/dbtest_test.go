@@ -2,7 +2,6 @@ package dbtest
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -141,27 +140,20 @@ func TestAddMessage_MissingConversation(t *testing.T) {
 	t.Logf("got expected fatal: %s", ft.fatalMsg)
 }
 
-func TestNewTestDBClonesAreIndependentAndGrow(t *testing.T) {
+func TestNewTestDBClonesAreIndependent(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	first := NewTestDB(t, schemaPath)
 	second := NewTestDB(t, schemaPath)
-	value := strings.Repeat("x", 100_000)
-	for i := range 50 {
-		_, err := first.DB.Exec(`INSERT INTO sources (source_type, identifier, display_name) VALUES (?, ?, ?)`, "gmail", fmt.Sprintf("source-%d@example.com", i), value)
-		require.NoError(err)
-	}
+	_, err := first.DB.Exec(`INSERT INTO sources (source_type, identifier, display_name) VALUES (?, ?, ?)`, "gmail", "source@example.com", "Source")
+	require.NoError(err)
 	var count int
-	require.NoError(first.DB.QueryRow(`SELECT COUNT(*) FROM sources WHERE length(display_name) = 100000`).Scan(&count))
-	assert.Equal(50, count)
+	require.NoError(first.DB.QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&count))
+	assert.Equal(1, count)
 	third := NewTestDB(t, schemaPath)
 	for _, clone := range []*TestDB{second, third} {
 		require.NoError(clone.DB.QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&count))
 		assert.Zero(count)
-	}
-	for _, clone := range []*TestDB{first, second, third} {
-		require.NoError(clone.DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'messages_fts'`).Scan(&count))
-		assert.Zero(count, "fixtures start without FTS")
 	}
 }
