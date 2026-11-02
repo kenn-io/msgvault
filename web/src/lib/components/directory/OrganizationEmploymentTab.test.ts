@@ -82,6 +82,25 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText(/Recovered role/)).toBeDefined();
   });
 
+  it('selects an organization created from Add work in the employment form', async () => {
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/organizations' && request.method === 'POST') return Response.json(organization(22, 1, 'New employer'), { status: 201, headers: { ETag: '"organization-22-r1"' } });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    });
+    controller.organizations = [organization()];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Add work' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'New organization' }));
+      await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'New employer' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
+      expect(screen.getByRole('button', { name: 'Organization: New employer' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Create employment' })).toHaveProperty('disabled', false);
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it.each([false, true])('creates work for the selected person and employer with user provenance (search beyond fifty=%s)', async search => {
     const requests: Request[] = [];
     const queries: string[] = [];

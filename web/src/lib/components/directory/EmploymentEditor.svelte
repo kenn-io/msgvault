@@ -216,7 +216,7 @@
     </div>
   </form>
 </Modal>
-{#if creatingOrganization}<OrganizationEditor {controller} onDone={() => { creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
+{#if creatingOrganization}<OrganizationEditor {controller} onDone={(organization) => { selectedOrganization = organization; organizationID = String(organization?.id ?? ''); creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
 
 
 <style>

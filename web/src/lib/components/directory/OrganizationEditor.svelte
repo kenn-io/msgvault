@@ -8,7 +8,7 @@
   interface Props {
     controller: DirectoryEntityController;
     organization?: Pick<Organization, 'id'> & Partial<Organization>;
-    onDone?: () => void;
+    onDone?: (organization?: Organization) => void;
     onClose?: () => void;
   }
 
@@ -69,7 +69,7 @@
       const result = initialOrganization
         ? await controller.updateOrganization(initialOrganization.id, body)
         : await controller.createOrganization(body);
-      if (result.ok) { onDone(); return; }
+      if (result.ok) { onDone(result.entity); return; }
       handleFailure(result);
     } finally {
       submitting = false;
