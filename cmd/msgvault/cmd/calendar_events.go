@@ -16,8 +16,11 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.29.0"
+// This client uses paging and detail introduced in API 3.35.
+// The upstream basic occurrence list alone starts at API 3.33.
+const calendarEventsMinAPISchemaVersion = "3.35.0"
 const calendarEventDeletedStatus = "deleted"
+const calendarArchiveAccountFlag = "account"
 
 type calendarEventsClient interface {
 	ListCalendarOccurrencesContext(ctx context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error)
@@ -38,6 +41,14 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 	var limit int
 	var jsonOutput bool
 	command := &cobra.Command{Use: "events --from <date> --to <date>", Short: "List archived calendar events", Args: cobra.NoArgs}
+	// Keep live flags out of archive help; archiveCalendarRun rejects them.
+	command.Flags().String(calendarArchiveAccountFlag, "", "")
+	command.Flags().String("send-updates", "", "")
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().Bool("read-only", false, "")
+	for _, name := range []string{calendarArchiveAccountFlag, "dry-run", "read-only", "send-updates"} {
+		_ = command.Flags().MarkHidden(name)
+	}
 	command.Flags().StringVar(&from, "from", "", "window start: YYYY-MM-DD or RFC3339")
 	command.Flags().StringVar(&to, "to", "", "exclusive window end: YYYY-MM-DD or RFC3339")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print occurrences and attendees as JSON")
@@ -156,7 +167,7 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 
 func archiveCalendarRun(open calendarEventsOpen, prepare func(*cobra.Command) error, run func(*cobra.Command, []string, calendarEventsClient) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		for _, name := range []string{"account", "dry-run", "read-only", "send-updates"} {
+		for _, name := range []string{calendarArchiveAccountFlag, "dry-run", "read-only", "send-updates"} {
 			if cmd.Flags().Changed(name) {
 				return usageErr(cmd, fmt.Errorf("--%s is only valid for live calendar commands", name))
 			}
@@ -205,6 +216,14 @@ func printCalendarOccurrences(cmd *cobra.Command, occurrences []store.CalendarOc
 func newCalendarEventCommand(open calendarEventsOpen) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{Use: "event <ref>", Short: "Read an archived calendar occurrence", Args: cobra.ExactArgs(1)}
+	// Keep live flags out of archive help; archiveCalendarRun rejects them.
+	command.Flags().String(calendarArchiveAccountFlag, "", "")
+	command.Flags().String("send-updates", "", "")
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().Bool("read-only", false, "")
+	for _, name := range []string{calendarArchiveAccountFlag, "dry-run", "read-only", "send-updates"} {
+		_ = command.Flags().MarkHidden(name)
+	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print the occurrence as JSON")
 	command.RunE = archiveCalendarRun(open, nil, func(cmd *cobra.Command, args []string, client calendarEventsClient) error {
 		o, err := client.GetCalendarOccurrenceContext(cmd.Context(), args[0])

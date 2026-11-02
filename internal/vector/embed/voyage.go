@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -109,23 +110,47 @@ func (c *VoyageClient) EmbedDocuments(ctx context.Context, documents []DocumentI
 	if len(documents) == 0 {
 		return nil, nil
 	}
+	results := make([][][]float32, 0, len(documents))
+	err := c.EmbedDocumentRequests(ctx, documents, nil, func(_ int, vectors [][][]float32) error {
+		results = append(results, vectors...)
+		return nil
+	})
+	return results, err
+}
+
+// EmbedDocumentRequests sends the packed requests for documents in order and
+// passes each request's vectors to completed before sending the next one.
+func (c *VoyageClient) EmbedDocumentRequests(
+	ctx context.Context, documents []DocumentInput, started func(first, count int), completed vector.DocumentRequestFunc,
+) error {
+	if len(documents) == 0 {
+		return nil
+	}
 	batches, err := PackDocuments(prependDocumentPrefix(documents, c.cfg.DocumentPrefix), c.cfg.Limits)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	results := make([][][]float32, 0, len(documents))
+	first := 0
 	for _, batch := range batches {
+		if err := waitForVoyageRetry(ctx, 0); err != nil {
+			return err
+		}
+		if started != nil {
+			started(first, len(batch))
+		}
 		batchResults, err := c.embedRequest(ctx, documentInputs(batch), "document")
 		if err != nil {
-			return results, err
+			return err
 		}
 		for _, document := range batch {
 			addEmbeddingPrefix(ctx, c.cfg.DocumentPrefix, len(document.Chunks))
 		}
-		results = append(results, batchResults...)
+		if err := completed(first, batchResults); err != nil {
+			return err
+		}
+		first += len(batch)
 	}
-	return results, nil
+	return nil
 }
 
 func prependDocumentPrefix(documents []DocumentInput, prefix string) []DocumentInput {
@@ -175,6 +200,9 @@ func (c *VoyageClient) embedWithRetry(ctx context.Context, inputs [][]string, in
 
 	var lastErr error
 	for attempt := 1; attempt <= c.cfg.MaxRetries; attempt++ {
+		if err := waitForVoyageRetry(ctx, 0); err != nil {
+			return nil, err
+		}
 		results, err := c.doVoyageOnce(ctx, body, inputs)
 		if err == nil {
 			return results, nil
@@ -192,19 +220,28 @@ func (c *VoyageClient) embedWithRetry(ctx context.Context, inputs [][]string, in
 		if retry.retryAfterSet {
 			backoff = retry.retryAfter
 		}
-		if backoff <= 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, fmt.Errorf("embed: context canceled during backoff: %w", err)
-			}
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("embed: context canceled during backoff: %w", ctx.Err())
-		case <-time.After(backoff):
+		if err := waitForVoyageRetry(ctx, backoff); err != nil {
+			return nil, err
 		}
 	}
 	return nil, fmt.Errorf("embed: giving up after %d attempts: %w", c.cfg.MaxRetries, lastErr)
+}
+
+// waitForVoyageRetry waits out a retry backoff, returning early when the job
+// is asked to yield or its context ends.
+func waitForVoyageRetry(ctx context.Context, backoff time.Duration) error {
+	if backoff > 0 {
+		waitCtx, cancel := context.WithTimeout(ctx, backoff)
+		waitForPreemption(waitCtx)
+		cancel()
+	}
+	if jobctx.PreemptionRequested(ctx) {
+		return jobctx.ErrYieldedToWaiter
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("embed: context canceled during backoff: %w", err)
+	}
+	return nil
 }
 
 func (c *VoyageClient) doVoyageOnce(ctx context.Context, body []byte, inputs [][]string) ([][][]float32, error) {

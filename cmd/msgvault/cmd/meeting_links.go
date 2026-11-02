@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingLinksMinAPISchemaVersion = "3.27.0"
+const meetingLinksMinAPISchemaVersion = "3.35.0"
 
 type meetingLinkClient interface {
 	MeetingLinks(ctx context.Context, messageID int64) ([]store.MeetingLink, error)

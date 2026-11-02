@@ -62,6 +62,13 @@ func runEmbed(cmd *cobra.Command) error {
 		return err
 	}
 
+	configCopy := *cfg
+	cfg = &configCopy
+	cfg.Vector, err = resolveLocalVectorConfig(ctx, cfg.Vector)
+	if err != nil {
+		return err
+	}
+
 	var (
 		backend   vector.Backend
 		vectorsDB *sql.DB
@@ -165,10 +172,7 @@ func runEmbed(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("load provider credentials: %w", err)
 	}
-	embeddingAPIKey, err := resolveProviderCredentialFromSnapshot(
-		credentialSnapshot, providercredentials.VectorEmbeddingsID,
-		cfg.Vector.Embeddings.Endpoint, cfg.Vector.Embeddings.APIKeyEnv,
-	)
+	embeddingAPIKey, err := resolveTextEmbeddingCredential(credentialSnapshot, cfg.Vector)
 	if err != nil {
 		return fmt.Errorf("resolve text embedding credential: %w", err)
 	}

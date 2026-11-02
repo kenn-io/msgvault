@@ -49,10 +49,10 @@ type Message struct {
 	Precedence      string
 	ListUnsubscribe bool
 	HasCalendarPart bool
+	CalendarParts   []CalendarPart
 	References      []string
 	BodyText        string
 	BodyHTML        string
-	CalendarParts   []CalendarPart
 	Attachments     []Attachment
 	Errors          []string // Non-fatal parsing errors
 }

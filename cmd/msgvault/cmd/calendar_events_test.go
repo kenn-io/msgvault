@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,8 +56,9 @@ func TestCalendarEventsCommand(t *testing.T) {
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed\x1b[31m\x1b[0m\x1b]52;c;Y2xpcGJvYXJk\x07", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
 		{name: "series cap", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"}, wantErr: "calendar query is too broad: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"},
-		{name: "old daemon", version: "3.27.0", wantErr: "calendar events require daemon API schema 3.29.0 or newer"},
-		{name: "prior schema", version: "3.28.0", wantErr: "calendar events require daemon API schema 3.29.0 or newer"},
+		{name: "old daemon", version: "3.27.0", wantErr: "calendar events require daemon API schema 3.35.0 or newer"},
+		{name: "prior schema", version: "3.28.0", wantErr: "calendar events require daemon API schema 3.35.0 or newer"},
+		{name: "prior calendar schema", version: "3.32.0", wantErr: "calendar events require daemon API schema 3.35.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
 		{name: "dry run", args: []string{"--dry-run"}, wantErr: "--dry-run is only valid"},
 		{name: "read only", args: []string{"--read-only"}, wantErr: "--read-only is only valid"},
@@ -121,6 +124,18 @@ func TestCalendarEventsCommand(t *testing.T) {
 		})
 	}
 }
+func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
+	root := newCalendarControlCmd(nil)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"events", "--help"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "--from")
+	for _, name := range []string{"--account", "--dry-run", "--read-only", "--send-updates"} {
+		assert.NotContains(t, out.String(), name)
+	}
+}
+
 func TestCalendarEventsRFC3339Bounds(t *testing.T) {
 	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
@@ -373,4 +388,64 @@ func TestCalendarEventsPagingCommand(t *testing.T) {
 	assertions.Contains(out.String(), "evt:42")
 	assertions.Contains(out.String(), "Planning")
 	assertions.Contains(out.String(), "\nnext cursor: next-page\n")
+}
+
+func TestCalendarArchiveCommandsRequirePagingAndDetailSchema(t *testing.T) {
+	for _, version := range []string{"3.33.0", "3.34.0", "3.35.0"} {
+		for _, command := range []struct {
+			name string
+			args []string
+		}{
+			{"paged list", []string{"events", "--from", "2027-03-01", "--to", "2027-04-01", "--limit", "1", "--cursor", "previous-page", "--json"}},
+			{"detail", []string{"event", "evt:1", "--json"}},
+		} {
+			t.Run(version+"/"+command.name, func(t *testing.T) {
+				assertions, requirements := assert.New(t), require.New(t)
+				var reads atomic.Int32
+				occurrence := store.CalendarOccurrence{Ref: "evt:1", MessageID: 1, Subject: "Planning", Start: time.Date(2027, 3, 1, 17, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 1, 18, 0, 0, 0, time.UTC)}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/api/v1/health":
+						assertions.NoError(json.MarshalWrite(w, map[string]string{"status": "ok", "api_schema_version": version}))
+					case "/api/v1/calendar/events":
+						reads.Add(1)
+						assertions.Equal("1", r.URL.Query().Get("limit"))
+						assertions.Equal("previous-page", r.URL.Query().Get("cursor"))
+						assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{occurrence}}))
+					case "/api/v1/calendar/events/evt:1":
+						reads.Add(1)
+						assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrenceDetail{CalendarOccurrence: occurrence}))
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				t.Cleanup(server.Close)
+				client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: server.Client()})
+				requirements.NoError(err)
+				t.Cleanup(func() { assertions.NoError(client.Close()) })
+				open := func(context.Context) (calendarEventsClient, func(), error) { return client, func() {}, nil }
+				root := newCalendarControlCmd(nil)
+				for _, child := range root.Commands() {
+					if child.Name() == "events" || child.Name() == "event" {
+						root.RemoveCommand(child)
+					}
+				}
+				root.AddCommand(newCalendarEventsCommand(open), newCalendarEventCommand(open))
+				var out bytes.Buffer
+				root.SetOut(&out)
+				root.SetErr(&bytes.Buffer{})
+				root.SetArgs(command.args)
+				err = root.Execute()
+				if version != "3.35.0" {
+					requirements.ErrorContains(err, "calendar events require daemon API schema 3.35.0 or newer")
+					assertions.Zero(reads.Load(), "reject before issuing a richer calendar request")
+					return
+				}
+				requirements.NoError(err)
+				assertions.Equal(int32(1), reads.Load())
+				assertions.Contains(out.String(), "Planning")
+			})
+		}
+	}
 }

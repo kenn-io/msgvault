@@ -685,7 +685,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 }
 
 func TestCalendarArchiveMCPVersionGates(t *testing.T) {
-	for _, version := range []string{"3.26.0", "3.27.0"} {
+	for _, version := range []string{"3.26.0", "3.27.0", "3.32.0", "3.33.0", "3.34.0", "3.35.0"} {
 		t.Run(version, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -700,16 +700,16 @@ func TestCalendarArchiveMCPVersionGates(t *testing.T) {
 				assertions.NoError(json.NewEncoder(w).Encode(body))
 			})
 			owner := daemonMCPServeOptions(t.Context(), client, nil)
-			assertions.Equal(version == "3.27.0", owner.CalEvents != nil)
+			assertions.Equal(version == "3.35.0", owner.CalEvents != nil)
 			delegated, err := delegatedMCPServeOptions(t.Context(), client)
 			requirements.NoError(err)
-			assertions.Equal(version == "3.27.0", delegated.CalEvents != nil)
+			assertions.Equal(version == "3.35.0", delegated.CalEvents != nil)
 		})
 	}
 }
 
 func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
-	for _, version := range []string{"3.32.0", "3.33.0"} {
+	for _, version := range []string{"3.32.0", "3.33.0", "3.35.0", "3.36.0"} {
 		t.Run(version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -723,10 +723,10 @@ func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
 				assert.NoError(t, json.NewEncoder(w).Encode(body))
 			})
 			owner := daemonMCPServeOptions(t.Context(), client, nil)
-			assert.Equal(t, version == "3.33.0", owner.Timeline != nil)
+			assert.Equal(t, version == "3.36.0", owner.Timeline != nil)
 			delegated, err := delegatedMCPServeOptions(t.Context(), client)
 			require.NoError(t, err)
-			assert.Equal(t, version == "3.33.0", delegated.Timeline != nil)
+			assert.Equal(t, version == "3.36.0", delegated.Timeline != nil)
 		})
 	}
 }

@@ -107,3 +107,14 @@ func TestEvaluateReportsEveryThresholdCheck(t *testing.T) {
 	assert.Equal(ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 1, Required: 2, Enabled: true}, d.Thresholds[0])
 	assert.Equal(ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 2, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])
 }
+
+// A call is two-way contact, so weekly calls alone reach tier 1 and each
+// threshold check reports the calls in its count.
+func TestCallsCountBothWays(t *testing.T) {
+	assert := assert.New(t)
+	d := Evaluate(Signals{CallsShort: 6, CallsLong: 6, ActiveDaysShort: 6, ActiveDaysLong: 6, ChannelsLong: 1}, DefaultConfig())
+	assert.Equal(1, d.Tier)
+	assert.Equal("tier1_intensity", d.Rule)
+	assert.Equal(ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 6, Required: 2, Enabled: true, Met: true}, d.Thresholds[0])
+	assert.Equal(ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 6, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])
+}

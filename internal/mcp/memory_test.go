@@ -85,6 +85,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		PeopleBackend:        struct{ peoplebrowser.Backend }{},
 		DirectoryBackend:     struct{ peoplebrowser.DirectoryLister }{},
 		PersonAgendaBackend:  struct{ PersonAgendaBackend }{},
+		PersonTierBackend:    struct{ PersonTierBackend }{},
 		ContactRoutesBackend: struct{ ContactRoutesBackend }{},
 		Kata:                 struct{ KataBackend }{},
 		KataLookup:           true,

@@ -235,6 +235,7 @@ export function sameFilterID(a: string | undefined, b: string | undefined): bool
 }
 
 export interface ExploreResult {
+  warnings?: string[];
   rows: EntryRow[];
   totalCount?: number;
   cacheRevision: string;
@@ -248,6 +249,7 @@ export interface ExploreResult {
 }
 
 export interface ExploreGroupResult {
+  warnings?: string[];
   rows: ExploreGroupRow[];
   totalCount: number;
   cacheRevision: string;

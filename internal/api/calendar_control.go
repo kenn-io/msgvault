@@ -17,8 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-// Domain types share short names such as Person, Result, and RemoteRequest
-// with the archive. Prefix their schema names to preserve existing wire names.
+// Domain types share short names. Prefix them to preserve existing wire names.
 func prefixedSchemaName(t reflect.Type, hint string) string {
 	original := t
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
@@ -38,6 +37,8 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 			return "TimelineResult"
 		}
 		return "Timeline" + name
+	case "go.kenn.io/msgvault/internal/persontiers":
+		return "PersonTier" + name
 	default:
 		return name
 	}
