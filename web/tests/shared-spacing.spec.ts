@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
 });
 
-test('page content sits one header gap below the divider, and full-width panes meet it', async ({ page }) => {
+test('page content sits one header gap below the page title, and full-width panes sit closest', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
   await page.route('**/api/v1/operations/status', (route) => route.fulfill({ json: { lanes: [] } }));
   await page.route('**/api/v1/sources**', (route) => route.fulfill({ json: { sources: [] } }));
@@ -38,15 +38,14 @@ test('page content sits one header gap below the divider, and full-width panes m
     if (label === 'Sources') await expect(page.getByText('No archived sources are available.')).toBeVisible();
     if (label === 'Saved views') await expect(page.getByText('Synthetic saved view', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
-    const header = page.locator('.page-header:visible');
+    const header = page.locator('.kit-page-header:visible');
     await expect(header).toHaveCount(1);
     gaps[label] = await header.evaluate((element) => {
-      const divider = element.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(element, '::before').bottom);
       const owner = element.parentElement!;
       let next = element.nextElementSibling;
       if (!next) next = owner.nextElementSibling;
       while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
-      return next!.getBoundingClientRect().top - divider;
+      return next!.getBoundingClientRect().top - element.getBoundingClientRect().bottom;
     });
   }
   await page.setViewportSize({ width: 390, height: 844 });
@@ -54,11 +53,10 @@ test('page content sits one header gap below the divider, and full-width panes m
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
   await page.getByRole('button', { name: 'Open Source sync run' }).click();
   await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toBeVisible();
-  gaps['Focused Operations'] = await page.locator('.focused-detail .page-header').evaluate((header) => {
-    const divider = header.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(header, '::before').bottom);
-    return header.nextElementSibling!.getBoundingClientRect().top - divider;
-  });
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['Relationships', 'Settings'].includes(label) ? 0 : 8])));
+  gaps['Focused Operations'] = await page.locator('.focused-detail .kit-page-header').evaluate((header) => (
+    header.nextElementSibling!.getBoundingClientRect().top - header.getBoundingClientRect().bottom
+  ));
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['Relationships', 'Settings'].includes(label) ? 12 : 20])));
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {

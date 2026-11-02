@@ -6,6 +6,7 @@
     CommandPalette,
     getThemeMode,
     IconButton,
+    PageHeader,
     ThemeToggle,
     appShortcuts,
     initShortcuts,
@@ -71,7 +72,6 @@
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
-  import PageHeader from './PageHeader.svelte';
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
