@@ -271,6 +271,12 @@ each report as a `vitest-<suite>-attempt-<n>` or
 `playwright-<suite>-attempt-<n>` artifact. `MSGVAULT_PLAYWRIGHT_SUITE` names a
 Playwright run's report.
 
+Bash shards use recorded durations from a package's `testdata/shard-weights-<backend>.txt` to balance test time. Only PostgreSQL store has a weights file; a missing file keeps round-robin assignment. Unlisted tests get the median recorded duration, and removed tests are ignored. Each successful shard line reports its summed top-level test-seconds. Refresh `internal/store/testdata/shard-weights-postgres.txt` from a recent successful main run's `test-postgres-sharded (store)` job with:
+
+```bash
+gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): ' | sort
+```
+
 ## Lint & Format
 
 ```bash

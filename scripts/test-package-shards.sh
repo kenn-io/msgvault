@@ -4,7 +4,7 @@
 # A package's tests run one at a time inside a single test binary, so a package
 # with thousands of tests sets the wall clock for the whole job no matter how
 # many cores the runner has. This compiles the package once, lists its tests,
-# deals them round-robin into shards, and runs each shard as its own process
+# deals them into shards, and runs each shard as its own process
 # with -test.run pinned to exactly its names. The tests, their order within a
 # shard, and the binary are unchanged; only the process boundary is new.
 #
@@ -71,9 +71,31 @@ echo "Running ${#test_names[@]} tests from $package in $active_shards shards"
 for ((i = 0; i < active_shards; i++)); do
 	: >"$work/shard-$i.names"
 done
-for ((i = 0; i < ${#test_names[@]}; i++)); do
-	printf '%s\n' "${test_names[$i]}" >>"$work/shard-$((i % active_shards)).names"
-done
+backend=sqlite
+if [ -n "${MSGVAULT_TEST_DB:-}" ]; then backend=postgres; fi
+weights_file="$package_dir/testdata/shard-weights-$backend.txt"
+if [ -f "$weights_file" ]; then
+	# Keep current top-level tests only, ordered by duration for the median.
+	awk 'NR == FNR { names[$0] = 1; next }
+		/^--- (PASS|SKIP|FAIL): / && ($3 in names) {
+			seconds = $4; gsub(/[()s]/, "", seconds); print seconds, $3
+		}' "$names_file" "$weights_file" | sort -k1,1g >"$work/weights"
+	awk 'FILENAME == ARGV[1] { weights[$2] = $1; ordered[++n] = $1; next }
+		{
+			median = n % 2 ? ordered[(n + 1) / 2] : (ordered[n / 2] + ordered[n / 2 + 1]) / 2
+			print ($0 in weights ? weights[$0] : median), FNR, $0
+		}' "$work/weights" "$names_file" | sort -k1,1gr -k2,2n |
+		awk -v shards="$active_shards" -v prefix="$work/shard-" '{
+			lightest = 0
+			for (i = 1; i < shards; i++) if (total[i] < total[lightest]) lightest = i
+			print $3 >> (prefix lightest ".names")
+			total[lightest] += $1
+		}'
+else
+	for ((i = 0; i < ${#test_names[@]}; i++)); do
+		printf '%s\n' "${test_names[$i]}" >>"$work/shard-$((i % active_shards)).names"
+	done
+fi
 
 pids=()
 for ((i = 0; i < active_shards; i++)); do
@@ -112,7 +134,8 @@ for ((i = 0; i < active_shards; i++)); do
 	if [ "$status" -eq 0 ]; then
 		awk '/^[[:space:]]*--- (PASS|SKIP): /' "$work/shard-$i.out"
 		printf 'ok  \t%s\t%s\n' "$import_path" "$(elapsed "$i")"
-		echo "ok shard $((i + 1)): $count tests"
+		seconds=$(awk '/^--- (PASS|SKIP|FAIL): / { seconds += substr($4, 2) } END { print seconds + 0 }' "$work/shard-$i.out")
+		echo "ok shard $((i + 1)): $count tests, ${seconds}s"
 	else
 		failed=1
 		echo "shard $((i + 1)) failed" >&2
