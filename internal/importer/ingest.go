@@ -178,6 +178,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		InternalDate:    internalDate,
 		SenderID:        senderID,
 		IsFromMe:        isFromMe,
+		// A From-address match is identity attribution, never native sent evidence.
+		IdentityDerivedIsFromMe: true,
 		Subject: sql.NullString{
 			String: subject, Valid: subject != "",
 		},
