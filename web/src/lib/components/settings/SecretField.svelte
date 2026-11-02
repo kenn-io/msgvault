@@ -47,7 +47,7 @@
     onclear?: () => void;
   } = $props();
 
-  const sentence = $derived(label.charAt(0).toLowerCase() + label.slice(1));
+  const sentence = $derived(/^[A-Z][a-z]/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label);
   const blocked = $derived(disabled || saving || disabledReason !== '');
   const verb = $derived(configured ? 'Replace' : 'Add');
   // A set key with no hint still shows as set, just without characters.

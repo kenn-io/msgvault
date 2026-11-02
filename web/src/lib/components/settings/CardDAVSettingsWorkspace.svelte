@@ -187,13 +187,16 @@
 <style>
   .connection-picker {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-4);
     min-width: 0;
   }
 
   .connection-picker label {
     display: grid;
     gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
   }
 
   .carddav-settings {
