@@ -25,7 +25,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: web/package.json
-      - uses: kenn-io/kit/.github/actions/kit-retry@19ca4ee42e3452f57ba6d72cf07ce5963b26219b # v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@b2c1b6f25ec8f521899e7cc0eb03d266fa9f44ba # v0.47.5
       - name: Install frontend dependencies
         working-directory: web
         shell: bash
