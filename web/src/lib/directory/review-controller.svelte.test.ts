@@ -37,7 +37,7 @@ describe('DirectoryReviewController', () => {
       const request = requestOf(input);
       requests.push(request);
       if (requests.length === 1) return first.promise;
-      return page([candidate(2, requests.length === 2 ? 'conflict' : 'accepted')]);
+      return page([candidate(2, 'conflict')]);
     });
     const controller = new DirectoryReviewController(createAPIClient(fetchFn));
 

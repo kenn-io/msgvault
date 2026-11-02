@@ -116,7 +116,7 @@ describe('RelationshipReviewController', () => {
     controller.destroy();
   });
 
-  it('normalizes null to empty and retries an empty failed context only on demand', async () => {
+  it('rejects malformed rows, normalizes null to empty, and retries only on demand', async () => {
     let attempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async () => {
       attempts += 1;
