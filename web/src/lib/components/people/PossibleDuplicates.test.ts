@@ -6,17 +6,16 @@ import PossibleDuplicates from './PossibleDuplicates.svelte';
 import { pair } from '../shell/fixtures.test-support';
 
 it.each([
-  { state: 'candidate', pending: false, actionable: true, blocker: undefined, mergeDisabled: false },
-  { state: 'candidate', pending: true, actionable: true, blocker: undefined, mergeDisabled: true },
-  { state: 'candidate', pending: false, actionable: false, blocker: 'endpoint_unsupported', mergeDisabled: true },
-  { state: 'conflict', pending: false, actionable: true, blocker: undefined, mergeDisabled: false },
-  { state: 'conflict', pending: false, actionable: false, blocker: 'person_merge_required', mergeDisabled: false },
-])('renders summaries and decisions for $state, pending=$pending, blocker=$blocker', async ({ state, pending, actionable, blocker, mergeDisabled }) => {
-  const row = { ...pair, state, actionable, blocker, basis: 'stable_provider_id', review_token: 'displayed-token' };
+  { state: 'candidate', leftKind: 'participant', pending: false, actionable: true, blocker: undefined, mergeDisabled: false },
+  { state: 'candidate', leftKind: 'participant', pending: true, actionable: true, blocker: undefined, mergeDisabled: true },
+  { state: 'candidate', leftKind: 'person', pending: false, actionable: false, blocker: 'endpoint_unsupported', mergeDisabled: true },
+  { state: 'conflict', leftKind: 'participant', pending: false, actionable: false, blocker: 'person_merge_required', mergeDisabled: false },
+])('renders summaries and decisions for $state, pending=$pending, blocker=$blocker', async ({ state, leftKind, pending, actionable, blocker, mergeDisabled }) => {
+  const row = { ...pair, state, left_kind: leftKind, actionable, blocker, basis: 'stable_provider_id', review_token: 'displayed-token' };
   const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
   controller.rows = [row];
   if (pending) controller.pendingDecisions.add(row.id);
-  controller.summaries.set('participant:1', { id: 1, name: 'Observed example', address: 'observed@example.com', count: 1, lastAt: null });
+  controller.summaries.set(`${leftKind}:1`, { id: 1, name: 'Observed example', address: 'observed@example.com', count: 1, lastAt: null });
   controller.summaries.set('participant:2', { id: 2, name: 'Absorbed person', address: 'absorbed@example.com', count: 3, lastAt: null });
   const onDecide = vi.fn();
   const view = render(PossibleDuplicates, { controller, onDecide });
