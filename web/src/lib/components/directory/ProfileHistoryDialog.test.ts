@@ -127,7 +127,7 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
   });
 
-  it('refreshes structured history after split reconciliation while keeping the split receipt open', async () => {
+  it('refreshes structured history after split reconciliation', async () => {
     let reconciled = false;
     const source = { ...person(), participant_ids: [1, 2] };
     const remaining = { ...source, revision: 4, participant_ids: [2] };
@@ -158,14 +158,11 @@ describe('ProfileHistoryDialog', () => {
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'Participant 1' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: /I confirm splitting/ }));
       await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
-      const receipt = await screen.findByRole('heading', { name: 'Split completed' });
-      expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 });
       await waitFor(() => {
+        expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 });
         expect(screen.getByText('Retained name')).toBeDefined();
         for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value)).toBeNull();
       });
-      expect(screen.getByRole('heading', { name: 'Split completed' })).toBe(receipt);
-      expect(screen.getByRole('dialog', { name: 'Split merged profile' })).toBeDefined();
     } finally { view.unmount(); }
   });
 

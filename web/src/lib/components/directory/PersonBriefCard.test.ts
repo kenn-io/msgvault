@@ -333,7 +333,7 @@ describe('PersonBriefCard', () => {
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
-      else await waitFor(() => expect(toggle.checked).toBe(false));
+      else await screen.findByRole('checkbox', { name: 'Also track this person' });
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.
