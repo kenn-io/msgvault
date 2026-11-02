@@ -235,6 +235,7 @@
   width="min(960px, 94vw)"
   maxWidth="min(960px, 94vw)"
   closeLabel="Close file viewer"
+  closable
   onclose={() => {
     void close();
   }}
