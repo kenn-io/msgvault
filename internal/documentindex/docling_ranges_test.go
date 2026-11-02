@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -29,8 +27,7 @@ import (
 
 func doclingPDFPages(t *testing.T, pages int) []byte {
 	t.Helper()
-	var imageBytes bytes.Buffer
-	require.NoError(t, jpeg.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 1, 1)), nil))
+	imageBytes := mediatest.JPEG(1, 1, nil)
 	objects := make([]string, 2, pages+2)
 	objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"
 	var kids strings.Builder
@@ -40,7 +37,7 @@ func doclingPDFPages(t *testing.T, pages int) []byte {
 	}
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids.String(), pages)
 	objects = append(objects,
-		fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream", imageBytes.Len(), imageBytes.String()),
+		fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream", len(imageBytes), imageBytes),
 		"<< /Length 10 >>\nstream\nq /Im Do Q\nendstream")
 	return mediatest.PDFObjects("synthetic document range fixture", objects)
 }
@@ -236,13 +233,13 @@ func TestDoclingWorkerPageRanges(t *testing.T) {
 }
 
 func TestDoclingRangesStoreIntegration(t *testing.T) {
-	for _, failure := range []string{"partial resume after reopen", "checkpoint limit maps to response_too_large"} {
+	for _, failure := range []string{"partial resume after reopen", "normalized character limit", "checkpoint limit maps to response_too_large"} {
 		t.Run(failure, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := storetest.New(t)
 			pages := 600
-			if failure == "partial resume after reopen" {
+			if failure != "checkpoint limit maps to response_too_large" {
 				pages = 120
 			}
 			content := doclingPDFPages(t, pages)
@@ -253,7 +250,7 @@ func TestDoclingRangesStoreIntegration(t *testing.T) {
 			server := doclingRangeTestServer(t, pages, &selections, nil, func(page int) string {
 				return fmt.Sprintf("range sentinel page %d", page)
 			}, func(response, _, _ map[string]any, first, _ int) {
-				if failMiddle && first == 51 && failure == "partial resume after reopen" {
+				if failMiddle && first == 51 && failure != "checkpoint limit maps to response_too_large" {
 					response["status"] = "partial_success"
 					response["errors"] = []any{map[string]any{"page_no": 51}}
 				}
@@ -264,6 +261,9 @@ func TestDoclingRangesStoreIntegration(t *testing.T) {
 			c.MaxPollAttempts = 1
 			c.PollInterval = time.Millisecond
 			c.MaxPagesPerDocument = 600
+			if failure == "normalized character limit" {
+				c.MaxNormalizedChars = 16
+			}
 			if failure == "checkpoint limit maps to response_too_large" {
 				c.MaxResponseBytes = 64 << 10
 			}
@@ -303,7 +303,11 @@ func TestDoclingRangesStoreIntegration(t *testing.T) {
 				assertions.Equal(failed.FailureDetail, detail)
 				return
 			}
-			assertions.Equal(1, saved)
+			if failure == "normalized character limit" {
+				assertions.Zero(saved, "over-budget normalized text must stay out of the archive")
+			} else {
+				assertions.Equal(1, saved)
+			}
 			beforeResume, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
 			requirements.NoError(err)
 			assertions.Equal(int64(2*len(content)), beforeResume.VerifiedUploadBytes)
@@ -326,14 +330,26 @@ func TestDoclingRangesStoreIntegration(t *testing.T) {
 			requirements.NoError(err)
 			result, err := worker.ProcessCandidate(t.Context(), candidate)
 			requirements.NoError(err)
-			assertions.Equal(pages, result.Units)
+			if failure == "normalized character limit" {
+				assertions.True(result.Truncated)
+				var chars int
+				requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT SUM(char_count) FROM document_units WHERE extraction_id = ?"), result.ExtractionID).Scan(&chars))
+				assertions.Equal(16, chars)
+			} else {
+				assertions.Equal(pages, result.Units)
+			}
 			var requests int
 			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT request_count FROM document_extractions WHERE id = ?"), result.ExtractionID).Scan(&requests))
 			afterResume, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
 			requirements.NoError(err)
-			assertions.Equal(int64(2*len(content)), afterResume.VerifiedUploadBytes-beforeResume.VerifiedUploadBytes)
-			assertions.Equal([]string{"1,50", "51,100", "51,100", "101,120"}, selections)
-			assertions.Equal(4, requests)
+			if failure == "normalized character limit" {
+				assertions.Equal(int64(3*len(content)), afterResume.VerifiedUploadBytes-beforeResume.VerifiedUploadBytes)
+				assertions.Equal([]string{"1,50", "51,100", "1,50", "51,100", "101,120"}, selections)
+			} else {
+				assertions.Equal(int64(2*len(content)), afterResume.VerifiedUploadBytes-beforeResume.VerifiedUploadBytes)
+				assertions.Equal([]string{"1,50", "51,100", "51,100", "101,120"}, selections)
+				assertions.Equal(4, requests)
+			}
 			var heads int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_heads").Scan(&heads))
 			assertions.Equal(1, heads)

@@ -510,8 +510,8 @@ uses a configured endpoint without a manifest.
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB) |
-| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
+| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB); exceeding this limit fails the extraction |
+| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters; Docling ranges exceeding the aggregate checkpoint limit stay in memory and are resent on retry, and the completed document is truncated at publication |
 | `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
 | `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
 | `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |

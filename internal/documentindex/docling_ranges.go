@@ -91,7 +91,7 @@ func (w *DoclingWorker) renderPageRanges(ctx context.Context, content []byte, ca
 				for _, unit := range evidence.Units {
 					checkpoint.CharCount += utf8.RuneCountInString(unit.Text)
 				}
-				if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes); err != nil {
+				if err := w.catalog.SaveDocumentExtractionRange(ctx, claim, checkpoint, w.config.Documents.MaxResponseBytes, w.config.Documents.MaxNormalizedChars); err != nil && !errors.Is(err, store.ErrDocumentRangeChars) {
 					return document.SourceDocument{}, fmt.Errorf("%w: %w", errDocumentRangeCheckpoint, err)
 				}
 			}

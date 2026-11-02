@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -20,6 +18,7 @@ type DocumentExtractionRange struct {
 }
 
 var ErrDocumentRangeBytes = errors.New("document range checkpoints exceed max_response_bytes")
+var ErrDocumentRangeChars = errors.New("document range checkpoints exceed max_normalized_chars")
 
 // LoadDocumentExtractionRanges bounds stored bytes; the worker validates
 // canonical evidence and its checksum before use.
@@ -45,11 +44,7 @@ func (s *Store) LoadDocumentExtractionRanges(ctx context.Context, claim Document
 	return ranges, rows.Err()
 }
 
-func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentExtractionClaim, r DocumentExtractionRange, maxBytes int64) error {
-	digest := sha256.Sum256(r.Evidence)
-	if hex.EncodeToString(digest[:]) != r.EvidenceChecksum {
-		return errors.New("invalid document range checkpoint")
-	}
+func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentExtractionClaim, r DocumentExtractionRange, maxBytes int64, maxChars int) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		// Lock the exact live claim while writing, so a replacement cannot race the fence.
@@ -64,9 +59,12 @@ func (s *Store) SaveDocumentExtractionRange(ctx context.Context, claim DocumentE
 		if count != 1 {
 			return ErrDocumentExtractionFenceLost
 		}
-		var size int64
-		if err := q.QueryRow(`SELECT COALESCE(SUM(OCTET_LENGTH(evidence)),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size); err != nil {
+		var size, chars int64
+		if err := q.QueryRow(`SELECT COALESCE(SUM(OCTET_LENGTH(evidence)),0), COALESCE(SUM(char_count),0) FROM document_extraction_ranges WHERE extraction_id = ? AND first_page != ?`, claim.ExtractionID, r.FirstPage).Scan(&size, &chars); err != nil {
 			return err
+		}
+		if chars+int64(r.CharCount) > int64(maxChars) {
+			return ErrDocumentRangeChars
 		}
 		if size+int64(len(r.Evidence)) > maxBytes {
 			return ErrDocumentRangeBytes

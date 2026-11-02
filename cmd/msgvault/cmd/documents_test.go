@@ -1099,7 +1099,7 @@ func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(fixture.Store.SaveDocumentExtractionRange(ctx, claim,
-		storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes))
+		storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes, documentsConfig.MaxNormalizedChars))
 	require.NoError(fixture.Store.FailDocumentExtraction(ctx, store.DocumentExtractionFailure{
 		Claim: claim, ReasonCode: "provider_timeout", Terminal: true,
 	}))

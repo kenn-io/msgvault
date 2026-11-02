@@ -77,7 +77,7 @@ func TestDoclingStatusDisclosesRangePlaintext(t *testing.T) {
 		LeaseOwner: "range-status-worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
 	})
 	requirements.NoError(err)
-	requirements.NoError(f.Store.SaveDocumentExtractionRange(ctx, claim, storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes))
+	requirements.NoError(f.Store.SaveDocumentExtractionRange(ctx, claim, storetest.DocumentRangeCheckpoint(t), documentsConfig.MaxResponseBytes, documentsConfig.MaxNormalizedChars))
 	var status documentStatusOutput
 	requirements.NoError(json.Unmarshal([]byte(run("status", "--json")), &status))
 	assertions.True(status.StoresPlaintext)
