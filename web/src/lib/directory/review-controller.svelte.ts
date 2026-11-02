@@ -237,7 +237,7 @@ export class DirectoryReviewController {
   ): Promise<void> {
     if (this.disposed) return;
     this.lastMerge = { candidateID, ...success };
-    this.invalidateSummaries();
+    this.invalidateSummaries(false);
     if (this.mergeRequired?.candidateID === candidateID) this.mergeRequired = null;
     const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
     this.status = `Profiles merged into ${name}. Review the refreshed pair to finish. Identity cache ${success.result.cache_state}.`;
@@ -264,15 +264,15 @@ export class DirectoryReviewController {
     return this.settlement;
   }
   async invalidate(active: boolean): Promise<void> {
-    this.invalidateSummaries();
+    this.invalidateSummaries(false);
     this.resetIdentityContext(this.identityState);
     this.initialized = false;
     if (active) await this.settleDecision().then(() => this.loadIdentityPage(0));
   }
 
   retrySummary(key: string): void { this.summaries.delete(key); this.requestSummaries(); }
-  /** Summaries describe whole clusters, so any identity change outdates them all. */
-  invalidateSummaries(): void { this.summaries.clear(); this.lookupAbort.abort(); }
+  /** Summaries describe whole clusters, so any identity change outdates them all; callers that keep the page look them up again. */
+  invalidateSummaries(refetch = true): void { this.summaries.clear(); if (refetch) this.requestSummaries(); else this.lookupAbort.abort(); }
   /** Queues the lookups for the cards on the current page. */
   requestSummaries(): void {
     this.lookupQueue = [];
@@ -396,7 +396,7 @@ export class DirectoryReviewController {
       if (!this.ownsDecision(candidateID, abort)) {
         return result = { ok: false, kind: 'error', status: 0, message: 'Decision was superseded.' };
       }
-      if (response.data ? decision === 'accept' : response.error?.error === 'identity_match_review_stale') this.invalidateSummaries();
+      if (response.data ? decision === 'accept' : response.error?.error === 'identity_match_review_stale') this.invalidateSummaries(false);
       if (response.data) {
         const decidedCandidate = response.data.candidate;
         this.decisionDrafts.delete(candidateID);

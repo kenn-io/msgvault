@@ -3005,16 +3005,18 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it('shows a saved profile rename when returning to cached duplicate cards', async () => {
+it.each(['before returning', 'after returning'])('shows a saved profile rename completed %s to cached duplicate cards', async timing => {
+  let releaseSave!: () => void;
+  const saveStarted = vi.fn();
   let renamed = false;
   const saved = () => ({ ...person(7, renamed ? 5 : 4, []), display_name: renamed ? 'Renamed saved person' : 'Original saved person' });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, left_kind: 'person', left_id: 7 }], limit: Number(url.searchParams.get('limit')), offset: 0 });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, left_kind: 'person', left_id: 7, actionable: false, blocker: 'endpoint_unsupported' }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/people/directory')) return Response.json({ people: [directoryPerson(7, { display_name: saved().display_name, revision: saved().revision })] });
     if (path === '/api/v1/people/7') {
-      if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); renamed = true; }
+      if (request.method === 'PATCH') { expect(await request.json()).toEqual({ display_name: 'Renamed saved person' }); saveStarted(); if (timing === 'after returning') await new Promise<void>(resolve => { releaseSave = resolve; }); renamed = true; }
       return Response.json(saved(), { headers: { ETag: `"person-7-r${saved().revision}"` } });
     }
     if (path === '/api/v1/people/7/profile') return Response.json({ person: saved(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
@@ -3025,7 +3027,8 @@ it('shows a saved profile rename when returning to cached duplicate cards', asyn
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
-  const state = new ExploreState(null);
+  window.history.replaceState(null, '', '/');
+  const state = new ExploreState(window);
   state.commitNavigation({ workspace: 'relationships', relationshipSaved: true, peopleDuplicates: true });
   const view = render(AppShell, { client, state });
   try {
@@ -3036,12 +3039,21 @@ it('shows a saved profile rename when returning to cached duplicate cards', asyn
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed saved person' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-    await screen.findByRole('heading', { name: 'Renamed saved person' });
-    await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
-    await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
-    await screen.findByRole('button', { name: 'Keep separate' });
+    if (timing === 'after returning') {
+      await waitFor(() => expect(saveStarted).toHaveBeenCalledOnce());
+      const returned = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.go(-2);
+      await returned;
+      await screen.findByRole('heading', { name: 'Possible duplicates' });
+      await within(await screen.findByRole('listitem', { name: /Original saved person and/ })).findByText('Original saved person');
+      releaseSave();
+    } else {
+      await screen.findByRole('heading', { name: 'Renamed saved person' });
+      await fireEvent.click(within(screen.getByRole('complementary', { name: 'People' })).getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(screen.getByText('Possible duplicates', { exact: true }));
+    }
     await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Renamed saved person'));
-  } finally { view.unmount(); state.destroy(); }
+  } finally { view.unmount(); state.destroy(); window.history.replaceState(null, '', '/'); }
 });
 
 it.each(['Stay', 'Discard and leave'])('restores held Back before a saved view replaces the Settings leave choice, then %s', async (choice) => {
