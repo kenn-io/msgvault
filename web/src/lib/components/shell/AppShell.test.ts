@@ -1067,14 +1067,14 @@ describe('AppShell', () => {
       render(AppShell, { client, state });
       await screen.findByText('Synthetic subject 1');
       await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
-      await fireEvent.click(await screen.findByRole('option', { name: 'Deletions' }));
-      await screen.findByRole('heading', { level: 1, name: 'Deletions' });
+      await fireEvent.click(await screen.findByRole('option', { name: 'Staged deletions' }));
+      await screen.findByRole('heading', { level: 1, name: 'Staged deletions' });
 
       window.history.back();
       await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('grid', { name: 'Messages results' })));
 
       window.history.forward();
-      const heading = await screen.findByRole('heading', { level: 1, name: 'Deletions' });
+      const heading = await screen.findByRole('heading', { level: 1, name: 'Staged deletions' });
       await waitFor(() => expect(document.activeElement).toBe(heading));
     });
 
