@@ -13,15 +13,8 @@ func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			require := require.New(t)
 			st := openTestStore(t)
-			_, err := st.DB().Exec(`WITH RECURSIVE ids(id) AS (
-		SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < 2004
-	) INSERT INTO participants (id, email_address)
-	SELECT id, 'participant-' || id || '@example.com' FROM ids`)
-			require.NoError(err)
-			_, err = st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b)
-		SELECT id, id + 1 FROM participants WHERE id >= 5 AND id % 2 = 1`)
-			require.NoError(err)
-			_, err = st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
+			seedDisjointParticipantLinks(t, st, 4, 1000)
+			_, err := st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
 			require.NoError(err)
 			var rejectedID int64
 			if operation == "reject" {
