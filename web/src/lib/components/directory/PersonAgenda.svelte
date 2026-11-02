@@ -14,11 +14,12 @@
   interface Props {
     client: APIClient;
     personID: number;
+    refreshKey?: string;
     onSetUp?: () => void;
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, onSetUp, onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, refreshKey, onSetUp, onAnnounce = () => undefined }: Props = $props();
   let items = $state<AgendaItem[]>([]);
   let loading = $state(true);
   let mutating = $state(false);
@@ -46,10 +47,10 @@
   $effect(() => {
     const selectedPersonID = personID;
     void client;
-    // Selection changed: the prior person's visible state must not survive
-    // into the transition. Clear it synchronously so no Unlink or Add can
-    // pair old data with the new selection while the fresh status and list
-    // resolve; load() restores each piece only for the current generation.
+    void refreshKey;
+    // Clear task data when the selection or profile changes so actions use
+    // current UID aliases. Keep draft inputs while status and list reload;
+    // load() restores each piece only for the current generation.
     items = [];
     error = '';
     integrationState = 'loading';
