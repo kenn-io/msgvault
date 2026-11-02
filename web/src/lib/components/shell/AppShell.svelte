@@ -232,11 +232,6 @@
     beforeCommit();
     exploreState.commitWorkspace(workspace);
   }
-  function openDirectoryFromRelationship(participantID: number): void {
-    beforeCommit();
-    directoryController.resetForPromotion();
-    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: null, relationshipTarget: `cluster:${participantID}`, relationshipFiles: false });
-  }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
     exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, peopleDuplicates: false, relationshipTarget: null, relationshipFiles: false });
