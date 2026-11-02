@@ -114,7 +114,7 @@ it.each(['sort', 'filter'])('Escape dismisses the People %s before leaving the o
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['fails', 'is cancelled', 'refreshes the cache', 'merges'])('reports the result when the next pair %s', async (outcome) => {
+it.each(['fails', 'is cancelled', 'clears the stale warning', 'merges'])('handles the next pair when it %s', async (outcome) => {
   let calls = 0; let listRequests = 0; let releaseReconcile: (() => void) | undefined;
   const links: Array<{ participant_a: number; participant_b: number }> = [];
   const client = clientFor({
