@@ -257,6 +257,7 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 	if msg.RelatedMessageID != nil {
 		output["related_message_id"] = *msg.RelatedMessageID
 	}
+	addSenderClassJSON(output, msg.Readout)
 	if msg.WebURL != "" {
 		output["web_url"] = msg.WebURL
 	}

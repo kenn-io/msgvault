@@ -303,6 +303,7 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 	out := CLIHybridSearchResult{
 		Message: query.MessageSummary{
 			SenderAuth:        senderAuthFromGenerated(item.SenderAuth),
+			Readout:           senderClassFromGenerated(item.SenderClass, item.SenderClassBasis, item.SenderRelationship),
 			ID:                item.ID,
 			SourceID:          int64Value(item.SourceID),
 			SourceMessageID:   stringValue(item.SourceMessageID),
@@ -372,6 +373,7 @@ func queryAddressesFromStrings(addresses []string) []query.Address {
 func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) query.MessageSummary {
 	return query.MessageSummary{
 		SenderAuth:           senderAuthFromGenerated(msg.SenderAuth),
+		Readout:              senderClassFromGenerated(msg.SenderClass, msg.SenderClassBasis, msg.SenderRelationship),
 		ID:                   msg.ID,
 		SourceID:             int64Value(msg.SourceID),
 		SourceMessageID:      msg.SourceMessageID,
@@ -420,6 +422,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	}
 	return &query.MessageDetail{
 		SenderAuth:           senderAuthFromGenerated(resp.SenderAuth),
+		Readout:              senderClassFromGenerated(resp.SenderClass, resp.SenderClassBasis, resp.SenderRelationship),
 		RelatedMessageID:     resp.RelatedMessageID,
 		ID:                   resp.ID,
 		Calendar:             calendarProjectionFromGenerated(resp.Calendar),

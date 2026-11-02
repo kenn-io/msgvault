@@ -1,3 +1,9 @@
+---
+last_edited: 2026-11-02
+title: Understand sender authentication
+description: Configure trusted receiver pins and interpret advisory sender authentication results.
+---
+
 # Understand sender authentication
 
 Message reads include advisory `sender_auth` metadata. For email,
@@ -59,3 +65,5 @@ stored messages. Search results, thread pages, HTTP message reads, CLI reads,
 and MCP expose the same receipt. Cache-only backends cannot provide raw-header
 evidence. An older daemon may omit the field; treat that as unavailable.
 Sender authentication is not available as a search filter or a SQL projection.
+
+[Sender class](sender-class.md) combines this authentication evidence with exact-mailbox relationship evidence on message reads.

@@ -1868,6 +1868,7 @@ func (a *storeAPIAdapter) ListIdentityMatchJudgmentsContext(ctx context.Context,
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
+var _ query.SenderClassResolver = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
@@ -2200,6 +2201,18 @@ func (a *storeAPIAdapter) ListMessagesContext(
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
 	return a.store.GetMessageContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) MessageSenderIdentities(
+	ctx context.Context, messageIDs, allowedSourceIDs []int64,
+) (map[int64]store.MessageSenderIdentity, error) {
+	return a.store.MessageSenderIdentities(ctx, messageIDs, allowedSourceIDs)
+}
+
+func (a *storeAPIAdapter) SenderRelationships(
+	ctx context.Context, addresses []string, allowedSourceIDs []int64,
+) (map[string]store.SenderRelationshipEvidence, error) {
+	return a.store.SenderRelationships(ctx, addresses, allowedSourceIDs)
 }
 
 func (a *storeAPIAdapter) GetMessagesSummariesByIDsContext(

@@ -56,6 +56,7 @@ func (s *Server) beginCallerRead(r *http.Request) (func(), *apiHTTPError) {
 	if s.queryEngineForContext(ctx) != nil {
 		engine := query.NewEngine(reader.DB(), reader.IsPostgreSQL())
 		query.ConfigureSenderAuth(engine, s.senderAuthPins)
+		s.configureSenderClass(engine)
 		ctx = context.WithValue(ctx, analyticsEngineContextKey{}, &analyticsEngineState{engine: engine, mode: AnalyticsModeSQL})
 	}
 	*r = *r.WithContext(ctx)

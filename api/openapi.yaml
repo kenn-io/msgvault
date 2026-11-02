@@ -1109,6 +1109,32 @@ components:
           type: string
         sender_auth:
           $ref: "#/components/schemas/Verdict"
+        sender_class:
+          enum:
+            - unverified
+            - verified
+            - known
+            - contact
+            - self
+          type: string
+        sender_class_basis:
+          enum:
+            - source_owned
+            - auth_failed
+            - no_auth_evidence
+            - curated_person
+            - owner_sent_to
+            - dmarc_pass
+            - platform
+            - invalid_relationship
+            - evidence_unavailable
+          type: string
+        sender_relationship:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
         sent_at:
           format: date-time
           type: string
@@ -2864,6 +2890,32 @@ components:
           type: string
         sender_auth:
           $ref: "#/components/schemas/Verdict"
+        sender_class:
+          enum:
+            - unverified
+            - verified
+            - known
+            - contact
+            - self
+          type: string
+        sender_class_basis:
+          enum:
+            - source_owned
+            - auth_failed
+            - no_auth_evidence
+            - curated_person
+            - owner_sent_to
+            - dmarc_pass
+            - platform
+            - invalid_relationship
+            - evidence_unavailable
+          type: string
+        sender_relationship:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
         sent_at:
           format: date-time
           type: string
@@ -6724,6 +6776,32 @@ components:
           $ref: "#/components/schemas/ScoreBreakdown"
         sender_auth:
           $ref: "#/components/schemas/Verdict"
+        sender_class:
+          enum:
+            - unverified
+            - verified
+            - known
+            - contact
+            - self
+          type: string
+        sender_class_basis:
+          enum:
+            - source_owned
+            - auth_failed
+            - no_auth_evidence
+            - curated_person
+            - owner_sent_to
+            - dmarc_pass
+            - platform
+            - invalid_relationship
+            - evidence_unavailable
+          type: string
+        sender_relationship:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
         sent_at:
           type: string
         size_bytes:
@@ -8226,6 +8304,32 @@ components:
           type: integer
         sender_auth:
           $ref: "#/components/schemas/Verdict"
+        sender_class:
+          enum:
+            - unverified
+            - verified
+            - known
+            - contact
+            - self
+          type: string
+        sender_class_basis:
+          enum:
+            - source_owned
+            - auth_failed
+            - no_auth_evidence
+            - curated_person
+            - owner_sent_to
+            - dmarc_pass
+            - platform
+            - invalid_relationship
+            - evidence_unavailable
+          type: string
+        sender_relationship:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
         sent_at:
           type: string
         size_bytes:
@@ -8410,6 +8514,32 @@ components:
           type: string
         sender_auth:
           $ref: "#/components/schemas/Verdict"
+        sender_class:
+          enum:
+            - unverified
+            - verified
+            - known
+            - contact
+            - self
+          type: string
+        sender_class_basis:
+          enum:
+            - source_owned
+            - auth_failed
+            - no_auth_evidence
+            - curated_person
+            - owner_sent_to
+            - dmarc_pass
+            - platform
+            - invalid_relationship
+            - evidence_unavailable
+          type: string
+        sender_relationship:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
         sent_at:
           type: string
         size_bytes:
@@ -16514,6 +16644,32 @@ components:
           type: integer
         sender_auth:
           $ref: "#/components/schemas/Verdict"
+        sender_class:
+          enum:
+            - unverified
+            - verified
+            - known
+            - contact
+            - self
+          type: string
+        sender_class_basis:
+          enum:
+            - source_owned
+            - auth_failed
+            - no_auth_evidence
+            - curated_person
+            - owner_sent_to
+            - dmarc_pass
+            - platform
+            - invalid_relationship
+            - evidence_unavailable
+          type: string
+        sender_relationship:
+          enum:
+            - contact
+            - known
+            - none
+          type: string
         sent_at:
           format: date-time
           type:
@@ -17066,7 +17222,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.35.0
+  version: 3.36.0
 openapi: 3.1.0
 paths:
   /api/ping:

@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/senderclass"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -883,6 +884,7 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
+	senderclass.Readout
 	SenderAuth           *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	RelatedMessageID     *int64                    `json:"related_message_id,omitempty"`
 	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
@@ -3735,6 +3737,7 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
 		SenderAuth:           msg.SenderAuth,
+		Readout:              msg.Readout,
 		Calendar:             msg.Calendar,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,

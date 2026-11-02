@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/senderclass"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -27,6 +28,8 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
+	senderclass.Readout
+
 	SenderAuth        *senderauth.Verdict `json:"sender_auth,omitempty"`
 	AttachmentNames   []string            `json:"attachment_names,omitzero"`
 	MatchSnippet      string              `json:"match_snippet,omitempty"`
@@ -71,6 +74,8 @@ type DeletionTarget struct {
 
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
+	senderclass.Readout
+
 	SenderAuth        *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty"`

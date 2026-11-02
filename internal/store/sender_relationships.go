@@ -15,19 +15,23 @@ import (
 func (s *Store) senderNativeOwnershipSQL() string {
 	original := `COALESCE(NULLIF((SELECT p.original_source_message_id
   FROM source_merge_archive_only_messages p WHERE p.message_id=m.id), ''), m.source_message_id)`
-	origin := `m.metadata ->> 'imap_content_origin'`
-	if s.dialect.DriverName() != postgresDriverName {
-		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
-	}
 	sentLabel := `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 	   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))`
 	providerSent := `((src.source_type IN ('gmail','imap','msmail') AND ` + sentLabel + `) OR
-	  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent'))`
+	  ` + senderIMAPSentOriginSQL(s.IsPostgreSQL()) + `)`
 	email := `COALESCE(NULLIF(m.message_type,''),'email')='email'`
 	// Microsoft Graph's legacy source_is_from_me value was address-derived.
 	// Only its provider Sent Items role is native evidence for email ownership.
 	nativeFlag := `(COALESCE(m.source_is_from_me,FALSE) AND NOT (` + email + ` AND src.source_type='msmail'))`
 	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+}
+
+func senderIMAPSentOriginSQL(postgres bool) string {
+	origin := `m.metadata ->> 'imap_content_origin'`
+	if !postgres {
+		origin = `CASE WHEN json_valid(m.metadata) THEN ` + origin + ` END`
+	}
+	return `(src.source_type='imap' AND COALESCE(` + origin + `,'')='sent')`
 }
 
 // senderRawImportedIDSQL recognizes complete importer-generated email IDs.

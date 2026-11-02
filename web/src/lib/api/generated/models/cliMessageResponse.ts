@@ -4,6 +4,9 @@
 import type { CalendarProjection } from "./calendarProjection";
 import type { CliMessageAddress } from "./cliMessageAddress";
 import type { CliMessageAttachment } from "./cliMessageAttachment";
+import type { CliMessageResponseSenderClass } from "./cliMessageResponseSenderClass";
+import type { CliMessageResponseSenderClassBasis } from "./cliMessageResponseSenderClassBasis";
+import type { CliMessageResponseSenderRelationship } from "./cliMessageResponseSenderRelationship";
 import type { Verdict } from "./verdict";
 
 export interface CliMessageResponse {
@@ -27,6 +30,9 @@ export interface CliMessageResponse {
   related_message_id?: number;
   rfc822_message_id?: string;
   sender_auth?: Verdict;
+  sender_class?: CliMessageResponseSenderClass;
+  sender_class_basis?: CliMessageResponseSenderClassBasis;
+  sender_relationship?: CliMessageResponseSenderRelationship;
   sent_at: string;
   size_estimate: number;
   snippet: string;

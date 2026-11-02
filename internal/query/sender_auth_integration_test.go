@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -62,4 +64,28 @@ func TestSenderAuthReadPaths(t *testing.T) {
 	must.NoError(err)
 	must.NoError(f.Store.AddMessageLabels(id, []int64{label}))
 	checks.Equal(senderauth.Basis("owner_sent"), e.ReadSenderAuth(ctx, []int64{id})[id].Basis)
+}
+
+func TestSenderAuthUsesPersistedIMAPSentOriginAfterLabelChanges(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("imap", "imap://sent-origin@example.test:993")
+	requirements.NoError(err)
+	conversationID, err := f.Store.EnsureConversation(source.ID, "sent-origin", "Sent origin")
+	requirements.NoError(err)
+	messageID := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID("imap-sent").Create(t, f.Store)
+	requirements.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{
+		String: `{"imap_content_origin":"sent"}`,
+		Valid:  true,
+	}))
+	labels, err := f.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["SENT"]}))
+	requirements.NoError(f.Store.RemoveMessageLabels(messageID, []int64{labels["SENT"]}))
+
+	verdict := originalEngine(f).ReadSenderAuth(t.Context(), []int64{messageID})[messageID]
+	requirements.NotNil(verdict)
+	requirements.Equal(senderauth.Verdict{Kind: "none", Basis: "owner_sent"}, *verdict)
 }

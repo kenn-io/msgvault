@@ -265,12 +265,12 @@ func (s *Store) withMessageAttributionTxContext(
 }
 
 // SentMessageSQL returns the provider Sent-folder/label predicate for message
-// alias m and its source alias src. Address-derived ownership is not evidence
-// that a message was sent, including legacy importer source_is_from_me values.
-func SentMessageSQL() string {
-	return `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+// alias m and source alias src, plus preserved IMAP Sent-origin evidence.
+// Address-derived ownership is never enough to establish that a message was sent.
+func SentMessageSQL(postgres bool) string {
+	return `(EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id AND (` +
-		sentFolderLabelSQL("l") + " OR " + sentGmailLabelSQL("l", "src") + "))"
+		sentFolderLabelSQL("l") + " OR " + sentGmailLabelSQL("l", "src") + ") OR " + senderIMAPSentOriginSQL(postgres) + ")"
 }
 
 func sentFolderLabelSQL(l string) string {

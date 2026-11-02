@@ -185,6 +185,7 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 		if r.Message.SenderAuth != nil {
 			row["sender_auth"] = r.Message.SenderAuth
 		}
+		addSenderClassJSON(row, r.Message.Readout)
 		if r.AttachmentCount != nil {
 			row["attachment_count"] = *r.AttachmentCount
 		}

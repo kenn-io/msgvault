@@ -63,6 +63,68 @@ func (c CLIDeduplicatePlanRequestPlanProtocol) Validate() error {
 	}
 }
 
+type CLIQueryMessageSummarySenderClass string
+
+const (
+	CLIQueryMessageSummarySenderClassContact    CLIQueryMessageSummarySenderClass = "contact"
+	CLIQueryMessageSummarySenderClassKnown      CLIQueryMessageSummarySenderClass = "known"
+	CLIQueryMessageSummarySenderClassSelf       CLIQueryMessageSummarySenderClass = "self"
+	CLIQueryMessageSummarySenderClassUnverified CLIQueryMessageSummarySenderClass = "unverified"
+	CLIQueryMessageSummarySenderClassVerified   CLIQueryMessageSummarySenderClass = "verified"
+)
+
+// Validate checks if the CLIQueryMessageSummarySenderClass value is valid
+func (c CLIQueryMessageSummarySenderClass) Validate() error {
+	switch c {
+	case CLIQueryMessageSummarySenderClassContact, CLIQueryMessageSummarySenderClassKnown, CLIQueryMessageSummarySenderClassSelf, CLIQueryMessageSummarySenderClassUnverified, CLIQueryMessageSummarySenderClassVerified:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CLIQueryMessageSummarySenderClass value, got: %v", c))
+	}
+}
+
+type CLIQueryMessageSummarySenderClassBasis string
+
+const (
+	CLIQueryMessageSummarySenderClassBasisAuthFailed          CLIQueryMessageSummarySenderClassBasis = "auth_failed"
+	CLIQueryMessageSummarySenderClassBasisCuratedPerson       CLIQueryMessageSummarySenderClassBasis = "curated_person"
+	CLIQueryMessageSummarySenderClassBasisDmarcPass           CLIQueryMessageSummarySenderClassBasis = "dmarc_pass"
+	CLIQueryMessageSummarySenderClassBasisEvidenceUnavailable CLIQueryMessageSummarySenderClassBasis = "evidence_unavailable"
+	CLIQueryMessageSummarySenderClassBasisInvalidRelationship CLIQueryMessageSummarySenderClassBasis = "invalid_relationship"
+	CLIQueryMessageSummarySenderClassBasisNoAuthEvidence      CLIQueryMessageSummarySenderClassBasis = "no_auth_evidence"
+	CLIQueryMessageSummarySenderClassBasisOwnerSentTo         CLIQueryMessageSummarySenderClassBasis = "owner_sent_to"
+	CLIQueryMessageSummarySenderClassBasisPlatform            CLIQueryMessageSummarySenderClassBasis = "platform"
+	CLIQueryMessageSummarySenderClassBasisSourceOwned         CLIQueryMessageSummarySenderClassBasis = "source_owned"
+)
+
+// Validate checks if the CLIQueryMessageSummarySenderClassBasis value is valid
+func (c CLIQueryMessageSummarySenderClassBasis) Validate() error {
+	switch c {
+	case CLIQueryMessageSummarySenderClassBasisAuthFailed, CLIQueryMessageSummarySenderClassBasisCuratedPerson, CLIQueryMessageSummarySenderClassBasisDmarcPass, CLIQueryMessageSummarySenderClassBasisEvidenceUnavailable, CLIQueryMessageSummarySenderClassBasisInvalidRelationship, CLIQueryMessageSummarySenderClassBasisNoAuthEvidence, CLIQueryMessageSummarySenderClassBasisOwnerSentTo, CLIQueryMessageSummarySenderClassBasisPlatform, CLIQueryMessageSummarySenderClassBasisSourceOwned:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CLIQueryMessageSummarySenderClassBasis value, got: %v", c))
+	}
+}
+
+type CLIQueryMessageSummarySenderRelationship string
+
+const (
+	CLIQueryMessageSummarySenderRelationshipContact CLIQueryMessageSummarySenderRelationship = "contact"
+	CLIQueryMessageSummarySenderRelationshipKnown   CLIQueryMessageSummarySenderRelationship = "known"
+	CLIQueryMessageSummarySenderRelationshipNone    CLIQueryMessageSummarySenderRelationship = "none"
+)
+
+// Validate checks if the CLIQueryMessageSummarySenderRelationship value is valid
+func (c CLIQueryMessageSummarySenderRelationship) Validate() error {
+	switch c {
+	case CLIQueryMessageSummarySenderRelationshipContact, CLIQueryMessageSummarySenderRelationshipKnown, CLIQueryMessageSummarySenderRelationshipNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CLIQueryMessageSummarySenderRelationship value, got: %v", c))
+	}
+}
+
 type CalendarRequestAction string
 
 const (
@@ -519,6 +581,68 @@ func (c CardDAVStatusResponseRepairReason) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVStatusResponseRepairReason value, got: %v", c))
+	}
+}
+
+type CliMessageResponseSenderClass string
+
+const (
+	CliMessageResponseSenderClassContact    CliMessageResponseSenderClass = "contact"
+	CliMessageResponseSenderClassKnown      CliMessageResponseSenderClass = "known"
+	CliMessageResponseSenderClassSelf       CliMessageResponseSenderClass = "self"
+	CliMessageResponseSenderClassUnverified CliMessageResponseSenderClass = "unverified"
+	CliMessageResponseSenderClassVerified   CliMessageResponseSenderClass = "verified"
+)
+
+// Validate checks if the CliMessageResponseSenderClass value is valid
+func (c CliMessageResponseSenderClass) Validate() error {
+	switch c {
+	case CliMessageResponseSenderClassContact, CliMessageResponseSenderClassKnown, CliMessageResponseSenderClassSelf, CliMessageResponseSenderClassUnverified, CliMessageResponseSenderClassVerified:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CliMessageResponseSenderClass value, got: %v", c))
+	}
+}
+
+type CliMessageResponseSenderClassBasis string
+
+const (
+	CliMessageResponseSenderClassBasisAuthFailed          CliMessageResponseSenderClassBasis = "auth_failed"
+	CliMessageResponseSenderClassBasisCuratedPerson       CliMessageResponseSenderClassBasis = "curated_person"
+	CliMessageResponseSenderClassBasisDmarcPass           CliMessageResponseSenderClassBasis = "dmarc_pass"
+	CliMessageResponseSenderClassBasisEvidenceUnavailable CliMessageResponseSenderClassBasis = "evidence_unavailable"
+	CliMessageResponseSenderClassBasisInvalidRelationship CliMessageResponseSenderClassBasis = "invalid_relationship"
+	CliMessageResponseSenderClassBasisNoAuthEvidence      CliMessageResponseSenderClassBasis = "no_auth_evidence"
+	CliMessageResponseSenderClassBasisOwnerSentTo         CliMessageResponseSenderClassBasis = "owner_sent_to"
+	CliMessageResponseSenderClassBasisPlatform            CliMessageResponseSenderClassBasis = "platform"
+	CliMessageResponseSenderClassBasisSourceOwned         CliMessageResponseSenderClassBasis = "source_owned"
+)
+
+// Validate checks if the CliMessageResponseSenderClassBasis value is valid
+func (c CliMessageResponseSenderClassBasis) Validate() error {
+	switch c {
+	case CliMessageResponseSenderClassBasisAuthFailed, CliMessageResponseSenderClassBasisCuratedPerson, CliMessageResponseSenderClassBasisDmarcPass, CliMessageResponseSenderClassBasisEvidenceUnavailable, CliMessageResponseSenderClassBasisInvalidRelationship, CliMessageResponseSenderClassBasisNoAuthEvidence, CliMessageResponseSenderClassBasisOwnerSentTo, CliMessageResponseSenderClassBasisPlatform, CliMessageResponseSenderClassBasisSourceOwned:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CliMessageResponseSenderClassBasis value, got: %v", c))
+	}
+}
+
+type CliMessageResponseSenderRelationship string
+
+const (
+	CliMessageResponseSenderRelationshipContact CliMessageResponseSenderRelationship = "contact"
+	CliMessageResponseSenderRelationshipKnown   CliMessageResponseSenderRelationship = "known"
+	CliMessageResponseSenderRelationshipNone    CliMessageResponseSenderRelationship = "none"
+)
+
+// Validate checks if the CliMessageResponseSenderRelationship value is valid
+func (c CliMessageResponseSenderRelationship) Validate() error {
+	switch c {
+	case CliMessageResponseSenderRelationshipContact, CliMessageResponseSenderRelationshipKnown, CliMessageResponseSenderRelationshipNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CliMessageResponseSenderRelationship value, got: %v", c))
 	}
 }
 
@@ -1035,6 +1159,68 @@ func (f FileSuggestionRowMimeFamily) Validate() error {
 	}
 }
 
+type HybridSearchItemSenderClass string
+
+const (
+	HybridSearchItemSenderClassContact    HybridSearchItemSenderClass = "contact"
+	HybridSearchItemSenderClassKnown      HybridSearchItemSenderClass = "known"
+	HybridSearchItemSenderClassSelf       HybridSearchItemSenderClass = "self"
+	HybridSearchItemSenderClassUnverified HybridSearchItemSenderClass = "unverified"
+	HybridSearchItemSenderClassVerified   HybridSearchItemSenderClass = "verified"
+)
+
+// Validate checks if the HybridSearchItemSenderClass value is valid
+func (h HybridSearchItemSenderClass) Validate() error {
+	switch h {
+	case HybridSearchItemSenderClassContact, HybridSearchItemSenderClassKnown, HybridSearchItemSenderClassSelf, HybridSearchItemSenderClassUnverified, HybridSearchItemSenderClassVerified:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid HybridSearchItemSenderClass value, got: %v", h))
+	}
+}
+
+type HybridSearchItemSenderClassBasis string
+
+const (
+	HybridSearchItemSenderClassBasisAuthFailed          HybridSearchItemSenderClassBasis = "auth_failed"
+	HybridSearchItemSenderClassBasisCuratedPerson       HybridSearchItemSenderClassBasis = "curated_person"
+	HybridSearchItemSenderClassBasisDmarcPass           HybridSearchItemSenderClassBasis = "dmarc_pass"
+	HybridSearchItemSenderClassBasisEvidenceUnavailable HybridSearchItemSenderClassBasis = "evidence_unavailable"
+	HybridSearchItemSenderClassBasisInvalidRelationship HybridSearchItemSenderClassBasis = "invalid_relationship"
+	HybridSearchItemSenderClassBasisNoAuthEvidence      HybridSearchItemSenderClassBasis = "no_auth_evidence"
+	HybridSearchItemSenderClassBasisOwnerSentTo         HybridSearchItemSenderClassBasis = "owner_sent_to"
+	HybridSearchItemSenderClassBasisPlatform            HybridSearchItemSenderClassBasis = "platform"
+	HybridSearchItemSenderClassBasisSourceOwned         HybridSearchItemSenderClassBasis = "source_owned"
+)
+
+// Validate checks if the HybridSearchItemSenderClassBasis value is valid
+func (h HybridSearchItemSenderClassBasis) Validate() error {
+	switch h {
+	case HybridSearchItemSenderClassBasisAuthFailed, HybridSearchItemSenderClassBasisCuratedPerson, HybridSearchItemSenderClassBasisDmarcPass, HybridSearchItemSenderClassBasisEvidenceUnavailable, HybridSearchItemSenderClassBasisInvalidRelationship, HybridSearchItemSenderClassBasisNoAuthEvidence, HybridSearchItemSenderClassBasisOwnerSentTo, HybridSearchItemSenderClassBasisPlatform, HybridSearchItemSenderClassBasisSourceOwned:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid HybridSearchItemSenderClassBasis value, got: %v", h))
+	}
+}
+
+type HybridSearchItemSenderRelationship string
+
+const (
+	HybridSearchItemSenderRelationshipContact HybridSearchItemSenderRelationship = "contact"
+	HybridSearchItemSenderRelationshipKnown   HybridSearchItemSenderRelationship = "known"
+	HybridSearchItemSenderRelationshipNone    HybridSearchItemSenderRelationship = "none"
+)
+
+// Validate checks if the HybridSearchItemSenderRelationship value is valid
+func (h HybridSearchItemSenderRelationship) Validate() error {
+	switch h {
+	case HybridSearchItemSenderRelationshipContact, HybridSearchItemSenderRelationshipKnown, HybridSearchItemSenderRelationshipNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid HybridSearchItemSenderRelationship value, got: %v", h))
+	}
+}
+
 type IdentityLinkResponseCacheState string
 
 const (
@@ -1228,6 +1414,68 @@ func (m MeetingScopeRequestDeletion) Validate() error {
 	}
 }
 
+type MessageDetailSenderClass string
+
+const (
+	MessageDetailSenderClassContact    MessageDetailSenderClass = "contact"
+	MessageDetailSenderClassKnown      MessageDetailSenderClass = "known"
+	MessageDetailSenderClassSelf       MessageDetailSenderClass = "self"
+	MessageDetailSenderClassUnverified MessageDetailSenderClass = "unverified"
+	MessageDetailSenderClassVerified   MessageDetailSenderClass = "verified"
+)
+
+// Validate checks if the MessageDetailSenderClass value is valid
+func (m MessageDetailSenderClass) Validate() error {
+	switch m {
+	case MessageDetailSenderClassContact, MessageDetailSenderClassKnown, MessageDetailSenderClassSelf, MessageDetailSenderClassUnverified, MessageDetailSenderClassVerified:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageDetailSenderClass value, got: %v", m))
+	}
+}
+
+type MessageDetailSenderClassBasis string
+
+const (
+	MessageDetailSenderClassBasisAuthFailed          MessageDetailSenderClassBasis = "auth_failed"
+	MessageDetailSenderClassBasisCuratedPerson       MessageDetailSenderClassBasis = "curated_person"
+	MessageDetailSenderClassBasisDmarcPass           MessageDetailSenderClassBasis = "dmarc_pass"
+	MessageDetailSenderClassBasisEvidenceUnavailable MessageDetailSenderClassBasis = "evidence_unavailable"
+	MessageDetailSenderClassBasisInvalidRelationship MessageDetailSenderClassBasis = "invalid_relationship"
+	MessageDetailSenderClassBasisNoAuthEvidence      MessageDetailSenderClassBasis = "no_auth_evidence"
+	MessageDetailSenderClassBasisOwnerSentTo         MessageDetailSenderClassBasis = "owner_sent_to"
+	MessageDetailSenderClassBasisPlatform            MessageDetailSenderClassBasis = "platform"
+	MessageDetailSenderClassBasisSourceOwned         MessageDetailSenderClassBasis = "source_owned"
+)
+
+// Validate checks if the MessageDetailSenderClassBasis value is valid
+func (m MessageDetailSenderClassBasis) Validate() error {
+	switch m {
+	case MessageDetailSenderClassBasisAuthFailed, MessageDetailSenderClassBasisCuratedPerson, MessageDetailSenderClassBasisDmarcPass, MessageDetailSenderClassBasisEvidenceUnavailable, MessageDetailSenderClassBasisInvalidRelationship, MessageDetailSenderClassBasisNoAuthEvidence, MessageDetailSenderClassBasisOwnerSentTo, MessageDetailSenderClassBasisPlatform, MessageDetailSenderClassBasisSourceOwned:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageDetailSenderClassBasis value, got: %v", m))
+	}
+}
+
+type MessageDetailSenderRelationship string
+
+const (
+	MessageDetailSenderRelationshipContact MessageDetailSenderRelationship = "contact"
+	MessageDetailSenderRelationshipKnown   MessageDetailSenderRelationship = "known"
+	MessageDetailSenderRelationshipNone    MessageDetailSenderRelationship = "none"
+)
+
+// Validate checks if the MessageDetailSenderRelationship value is valid
+func (m MessageDetailSenderRelationship) Validate() error {
+	switch m {
+	case MessageDetailSenderRelationshipContact, MessageDetailSenderRelationshipKnown, MessageDetailSenderRelationshipNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageDetailSenderRelationship value, got: %v", m))
+	}
+}
+
 type MessageRecordingState string
 
 const (
@@ -1247,6 +1495,68 @@ func (m MessageRecordingState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageRecordingState value, got: %v", m))
+	}
+}
+
+type MessageSummarySenderClass string
+
+const (
+	MessageSummarySenderClassContact    MessageSummarySenderClass = "contact"
+	MessageSummarySenderClassKnown      MessageSummarySenderClass = "known"
+	MessageSummarySenderClassSelf       MessageSummarySenderClass = "self"
+	MessageSummarySenderClassUnverified MessageSummarySenderClass = "unverified"
+	MessageSummarySenderClassVerified   MessageSummarySenderClass = "verified"
+)
+
+// Validate checks if the MessageSummarySenderClass value is valid
+func (m MessageSummarySenderClass) Validate() error {
+	switch m {
+	case MessageSummarySenderClassContact, MessageSummarySenderClassKnown, MessageSummarySenderClassSelf, MessageSummarySenderClassUnverified, MessageSummarySenderClassVerified:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageSummarySenderClass value, got: %v", m))
+	}
+}
+
+type MessageSummarySenderClassBasis string
+
+const (
+	MessageSummarySenderClassBasisAuthFailed          MessageSummarySenderClassBasis = "auth_failed"
+	MessageSummarySenderClassBasisCuratedPerson       MessageSummarySenderClassBasis = "curated_person"
+	MessageSummarySenderClassBasisDmarcPass           MessageSummarySenderClassBasis = "dmarc_pass"
+	MessageSummarySenderClassBasisEvidenceUnavailable MessageSummarySenderClassBasis = "evidence_unavailable"
+	MessageSummarySenderClassBasisInvalidRelationship MessageSummarySenderClassBasis = "invalid_relationship"
+	MessageSummarySenderClassBasisNoAuthEvidence      MessageSummarySenderClassBasis = "no_auth_evidence"
+	MessageSummarySenderClassBasisOwnerSentTo         MessageSummarySenderClassBasis = "owner_sent_to"
+	MessageSummarySenderClassBasisPlatform            MessageSummarySenderClassBasis = "platform"
+	MessageSummarySenderClassBasisSourceOwned         MessageSummarySenderClassBasis = "source_owned"
+)
+
+// Validate checks if the MessageSummarySenderClassBasis value is valid
+func (m MessageSummarySenderClassBasis) Validate() error {
+	switch m {
+	case MessageSummarySenderClassBasisAuthFailed, MessageSummarySenderClassBasisCuratedPerson, MessageSummarySenderClassBasisDmarcPass, MessageSummarySenderClassBasisEvidenceUnavailable, MessageSummarySenderClassBasisInvalidRelationship, MessageSummarySenderClassBasisNoAuthEvidence, MessageSummarySenderClassBasisOwnerSentTo, MessageSummarySenderClassBasisPlatform, MessageSummarySenderClassBasisSourceOwned:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageSummarySenderClassBasis value, got: %v", m))
+	}
+}
+
+type MessageSummarySenderRelationship string
+
+const (
+	MessageSummarySenderRelationshipContact MessageSummarySenderRelationship = "contact"
+	MessageSummarySenderRelationshipKnown   MessageSummarySenderRelationship = "known"
+	MessageSummarySenderRelationshipNone    MessageSummarySenderRelationship = "none"
+)
+
+// Validate checks if the MessageSummarySenderRelationship value is valid
+func (m MessageSummarySenderRelationship) Validate() error {
+	switch m {
+	case MessageSummarySenderRelationshipContact, MessageSummarySenderRelationshipKnown, MessageSummarySenderRelationshipNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageSummarySenderRelationship value, got: %v", m))
 	}
 }
 
@@ -2934,6 +3244,68 @@ func (t TelemetryEventResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TelemetryEventResponseStatus value, got: %v", t))
+	}
+}
+
+type ThreadMessageSenderClass string
+
+const (
+	ThreadMessageSenderClassContact    ThreadMessageSenderClass = "contact"
+	ThreadMessageSenderClassKnown      ThreadMessageSenderClass = "known"
+	ThreadMessageSenderClassSelf       ThreadMessageSenderClass = "self"
+	ThreadMessageSenderClassUnverified ThreadMessageSenderClass = "unverified"
+	ThreadMessageSenderClassVerified   ThreadMessageSenderClass = "verified"
+)
+
+// Validate checks if the ThreadMessageSenderClass value is valid
+func (t ThreadMessageSenderClass) Validate() error {
+	switch t {
+	case ThreadMessageSenderClassContact, ThreadMessageSenderClassKnown, ThreadMessageSenderClassSelf, ThreadMessageSenderClassUnverified, ThreadMessageSenderClassVerified:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ThreadMessageSenderClass value, got: %v", t))
+	}
+}
+
+type ThreadMessageSenderClassBasis string
+
+const (
+	ThreadMessageSenderClassBasisAuthFailed          ThreadMessageSenderClassBasis = "auth_failed"
+	ThreadMessageSenderClassBasisCuratedPerson       ThreadMessageSenderClassBasis = "curated_person"
+	ThreadMessageSenderClassBasisDmarcPass           ThreadMessageSenderClassBasis = "dmarc_pass"
+	ThreadMessageSenderClassBasisEvidenceUnavailable ThreadMessageSenderClassBasis = "evidence_unavailable"
+	ThreadMessageSenderClassBasisInvalidRelationship ThreadMessageSenderClassBasis = "invalid_relationship"
+	ThreadMessageSenderClassBasisNoAuthEvidence      ThreadMessageSenderClassBasis = "no_auth_evidence"
+	ThreadMessageSenderClassBasisOwnerSentTo         ThreadMessageSenderClassBasis = "owner_sent_to"
+	ThreadMessageSenderClassBasisPlatform            ThreadMessageSenderClassBasis = "platform"
+	ThreadMessageSenderClassBasisSourceOwned         ThreadMessageSenderClassBasis = "source_owned"
+)
+
+// Validate checks if the ThreadMessageSenderClassBasis value is valid
+func (t ThreadMessageSenderClassBasis) Validate() error {
+	switch t {
+	case ThreadMessageSenderClassBasisAuthFailed, ThreadMessageSenderClassBasisCuratedPerson, ThreadMessageSenderClassBasisDmarcPass, ThreadMessageSenderClassBasisEvidenceUnavailable, ThreadMessageSenderClassBasisInvalidRelationship, ThreadMessageSenderClassBasisNoAuthEvidence, ThreadMessageSenderClassBasisOwnerSentTo, ThreadMessageSenderClassBasisPlatform, ThreadMessageSenderClassBasisSourceOwned:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ThreadMessageSenderClassBasis value, got: %v", t))
+	}
+}
+
+type ThreadMessageSenderRelationship string
+
+const (
+	ThreadMessageSenderRelationshipContact ThreadMessageSenderRelationship = "contact"
+	ThreadMessageSenderRelationshipKnown   ThreadMessageSenderRelationship = "known"
+	ThreadMessageSenderRelationshipNone    ThreadMessageSenderRelationship = "none"
+)
+
+// Validate checks if the ThreadMessageSenderRelationship value is valid
+func (t ThreadMessageSenderRelationship) Validate() error {
+	switch t {
+	case ThreadMessageSenderRelationshipContact, ThreadMessageSenderRelationshipKnown, ThreadMessageSenderRelationshipNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ThreadMessageSenderRelationship value, got: %v", t))
 	}
 }
 

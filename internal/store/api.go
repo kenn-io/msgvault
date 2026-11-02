@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/senderclass"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -49,6 +50,8 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	senderclass.Readout
+
 	SenderAuth           *senderauth.Verdict `json:"sender_auth,omitempty"`
 	RelatedMessageID     *int64
 	ConversationTitle    string

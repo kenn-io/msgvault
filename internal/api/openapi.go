@@ -387,7 +387,8 @@ import (
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
 // 3.35.0 adds archived calendar occurrence listing and sender_auth metadata to message reads.
-const APISchemaVersion = "3.35.0"
+// 3.36.0 adds derived sender class, basis, and exact-address relationship on message reads.
+const APISchemaVersion = "3.36.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1265,6 +1266,18 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	// New sender enums must not steal legacy short constants such as None.
+	for name, schema := range schemas {
+		for property, suffix := range map[string]string{"sender_class": "SenderClass", "sender_class_basis": "SenderClassBasis", "sender_relationship": "SenderRelationship"} {
+			if field := schema.Properties[property]; field != nil {
+				values := make([]string, len(field.Enum))
+				for i, value := range field.Enum {
+					values[i], _ = value.(string)
+				}
+				setEnumNames(field, qualifiedEnumNames(name+suffix, values))
+			}
+		}
 	}
 	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
 		schema := schemas[name]

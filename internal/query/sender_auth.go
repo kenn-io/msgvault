@@ -51,6 +51,11 @@ func (e *DuckDBEngine) SetSenderAuthPins(pins map[int64]senderauth.TrustSet) {
 // Unavailable evidence is advisory and cannot turn a successful read into an error.
 func (e *SQLiteEngine) readSenderAuth(ctx context.Context, ids []int64) map[int64]*senderauth.Verdict {
 	out := make(map[int64]*senderauth.Verdict, len(ids))
+	postgres := false
+	if _, ok := e.dialect.(PostgreSQLQueryDialect); ok {
+		postgres = true
+	}
+	sentMessageSQL := store.SentMessageSQL(postgres)
 	for _, id := range ids {
 		out[id] = senderauth.UnknownVerdict("no_raw")
 	}
@@ -64,7 +69,7 @@ func (e *SQLiteEngine) readSenderAuth(ctx context.Context, ids []int64) map[int6
 		}
 		conditions, args := appendSourceFilter([]string{"m.id IN (" + strings.Join(placeholders, ",") + ")", store.LiveMessagesWhere("m", false)}, args, "m.", nil, sourcescope.IDs(ctx))
 		func() {
-			rows, err := e.queryContext(ctx, `SELECT m.id, m.source_id, COALESCE(m.message_type,''), `+store.SentMessageSQL()+`,
+			rows, err := e.queryContext(ctx, `SELECT m.id, m.source_id, COALESCE(m.message_type,''), `+sentMessageSQL+`,
    COALESCE(r.raw_format,''), COALESCE(r.compression,''), COALESCE(r.encryption_version,0), substr(r.raw_data,1,?),
    CASE WHEN m.sender_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id=m.id AND mr.recipient_type='from') THEN 1 ELSE (SELECT COUNT(*) FROM message_recipients mr WHERE mr.message_id=m.id AND mr.recipient_type='from') END,
    COALESCE((SELECT p.email_address FROM message_recipients mr JOIN participants p ON p.id=mr.participant_id WHERE mr.message_id=m.id AND mr.recipient_type='from' ORDER BY mr.id LIMIT 1),(SELECT p.email_address FROM participants p WHERE p.id=m.sender_id),'')
@@ -180,6 +185,7 @@ func (e *SQLiteEngine) fillSenderAuth(ctx context.Context, messages []MessageSum
 	for i := range messages {
 		messages[i].SenderAuth = SenderAuthForAddresses(results[messages[i].ID], []Address{{Email: messages[i].FromEmail}})
 	}
+	fillSummarySenderClasses(ctx, e, messages)
 }
 
 // SenderAuthReader derives advisory metadata for already selected message IDs.
@@ -220,6 +226,7 @@ func (e *DuckDBEngine) fillSenderAuth(ctx context.Context, messages []MessageSum
 	for i := range messages {
 		messages[i].SenderAuth = SenderAuthForAddresses(auth[messages[i].ID], []Address{{Email: messages[i].FromEmail}})
 	}
+	fillSummarySenderClasses(ctx, e, messages)
 }
 
 // SenderAuthForAddresses binds receipt evidence to the From value actually

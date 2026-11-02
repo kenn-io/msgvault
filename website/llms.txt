@@ -105,3 +105,5 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [GitHub repository](https://github.com/kenn-io/msgvault): source, issues, releases
 
 - [Sender authentication](https://msgvault.io/docs/usage/sender-auth.md): Explicit receiver pins and advisory sender-domain evidence.
+
+- [Sender class](https://msgvault.io/docs/usage/sender-class.md): Read-time identity classes, relationship evidence, and source-scoped limits.

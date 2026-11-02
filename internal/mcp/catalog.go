@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/senderclass"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -474,7 +476,11 @@ func defaultValueString(value int) string {
 }
 
 func outputSchemaFor[T any]() *jsonschema.Schema {
-	schema, err := jsonschema.For[T](nil)
+	schema, err := jsonschema.For[T](&jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+		reflect.TypeFor[senderclass.Class]():        {Type: "string", Enum: []any{"unverified", "verified", "known", "contact", "self"}},
+		reflect.TypeFor[senderclass.Basis]():        {Type: "string", Enum: []any{"source_owned", "auth_failed", "no_auth_evidence", "curated_person", "owner_sent_to", "dmarc_pass", "platform", "invalid_relationship", "evidence_unavailable"}},
+		reflect.TypeFor[senderclass.Relationship](): {Type: "string", Enum: []any{"contact", "known", "none"}},
+	}})
 	if err != nil {
 		panic(err)
 	}

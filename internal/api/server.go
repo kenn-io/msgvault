@@ -707,6 +707,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	s.senderAuthPins = opts.Config.SenderAuth.Pins()
 	query.ConfigureSenderAuth(opts.Engine, s.senderAuthPins)
+	s.configureSenderClass(opts.Engine)
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,
 		analyticsInitializationActive: opts.AnalyticsInitializationActive,
@@ -1076,6 +1077,7 @@ func (s *Server) AnalyticsMode() string {
 // have stopped.
 func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
 	query.ConfigureSenderAuth(engine, s.senderAuthPins)
+	s.configureSenderClass(engine)
 	for {
 		current := s.currentAnalyticsState()
 		next := &analyticsEngineState{engine: engine, mode: mode}

@@ -3,6 +3,9 @@
  */
 import type { AttachmentInfo } from "./attachmentInfo";
 import type { CalendarProjection } from "./calendarProjection";
+import type { MessageDetailSenderClass } from "./messageDetailSenderClass";
+import type { MessageDetailSenderClassBasis } from "./messageDetailSenderClassBasis";
+import type { MessageDetailSenderRelationship } from "./messageDetailSenderRelationship";
 import type { Verdict } from "./verdict";
 
 export interface MessageDetail {
@@ -30,6 +33,9 @@ export interface MessageDetail {
   message_type?: string;
   related_message_id?: number;
   sender_auth?: Verdict;
+  sender_class?: MessageDetailSenderClass;
+  sender_class_basis?: MessageDetailSenderClassBasis;
+  sender_relationship?: MessageDetailSenderRelationship;
   sent_at: string;
   size_bytes: number;
   snippet: string;
