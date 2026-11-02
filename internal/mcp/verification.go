@@ -132,7 +132,7 @@ func (h *handlers) guardVerificationSearchItems(ctx context.Context, items []sea
 }
 
 func (h *handlers) prepareVerificationAttachment(ctx context.Context, att *query.AttachmentInfo) (*query.AttachmentInfo, error) {
-	if h.delegatedOnly || h.unmaskVerification {
+	if h.unmaskVerification {
 		return att, nil
 	}
 	if att.MessageID == 0 {
@@ -141,6 +141,14 @@ func (h *handlers) prepareVerificationAttachment(ctx context.Context, att *query
 	msg, err := h.canonicalVerification(ctx, att.MessageID)
 	if err != nil || msg.SourceID != att.SourceID {
 		return nil, &attachmentUnavailableError{message: errVerificationUnavailable.Error()}
+	}
+	if h.delegatedOnly && msg.Verification != nil {
+		if msg.Verification.Masked {
+			return nil, &attachmentUnavailableError{message: errVerificationMasked.Error()}
+		}
+		// The daemon detail response carries the current source-scoped grant
+		// decision. Recheck it for every cached attachment continuation.
+		return att, nil
 	}
 	finding := verification.Detect(query.VerificationInput(msg))
 	if finding == nil {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-02"
+last_edited: 2026-11-02
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -31,6 +31,11 @@ View never deletes archive messages.
 
 ## Verification protection
 
+Unreleased. Owner-daemon HTML and raw-MIME protection is blocked on the
+[canonical-body update](https://github.com/kenn-io/msgvault/pull/1685). Until
+that update lands, a credential present only in HTML beside a plain-text
+alternative can escape owner MCP masking and raw-MIME refusal.
+
 MCP masks detected verification codes and sign-in, reset, and confirmation
 links by default, including expired values. It masks complete message content
 before excerpts, body pagination, and keyword matches. Detection covers archived
@@ -43,7 +48,7 @@ with `msgvault mcp --unmask-verification` to reveal values for that session.
 Delegated sessions refuse that flag and rely on the actual source's
 `verification.read` modifier alongside the operation's read permission.
 
-Masked sessions refuse raw MIME and detected messages' text or `message/rfc822`
+For detected messages, masked sessions refuse raw MIME and text or `message/rfc822`
 attachment bytes, including chunk continuations. Other attachment formats,
 including screenshots and PDFs, are outside this protection. Heuristic detection
 can miss credentials, and search membership and counts can disclose existence.
@@ -51,6 +56,11 @@ Until their separate protection is available, owner masked sessions also refuse
 `query_sql`, `aggregate`, and vector mode in `search_in_message`.
 See [scoped archive reads](../cli-reference.md#scoped-archive-reads) for grant
 permissions and delegated behavior.
+
+Use `list_verifications` to notice recent arrivals with daemon API schema 3.37.0
+or newer. It defaults to the last hour, returns at most 100 arrivals, and scans
+at most 1,000 candidates. See [verification codes and links](verification-codes.md)
+for filters, reveal authority, search pagination, and protection limits.
 
 ## Calendar control
 

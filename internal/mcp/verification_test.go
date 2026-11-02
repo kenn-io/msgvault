@@ -315,6 +315,49 @@ func TestVerificationAttachmentAndRawContinuation(t *testing.T) {
 	assertions.ErrorContains(x.h.protectVerificationAttachment(t.Context(), &missing), "verification_unavailable")
 }
 
+func TestDelegatedAttachmentContinuationRechecksVerificationPolicy(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	const attachmentID = int64(19)
+	const messageID = int64(81)
+	data := []byte("synthetic attachment content")
+	message := &query.MessageDetail{ID: messageID, SourceID: 3, BodyText: "ordinary message"}
+	engine := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{messageID: message},
+		Attachments: map[int64]*query.AttachmentInfo{attachmentID: {
+			ID: attachmentID, MessageID: messageID, SourceID: 3, Filename: "proof.txt",
+			MimeType: "text/plain", StoragePath: "synthetic/path", ContentHash: strings.Repeat("a", 64), Size: int64(len(data)),
+		}},
+	}
+	reads := 0
+	h := &handlers{
+		engine: engine, downloads: &downloadCache{}, delegatedOnly: true,
+		attachmentReader: attachmentReaderFunc(func(context.Context, string) ([]byte, error) {
+			reads++
+			return data, nil
+		}),
+	}
+
+	first := callToolDirect(t, ToolGetAttachment, h.getAttachment, map[string]any{
+		"attachment_id": float64(attachmentID), "offset": float64(0), "length": float64(4),
+	})
+	requirements.False(first.isError, first.text)
+	var chunk struct {
+		SHA256 string `json:"sha256"`
+	}
+	requirements.NoError(json.Unmarshal([]byte(first.text), &chunk))
+	requirements.NotEmpty(chunk.SHA256)
+
+	message.Verification = &verification.Metadata{Masked: true}
+	denied := runToolExpectError(t, ToolGetAttachment, h.getAttachment, map[string]any{
+		"attachment_id": float64(attachmentID), "offset": float64(4), "length": float64(4), "sha256": chunk.SHA256,
+	})
+	assertions.Contains(denied.text, "verification_masked")
+	assertions.Nil(denied.embeddedResource)
+	assertions.NotContains(denied.text, "data_base64")
+	assertions.Equal(1, reads, "a denied continuation must reuse no attachment bytes")
+}
+
 func TestVerificationBinaryAttachmentMetadata(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

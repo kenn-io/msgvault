@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: 2026-11-02
 title: Documentation
 description: Set up your archive, find messages and files, maintain people, and operate msgvault.
 ---
@@ -41,6 +41,7 @@ the [archive lifecycle](/guide/) or the [project's origin](introduction.md).
 | Which model settings should I use? | [Recommended configuration](usage/recommended-configuration.md) |
 | What does my archive contain? | [Analytics](usage/analytics.md) and [SQL queries](usage/querying.md) |
 | How can an AI assistant use it? | [MCP](usage/chat.md) and [agent skills](guides/agent-skills.md) |
+| Can an assistant notice a code without receiving it? | [Verification codes and links](usage/verification-codes.md) |
 
 ## Keep track of people
 

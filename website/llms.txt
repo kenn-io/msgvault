@@ -77,6 +77,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [External credential providers](https://msgvault.io/docs/guides/credential-providers.md): scoped message MCP access through a trusted local helper
 - [HTTP API](https://msgvault.io/docs/api-server.md)
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
+- [Verification Codes and Links](https://msgvault.io/docs/usage/verification-codes.md): masked reads, source grants, and recent arrivals
 - [Kata Issues](https://msgvault.io/docs/usage/kata-issues.md): file issues that quote archived messages and files
 - [Agent Skills](https://msgvault.io/docs/guides/agent-skills.md)
 - [FAQ](https://msgvault.io/docs/faq.md)
