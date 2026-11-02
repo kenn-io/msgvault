@@ -1,8 +1,9 @@
-import { disabledTaskLookup } from '../tasks/fixtures.test-support';
+import { disabledTaskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import type { ArchiveMessageDetail } from '../../archive/types';
 import MessageCard from './MessageCard.svelte';
 
@@ -277,6 +278,44 @@ it.each([{ state: 'ready', shown: true }, { state: 'unavailable', shown: false }
   sibling.unmount();
   view.unmount();
   readiness.dispose();
+});
+
+it('refreshes links after a Kata comment fails after saving evidence', async () => {
+  let saved = false;
+  const issue = { uid: 'issue-uid', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' };
+  const reference = { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'archive@example.com', source_message_id: 'message-example', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 15 } };
+  const client = createAPIClient(async (input) => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+    if (path.endsWith('/messages/42/tasks')) return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata });
+    if (path.endsWith('/kata/issues')) return Response.json({ issues: saved ? [issue] : [], truncated: false });
+    if (path.endsWith('/evidence/prepare')) return Response.json({ evidence: [{ id: 'evidence-1', passage: 'passage-1', reference, excerpt: 'Opening passage', display: { containing_title: 'Synthetic message' }, content_trust: 'untrusted' }] });
+    if (path.endsWith('/issues/example%23abcd/evidence') && request.method === 'POST') {
+      saved = true;
+      return Response.json({ error: 'kata_unavailable', message: 'Comment failed' }, { status: 503 });
+    }
+    throw new Error(`Unexpected request: ${request.method} ${path}`);
+  });
+  const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+  const readiness = new KataReadiness(client);
+  const view = render(MessageCard, { props: { message: detail({ messageType: 'email' }), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
+  try {
+    await screen.findByText('No linked tasks.');
+    await screen.findByText('No linked Kata issues.');
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
+    await screen.findByText('Opening passage');
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Action:/ }), 'Add to existing issue');
+    await fireEvent.input(screen.getByLabelText('Kata issue ref'), { target: { value: 'example#abcd' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add evidence' }));
+    await screen.findByText('Comment failed');
+    await fireEvent.click(screen.getByText('Close').closest('button')!);
+    expect(await screen.findByText('example#abcd: Follow up · open')).toBeDefined();
+    expect(await screen.findByText('Linked task')).toBeDefined();
+  } finally { view.unmount(); readiness.dispose(); }
 });
 
 it('clears a download error when its menu reopens', async () => {
