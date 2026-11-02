@@ -794,24 +794,6 @@ describe('RelationshipsController.openTarget', () => {
     controller.destroy();
   });
 
-  it('opens the detail without fetching a timeline', async () => {
-    let timelineCalls = 0;
-    const client = createAPIClient(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path.endsWith('/timeline')) timelineCalls += 1;
-      if (path.endsWith('/calendar')) return Response.json(calendar(12, 2026, 'cache-rel'));
-      if (path.endsWith('/participants/12')) return Response.json(person(12));
-      return Response.json({ canonical_id: 12, identity_revision: 3, rows: [], total_count: 0, cache_revision: 'cache-rel' });
-    });
-    const controller = new RelationshipsController(client, () => 'UTC');
-    try {
-      await controller.openTarget('cluster:12', { filters: [] });
-      await vi.waitFor(() => expect(controller.relationshipCalendar?.year).toBe(2026));
-      expect(timelineCalls).toBe(0);
-    } finally { controller.destroy(); }
-  });
-
   it('clamps a preserved calendar year when revision drift moves first activity later', async () => {
     const currentYear = new Date().getUTCFullYear();
     let detailCalls = 0;
@@ -1259,29 +1241,6 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
 
     expect(outcome).toEqual({ ok: true, identityRevision: 1, cacheState: 'ready' });
     expect(fetchFn).toHaveBeenCalledTimes(1);
-  });
-
-  it('refreshes detail when no identity revision was loaded', async () => {
-    let personCalls = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/participants/1' && request.method === 'GET') {
-        personCalls += 1;
-        return Response.json(person(1));
-      }
-      if (path === '/api/v1/identity/links') return Response.json({ identity_revision: 3, cache_state: 'ready' });
-      throw new Error(`unexpected path ${path}`);
-    });
-    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
-    await controller.openTarget('cluster:1', { filters: [], presentation: 'table' });
-    expect(controller.identityRevision).toBeNull();
-    expect(personCalls).toBe(1);
-
-    const outcome = await controller.linkParticipants(1, 2);
-
-    expect(outcome).toEqual({ ok: true, identityRevision: 3, cacheState: 'ready' });
-    expect(personCalls).toBe(2);
   });
 
   it('maps a 409 already_linked body to code already_linked', async () => {

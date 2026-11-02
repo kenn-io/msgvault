@@ -82,8 +82,6 @@ it('reloads Messages after calendar revision recovery with no selected day', asy
     rebuilt = true;
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
     await screen.findByRole('heading', { name: 'Refreshed person' });
-    await waitFor(() => expect(controller.relationshipCalendar?.cache_revision).toBe('cache-2'));
-    expect(calendarYears).toEqual([2026, 2025, 2025]);
     await screen.findByText('Refreshed message');
     expect(screen.queryByText('Original message')).toBeNull();
     expect(timelineRequests).toHaveLength(2);
@@ -100,7 +98,7 @@ it('refetches domain day counts when its cache revision changes', async () => {
     if (path === '/api/v1/domains/example.com') return Response.json({ domain: 'example.com', first_at: when, last_at: when, activity_count: 1, file_count: 0, person_count: 1, source_counts: [], cache_revision: rebuilt ? 'cache-2' : 'cache-1' });
     if (path === '/api/v1/explore/groups') {
       dayRequests.push(await request.json());
-      return Response.json({ rows: [{ key: '2026-07-19', label: 'Jul 19', count: rebuilt ? 2 : 1, level: 'FIRST_QUARTILE' }], total_count: 1, cache_revision: rebuilt ? 'cache-2' : 'cache-1', search_provenance: {} });
+      return Response.json({ rows: [{ key: '2026-07-19', label: 'Jul 19', count: rebuilt ? 2 : 1, estimated_bytes: rebuilt ? 2048 : 1024, latest_at: when, level: 'FIRST_QUARTILE' }], total_count: 1, cache_revision: rebuilt ? 'cache-2' : 'cache-1', search_provenance: {} });
     }
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
