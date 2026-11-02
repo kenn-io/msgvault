@@ -260,17 +260,20 @@ func TestXDelayedCrossSourceImportCannotOutrankProtectedObservation(t *testing.T
 	release()
 	select {
 	case importErr := <-publicDone:
-		_testRequire.NoError(importErr)
+		_testRequire.ErrorIs(importErr, ErrContentCleanupRequired)
 	case <-time.After(10 * time.Second):
 		_testRequire.FailNow("public import did not finish after releasing its response")
 	}
 	target, err := st.ResolveXPostContext(t.Context(), publicSource.ID, "7100")
 	_testRequire.NoError(err)
-	_testAssert.Equal("protected", target.Availability, "a response completing after protection cannot outrank a request that started before it")
+	_testAssert.Equal("removed", target.Availability, "a response completing after protection cannot outrank a request that started before it")
 	_testAssert.Zero(target.MessageID)
 	var messages int
 	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
 	_testAssert.Zero(messages, "stale public text must not enter the archive")
+	pending, err := st.XCleanupPendingContext(t.Context())
+	_testRequire.NoError(err)
+	_testAssert.True(pending, "the owner must complete durable cleanup before reads resume")
 }
 
 func TestXOwnCompletionSurvivesMentionsFailure(t *testing.T) {

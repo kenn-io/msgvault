@@ -305,11 +305,14 @@ func TestXUnavailableAndSuppressedPostsNeverIngestText(t *testing.T) {
 			_testAssert.Zero(messages)
 			target, err := st.ResolveXPostContext(t.Context(), source, "100")
 			_testRequire.NoError(err)
-			_testAssert.Equal(availability, target.Availability)
+			_testAssert.Equal("removed", target.Availability)
 			_testAssert.Zero(target.MessageID)
-			// A later page that shares a suppressed alias cannot restore text.
-			_, err = st.DB().Exec(st.Rebind("UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP WHERE source_id=?"), source)
+			pending, err := st.PendingXRemovalsContext(t.Context(), source)
 			_testRequire.NoError(err)
+			_testRequire.Len(pending, 1)
+			_testAssert.Equal(availability, pending[0].Reason)
+			// A later page cannot restore text through the suppression committed
+			// by the original unavailable write.
 			newer := xPostInput(source, "102", "100", "also must not archive", "100", "102")
 			result, err = st.PersistXPostContext(t.Context(), newer)
 			_testRequire.NoError(err)
@@ -346,7 +349,7 @@ func TestXProtectedAuthorObservationAppliesAcrossSources(t *testing.T) {
 	_testAssert.True(result.Skipped, "a delayed public observation cannot override newer protected evidence from another source")
 	target, err := st.ResolveXPostContext(t.Context(), otherSource.ID, delayed.PostID)
 	_testRequire.NoError(err)
-	_testAssert.Equal("protected", target.Availability)
+	_testAssert.Equal("removed", target.Availability)
 	_testAssert.Zero(target.MessageID)
 	var messages int
 	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))

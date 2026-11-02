@@ -11,26 +11,28 @@ import (
 )
 
 func TestXRemovalEnumeratesAndDeletesEveryGeneration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	embedding := make([]float32, 768)
 	embedding[0] = 1
 	var want []vector.GenerationID
 	for i := range 3 {
 		gen, err := b.CreateGeneration(ctx, "synthetic-local", 768, "")
-		require.NoError(t, err)
+		require.NoError(err)
 		want = append(want, gen)
-		require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{{MessageID: 1, Vector: embedding}}))
+		require.NoError(b.Upsert(ctx, gen, []vector.Chunk{{MessageID: 1, Vector: embedding}}))
 		if i < 2 {
-			require.NoError(t, b.ActivateGeneration(ctx, gen, true))
+			require.NoError(b.ActivateGeneration(ctx, gen, true))
 		}
 	}
 	all, err := b.GenerationIDs(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, want, all)
+	require.NoError(err)
+	assert.Equal(want, all)
 	for _, gen := range all {
-		require.NoError(t, b.Delete(ctx, gen, []int64{1}))
+		require.NoError(b.Delete(ctx, gen, []int64{1}))
 		var n int
-		require.NoError(t, b.DB().QueryRow(`SELECT count(*) FROM embeddings WHERE generation_id=? AND message_id=1`, int64(gen)).Scan(&n))
-		assert.Zero(t, n)
+		require.NoError(b.DB().QueryRow(`SELECT count(*) FROM embeddings WHERE generation_id=? AND message_id=1`, int64(gen)).Scan(&n))
+		assert.Zero(n)
 	}
 }

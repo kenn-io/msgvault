@@ -24,7 +24,7 @@ func TestWritePageAvailabilityAndAuthorRaw(t *testing.T) {
 		{name: "missing protected", userField: `{"id":"1002","name":"Example Author","username":"example_author"}`, availability: "unverified"},
 		{name: "null protected", userField: `{"id":"1002","name":"Example Author","username":"example_author","protected":null}`, availability: "unverified"},
 		{name: "public", userField: `{"id":"1002","name":"Example Author","username":"example_author","protected":false}`, availability: "public"},
-		{name: "protected", userField: `{"id":"1002","name":"Private Author","username":"private_author","protected":true}`, availability: "protected", skip: true},
+		{name: "protected", userField: `{"id":"1002","name":"Private Author","username":"private_author","protected":true}`, availability: "removed", skip: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_testAssert := assert.New(t)
@@ -50,6 +50,9 @@ func TestWritePageAvailabilityAndAuthorRaw(t *testing.T) {
 			_testAssert.Equal(tc.availability, target.Availability)
 			if tc.skip {
 				_testAssert.Zero(target.MessageID)
+				pending, err := st.XCleanupPendingContext(t.Context())
+				_testRequire.NoError(err)
+				_testAssert.True(pending, "first-seen protected IDs retain their cleanup obligation")
 				return
 			}
 			body, err := st.GetMessageBodyText(target.MessageID)
