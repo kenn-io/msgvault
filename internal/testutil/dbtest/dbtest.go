@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package dbtest provides shared database test helpers for seeding and querying
 // test databases. It is designed to be importable from any test package without
 // circular dependency issues (it does not import internal/query).
@@ -8,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 
@@ -494,13 +495,4 @@ func (tdb *TestDB) MarkDeletedBySourceID(sourceID string) {
 	tdb.T.Helper()
 	_, err := tdb.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE source_message_id = ?", sourceID)
 	require.NoErrorf(tdb.T, err, "mark deleted by source id %s", sourceID)
-}
-
-// SkipIfPostgres skips SQLite-only tests when MSGVAULT_TEST_DB targets PostgreSQL.
-func SkipIfPostgres(tb testing.TB, reason string) {
-	tb.Helper()
-	testDB := os.Getenv("MSGVAULT_TEST_DB")
-	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
-		tb.Skipf("skipping on PostgreSQL: %s", reason)
-	}
 }
