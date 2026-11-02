@@ -71,6 +71,7 @@ describe('RelationshipsTab', () => {
   });
 
   it('refreshes imported connections when the surviving person reloads in place', async () => {
+    vi.stubEnv('TZ', 'UTC');
     let merged = false;
     const imported = { id: 71, person_id: 7, matched_person_id: 141, raw_related_value: 'absorbed@example.com', raw_related_type: 'X-CUSTOM_friend', value_kind: 'text', status: 'accepted', source: 'vcard_import', created_at: '2026-08-01T12:00:00Z', updated_at: '2026-08-01T12:00:00Z', reviewed_at: '2026-08-02T12:00:00Z' };
     const client = createAPIClient(async input => {
@@ -89,7 +90,7 @@ describe('RelationshipsTab', () => {
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();
       expect(screen.getAllByText('Accepted')).toHaveLength(2);
-    } finally { rendered.unmount(); controller.destroy(); }
+    } finally { rendered.unmount(); controller.destroy(); vi.unstubAllEnvs(); }
   });
 
   it('renders the shared type catalog without person connections and keeps system types read-only', () => {

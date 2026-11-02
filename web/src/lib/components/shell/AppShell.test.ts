@@ -2981,15 +2981,16 @@ it('keeps duplicate and saved-view Undo actions independent', async () => {
 });
 
 it.each([
+  { outcome: 'success', decision: 'reject', action: 'Keep separate' },
+  { outcome: 'pagehide', decision: 'reject', action: 'Keep separate' },
   { outcome: '503', decision: 'reject', action: 'Keep separate' },
   { outcome: 'person_merge_required', decision: 'accept', action: 'Merge' },
-])('recovers $outcome when a duplicate decision settles after leaving People', async ({ outcome, decision, action }) => {
+])('preserves shell focus and recovery when a duplicate settles: $outcome', async ({ outcome, decision, action }) => {
   let finish!: (response: Response) => void;
-  const posted = vi.fn();
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith(`/17/review/${decision}`)) { posted(); return new Promise<Response>(resolve => { finish = resolve; }); }
+    if (path.endsWith(`/17/review/${decision}`)) { return new Promise<Response>(resolve => { finish = resolve; }); }
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
@@ -3000,10 +3001,16 @@ it.each([
   const rendered = render(AppShell, { client, state });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: action }));
-    await screen.findByRole('button', { name: 'Undo' });
-    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' }));
-    await screen.findByRole('main', { name: 'Messages' });
-    await waitFor(() => expect(posted).toHaveBeenCalledOnce());
+    const undo = await screen.findByRole('button', { name: 'Undo' });
+    undo.focus();
+    const messages = within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' });
+    if (outcome === 'pagehide') await fireEvent(window, new Event('pagehide'));
+    else {
+      messages.focus();
+      await fireEvent.click(messages);
+      await screen.findByRole('main', { name: 'Messages' });
+    }
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
     if (outcome === '503') {
       finish(Response.json({ error: 'unavailable', message: 'Decision unavailable' }, { status: 503 }));
@@ -3013,7 +3020,7 @@ it.each([
       await fireEvent.click(returnAction!);
       await screen.findByRole('heading', { name: 'Possible duplicates' });
       await screen.findByRole('button', { name: 'Keep separate' });
-    } else {
+    } else if (outcome === 'person_merge_required') {
       vi.useFakeTimers();
       finish(Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: person(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) }, { status: 409 }));
       await vi.advanceTimersByTimeAsync(0);
@@ -3022,8 +3029,11 @@ it.each([
       expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
       await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
       await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    } else {
+      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }));
+      await waitFor(() => expect(document.activeElement).toBe(outcome === 'pagehide' ? screen.getByRole('radio', { name: 'To review' }) : messages));
     }
-  } finally { rendered.unmount(); state.destroy(); vi.useRealTimers(); }
+  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
 it('refreshes cached duplicate cards after explicit reentry', async () => {
@@ -3043,22 +3053,5 @@ it('refreshes cached duplicate cards after explicit reentry', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
     await fireEvent(window, new Event('pagehide'));
     await waitFor(() => expect(server.decisions).toEqual([{ review_token: 'fresh-17' }]));
-  } finally { rendered.unmount(); state.destroy(); }
-});
-
-it.each([false, true])('preserves focus when Undo settles, navigating away=%s', async navigate => {
-  const { client } = duplicateReviewArchive();
-  const state = new ExploreState(null);
-  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
-  const rendered = render(AppShell, { client, state });
-  try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
-    const undo = await screen.findByRole('button', { name: 'Undo' });
-    undo.focus();
-    const messages = within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Messages' });
-    if (navigate) { messages.focus(); await fireEvent.click(messages); }
-    else await fireEvent(window, new Event('pagehide'));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull());
-    await waitFor(() => expect(document.activeElement).toBe(navigate ? messages : screen.getByRole('radio', { name: 'To review' })));
   } finally { rendered.unmount(); state.destroy(); }
 });
