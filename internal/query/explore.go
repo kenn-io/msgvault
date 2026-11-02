@@ -75,9 +75,9 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	countArgs := append(append([]any{}, conditionArgs...), candidateRankArgs...)
 	args := append(append([]any{}, countArgs...), limit, request.Page.Offset)
 	var queryText string
-	fastPath := !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request)
+	fastPath := !e.exploreFastPathDisabled
 	if fastPath {
-		shareFilteredPopulation := len(request.Context.Domains) > 0
+		shareFilteredPopulation := len(request.Context.Domains) > 0 || len(request.Context.ParticipantIDs) > 0 || len(request.Context.AdditionalParticipantGroups) > 0
 		for _, group := range request.Context.AdditionalDomainGroups {
 			if len(group) > 0 {
 				shareFilteredPopulation = true
@@ -346,7 +346,7 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 	if len(request.Context.ParticipantIDs) > 0 {
 		parts := make([]string, len(request.Context.ParticipantIDs))
 		for i := range parts {
-			parts[i] = "(sender_id = ? OR list_contains(participant_ids, ?) OR list_contains(conversation_participant_ids, ?))"
+			parts[i] = "(sender_id = ? OR message_id IN (SELECT message_id FROM message_recipients WHERE participant_id = ?) OR conversation_id IN (SELECT conversation_id FROM conversation_participants WHERE participant_id = ?))"
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 		for _, value := range request.Context.ParticipantIDs {
@@ -397,7 +397,7 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		}
 		parts := make([]string, len(group))
 		for i := range parts {
-			parts[i] = "(sender_id = ? OR list_contains(participant_ids, ?) OR list_contains(conversation_participant_ids, ?))"
+			parts[i] = "(sender_id = ? OR message_id IN (SELECT message_id FROM message_recipients WHERE participant_id = ?) OR conversation_id IN (SELECT conversation_id FROM conversation_participants WHERE participant_id = ?))"
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 		for _, value := range group {
@@ -650,19 +650,8 @@ func buildExploreFastCountSQL(conditions, candidateRankExpression string) string
 SELECT COUNT(*) FROM logical_entries`
 }
 
-// exploreConditionsTouchParticipantLists reports whether buildExploreConditions
-// renders predicates over the per-message participant list columns for this
-// request. Those predicates force analytical_entries to assemble participant
-// lists for the whole archive during filtering, so the two-phase listing fast
-// path (which rescans the filtered population) would pay that cost twice; such
-// requests keep the single-pass legacy query.
-func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
-	return len(request.Context.ParticipantIDs) > 0 ||
-		len(request.Context.AdditionalParticipantGroups) > 0
-}
-
 // buildExploreFastListingSQL builds the two-phase entry-row page query used
-// when exploreConditionsTouchParticipantLists is false. Phase one selects the
+// for indexed context filters. Phase one selects the
 // page (ORDER BY + LIMIT/OFFSET) from logical entries WITHOUT participant
 // list columns, so the whole-archive per-message list aggregation inside
 // analytical_entries is pruned; phase two rebuilds participant_ids and
