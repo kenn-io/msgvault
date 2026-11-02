@@ -7,6 +7,8 @@ import { installOperations } from './fixtures/operations';
 
 async function openPersonFacts(page: Page): Promise<void> {
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 })));
+  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
   await page.getByRole('region', { name: 'Facts', exact: true }).getByRole('button', { name: 'Show', exact: true }).click();
 }
 
@@ -293,6 +295,8 @@ test('Directory network graph has no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
   const graph = page.getByRole('region', { name: 'Network graph' });
   await expect(graph).toBeVisible();
   await assertNoViolations(page, 'Directory network');
@@ -344,6 +348,8 @@ for (const theme of ['light', 'dark'] as const) {
         workspace: 'relationships', directoryPersonID: 7
       }))}`);
       await setKitTheme(page, theme);
+      await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
+      await page.getByRole('radio', { name: 'Details', exact: true }).click();
       await expect(page.getByText('urn:uuid:synthetic-related-person')).toBeVisible();
       await assertNoViolations(page, `Imported relationships ${theme} ${viewport.width}`);
     }
