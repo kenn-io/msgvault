@@ -97,7 +97,7 @@ func addSegment(r *Result, s Segment) {
 	}
 	if n := len(r.Segments); n > 0 {
 		last := &r.Segments[n-1]
-		if last.End == s.Start && last.Kind == s.Kind && last.Basis == s.Basis && last.Depth == s.Depth && last.Claimed == nil && s.Claimed == nil && last.Confidence == s.Confidence {
+		if last.End == s.Start && last.Kind == s.Kind && last.Basis == s.Basis && last.Depth == s.Depth && last.Claimed == s.Claimed && last.Confidence == s.Confidence {
 			last.End = s.End
 			return
 		}
@@ -121,9 +121,12 @@ func Split(body string, format Format, opts Options) Result {
 		limit--
 	}
 	r.Truncated = limit < len(body)
-	if format == Text {
+	switch format {
+	case Text:
 		splitText(&r, body[:limit], opts)
-	} else {
+	case HTML:
+		splitHTML(&r, body[:limit])
+	default:
 		addSegment(&r, segment(Authored, 0, limit, "unmarked", 0))
 	}
 	if r.Truncated {
