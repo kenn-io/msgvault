@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.33.0"
+const calendarEventsMinAPISchemaVersion = "3.35.0"
 const calendarEventDeletedStatus = "deleted"
 
 type calendarEventsClient interface {

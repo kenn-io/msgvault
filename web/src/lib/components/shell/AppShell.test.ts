@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, tick } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { OPERATION_SETUP } from '../../operations/labels';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
@@ -73,6 +74,40 @@ function operationAuthorityResponse(path: string): Response | undefined {
 }
 
 describe('AppShell', () => {
+  it('keeps confirmation focus through held Back and its restoring traversal', async () => {
+    window.history.replaceState({ exploreIndex: 0 }, '', '/?workspace=files');
+    window.history.pushState({ exploreIndex: 1 }, '', '/?workspace=settings');
+    const state = new ExploreState(window);
+    const settings = createRawSnippet(() => ({
+      render: () => '<main aria-label="Settings fixture"><button>Stay</button></main>'
+    }));
+    const rendered = render(AppShell, {
+      client: createAPIClient(vi.fn()), state, enabled: false, settings
+    });
+    const stay = await screen.findByRole('button', { name: 'Stay' });
+    state.holdLeave = () => { stay.focus(); return true; };
+    const focused: Array<Element | null> = [];
+    let finish!: () => void;
+    const traversed = new Promise<void>(resolve => { finish = resolve; });
+    const recordFocus = async () => {
+      await tick();
+      focused.push(document.activeElement);
+      if (focused.length === 2) finish();
+    };
+    window.addEventListener('popstate', recordFocus);
+    try {
+      window.history.back();
+      await traversed;
+      expect(state.current.workspace).toBe('settings');
+      expect(window.location.search).toBe('?workspace=settings');
+      expect(focused).toEqual([stay, stay]);
+    } finally {
+      window.removeEventListener('popstate', recordFocus);
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   function entry(index: number) {
     return {
       key: `message:${index}`,
@@ -1231,8 +1266,10 @@ describe('AppShell', () => {
     });
     try {
       await fireEvent.click(await screen.findByRole('button', { name: 'Set up Person fact sweep' }));
+      const setup = OPERATION_SETUP.person_sweep;
+      if (setup?.kind !== 'settings') throw new Error('Person fact sweep needs a Settings target');
       expect(state.current).toMatchObject({
-        workspace: 'settings', settingsCategory: 'people', settingsAuthority: ''
+        workspace: 'settings', ...setup.target
       });
     } finally {
       rendered.unmount();
@@ -3413,6 +3450,27 @@ describe('AppShell', () => {
       await fireEvent.keyDown(opener, { key: 'Escape' });
       await waitFor(() => expect(state.current.selectedRow).toBeNull());
     });
+  });
+
+  it('opens Settings Overview from Operations', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations', settingsCategory: 'server' }))}`);
+    const client = createAPIClient(async input => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+      if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
+      return Response.json(exploreResponse());
+    });
+    const settings = createRawSnippet(() => ({ render: () => '<main aria-label="Settings fixture"></main>' }));
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state, enabled: false, settings });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Settings overview' }));
+      expect(await screen.findByRole('main', { name: 'Settings fixture' })).toBeDefined();
+      expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'overview' });
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
   });
 });
 

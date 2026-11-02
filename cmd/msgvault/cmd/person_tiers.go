@@ -84,7 +84,7 @@ a year by default), with the rule that put each there, whether they are
 tracked, and the latest day that counted toward the tier. Windows and
 thresholds come from [people.tiers]. Counts follow the timezone and direct
 limit the activity projection was built under. Nothing is written; pass the
-IDs from --json to "person track".`,
+IDs you choose to "person track", which accepts several.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runPersonTiers(command, deps, args, func(st personTiersCommandStore, options store.PersonTierOptions) error {
@@ -185,15 +185,11 @@ func writePersonTiersPreview(w io.Writer, preview *store.PersonTierPreview) erro
 }
 
 func writePersonTierExplanation(w io.Writer, e *store.PersonTierExplanation) error {
-	exclusion := e.Exclusion
-	if exclusion == "" {
-		exclusion = "-"
-	}
 	_, err := fmt.Fprintf(w, "Person: %d\nName: %s\nTier: %d\nRule: %s\nExclusion: %s\nTracked: %t\nLast counted: %s\nAs of: %s\nProjection: timezone %s, direct limit %d\n"+
-		"Excluded list messages: %d\nLarge-audience inbound messages: %d\n",
-		e.PersonID, personDisplayName(e.DisplayName), e.Tier, e.Rule, exclusion, e.Tracked,
+		"Answered calls: %d short window, %d long window\nExcluded list messages: %d\nLarge-audience inbound messages: %d\n",
+		e.PersonID, personDisplayName(e.DisplayName), e.Tier, e.Rule, optionalCLIString(e.Exclusion), e.Tracked,
 		optionalCLIString(e.LastContactDate), e.AsOf, e.Projection.Timezone, e.Projection.MaxDirect,
-		e.Signals.ExcludedListEvents, e.Signals.LargeAudienceInboundEvents)
+		e.Signals.CallsShort, e.Signals.CallsLong, e.Signals.ExcludedListEvents, e.Signals.LargeAudienceInboundEvents)
 	if err != nil {
 		return fmt.Errorf("write person tier explanation: %w", err)
 	}
