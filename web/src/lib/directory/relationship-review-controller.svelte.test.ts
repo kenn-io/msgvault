@@ -52,16 +52,13 @@ function requestOf(input: RequestInfo | URL): Request {
 
 describe('RelationshipReviewController', () => {
   it(
-    'loads safe fields and supersedes work when the selected owner changes',
+    'loads only safe review fields',
     async () => {
       const requests: Array<{ method: string; path: string; query: Array<[string, string]> }> = [];
-      const pending = deferredResponse();
-      let oldSignal!: AbortSignal;
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input);
         const url = new URL(request.url);
         requests.push({ method: request.method, path: url.pathname, query: [...url.searchParams.entries()] });
-        if (requests.length === 2) { oldSignal = request.signal; return pending.promise; }
         return Response.json({ reviews: [generatedReview({ person_id: Number(url.searchParams.get('person_id')) })] });
       });
       const controller = new RelationshipReviewController(createAPIClient(fetchFn));
@@ -92,17 +89,32 @@ describe('RelationshipReviewController', () => {
         },
       ]);
       expect(JSON.stringify(controller.rows)).not.toMatch(/forbidden|source_ref|accepted_relationship/i);
-      const oldLoad = controller.load();
-      controller.applyPerson(8);
-      expect(oldSignal.aborted).toBe(true);
-      expect(controller.rows).toEqual([]);
-      await vi.waitFor(() => expect(controller.rows[0]?.person_id).toBe(8));
-      pending.resolve(Response.json({ reviews: [generatedReview()] }));
-      await oldLoad;
-      expect(controller.rows[0]?.person_id).toBe(8);
       controller.destroy();
     },
   );
+
+  it('supersedes work when the selected owner changes', async () => {
+    const pending = deferredResponse();
+    let oldSignal!: AbortSignal;
+    let calls = 0;
+    const controller = new RelationshipReviewController(createAPIClient(async input => {
+      const request = requestOf(input);
+      const personID = Number(new URL(request.url).searchParams.get('person_id'));
+      if (++calls === 2) { oldSignal = request.signal; return pending.promise; }
+      return Response.json({ reviews: [generatedReview({ person_id: personID })] });
+    }));
+    controller.applyPerson(7);
+    await vi.waitFor(() => expect(controller.rows[0]?.person_id).toBe(7));
+    const oldLoad = controller.load();
+    controller.applyPerson(8);
+    expect(oldSignal.aborted).toBe(true);
+    expect(controller.rows).toEqual([]);
+    await vi.waitFor(() => expect(controller.rows[0]?.person_id).toBe(8));
+    pending.resolve(Response.json({ reviews: [generatedReview()] }));
+    await oldLoad;
+    expect(controller.rows[0]?.person_id).toBe(8);
+    controller.destroy();
+  });
 
   it('normalizes null to empty and retries an empty failed context only on demand', async () => {
     let attempts = 0;
@@ -111,6 +123,7 @@ describe('RelationshipReviewController', () => {
       if (attempts === 1) {
         return Response.json({ error: 'unavailable', message: 'forbidden-service-detail' }, { status: 503 });
       }
+      if (attempts === 2) return Response.json({ reviews: [generatedReview({ id: 0 })] });
       return Response.json({ reviews: null });
     });
     const controller = new RelationshipReviewController(createAPIClient(fetchFn));
@@ -125,6 +138,10 @@ describe('RelationshipReviewController', () => {
 
     await controller.retry();
     expect(attempts).toBe(2);
+    expect(controller.rows).toEqual([]);
+    expect(controller.error).toBe('Unable to load imported relationship reviews.');
+    await controller.retry();
+    expect(attempts).toBe(3);
     expect(controller.rows).toEqual([]);
     expect(controller.error).toBeNull();
     controller.destroy();

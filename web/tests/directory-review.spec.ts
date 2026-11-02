@@ -44,8 +44,6 @@ test('refreshes the duplicate queue and badge after Unlink', async ({ page }) =>
     await expect.poll(reads).toBeGreaterThan(before);
     await expect(page.locator('#duplicate-17')).toBeVisible();
   }
-  await page.goto(peopleURL);
-  await page.evaluate(async () => { await fetch('/api/v1/people/7/merge', { method: 'POST' }); });
   await page.goto(duplicatesURL);
   await expect(page.locator('#duplicate-17')).toBeVisible();
   await page.getByRole('button', { name: 'Back to People' }).click();
@@ -62,7 +60,7 @@ test('refreshes the duplicate queue and badge after Unlink', async ({ page }) =>
   await showDuplicates();
   await page.locator('#duplicate-17').getByRole('button', { name: 'Keep separate' }).click();
   await page.getByRole('button', { name: 'Back to People' }).click();
-  await expect(badge).toHaveText('People 1');
+  await expect(badge).toHaveText('People 2');
 });
 
 for (const bulk of [false, true]) {

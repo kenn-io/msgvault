@@ -5,10 +5,13 @@ import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import MergePeopleDialog from './MergePeopleDialog.svelte';
+import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
+
+vi.mock('../directory/PersonBindingConflictModal.svelte', { spy: true });
 
 it.each([
   { savedAnchor: true, promote: false, outcome: 'merge' },
-  { savedAnchor: false, promote: false, outcome: 'unreadable saved profile' },
+  { savedAnchor: false, promote: false, outcome: 'selected saved profile read fails' },
   { savedAnchor: true, promote: true, outcome: 'retry and merge' },
   { savedAnchor: true, promote: true, outcome: 'cancel' },
   { savedAnchor: false, promote: true, outcome: 'read failure' }
@@ -23,12 +26,11 @@ it.each([
     if (path === '/api/v1/participants/search') return Response.json({ rows: savedAnchor && promote ? [{ id: 2, display_label: 'Synthetic Two', identifiers: [], activity_count: 1 }] : [] });
     if (path === '/api/v1/people' && request.method === 'POST') return Response.json(profile(9));
     if (path === '/api/v1/people/7' || path === '/api/v1/people/9') {
-      if (outcome === 'unreadable saved profile') return Response.json({ message: 'Target missing' }, { status: 404 });
+      if (outcome === 'selected saved profile read fails') return Response.json({ message: 'Target missing' }, { status: 404 });
       if (path.endsWith('/9') && failProfile) { failProfile = false; return Response.json({ error: 'unavailable' }, { status: 503 }); }
       const id = Number(path.split('/').at(-1));
       return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } });
     }
-    if (path === '/api/v1/people/7/merge') return Response.json(mergeResult(profile(7)), { headers: { ETag: '"person-7-r5"' } });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const controller = new RelationshipsController(client, () => 'UTC');
@@ -39,7 +41,7 @@ it.each([
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: savedAnchor ? /Synthetic Two/ : /Synthetic One/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    if (outcome === 'unreadable saved profile') {
+    if (outcome === 'selected saved profile read fails') {
       await screen.findByText('Target missing');
       expect(onClose).not.toHaveBeenCalled();
       return;
@@ -51,15 +53,15 @@ it.each([
       await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     }
     await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    const modal = vi.mocked(PersonBindingConflictModal).mock.calls.at(-1)![1];
+    expect(modal.conflict.profiles.map(item => item.person.id).sort()).toEqual([7, 9]);
     if (promote) expect(onReconcile).toHaveBeenCalledWith(expect.anything(), false);
     if (outcome === 'cancel') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      modal.onClose();
       expect(onClose).toHaveBeenCalledOnce();
       return;
     }
-    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
-    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+    await modal.onSuccess({ result: mergeResult(profile(7)), survivor: profile(7), responseETag: '"person-7-r5"' });
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
     expect(onReconcile).toHaveBeenLastCalledWith(controller.personMergeContextSnapshot());
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');

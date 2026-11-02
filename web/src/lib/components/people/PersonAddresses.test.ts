@@ -151,16 +151,24 @@ describe('PersonAddresses', () => {
     expect(onUnlinkParticipants).not.toHaveBeenCalled();
   });
 
-  it('shows an inline error and keeps the confirm state on an unlink failure', async () => {
-    const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'error', message: 'Request failed (500)' }));
+  it('retains failed unlink confirmation and retries a stale result for the same pair', async () => {
+    const onUnlinkParticipants = vi.fn<(...ids: number[]) => Promise<LinkOutcome>>()
+      .mockResolvedValueOnce({ ok: false, code: 'error', message: 'Request failed (500)' })
+      .mockResolvedValueOnce({ ok: true, identityRevision: 4, cacheState: 'stale' })
+      .mockResolvedValue({ ok: true, identityRevision: 4, cacheState: 'ready' });
     render(PersonAddresses, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink carol@example.com' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
-    expect(screen.getByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeDefined();
+    expect(screen.getByRole('group', { name: 'Confirm unlinking carol@example.com' })).toBeDefined();
     expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Identity saved; the cache refresh failed');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(onUnlinkParticipants.mock.calls).toEqual([[34, 56], [34, 56], [34, 56]]);
   });
 
   it.each(['failure', 'stale-cache banner'])('finishes captured unlinks without showing a late %s on the next person', async outcome => {

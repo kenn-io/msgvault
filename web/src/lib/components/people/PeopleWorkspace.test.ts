@@ -387,8 +387,8 @@ it.each(['complete', 'partial'])('refreshes cached Saved dates and Most recent o
 it.each(['link', 'merge'])('refreshes the selected profile and Saved list after a %s from Details', async operation => {
   let changed = false;
   let merged = false;
-  const one = { ...profile(7, 4, [1]), organizations: [], categories: [], contact_state: 'active', last_contact_at: '2020-07-18T10:00:00Z' };
-  const two = { ...profile(9, 2, [2]), organizations: [], categories: [], contact_state: 'active' };
+  const one = { ...profile(7, 4, [1]), last_contact_at: '2020-07-18T10:00:00Z' };
+  const two = profile(9, 2, [2]);
   const survivor = { ...one, revision: 5, participant_ids: [1, 2] };
   const client = clientFor({
     '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7, { revision: changed ? 5 : 4, last_contact_at: changed ? '2021-07-18T10:00:00Z' : one.last_contact_at }), ...(!merged && operation === 'merge' ? [directoryPerson(9)] : [])] }),

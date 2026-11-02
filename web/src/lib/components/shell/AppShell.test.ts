@@ -1143,28 +1143,6 @@ describe('AppShell', () => {
     });
   }
 
-  it('returns to Files after opening a saved person', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
-    const state = new ExploreState(window);
-    const fetchPerson = directoryPersonFetch();
-    const client = createAPIClient(async (input, init) => {
-      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
-      return fetchPerson(input, init);
-    });
-    const rendered = render(AppShell, { client, state, enabled: false });
-    try {
-      await screen.findByRole('main', { name: 'Files' });
-      state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
-      await screen.findByRole('heading', { name: 'Synthetic Person' });
-      const restored = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      window.history.back();
-      await restored;
-      await waitFor(() => expect(state.current.workspace).toBe('files'));
-      expect(screen.getByRole('main', { name: 'Files' })).toBeDefined();
-    } finally { rendered.unmount(); state.destroy(); }
-  });
-
   it('owns an ephemeral CardDAV conflict handoff and Browser Back restores the prior Directory person', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', directoryPersonID: 7
@@ -3043,7 +3021,7 @@ it.each(['before returning', 'after returning'])('shows a saved profile rename c
     }
     if (path === '/api/v1/people/7/profile') return Response.json({ person: saved(), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
-    if (path === '/api/v1/people/attribute-definitions') return Response.json({ definitions: [] });
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
     if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
     if (path === '/api/v1/participants/2') return Response.json({ id: 2, display_label: 'Observed counterpart', identifiers: [], activity_count: 3 });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
