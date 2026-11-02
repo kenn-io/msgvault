@@ -338,8 +338,8 @@ type MessageDetail struct {
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
-	Body     string  `json:"body"`
-	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback."`
+	Body     string  `json:"body" doc:"Plain-text body when one is stored; otherwise the legacy HTML fallback. Use body_html to access the HTML alternative alongside plain text."`
+	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Canonical stored plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback."`
 	BodyHTML string  `json:"body_html,omitempty"`
 	IsFromMe bool    `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left
@@ -521,6 +521,13 @@ func nullableTimePtr(value time.Time) *string {
 // messageDetailFromQuery builds a MessageDetail response from a query-engine
 // MessageDetail, formatting addresses the same way the store path does and
 // emitting body_html alongside body when both are present.
+func legacyMessageBody(bodyText, bodyHTML string) string {
+	if bodyText != "" {
+		return bodyText
+	}
+	return bodyHTML
+}
+
 func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	from := ""
 	fromEmail := ""
@@ -549,10 +556,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		labels = []string{}
 	}
 
-	body := qMsg.BodyText
-	if body == "" {
-		body = qMsg.BodyHTML
-	}
+	body := legacyMessageBody(qMsg.BodyText, qMsg.BodyHTML)
 
 	attachments := make([]AttachmentInfo, 0, len(qMsg.Attachments))
 	for _, att := range qMsg.Attachments {
@@ -753,7 +757,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 
 // handleGetMessage returns a single message by ID.
 // When the query engine is available, it returns separate body_html for rich
-// rendering; otherwise it falls back to the store layer (plain Body only).
+// rendering; otherwise it preserves the store fields in the same response.
 func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -814,7 +818,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
-		Body:              msg.Body,
+		Body:              legacyMessageBody(msg.BodyText, msg.BodyHTML),
 		BodyText:          new(msg.BodyText),
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,

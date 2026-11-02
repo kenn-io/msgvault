@@ -1,12 +1,14 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +41,32 @@ func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), n)
 	assertFTSContains(t, f.Store, "orchard", 2)
+}
+
+func TestStore_BackfillFTSDoesNotRewriteExistingHTMLOnlyEntry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+
+	existing := f.CreateMessage("backfill-html-existing")
+	require.NoError(f.Store.UpsertMessageBody(existing, sql.NullString{},
+		sql.NullString{String: "<p>htmlreindexonlyterm</p>", Valid: true}), "store HTML-only body")
+	require.NoError(f.Store.UpsertFTS(existing, "subject", "keepindexedonlyterm", "", "", ""),
+		"install existing FTS document")
+
+	missing := f.CreateMessage("backfill-missing")
+	require.NoError(f.Store.UpsertMessageBody(missing,
+		sql.NullString{String: "newmissingindexterm", Valid: true}, sql.NullString{}), "store missing-index body")
+
+	indexed, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+	assert.Equal(int64(1), indexed, "only the missing message should be indexed")
+	assertFTSContains(t, f.Store, "keepindexedonlyterm", 1)
+	assertFTSContains(t, f.Store, "htmlreindexonlyterm", 0)
+	assertFTSContains(t, f.Store, "newmissingindexterm", 1)
 }
 
 func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
@@ -105,6 +133,62 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
 	assertFTSContains(t, f.Store, "obsolete", 0)
+}
+
+func TestPG_BackfillFTS_HTMLOnlyRaceKeepsConcurrentPlainText(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
+
+	id := f.CreateMessage("html-body-backfill-race")
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{},
+		sql.NullString{String: "<p>stalehtmlmarker</p>", Valid: true}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "initial HTML-only FTS backfill")
+	_, err = f.Store.DB().Exec(`UPDATE messages SET search_fts = NULL WHERE id = $1`, id)
+	require.NoError(err, "mark the FTS document missing")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	writer, err := f.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	defer func() { _ = writer.Rollback() }()
+	var lockedID int64
+	require.NoError(writer.QueryRowContext(ctx,
+		`SELECT id FROM messages WHERE id = $1 FOR UPDATE`, id).Scan(&lockedID))
+	assert.Equal(id, lockedID)
+	_, err = writer.ExecContext(ctx, `UPDATE message_bodies
+		SET body_text = $1, body_html = $2 WHERE message_id = $3`,
+		"currentplaintextmarker", "<p>new HTML alternative</p>", id)
+	require.NoError(err, "stage a concurrent body update")
+
+	backfillDone := make(chan error, 1)
+	go func() {
+		_, backfillErr := f.Store.BackfillFTSContext(ctx, nil)
+		backfillDone <- backfillErr
+	}()
+
+	require.Eventually(func() bool {
+		var waiting bool
+		queryErr := f.Store.DB().QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock'
+			  AND query LIKE '%fts-html-candidate-lock%'
+		)`).Scan(&waiting)
+		return queryErr == nil && waiting
+	}, 5*time.Second, 20*time.Millisecond, "backfill must wait for the concurrent message lock")
+	require.NoError(writer.Commit(), "commit the concurrent body update")
+	select {
+	case err := <-backfillDone:
+		require.NoError(err, "backfill after the concurrent body update")
+	case <-ctx.Done():
+		require.NoError(ctx.Err(), "backfill did not finish after the update committed")
+	}
+
+	assertFTSContains(t, f.Store, "currentplaintextmarker", 1)
+	assertFTSContains(t, f.Store, "stalehtmlmarker", 0)
 }
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,

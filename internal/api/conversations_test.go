@@ -81,6 +81,41 @@ func TestConversationWindowIsAnchoredBoundedAndChronological(t *testing.T) {
 	assert.Equal("<p>Body 03</p>", response.Messages[2].BodyHTML)
 }
 
+func TestConversationWindowHTMLOnlyBodyKeepsLegacyHTMLFallback(t *testing.T) {
+	t.Parallel()
+	assertions, requirements := assert.New(t), require.New(t)
+	srv, conversationID, ids := seedConversation(t, "email", 1)
+	const html = `<p>Readable <strong>HTML-only</strong> body</p>`
+	bodyStore, ok := srv.store.(*store.Store)
+	requirements.True(ok, "server store type")
+	requirements.NotNil(bodyStore)
+	requirements.NoError(bodyStore.UpsertMessageBody(ids[0], sql.NullString{},
+		sql.NullString{String: html, Valid: true}))
+
+	request := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[0]), nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	requirements.Equal(http.StatusOK, response.Code, "body: %s", response.Body.String())
+	var window ConversationResponse
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&window))
+	requirements.Len(window.Messages, 1)
+	assertions.Equal(html, window.Messages[0].Body)
+	assertions.Equal(html, window.Messages[0].BodyHTML)
+
+	request = httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/messages/%d", ids[0]), nil)
+	response = httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	requirements.Equal(http.StatusOK, response.Code, "body: %s", response.Body.String())
+	var detail MessageDetail
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&detail))
+	assertions.Equal(html, detail.Body)
+	requirements.NotNil(detail.BodyText)
+	assertions.Empty(*detail.BodyText)
+	assertions.Equal(html, detail.BodyHTML)
+}
+
 func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

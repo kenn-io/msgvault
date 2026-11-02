@@ -843,16 +843,23 @@ func StripHTML(rawHTML string) string {
 	return strings.TrimSpace(text)
 }
 
+// TextBodyForDisplay returns plain text when available and otherwise readable
+// text derived from HTML. The derived value is for display only; it does not
+// change the canonical plain-text alternative stored in BodyText.
+func TextBodyForDisplay(bodyText, bodyHTML string) string {
+	if bodyText != "" {
+		return bodyText
+	}
+	if bodyHTML != "" {
+		return StripHTML(bodyHTML)
+	}
+	return ""
+}
+
 // GetBodyText returns the best available body text.
 // Prefers plain text, falls back to stripped HTML.
 func (m *Message) GetBodyText() string {
-	if m.BodyText != "" {
-		return m.BodyText
-	}
-	if m.BodyHTML != "" {
-		return StripHTML(m.BodyHTML)
-	}
-	return ""
+	return TextBodyForDisplay(m.BodyText, m.BodyHTML)
 }
 
 // GetFirstFrom returns the first From address, or empty if none.

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	mailmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -485,30 +486,37 @@ func (e *SQLiteEngine) loadBodyContextChunks(
 		// truncated with no misleading fallback context.
 		limit := scanBytes + utf8.UTFMax
 		args = append([]any{limit, limit}, idArgs...)
+		textBytes := `COALESCE(octet_length(mb.body_text), 0)`
+		htmlBytes := `COALESCE(octet_length(mb.body_html), 0)`
+		body := `CASE WHEN ` + textBytes + ` > 0 THEN mb.body_text ELSE COALESCE(mb.body_html, '') END`
+		length := `CASE WHEN ` + textBytes + ` > 0 THEN ` + textBytes + ` ELSE ` + htmlBytes + ` END`
 		querySQL = fmt.Sprintf(`
 			SELECT mb.message_id,
 				CASE
-					WHEN COALESCE(octet_length(mb.body_text), 0) <= ?
-					THEN CAST(COALESCE(mb.body_text, '') AS BLOB)
+					WHEN %s <= ?
+					THEN CAST(%s AS BLOB)
 					ELSE X''
 				END,
-				COALESCE(octet_length(mb.body_text), 0) > ?
+				%s > ?,
+				%s = 0 AND %s > 0
 			FROM message_bodies mb
 			WHERE mb.message_id IN (%s)
 			ORDER BY mb.message_id
-		`, idPlaceholders)
+		`, length, body, length, textBytes, htmlBytes, idPlaceholders)
 	case messageBodyContextPostgreSQL:
-		args = append([]any{scanBytes + utf8.UTFMax}, idArgs...)
+		args = append([]any{scanBytes + utf8.UTFMax, scanBytes}, idArgs...)
+		body := `COALESCE(NULLIF(mb.body_text, ''), mb.body_html, '')`
 		querySQL = fmt.Sprintf(`
 			SELECT mb.message_id,
 				COALESCE(convert_to(
-					SUBSTRING(COALESCE(mb.body_text, '') FROM 1 FOR ?), 'UTF8'
+					SUBSTRING(%s FROM 1 FOR ?), 'UTF8'
 				), ''::bytea),
-				FALSE
+				octet_length(%s) > ?,
+				COALESCE(NULLIF(mb.body_text, '') IS NULL AND COALESCE(mb.body_html, '') <> '', FALSE)
 			FROM message_bodies mb
 			WHERE mb.message_id IN (%s)
 			ORDER BY mb.message_id
-		`, idPlaceholders)
+		`, body, body, idPlaceholders)
 	default:
 		return nil, nil, nil, errors.New("message body context is unavailable for this query dialect")
 	}
@@ -525,12 +533,27 @@ func (e *SQLiteEngine) loadBodyContextChunks(
 		var messageID int64
 		var raw []byte
 		var sourceTruncated bool
-		if err := rows.Scan(&messageID, &raw, &sourceTruncated); err != nil {
+		var htmlFallback bool
+		if err := rows.Scan(&messageID, &raw, &sourceTruncated, &htmlFallback); err != nil {
 			return nil, nil, nil, fmt.Errorf("scan bounded message body prefix: %w", err)
 		}
 		prefix, prefixTruncated, err := validBodyContextPrefix(raw, scanBytes)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("message %d body context: %w", messageID, err)
+		}
+		if htmlFallback {
+			if sourceTruncated || prefixTruncated {
+				prefix = mailmime.StripHTMLPrefix(prefix)
+			} else {
+				prefix = mailmime.StripHTML(prefix)
+			}
+			if len(prefix) > scanBytes {
+				prefix, _, err = validBodyContextPrefix([]byte(prefix), scanBytes)
+				if err != nil {
+					return nil, nil, nil, fmt.Errorf("message %d stripped HTML body context: %w", messageID, err)
+				}
+				prefixTruncated = true
+			}
 		}
 		bodies[messageID] = prefix
 		messageChunks := makeBodyContextChunks(messageID, prefix, len(chunks)+1)

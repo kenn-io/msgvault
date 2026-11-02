@@ -121,6 +121,26 @@ describe('ConversationView', () => {
     expect(screen.getByText('Body 2')).toBeDefined();
   });
 
+  it('shows readable text for an HTML-only legacy body fallback', async () => {
+    const html = '<p>Readable <strong>HTML-only</strong> body</p>';
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      id: 7,
+      anchor_id: 2,
+      messages: [{ ...message(2), body: html, body_html: html, body_text: '' }],
+      has_before: false,
+      has_after: false,
+      total: 1
+    }));
+    render(ConversationView, {
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+    });
+
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByText('⋯'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show plain text' }));
+    expect(screen.getByText('Readable HTML-only body')).toBeDefined();
+  });
+
   it('expands additional messages inline without refetching and reports the anchor change', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
       id: 7, anchor_id: 2, messages: [message(1, 'imessage'), message(2, 'imessage')],

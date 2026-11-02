@@ -7963,11 +7963,13 @@ type MergeRequest struct {
 type MessageDetail struct {
 	Attachments []AttachmentInfo `json:"attachments" validate:"required"`
 	Bcc         []string         `json:"bcc,omitempty"`
-	Body        string           `json:"body" validate:"required"`
-	BodyHTML    *string          `json:"body_html,omitzero"`
-	BodyOmitted *bool            `json:"body_omitted,omitempty"`
 
-	// BodyText Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback.
+	// Body Plain-text body when one is stored; otherwise the legacy HTML fallback. Use body_html to access the HTML alternative alongside plain text.
+	Body        string  `json:"body" validate:"required"`
+	BodyHTML    *string `json:"body_html,omitzero"`
+	BodyOmitted *bool   `json:"body_omitted,omitempty"`
+
+	// BodyText Canonical stored plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback.
 	BodyText       *string             `json:"body_text,omitzero"`
 	Calendar       *CalendarProjection `json:"calendar,omitempty"`
 	Cc             []string            `json:"cc,omitempty"`

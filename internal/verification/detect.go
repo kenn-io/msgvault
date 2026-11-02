@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/html"
+	"golang.org/x/text/currency"
 )
 
 // Input contains complete canonical content, before excerpts or pagination.
@@ -75,11 +76,21 @@ var cues = []cue{
 }
 
 var (
-	codePattern     = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
-	urlPattern      = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
-	tokenPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
-	codeWordPattern = regexp.MustCompile(`\bcode\b`)
-	expiryPattern   = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
+	codePattern                      = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
+	urlPattern                       = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
+	tokenPattern                     = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
+	codeWordPattern                  = regexp.MustCompile(`\bcode\b`)
+	oneTimeCredentialPattern         = regexp.MustCompile(`^[\s\p{Z}]*(?:(?:verification|security|login|sign[ -]in|authentication|access)[\s\p{Z}]+)?(?:code|password|passcode|otp|pin)\b`)
+	transactionalReferenceBeforeCode = regexp.MustCompile(`\b(?:order|tracking|shipment|invoice|reservation|booking|confirmation)[\s\p{Z}]*(?:number|no\.?|id|code|#)?[\s\p{Z}]*[:#-]?[\s\p{Z}]*(?:is[\s\p{Z}]+)?$`)
+	transactionalReferenceAfterCode  = regexp.MustCompile(`^[\s\p{Z}]*(?:[.,:;#-][\s\p{Z}]*)?(?:is[\s\p{Z}]+)?(?:your[\s\p{Z}]+)?(?:order|tracking|shipment|invoice|reservation|booking|confirmation)[\s\p{Z}]*(?:number|no\.?|id|code)?\b`)
+	reverseCodeBeforeCuePattern      = regexp.MustCompile(`(?i)\b(?:[a-z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[a-z0-9]{4,8})[\s\p{Z}]+$`)
+	numericDatePattern               = regexp.MustCompile(`\b(?:[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{4})\b`)
+	decimalAmountPattern             = regexp.MustCompile(`\b[0-9]+[.,][0-9]+\b`)
+	moneySymbolAmountPattern         = regexp.MustCompile(`\p{Sc}[\s\p{Z}]*[0-9][0-9.,]*`)
+	isoCurrencyBeforeAmountPattern   = regexp.MustCompile(`(?i)\b([a-z]{3})[\s\p{Z}]+[0-9][0-9.,]*\b`)
+	isoCurrencyAfterAmountPattern    = regexp.MustCompile(`(?i)\b[0-9][0-9.,]*[\s\p{Z}]*([a-z]{3})\b`)
+	promotionalCodePattern           = regexp.MustCompile(`\b(?:coupon|promo(?:tional)?|discount)[\s\p{Z}]+code\b|\b[0-9]{1,3}[\s\p{Z}]*(?:%|percent)[\s\p{Z}]*(?:off|discount)\b`)
+	expiryPattern                    = regexp.MustCompile(`(?i)(?:expires? in|valid for)[\s\p{Z}]+([0-9]{1,5})[\s\p{Z}]+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
 )
 
 var knownDomains = []string{
@@ -123,6 +134,16 @@ func cueMatches(text string) []cueMatch {
 				continue
 			}
 			if wordBoundary(text, i, end) {
+				// A "your code" mention next to a coupon offer is not a
+				// credential cue, even when the value resembles an OTP.
+				if c.text == "your code" && promotionalCodeContext(text, i, end) {
+					continue
+				}
+				// A reversed "is your" cue can label a booking or order reference
+				// instead of a credential, as in "ABC123 is your booking code".
+				if c.text == "is your" && isTransactionalReverseCodeCue(text, i, end) {
+					continue
+				}
 				// "is your" alone is ordinary prose, not a credential cue.
 				if c.text != "is your" || hasCodeAfter(text, end, urls) {
 					found = append(found, cueMatch{start: i, end: end, kind: c.kind, text: c.text})
@@ -140,6 +161,17 @@ func cueMatches(text string) []cueMatch {
 	return found
 }
 
+func isTransactionalReverseCodeCue(text string, start, end int) bool {
+	before := text[max(0, start-20):start]
+	after := text[end:min(len(text), end+80)]
+	return reverseCodeBeforeCuePattern.MatchString(before) && transactionalReferenceAfterCode.MatchString(after)
+}
+
+func promotionalCodeContext(text string, start, end int) bool {
+	window := text[max(0, start-120):min(len(text), end+120)]
+	return promotionalCodePattern.MatchString(window)
+}
+
 func genericSignInCue(text string) bool {
 	switch text {
 	case "sign in", "sign-in", "log in", "login link":
@@ -147,6 +179,58 @@ func genericSignInCue(text string) bool {
 	default:
 		return false
 	}
+}
+
+func ambiguousOneTimeCue(text string) bool {
+	return text == "one-time" || text == "one time"
+}
+
+func hasCredentialWordNear(text string, c cueMatch) bool {
+	return oneTimeCredentialPattern.MatchString(text[c.end:])
+}
+
+func hasTransactionalReference(text string, start, end int) bool {
+	before := text[max(0, start-320):start]
+	after := text[end:min(len(text), end+320)]
+	return transactionalReferenceBeforeCode.MatchString(before) || transactionalReferenceAfterCode.MatchString(after)
+}
+
+func moneyAmountSpans(text string) [][]int {
+	spans := moneySymbolAmountPattern.FindAllStringIndex(text, -1)
+	for _, pattern := range []*regexp.Regexp{isoCurrencyBeforeAmountPattern, isoCurrencyAfterAmountPattern} {
+		for _, loc := range pattern.FindAllStringSubmatchIndex(text, -1) {
+			if len(loc) < 4 || loc[2] < 0 {
+				continue
+			}
+			code := strings.ToUpper(text[loc[2]:loc[3]])
+			if _, err := currency.ParseISO(code); err == nil {
+				spans = append(spans, []int{loc[0], loc[1]})
+			}
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i][0] != spans[j][0] {
+			return spans[i][0] < spans[j][0]
+		}
+		return spans[i][1] < spans[j][1]
+	})
+	merged := spans[:0]
+	for _, span := range spans {
+		if len(merged) == 0 || span[0] > merged[len(merged)-1][1] {
+			merged = append(merged, span)
+			continue
+		}
+		last := merged[len(merged)-1]
+		if span[1] > last[1] {
+			last[1] = span[1]
+		}
+	}
+	return merged
+}
+
+func containedInSpan(spans [][]int, start, end int) bool {
+	index := sort.Search(len(spans), func(i int) bool { return spans[i][1] > start })
+	return index < len(spans) && spans[index][0] <= start && end <= spans[index][1]
 }
 
 func hasCodeAfter(text string, start int, urls [][]int) bool {
@@ -204,6 +288,45 @@ func nearCue(text string, start, end int, matches []cueMatch) bool {
 	return false
 }
 
+func nearLinkCue(text string, start, end int, matches []cueMatch) bool {
+	const maxAssociatedCueDistance = 40
+	maxAssociatedCueBytes := maxAssociatedCueDistance * utf8.UTFMax
+	first := sort.Search(len(matches), func(i int) bool {
+		return matches[i].maxEnd >= start-maxAssociatedCueBytes
+	})
+	for _, c := range matches[first:] {
+		if c.start > end+maxAssociatedCueBytes {
+			break
+		}
+		var gap string
+		switch {
+		case c.end <= start:
+			if start-c.end > maxAssociatedCueBytes {
+				continue
+			}
+			gap = text[c.end:start]
+		case end <= c.start:
+			gap = text[end:c.start]
+		default:
+			return true
+		}
+		if utf8.RuneCountInString(gap) > maxAssociatedCueDistance {
+			continue
+		}
+		associated := true
+		for _, r := range gap {
+			if strings.ContainsRune(".!?", r) || r == '\u2028' || r == '\u2029' {
+				associated = false
+				break
+			}
+		}
+		if associated {
+			return true
+		}
+	}
+	return false
+}
+
 // normalizedOffsets maps increasing original offsets into their lowercased
 // positions without repeatedly normalizing the entire preceding body.
 func normalizedOffsets(original string) func(int) int {
@@ -255,7 +378,7 @@ func credentialURLParts(path string, query url.Values) (endpoint, opaque, payloa
 	for component := range strings.SplitSeq(path, "/") {
 		if credentialEndpoint(component) {
 			endpoint = true
-		} else if tokenPattern.MatchString(component) {
+		} else if opaqueCredentialToken(component) {
 			opaque = true
 		} else if loc := codePattern.FindStringIndex(component); loc != nil && loc[0] == 0 && loc[1] == len(component) && codeShape(component) {
 			payload = true
@@ -266,11 +389,27 @@ func credentialURLParts(path string, query url.Values) (endpoint, opaque, payloa
 		endpoint = endpoint || credentialKey
 		credentialKey = credentialKey || slices.Contains([]string{"code", "id", "ticket", "key", "nonce", "state"}, strings.ToLower(key))
 		for _, value := range values {
-			opaque = opaque || tokenPattern.MatchString(value)
+			opaque = opaque || opaqueCredentialToken(value)
 			payload = payload || credentialKey && strings.TrimSpace(value) != ""
 		}
 	}
 	return endpoint, opaque, payload || opaque
+}
+
+func opaqueCredentialToken(value string) bool {
+	if !tokenPattern.MatchString(value) {
+		return false
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '-' || r == '_' })
+	if len(parts) < 2 {
+		return true
+	}
+	for _, part := range parts {
+		if len(part) < 3 || strings.Trim(part, "abcdefghijklmnopqrstuvwxyz") != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type htmlLink struct {
@@ -400,8 +539,12 @@ func Detect(in Input) *Finding {
 		matches := cueMatches(text)
 		var linkMatches []cueMatch
 		var codeMatches []cueMatch
+		var genericSignInMatches []cueMatch
 		for _, c := range matches {
 			if c.kind == kindOTPCode {
+				if ambiguousOneTimeCue(c.text) && !hasCredentialWordNear(text, c) {
+					continue
+				}
 				codeMatches = append(codeMatches, c)
 			} else {
 				c.maxEnd = c.end
@@ -409,10 +552,19 @@ func Detect(in Input) *Finding {
 					c.maxEnd = max(c.maxEnd, linkMatches[len(linkMatches)-1].maxEnd)
 				}
 				linkMatches = append(linkMatches, c)
+				if genericSignInCue(c.text) {
+					genericSignInMatches = append(genericSignInMatches, c)
+				}
 			}
 			if !genericSignInCue(c.text) && (f.Kind == "" || kindRank(c.kind) > kindRank(f.Kind)) {
 				f.Kind = c.kind
 			}
+		}
+		var dateSpans, moneySpans, decimalAmountSpans [][]int
+		if len(genericSignInMatches) > 0 {
+			dateSpans = numericDatePattern.FindAllStringIndex(text, -1)
+			moneySpans = moneyAmountSpans(text)
+			decimalAmountSpans = decimalAmountPattern.FindAllStringIndex(text, -1)
 		}
 		if len(matches) > 0 {
 			signal := "body_cue"
@@ -441,13 +593,23 @@ func Detect(in Input) *Finding {
 			}
 			start := codeOffset(loc[0])
 			end := start + len(strings.ToLower(value))
-			if nearCue(text, start, end, codeMatches) {
+			explicitCodeCue := nearCue(text, start, end, codeMatches)
+			genericSignIn := nearCue(text, start, end, genericSignInMatches) &&
+				!hasTransactionalReference(text, start, end) &&
+				!containedInSpan(dateSpans, start, end) &&
+				!containedInSpan(moneySpans, start, end) &&
+				!containedInSpan(decimalAmountSpans, start, end)
+			if explicitCodeCue || genericSignIn {
 				add(Secret{Kind: "code", Value: value})
+				if f.Kind == "" && genericSignIn {
+					f.Kind = kindOTPCode
+				}
 			}
 		}
 		candidates := make([]htmlLink, 0, len(urls)+len(hrefs))
 		for _, loc := range urls {
-			candidates = append(candidates, htmlLink{strings.TrimRight(original[loc[0]:loc[1]], ".,;!)]}"), loc[0], loc[1]})
+			value := strings.TrimRight(original[loc[0]:loc[1]], ".,;!)]}")
+			candidates = append(candidates, htmlLink{value, loc[0], loc[0] + len(value)})
 		}
 		if fieldIndex == 3 {
 			for _, link := range hrefs {
@@ -470,7 +632,7 @@ func Detect(in Input) *Finding {
 			end := start + len(strings.ToLower(original[link.start:link.end]))
 			// Explicit link context can identify an opaque credential URL even
 			// when its endpoint is generic. An OTP cue alone is not link context.
-			if !endpoint && (!opaque || !nearCue(text, start, end, linkMatches)) {
+			if !endpoint && (!opaque || !nearLinkCue(text, start, end, linkMatches)) {
 				continue
 			}
 			if !opaque && !nearCue(text, start, end, matches) {

@@ -184,7 +184,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		detail := MessageDetail{
 			RelatedMessageID: message.RelatedMessageID,
 			MessageSummary:   toMessageSummary(message),
-			Body:             message.Body,
+			Body:             legacyMessageBody(message.BodyText, message.BodyHTML),
 			BodyHTML:         s.archivedRemoteImageHTML(r.Context(), message.ID, message.BodyHTML),
 			BodyOmitted:      message.BodyOmitted,
 			IsFromMe:         message.IsFromMe,

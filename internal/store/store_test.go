@@ -991,6 +991,38 @@ func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
 	}
 }
 
+func TestStore_UpsertMessageBodyInvalidatesChangedHTMLOnlyFTS(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+	messageID := f.CreateMessage("msg-html-only-body-fts-invalidation")
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: "<p>oldhtmlsearchterm</p>", Valid: true}), "store HTML-only body")
+	require.NoError(f.Store.UpsertFTS(messageID, "subject", "oldhtmlsearchterm", "", "", ""),
+		"index HTML-only body")
+
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{},
+		sql.NullString{String: "<p>newhtmlsearchterm</p>", Valid: true}), "update HTML-only body")
+	if f.Store.IsPostgreSQL() {
+		var searchIsNull, versionIsNull bool
+		require.NoError(f.Store.DB().QueryRow(`
+			SELECT search_fts IS NULL, indexing_version IS NULL
+			FROM messages WHERE id = $1
+		`, messageID).Scan(&searchIsNull, &versionIsNull), "check PostgreSQL invalidation")
+		assert.True(searchIsNull, "changed HTML-only body must clear its old FTS document")
+		assert.True(versionIsNull, "changed HTML-only body must require a fresh index version")
+	} else {
+		var count int
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
+		).Scan(&count), "check SQLite invalidation")
+		assert.Zero(count, "changed HTML-only body must delete its old FTS document")
+	}
+}
+
 func TestStore_MessageExistsBatch_Empty(t *testing.T) {
 	f := storetest.New(t)
 

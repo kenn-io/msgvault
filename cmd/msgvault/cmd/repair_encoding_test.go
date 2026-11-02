@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -169,6 +170,48 @@ func TestRepairEncodingPreservesAndReportsInvalidMessageIDs(t *testing.T) {
 	assert.Contains(stderr, "2 RFC 822 Message-ID")
 	assert.Contains(stderr, "left unchanged")
 	assert.Empty(reembedNeededIDs, "Message-ID does not feed the message embedder")
+}
+
+func TestRepairMessageFieldsKeepsHTMLOnlyBodyTextEmpty(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t,
+		"inserts invalid UTF-8 bytes into a TEXT column; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	_, err := db.Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, 'test', 'repair-html@example.test', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert source")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'repair-html-1', 'email_thread', 'title', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert conversation")
+	_, err = db.Exec(`INSERT INTO messages
+		(id, conversation_id, source_id, source_message_id, message_type, sent_at, size_estimate)
+		VALUES (1, 1, 1, 'repair-html-1', 'email', datetime('now'), 1000)`)
+	require.NoError(err, "insert message")
+
+	rawMIME := []byte("MIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><p>html-only marker</p></body></html>")
+	parsed := tryParseMIME(rawMIME, sql.NullString{})
+	require.NotNil(parsed, "parse retained HTML-only MIME")
+	assert.Empty(parsed.BodyText, "HTML-only MIME has no canonical plain-text alternative")
+	assert.Equal("html-only marker", parsed.GetBodyText(), "display text may be derived from HTML")
+
+	_, err = db.Exec(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
+		VALUES (1, ?, 'mime', NULL)`, rawMIME)
+	require.NoError(err, "insert retained MIME")
+	_, err = db.Exec(`INSERT INTO message_bodies (message_id, body_text, body_html)
+		VALUES (1, ?, ?)`, "invalid\xffbody", "<html><body><p>html-only marker</p></body></html>")
+	require.NoError(err, "insert invalid canonical body text")
+
+	_, err = repairMessageFields(st, &repairStats{}, testDiscardLogger())
+	require.NoError(err, "repair message fields")
+
+	var bodyText string
+	require.NoError(db.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = 1`).Scan(&bodyText))
+	assert.Empty(bodyText, "repair must not persist synthesized HTML text as a plain-text alternative")
 }
 
 // TestRepairMessageFields_ReembedNeededIDsAndHiddenTextFlag guards the re-embedding

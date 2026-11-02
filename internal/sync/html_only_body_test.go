@@ -14,7 +14,7 @@ func TestFullSyncStoresHTMLOnlyMailWithoutSynthesizingBodyText(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
-	htmlBody := `<html><body><p>Synthetic receipt body</p></body></html>`
+	htmlBody := `<html><body><p>Synthetic receipt body with htmlonlyneedle</p></body></html>`
 	raw := email.MakeRaw(email.Options{
 		From:        "shop@example.test",
 		To:          testEmail,
@@ -37,4 +37,7 @@ func TestFullSyncStoresHTMLOnlyMailWithoutSynthesizingBodyText(t *testing.T) {
 	assertions.False(bodyText.Valid)
 	assertions.True(bodyHTML.Valid)
 	assertions.Contains(bodyHTML.String, "Synthetic receipt body")
+	_, hits, err := env.Store.SearchMessages("htmlonlyneedle", 0, 10)
+	requirements.NoError(err, "search HTML-only synced body")
+	assertions.Equal(int64(1), hits)
 }

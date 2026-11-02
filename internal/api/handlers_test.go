@@ -4383,6 +4383,29 @@ func TestHandleGetMessage(t *testing.T) {
 	assert.True(resp.HiddenTextPresent)
 }
 
+func TestHandleGetMessage_StoreHTMLOnlyBodyKeepsLegacyHTMLFallback(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	const html = `<p>Readable <strong>HTML-only</strong> body</p>`
+	srv, mock := newTestServerWithMockStore(t)
+	mock.messages[0].Body = "Readable HTML-only body"
+	mock.messages[0].BodyText = ""
+	mock.messages[0].BodyHTML = html
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp MessageDetail
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(html, resp.Body)
+	require.NotNil(resp.BodyText)
+	assert.Empty(*resp.BodyText)
+	assert.Equal(html, resp.BodyHTML)
+}
+
 func TestHandleGetMessageNotFound(t *testing.T) {
 	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
@@ -4448,6 +4471,36 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 	assert.Equal(true, resp["is_from_me"], "is_from_me")
 	assert.InDelta(43, resp["related_message_id"], 0)
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
+}
+
+func TestHandleGetMessage_EngineHTMLOnlyBodyKeepsLegacyHTMLFallback(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	const html = `<p>Readable <strong>HTML-only</strong> body</p>`
+	engine := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{
+			42: {
+				ID:       42,
+				Subject:  "HTML-only message",
+				SentAt:   time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+				BodyHTML: html,
+			},
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/42", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp MessageDetail
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(html, resp.Body)
+	require.NotNil(resp.BodyText)
+	assert.Empty(*resp.BodyText, "derived display text does not change the canonical plain-text field")
+	assert.Equal(html, resp.BodyHTML)
 }
 
 // TestHandleGetMessage_EngineDeletedAt verifies the engine path surfaces

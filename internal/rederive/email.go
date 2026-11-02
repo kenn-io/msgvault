@@ -15,7 +15,7 @@ import (
 )
 
 // Bump the version when parsing the same retained MIME produces different text.
-const emailVersion = "email-v1"
+const emailVersion = "email-v2"
 
 // emailRetrySlots caps exact failed-row markers; later failures widen one
 // overflow range, so retry state is at most emailRetrySlots+2 ledger rows.
@@ -227,11 +227,12 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 		sum.Undecodable++
 		return false, nil //nolint:nilerr // Undecodable MIME is counted and left unchanged.
 	}
-	body := textutil.EnsureUTF8(parsed.GetBodyText())
+	body := textutil.EnsureUTF8(parsed.BodyText)
+	searchableBody := textutil.EnsureUTF8(parsed.GetBodyText())
 	html := textutil.EnsureUTF8(parsed.BodyHTML)
 	snippet := item.Snippet
 	if snippet != "" && snippet == textutil.SnippetFromBody(item.BodyText) {
-		snippet = textutil.SnippetFromBody(body)
+		snippet = textutil.SnippetFromBody(searchableBody)
 	}
 	changed, err := w.s.UpdateArchivedEmailTextContext(ctx, item,
 		sql.NullString{String: body, Valid: body != ""}, sql.NullString{String: html, Valid: html != ""},

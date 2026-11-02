@@ -1698,11 +1698,11 @@ func upsertMessageBody(
 	messageID int64,
 	bodyText, bodyHTML sql.NullString,
 ) error {
-	embeddingChanged, textChanged, err := messageBodyChanges(q, messageID, bodyText, bodyHTML)
+	embeddingChanged, textChanged, recordsChanged, err := messageBodyChanges(q, messageID, bodyText, bodyHTML)
 	if err != nil {
 		return err
 	}
-	if textChanged && ftsAvailable {
+	if (textChanged || embeddingChanged) && ftsAvailable {
 		// Invalidate before the body write: a missing index entry is
 		// recoverable by backfill, while a stale entry could produce a false hit.
 		if err := dialect.InvalidateFTSForMessage(q, messageID); err != nil {
@@ -1718,6 +1718,14 @@ func upsertMessageBody(
 	`, messageID, bodyText, bodyHTML)
 	if err != nil {
 		return err
+	}
+	if recordsChanged && dialect.DriverName() != postgresDriverName {
+		// Reuse the cache repair journal: edits to covered bodies require a
+		// full repair, while bodies above the published ID remain appendable.
+		if _, err := q.Exec(`INSERT INTO cache_related_change_journal (dataset, message_id)
+			VALUES ('message_facts', ?)`, messageID); err != nil {
+			return fmt.Errorf("invalidate message records projection: %w", err)
+		}
 	}
 	hiddenTextPresent := bodyHTML.Valid && mime.HTMLHasHiddenText(bodyHTML.String)
 	if _, err := q.Exec(`UPDATE messages SET hidden_text_present = ? WHERE id = ? AND hidden_text_present <> ?`,
@@ -1737,20 +1745,22 @@ func messageBodyChanges(
 	q querier,
 	messageID int64,
 	bodyText, bodyHTML sql.NullString,
-) (embeddingChanged bool, textChanged bool, err error) {
+) (embeddingChanged bool, textChanged bool, recordsChanged bool, err error) {
 	var oldText, oldHTML sql.NullString
 	err = q.QueryRow(`
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
-	if errors.Is(err, sql.ErrNoRows) {
-		return embeddingBodyValue(bodyText, bodyHTML) != "",
-			nullStringValue(bodyText) != "", nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, false, false, err
 	}
-	if err != nil {
-		return false, false, err
+	textChanged = nullStringValue(oldText) != nullStringValue(bodyText)
+	htmlChanged := nullStringValue(oldHTML) != nullStringValue(bodyHTML)
+	if textChanged || htmlChanged {
+		recordsChanged = strings.Contains(strings.ToLower(nullStringValue(oldHTML)), "application/ld+json") ||
+			strings.Contains(strings.ToLower(nullStringValue(bodyHTML)), "application/ld+json")
 	}
 	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML),
-		nullStringValue(oldText) != nullStringValue(bodyText), nil
+		textChanged, recordsChanged, nil
 }
 
 func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {
@@ -1832,22 +1842,23 @@ func (s *Store) GetMessageRawsContext(ctx context.Context, ids []int64) (map[int
 	return result, nil
 }
 
-// GetMessageBodyAndRawContext reads one message's body and MIME in the same
-// snapshot, so callers can authorize the sender of the content they return.
+// GetMessageBodyAndRawContext reads the best available display body and MIME
+// in the same snapshot, so callers can authorize the sender of the content
+// they return. HTML-only messages use readable text derived from body_html.
 func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64) (string, []byte, error) {
-	var body, compression sql.NullString
+	var bodyText, bodyHTML, compression sql.NullString
 	var compressed []byte
 	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT b.body_text, r.raw_data, r.compression
+		SELECT b.body_text, b.body_html, r.raw_data, r.compression
 		FROM message_raw r
 		LEFT JOIN message_bodies b ON b.message_id = r.message_id
 		WHERE r.message_id = ?
-	`), messageID).Scan(&body, &compressed, &compression)
+	`), messageID).Scan(&bodyText, &bodyHTML, &compressed, &compression)
 	if err != nil {
 		return "", nil, err
 	}
 	raw, err := decodeMessageRaw(compressed, compression)
-	return body.String, raw, err
+	return mime.TextBodyForDisplay(bodyText.String, bodyHTML.String), raw, err
 }
 
 // GetMessageBodyText returns the archived plain-text body for one message.
@@ -3942,7 +3953,7 @@ func (s *Store) BackfillFTSContext(
 	if err != nil {
 		return 0, err
 	}
-	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, progress)
+	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, progress, true)
 }
 
 // RebuildFTS fully recreates the FTS index from the underlying message
@@ -3984,7 +3995,7 @@ func (s *Store) RebuildFTSContext(
 		return 0, nil
 	}
 
-	indexed, err := s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillBatchSQL(), minID, maxID, progress)
+	indexed, err := s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillBatchSQL(), minID, maxID, progress, false)
 	if err != nil {
 		return indexed, err
 	}
@@ -4013,6 +4024,7 @@ func (s *Store) backfillFTSRangeContext(
 	batchSQL string,
 	minID, maxID int64,
 	progress func(done, total int64),
+	missingOnly bool,
 ) (int64, error) {
 	const batchSize = 5000
 	idRange := maxID - minID + 1
@@ -4021,7 +4033,7 @@ func (s *Store) backfillFTSRangeContext(
 
 	for cursor <= maxID {
 		batchEnd := cursor + batchSize
-		n, err := s.backfillFTSBatchContext(ctx, batchSQL, cursor, batchEnd)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, cursor, batchEnd, missingOnly)
 		if err != nil {
 			// Only the specific PG tsvector-overflow error (a single
 			// pathological row whose body exceeds PostgreSQL's tsvector
@@ -4033,7 +4045,7 @@ func (s *Store) backfillFTSRangeContext(
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
 			}
-			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, cursor, batchEnd)
+			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, cursor, batchEnd, missingOnly)
 			if err != nil {
 				return indexed, err
 			}
@@ -4068,10 +4080,11 @@ func (s *Store) backfillFTSRowByRowContext(
 	ctx context.Context,
 	batchSQL string,
 	fromID, toID int64,
+	missingOnly bool,
 ) (int64, error) {
 	var indexed int64
 	for id := fromID; id < toID; id++ {
-		n, err := s.backfillFTSBatchContext(ctx, batchSQL, id, id+1)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, id, id+1, missingOnly)
 		if err != nil {
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
@@ -4111,6 +4124,7 @@ func (s *Store) backfillFTSBatchContext(
 	ctx context.Context,
 	batchSQL string,
 	fromID, toID int64,
+	missingOnly bool,
 ) (int64, error) {
 	if s.backfillFTSBatchErrHook != nil {
 		if err := s.backfillFTSBatchErrHook(fromID, toID); err != nil {
@@ -4119,14 +4133,190 @@ func (s *Store) backfillFTSBatchContext(
 	}
 	var affected int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		htmlOnlyIDs, err := s.listFTSHTMLBodyIDsTx(ctx, tx, fromID, toID, missingOnly)
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
 		if err != nil {
 			return err
 		}
 		affected, err = result.RowsAffected()
-		return err
+		if err != nil {
+			return err
+		}
+		return s.backfillFTSHTMLBodyIDsTx(ctx, tx, htmlOnlyIDs)
 	})
 	return affected, err
+}
+
+// backfillFTSHTMLBodiesTx corrects the batch SQL's body column for HTML-only
+// messages. The SQL dialects share an index shape, but only the MIME parser
+// can reliably turn HTML into the same searchable text used during ingestion.
+func (s *Store) backfillFTSHTMLBodiesTx(ctx context.Context, tx *loggedTx, fromID, toID int64) error {
+	ids, err := s.listFTSHTMLBodyIDsTx(ctx, tx, fromID, toID, false)
+	if err != nil {
+		return err
+	}
+	return s.backfillFTSHTMLBodyIDsTx(ctx, tx, ids)
+}
+
+func (s *Store) listFTSHTMLBodyIDsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	fromID, toID int64,
+	missingOnly bool,
+) ([]int64, error) {
+	query := `
+		SELECT mb.message_id
+		FROM message_bodies mb
+		WHERE mb.message_id >= ? AND mb.message_id < ?
+		  AND COALESCE(octet_length(mb.body_text), 0) = 0
+		  AND COALESCE(octet_length(mb.body_html), 0) > 0
+	`
+	args := []any{fromID, toID}
+	if missingOnly {
+		if s.dialect.DriverName() == postgresDriverName {
+			query += ` AND EXISTS (
+				SELECT 1 FROM messages m
+				WHERE m.id = mb.message_id
+				  AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM ?)
+			)`
+			args = append(args, CurrentFTSIndexingVersion)
+		} else {
+			query += ` AND NOT EXISTS (
+				SELECT 1 FROM messages_fts f WHERE f.rowid = mb.message_id
+			)`
+		}
+	}
+	query += ` ORDER BY mb.message_id`
+	rows, err := tx.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list HTML-only FTS rows: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan HTML-only FTS row: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate HTML-only FTS rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close HTML-only FTS rows: %w", err)
+	}
+	return s.lockAndRefreshFTSHTMLBodyIDsTx(ctx, tx, ids)
+}
+
+// lockAndRefreshFTSHTMLBodyIDsTx serializes PostgreSQL body indexing with
+// message-body writes. Body writers lock the message row before changing its
+// body, so take those locks first, then lock and recheck the body rows. The
+// recheck drops candidates that changed from HTML-only while the initial list
+// was being collected.
+func (s *Store) lockAndRefreshFTSHTMLBodyIDsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	ids []int64,
+) ([]int64, error) {
+	if s.dialect.DriverName() != postgresDriverName || len(ids) == 0 {
+		return ids, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	messageRows, err := tx.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
+		/* fts-html-candidate-lock */
+		SELECT id FROM messages
+		WHERE id IN (%s)
+		ORDER BY id
+		FOR UPDATE
+	`, strings.Join(placeholders, ","))), args...)
+	if err != nil {
+		return nil, fmt.Errorf("lock HTML-only FTS messages: %w", err)
+	}
+	lockedMessageIDs := make([]int64, 0, len(ids))
+	for messageRows.Next() {
+		var id int64
+		if err := messageRows.Scan(&id); err != nil {
+			_ = messageRows.Close()
+			return nil, fmt.Errorf("scan HTML-only FTS message lock: %w", err)
+		}
+		lockedMessageIDs = append(lockedMessageIDs, id)
+	}
+	if err := messageRows.Err(); err != nil {
+		_ = messageRows.Close()
+		return nil, fmt.Errorf("iterate HTML-only FTS message locks: %w", err)
+	}
+	if err := messageRows.Close(); err != nil {
+		return nil, fmt.Errorf("close HTML-only FTS message locks: %w", err)
+	}
+	if len(lockedMessageIDs) == 0 {
+		return nil, nil
+	}
+
+	bodyPlaceholders := make([]string, len(lockedMessageIDs))
+	bodyArgs := make([]any, len(lockedMessageIDs))
+	for i, id := range lockedMessageIDs {
+		bodyPlaceholders[i] = "?"
+		bodyArgs[i] = id
+	}
+	bodyRows, err := tx.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
+		SELECT message_id
+		FROM message_bodies
+		WHERE message_id IN (%s)
+		  AND COALESCE(octet_length(body_text), 0) = 0
+		  AND COALESCE(octet_length(body_html), 0) > 0
+		ORDER BY message_id
+		FOR UPDATE
+	`, strings.Join(bodyPlaceholders, ","))), bodyArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("lock and refresh HTML-only FTS body candidates: %w", err)
+	}
+	refreshedIDs := make([]int64, 0, len(lockedMessageIDs))
+	for bodyRows.Next() {
+		var id int64
+		if err := bodyRows.Scan(&id); err != nil {
+			_ = bodyRows.Close()
+			return nil, fmt.Errorf("scan refreshed HTML-only FTS body candidate: %w", err)
+		}
+		refreshedIDs = append(refreshedIDs, id)
+	}
+	if err := bodyRows.Err(); err != nil {
+		_ = bodyRows.Close()
+		return nil, fmt.Errorf("iterate refreshed HTML-only FTS body candidates: %w", err)
+	}
+	if err := bodyRows.Close(); err != nil {
+		return nil, fmt.Errorf("close refreshed HTML-only FTS body candidates: %w", err)
+	}
+	return refreshedIDs, nil
+}
+
+func (s *Store) backfillFTSHTMLBodyIDsTx(ctx context.Context, tx *loggedTx, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	for _, id := range ids {
+		row, err := s.loadDerivedEmailText(q, id)
+		if err != nil {
+			return fmt.Errorf("load HTML-only FTS row %d: %w", id, err)
+		}
+		row.fts.Body = searchableEmailBodyText(row.body, row.html)
+		if err := s.dialect.FTSUpsert(q, row.fts); err != nil {
+			return fmt.Errorf("index HTML-only message %d: %w", id, err)
+		}
+	}
+	return nil
 }
 
 const latestConversationPreviewSubquery = `(SELECT snippet FROM messages
@@ -6880,7 +7070,7 @@ func (s *Store) derivedEmailTextMatchesContext(ctx context.Context, row derivedE
 		return true, nil
 	}
 	q := boundQuerier{ctx: ctx, q: s.db}
-	row.fts.Body = bodyText.String
+	row.fts.Body = searchableEmailBodyText(bodyText.String, bodyHTML.String)
 	matches, err := s.dialect.FTSMatches(q, row.fts)
 	if s.dialect.IsFTSValueTooLargeError(err) {
 		return ftsMessageUnsearchable(q, row.fts.MessageID)
@@ -6900,12 +7090,19 @@ func (s *Store) writeDerivedEmailText(ctx context.Context, tx *loggedTx, item *A
 	if err != nil {
 		return false, fmt.Errorf("load derived email envelope: %w", err)
 	}
-	row.fts.Body = bodyText.String
+	row.fts.Body = searchableEmailBodyText(bodyText.String, bodyHTML.String)
 	if row.matches(bodyText, bodyHTML, snippet) {
 		return s.upsertFTSOrUnsearchable(q, row.fts)
 	}
 	upsert := func(q querier, doc FTSDoc) error { _, err := s.upsertFTSOrUnsearchable(q, doc); return err }
 	return true, s.updateMessageDerivedText(q, item.MessageID, bodyText, bodyHTML, snippet, row.fts, upsert)
+}
+
+func searchableEmailBodyText(bodyText, bodyHTML string) string {
+	if bodyText != "" {
+		return bodyText
+	}
+	return mime.StripHTML(bodyHTML)
 }
 
 // ErrArchivedEmailSnippetChanged requires a fresh scan before retrying a repair.

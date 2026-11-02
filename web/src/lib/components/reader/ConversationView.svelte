@@ -252,6 +252,18 @@
     viewModes = { ...viewModes, [id]: mode };
   }
 
+  function textBody(message: APIMessageDetail): string {
+    if (message.body_text) return message.body_text;
+    const html = message.body_html;
+    if (!html || message.body !== html) return message.body;
+
+    // DOMParser creates an inert document, so sender-controlled HTML cannot
+    // load remote resources while the reader derives its plain-text view.
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    parsed.querySelectorAll('head,script,style,noscript,template').forEach((node) => node.remove());
+    return (parsed.body.innerText || parsed.body.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
   function archiveDetail(message: APIMessageDetail): ArchiveMessageDetail {
     return {
       id: message.id,
@@ -263,7 +275,7 @@
       snippet: message.snippet,
       messageType: message.message_type,
       relatedMessageId: message.related_message_id,
-      body: message.body,
+      body: textBody(message),
       bodyHtml: message.body_html,
       attachments: (message.attachments ?? []).map((attachment) => ({
         id: attachment.id,

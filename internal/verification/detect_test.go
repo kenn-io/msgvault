@@ -17,11 +17,15 @@ func TestDetectCorpus(t *testing.T) {
 		{"verification", "Your verification code is 482913", "otp_code", "482913", 0},
 		{"security", "Security code: 482913. Expires in 10 minutes.", "otp_code", "482913", 10 * time.Minute},
 		{"one-time", "One-time code 482913", "otp_code", "482913", 0},
+		{"one-time with non-breaking space", "One-time\u00a0code: 482913", "otp_code", "482913", 0},
+		{"discount code with non-breaking space", "Your code SAVE20. Use discount\u00a0code SAVE20.", "", "", 0},
 		{"one time", "One time password 482913", "otp_code", "482913", 0},
+		{"generic sign-in code", "Sign in: 482913", "otp_code", "482913", 0},
 		{"otp", "OTP: 482913", "otp_code", "482913", 0},
 		{"passcode", "Passcode: 4829", "otp_code", "4829", 0},
 		{"your code", "Your code is 482913", "otp_code", "482913", 0},
 		{"reverse", "482913 is your sign-in code", "otp_code", "482913", 0},
+		{"reverse booking reference", "ABC123 is your booking code", "", "", 0},
 		{"prefixed", "G-482913 is your verification code", "otp_code", "G-482913", 0},
 		{"space grouped", "Verification code: 482 913", "otp_code", "482 913", 0},
 		{"dash grouped", "Verification code: 482-913", "otp_code", "482-913", 0},
@@ -48,6 +52,20 @@ func TestDetectCorpus(t *testing.T) {
 		{"long DM", strings.Repeat("ordinary text ", 100) + "Verification code: 482913", "otp_code", "482913", 0},
 		{"cue only", "Your verification code will arrive separately", "otp_code", "", 0},
 		{"generic sign-in navigation", "Your order is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders", "", "", 0},
+		{"generic sign-in beside public help link", "Your order is confirmed. Sign in to view your order. Shipping help: https://shop.example.test/help/shipping-information", "", "", 0},
+		{"public URL before separate sign-in sentence", "Shipping help: https://shop.example.test/help/shipping-information?article=abcdefghijklmnop. Sign in to view your order.", "", "", 0},
+		{"decimal CHF total with non-breaking space", "Total: 1299.00\u00a0CHF. Sign in to view your invoice.", "", "", 0},
+		{"invoice reference with non-breaking spaces", "Invoice\u00a0number: 482913. Sign in to view your invoice.", "", "", 0},
+		{"confirmation number before generic sign-in", "Confirmation number: ABC123. Sign in to manage your booking.", "", "", 0},
+		{"integer CHF total before generic sign-in", "Total 1299 CHF. Sign in to view your invoice.", "", "", 0},
+		{"order number with generic sign-in", "Your order number is 482913. Sign in to view your order.", "", "", 0},
+		{"generic sign-in with order date", "Order date: 2026-11-03. Sign in to view your order.", "", "", 0},
+		{"reservation code with generic sign-in", "Reservation code: ABC123. Sign in to manage your booking.", "", "", 0},
+		{"booking code with generic sign-in", "Booking code: BOOK123. Sign in to manage your reservation.", "", "", 0},
+		{"promotional code", "Use your code SAVE20 for 20% off", "", "", 0},
+		{"one-time payment", "This is a one-time payment for your order.", "", "", 0},
+		{"one time purchase", "Your one time purchase is confirmed.", "", "", 0},
+		{"one-time purchase coupon code", "Your one-time purchase is confirmed. Use coupon code SAVE20.", "", "", 0},
 		{"invoice", "Invoice 482913 total $154.00", "", "", 0},
 		{"order", "Your order number is 482913", "", "", 0},
 		{"tracking", "Tracking 1234567890123456", "", "", 0},
@@ -115,6 +133,21 @@ func TestAllChannelsAndCanonicalFields(t *testing.T) {
 		f := Detect(in)
 		require.NotNil(t, f)
 		assert.NotEmpty(t, f.Values)
+	}
+}
+
+func BenchmarkDetectManyOpaqueURLsAndSignInCues(b *testing.B) {
+	const count = 512
+	var body strings.Builder
+	for range count {
+		body.WriteString("Sign in to manage your order. ")
+		body.WriteString("https://shop.example.test/help/shipping-information?article=abcdefghijklmnop. ")
+	}
+	in := Input{MessageType: "email", BodyText: body.String()}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		Detect(in)
 	}
 }
 
@@ -376,6 +409,28 @@ func TestAnyCodePromotesGenericSignIn(t *testing.T) {
 	}
 }
 
+func TestGenericSignInDoesNotPromoteOrderOrTrackingNumbers(t *testing.T) {
+	for _, body := range []string{
+		"Order number 482913. Sign in to view your order.",
+		"Tracking number: 482913. Sign in to view delivery details.",
+		"482913 is your order number. Sign in to view your order.",
+		"482913 is your tracking number. Sign in to view delivery details.",
+		"Invoice number 482913. Sign in to view your invoice.",
+		"482913 is your reservation number. Sign in to view your reservation.",
+		"Total $1299.00. Sign in to view your order.",
+		"Total: 1299.00 CHF. Sign in to view your order.",
+	} {
+		t.Run(body, func(t *testing.T) {
+			assert.Nil(t, Detect(Input{BodyText: body}))
+		})
+	}
+}
+
+func TestGenericSignInRepeatedDatesRemainOrdinary(t *testing.T) {
+	body := strings.Repeat("Sign in to view your account on 2026-11-03; ", 2_000)
+	assert.Nil(t, Detect(Input{BodyText: body}))
+}
+
 func TestExplicitCredentialCuesExtractOpaqueLinks(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, value string
@@ -407,6 +462,10 @@ func TestExplicitCredentialCuesExtractOpaqueLinks(t *testing.T) {
 	f := Detect(Input{BodyText: "Your verification code is 482913. Read https://example.com/news/abcdefghijklmnop"})
 	require.NotNil(t, f)
 	assert.Equal(t, []Secret{{Kind: "code", Value: "482913"}}, f.Values)
+}
+
+func TestOpaqueGenericLinkNeedsAssociatedCue(t *testing.T) {
+	assert.Nil(t, Detect(Input{BodyText: "Sign in to view your order.\nShipping help: https://example.com/help/abcdefghijklmnop"}))
 }
 
 func TestFragmentCredentialLinks(t *testing.T) {
@@ -457,6 +516,7 @@ func TestReverseCodeCueRequiresStandaloneNonURLCode(t *testing.T) {
 func TestCredentialLinkRequiresPayload(t *testing.T) {
 	for _, value := range []string{
 		"https://example.com/login",
+		"https://example.com/help/shipping-information",
 		"https://example.com/login?token=",
 		"https://example.com/login?redirect=docs",
 		"https://example.com/login/help",

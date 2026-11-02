@@ -175,6 +175,10 @@ func RegisterViewsWithColumns(ctx context.Context, db *sql.DB, analyticsDir stri
 	if err := createRelationshipActivityView(ctx, db, analyticsDir); err != nil {
 		return err
 	}
+	path := strings.ReplaceAll(filepath.Join(analyticsDir, "message_records", "*.parquet"), "'", "''")
+	if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW message_records AS SELECT * FROM read_parquet('"+path+"')"); err != nil {
+		return fmt.Errorf("create message records view: %w", err)
+	}
 	return createConvenienceViews(ctx, db)
 }
 

@@ -1079,6 +1079,46 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 	assert.Equal(0, fixture.client.updateCalls)
 }
 
+func TestGmailDraftExternalAdoptionIndexesHTMLOnlyBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	raw := []byte("From: owner@example.test\r\nTo: sender@example.test\r\nSubject: Re: Question\r\nMessage-ID: <gmail-external-html@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>External HTML draft contains htmladoptionmarker.</p>\r\n")
+	parsed, err := msgmime.Parse(raw)
+	require.NoError(err)
+	assert.Empty(parsed.BodyText)
+	assert.Contains(parsed.GetBodyText(), "htmladoptionmarker")
+	fixture.client.getDraft = &gmail.Draft{
+		ID: "gmail-draft-managed",
+		Message: gmail.RawMessage{
+			ID: "gmail-message-external-html", ThreadID: "gmail-thread-1", Raw: raw,
+		},
+	}
+
+	events, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate")
+	require.Error(err)
+	assert.Equal("changed_externally", err.Error())
+	require.Len(events, 1)
+
+	adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	message, err := fixture.store.GetMessageContext(t.Context(), adopted.CurrentMessageID)
+	require.NoError(err)
+	assert.Empty(message.BodyText)
+	assert.Contains(message.BodyHTML, "htmladoptionmarker")
+	assert.Contains(message.Snippet, "htmladoptionmarker")
+	output, err := fixture.adapter.gmailDraftLifecycleOutput(t.Context(), adopted, "present", nil, nil)
+	require.NoError(err)
+	assert.Contains(output.Content, "htmladoptionmarker")
+
+	matches, total, err := fixture.store.SearchMessagesContext(t.Context(), "htmladoptionmarker", 0, 10)
+	require.NoError(err)
+	require.Equal(int64(1), total)
+	require.Len(matches, 1)
+	assert.Equal(adopted.CurrentMessageID, matches[0].ID)
+}
+
 func TestGmailDraftCancellationClearsClaim(t *testing.T) {
 	for _, operation := range []string{api.CLIRunDraftEditCommand, api.CLIRunDraftDeleteCommand} {
 		t.Run(operation, func(t *testing.T) {

@@ -8129,13 +8129,14 @@ components:
             type: string
           type: array
         body:
+          description: Plain-text body when one is stored; otherwise the legacy HTML fallback. Use body_html to access the HTML alternative alongside plain text.
           type: string
         body_html:
           type: string
         body_omitted:
           type: boolean
         body_text:
-          description: Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback.
+          description: Canonical stored plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback.
           type: string
         calendar:
           $ref: "#/components/schemas/CalendarProjection"
