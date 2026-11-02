@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -409,9 +408,6 @@ func (p *Processor) reconcileMutations(ctx context.Context, messageID string) er
 }
 
 func (p *Processor) unsend(ctx context.Context, e Event) error {
-	if strings.ContainsAny(e.Unsend.MessageID, "\r\n") {
-		return invalidEvent("invalid LINE unsend target")
-	}
 	row, err := p.store.LineMessageContext(ctx, p.sourceID, e.Unsend.MessageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errTargetMissing
@@ -426,7 +422,7 @@ func (p *Processor) unsend(ctx context.Context, e Event) error {
 	if !row.SourceConversationID.Valid || row.SourceConversationID.String != key {
 		return invalidEvent("LINE unsend target belongs to a different chat")
 	}
-	if err = p.store.MarkMessagesDeletedFromReaderContext(ctx, p.sourceID, strings.NewReader(e.Unsend.MessageID+"\n"), 1); err != nil {
+	if err = p.store.MarkMessageDeletedContext(ctx, p.sourceID, e.Unsend.MessageID); err != nil {
 		return err
 	}
 	jobctx.RecordProgress(ctx)

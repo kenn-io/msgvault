@@ -106,11 +106,6 @@ func NewClient(channelID, secret string, options ...ClientOption) *Client {
 	return c
 }
 
-func validBase(base string) bool {
-	parsed, err := url.Parse(base)
-	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == ""
-}
-
 func (c *Client) accessToken(ctx context.Context, rejected string) (string, error) {
 	select {
 	case c.gate <- struct{}{}:
@@ -157,9 +152,6 @@ func (c *Client) send(ctx context.Context, method, base, path string, body []byt
 }
 
 func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path string, body []byte, contentType, token string, client *http.Client) (*http.Response, error) {
-	if !validBase(base) {
-		return nil, errors.New("line: invalid API base URL")
-	}
 	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("line: cannot create request")

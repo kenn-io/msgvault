@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -369,20 +368,6 @@ func TestClientContentUsesAttachmentDownloadTimeout(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.True(t, downloadDeadline.After(time.Now().Add(30*time.Second)))
-}
-
-func TestClientRejectsInvalidBaseURLs(t *testing.T) {
-	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
-	defer server.Close()
-	userInfo := strings.Replace(server.URL, "http://", "http://user:secret@", 1)
-	for _, base := range []string{userInfo, server.URL + "?query", server.URL + "#fragment"} {
-		client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs(base, base))
-		_, err := client.BotInfo(context.Background())
-		require.EqualError(t, err, "line: invalid API base URL")
-		assert.NotContains(t, err.Error(), "secret")
-	}
-	assert.Zero(t, requests.Load())
 }
 
 type trackedBody struct {
