@@ -587,9 +587,11 @@ Free text in `search_metadata` matches subject, snippet, and sender/recipient me
 ### `search_in_message`
 
 Pass a message `id` from any list or search result plus a `query`. The tool
-performs case-insensitive literal matching in `body_text` and
-returns an exact `total`, paginated `data`, and a `char_offset`, `line`, and
-centered `snippet` for every match. Feed `char_offset` to `get_message` as
+performs case-insensitive literal matching in the plain-text body, or the raw
+HTML body for HTML-only mail. This is the same body `get_message` returns with
+the automatic body format. The tool returns an exact `total`, paginated `data`,
+and a `char_offset`, `line`, and centered `snippet` for every match. Offsets
+index that body. Feed `char_offset` to `get_message` as
 `center_at` to read a larger body window around that occurrence.
 
 The tool defaults to `limit = 10`. For semantic search across the archive, use

@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -58,10 +57,7 @@ func readableMessageDetail(message *query.MessageDetail) *query.MessageDetail {
 }
 
 func messageTextBody(message *query.MessageDetail, stripQuoted bool) string {
-	body := message.BodyText
-	if body == "" && message.BodyHTML != "" {
-		body = mime.StripHTML(message.BodyHTML)
-	}
+	body := message.TextBody()
 	if body == "" {
 		body = message.Snippet
 	}

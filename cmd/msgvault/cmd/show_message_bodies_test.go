@@ -19,6 +19,7 @@ func TestOutputMessageTextBodyAlternatives(t *testing.T) {
 				{"HTML-only", "", "<p>Full delivery details</p>", "Short preview", "Full delivery details"},
 				{"HTML-only without snippet", "", "<p>Full delivery details</p>", "", "Full delivery details"},
 				{"plain text preferred", "Plain delivery details", "<p>HTML alternative</p>", "Short preview", "Plain delivery details"},
+				{"HTML without readable text", "", "<img src=x.png>", "Photo from Bob", "Photo from Bob"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					assert := assert.New(t)
@@ -32,7 +33,11 @@ func TestOutputMessageTextBodyAlternatives(t *testing.T) {
 					assert.Contains(output.String(), tc.want)
 					assert.NotContains(output.String(), "<p>")
 					assert.NotContains(output.String(), "Short preview")
-					assert.NotContains(output.String(), "No body")
+					if tc.name == "HTML without readable text" && !bodyOnly {
+						assert.Contains(output.String(), "[No body text available. Snippet: Photo from Bob]")
+					} else {
+						assert.NotContains(output.String(), "No body")
+					}
 					assert.NotContains(output.String(), "HTML alternative")
 					assert.Equal(tc.text, message.BodyText)
 					assert.Equal(tc.html, message.BodyHTML)
