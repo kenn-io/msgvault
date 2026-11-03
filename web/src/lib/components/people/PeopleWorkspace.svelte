@@ -188,7 +188,11 @@
       if (bulkCompleted > 0) await directory.reloadFirstPage();
     }
   }
-  async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+  async function reconcilePersonMerge(context: RelationshipsMergeContext, success: PersonMergeSuccess | undefined = undefined): Promise<void> {
+    if (success && soloPerson === success.result.merge.absorbed_person_id) {
+      soloProfile = soloProfileOf(success.survivor.id, success.survivor);
+      onReplaceNavigation({ directoryPersonID: success.survivor.id });
+    }
     await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
+  import type { PersonMergeSuccess } from '../../directory/person-merge';
   import type { MessagesTable } from '../../explore/loader.svelte';
   import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
@@ -22,7 +23,7 @@
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
-      onReconcilePersonMerge: (context: RelationshipsMergeContext) => Promise<void>; onIdentityChange?: () => Promise<void>;
+      onReconcilePersonMerge: (context: RelationshipsMergeContext, success: PersonMergeSuccess) => Promise<void>; onIdentityChange?: () => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
       onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
