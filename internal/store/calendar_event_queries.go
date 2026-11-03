@@ -378,7 +378,7 @@ func calendarEventRowsInWindow(ctx context.Context, r reboundReader, from, to ti
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND m.deleted_from_source_at IS NULL AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}

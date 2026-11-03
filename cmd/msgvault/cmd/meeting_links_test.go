@@ -127,5 +127,10 @@ func TestMeetingLinkCommands(t *testing.T) {
 		command, _, err := root.Find([]string{name})
 		requirements.NoError(err)
 		assertions.Equal(name, command.Name())
+		if name == "suggest" {
+			assertions.Equal("Suggest meeting links", command.Short)
+			assertions.Contains(command.Long, "msg:<id>")
+			assertions.Contains(command.Long, "evt:<id>[@occurrence key]")
+		}
 	}
 }

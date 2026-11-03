@@ -127,21 +127,25 @@ type Person struct {
 	Credited      bool   `json:"credited,omitempty"`
 }
 type PersonHeader struct {
-	Person             Person          `json:"person"`
-	Ref                string          `json:"ref"`
-	Channels           []string        `json:"channels"`
-	FirstAt            *time.Time      `json:"first_at"`
-	LastAt             *time.Time      `json:"last_at"`
-	LastInboundAt      *time.Time      `json:"last_inbound_at"`
-	LastOutboundAt     *time.Time      `json:"last_outbound_at"`
-	InteractionCount   int             `json:"interaction_count"`
-	CadenceStatus      string          `json:"cadence_status,omitempty"`
-	DueAt              *time.Time      `json:"due_at,omitempty"`
-	InitiatedByContact int             `json:"initiated_by_contact"`
-	InitiatedByOwner   int             `json:"initiated_by_owner"`
-	Monthly            [12]int         `json:"monthly"`
-	Brief              *UntrustedText  `json:"brief,omitempty"`
-	Agenda             []UntrustedText `json:"agenda,omitempty"`
+	Person                  Person          `json:"person"`
+	Ref                     string          `json:"ref"`
+	Channels                []string        `json:"channels"`
+	FirstAt                 *time.Time      `json:"first_at"`
+	FirstAtPrecision        string          `json:"first_at_precision,omitempty"`
+	LastAt                  *time.Time      `json:"last_at"`
+	LastAtPrecision         string          `json:"last_at_precision,omitempty"`
+	LastInboundAt           *time.Time      `json:"last_inbound_at"`
+	LastInboundAtPrecision  string          `json:"last_inbound_at_precision,omitempty"`
+	LastOutboundAt          *time.Time      `json:"last_outbound_at"`
+	LastOutboundAtPrecision string          `json:"last_outbound_at_precision,omitempty"`
+	InteractionCount        int             `json:"interaction_count"`
+	CadenceStatus           string          `json:"cadence_status,omitempty"`
+	DueAt                   *time.Time      `json:"due_at,omitempty"`
+	InitiatedByContact      int             `json:"initiated_by_contact"`
+	InitiatedByOwner        int             `json:"initiated_by_owner"`
+	Monthly                 [12]int         `json:"monthly"`
+	Brief                   *UntrustedText  `json:"brief,omitempty"`
+	Agenda                  []UntrustedText `json:"agenda,omitempty"`
 }
 type Anchor struct {
 	Ref      string    `json:"ref"`

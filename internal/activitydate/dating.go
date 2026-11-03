@@ -92,6 +92,28 @@ func DateEvent(ts Timestamps, loc *time.Location) (Dating, error) {
 	}, nil
 }
 
+// Compare orders activity dates with the precision supplied by their source.
+// Day-precision values are UTC-anchored civil dates; timestamps use the
+// projection timezone. When either side is day-precision, compare those civil
+// dates instead of treating the UTC anchor as an instant.
+func Compare(a time.Time, aPrecision DatePrecision, b time.Time, bPrecision DatePrecision, loc *time.Location) int {
+	if aPrecision == PrecisionDay || bPrecision == PrecisionDay {
+		if loc == nil {
+			loc = time.UTC
+		}
+		civil := func(at time.Time, precision DatePrecision) time.Time {
+			if precision != PrecisionDay {
+				at = at.In(loc)
+			} else {
+				at = at.UTC()
+			}
+			return time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
+		}
+		a, b = civil(a, aPrecision), civil(b, bPrecision)
+	}
+	return a.Compare(b)
+}
+
 func pickInstant(ts Timestamps) (time.Time, DateOrigin, bool) {
 	switch {
 	case usable(ts.SentAt):

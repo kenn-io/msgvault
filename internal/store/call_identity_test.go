@@ -359,6 +359,32 @@ func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) 
 	}
 }
 
+func TestCallContactAggregateOrdersMixedPrecisionByCivilDate(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newLogicalCallFixture(t)
+	day := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	messageDay := time.Date(2026, 10, 22, 3, 0, 0, 0, time.UTC)
+	f.put(t, "day", func(o *callhistory.Observation) { o.OccurredAt, o.Precision = day, "day" })
+	f.put(t, "instant", func(o *callhistory.Observation) { o.OccurredAt = messageDay })
+	zone := time.FixedZone("west", -7*60*60)
+	q := store.ContactQuery{
+		Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}},
+		Now:     time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), Location: zone,
+	}
+
+	got, err := f.st.CallContactAggregateContext(t.Context(), q)
+	requirements.NoError(err)
+	requirements.NotNil(got.FirstAt)
+	requirements.NotNil(got.LastAt)
+	assertions.Equal(messageDay, *got.FirstAt)
+	assertions.Empty(got.FirstAtPrecision)
+	assertions.Equal(day, *got.LastAt)
+	assertions.Equal("day", got.LastAtPrecision)
+	requirements.NotNil(got.LastInboundAt)
+	assertions.Equal(day, *got.LastInboundAt)
+	assertions.Equal("day", got.LastInboundAtPrecision)
+}
+
 func TestCallContactAggregateScope(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

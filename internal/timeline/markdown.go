@@ -60,9 +60,9 @@ func Markdown(t *Timeline) string {
 	}
 	if p := t.Person; p != nil && t.Mode == ModeRelationship {
 		fmt.Fprintf(&b, "%s · %s · %d interactions\n", singleLine(p.Ref, 80), strings.Join(p.Channels, ", "), p.InteractionCount)
-		fmt.Fprintf(&b, "first %s · last %s · ↓ %s · ↑ %s\n", dateText(p.FirstAt, loc), dateText(p.LastAt, loc), dateText(p.LastInboundAt, loc), dateText(p.LastOutboundAt, loc))
+		fmt.Fprintf(&b, "first %s · last %s · ↓ %s · ↑ %s\n", dateTextWithPrecision(p.FirstAt, loc, p.FirstAtPrecision), dateTextWithPrecision(p.LastAt, loc, p.LastAtPrecision), dateTextWithPrecision(p.LastInboundAt, loc, p.LastInboundAtPrecision), dateTextWithPrecision(p.LastOutboundAt, loc, p.LastOutboundAtPrecision))
 		if p.CadenceStatus != "" {
-			fmt.Fprintf(&b, "cadence %s · due %s\n", singleLine(p.CadenceStatus, 80), dateText(p.DueAt, loc))
+			fmt.Fprintf(&b, "cadence %s · due %s\n", singleLine(p.CadenceStatus, 80), dateTextWithPrecision(p.DueAt, loc, p.LastAtPrecision))
 		}
 		fmt.Fprintf(&b, "initiation: contact %d · owner %d\n12m:", p.InitiatedByContact, p.InitiatedByOwner)
 		for _, n := range p.Monthly {
@@ -330,6 +330,15 @@ func dateText(t *time.Time, loc *time.Location) string {
 		return "unknown"
 	}
 	return t.In(loc).Format("2006-01-02")
+}
+func dateTextWithPrecision(t *time.Time, loc *time.Location, precision string) string {
+	if t == nil {
+		return "unknown"
+	}
+	if precision == "day" {
+		return t.UTC().Format(time.DateOnly)
+	}
+	return dateText(t, loc)
 }
 
 func textLine(t UntrustedText, limit int) string {

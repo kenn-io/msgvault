@@ -123,10 +123,10 @@ func (f *timelineFixture) dayCall(date time.Time) int64 {
 	f.T.Helper()
 	f.serial++
 	o := callhistory.Observation{
-		RecordID: strconv.Itoa(f.serial), Version: 1, Provider: "google_calendar", Account: "example",
-		Kind: "scheduled_meeting", Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
+		RecordID: strconv.Itoa(f.serial), Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: date, Timezone: "America/Vancouver", Precision: "day",
-		Participants: []callhistory.Participant{{ID: f.peer, Participation: "invited"}}, Raw: []byte(`{}`),
+		Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}}, Raw: []byte(`{}`),
 	}
 	src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
 	require.NoError(f.T, err)

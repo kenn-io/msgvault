@@ -160,6 +160,8 @@ type ActivityEvent struct {
 	Persons                          []ActivityEventPerson
 }
 
+const activityDatePrecisionDay = "day"
+
 func (event ActivityEvent) Validate() error {
 	switch {
 	case event.MessageID <= 0:
@@ -176,7 +178,7 @@ func (event ActivityEvent) Validate() error {
 		event.DateOrigin != "received_at" &&
 		event.DateOrigin != "internal_date":
 		return fmt.Errorf("%w: unknown date origin %q", ErrInvalidActivity, event.DateOrigin)
-	case event.DatePrecision != "timestamp" && event.DatePrecision != "day":
+	case event.DatePrecision != "timestamp" && event.DatePrecision != activityDatePrecisionDay:
 		return fmt.Errorf("%w: unknown date precision %q", ErrInvalidActivity, event.DatePrecision)
 	case strings.TrimSpace(event.Timezone) == "":
 		return fmt.Errorf("%w: timezone is required", ErrInvalidActivity)
@@ -1150,7 +1152,7 @@ func validateActivityEventToken(event ActivityEvent, token ActivityProjectionTok
 					"%w: timestamp event date does not match transition target",
 					ErrInvalidActivity)
 			}
-		case "day":
+		case activityDatePrecisionDay:
 			if event.Timezone != "UTC" || event.UTCOffsetMinutes != 0 ||
 				event.LocalDate != event.OccurredAt.UTC().Format(time.DateOnly) {
 				return fmt.Errorf(

@@ -23,11 +23,13 @@ type ActivitySubject struct {
 
 // ContactAggregate summarizes counted interactions across the complete history.
 type ContactAggregate struct {
-	FirstAt, LastAt, LastInboundAt, LastOutboundAt *time.Time
-	Count                                          int
-	Channels                                       []ActivityChannel
-	Monthly                                        [12]int
-	InitiatedByContact, InitiatedByOwner           int
+	FirstAt, LastAt, LastInboundAt, LastOutboundAt  *time.Time
+	FirstAtPrecision, LastAtPrecision               string
+	LastInboundAtPrecision, LastOutboundAtPrecision string
+	Count                                           int
+	Channels                                        []ActivityChannel
+	Monthly                                         [12]int
+	InitiatedByContact, InitiatedByOwner            int
 }
 
 // ContactQuery supplies the identity, filters, clock and zone for an aggregate.

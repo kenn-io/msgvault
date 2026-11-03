@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -167,7 +168,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 				upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
 			}
 		},
-		func() { c.loadFreshness() },
+		func() { cc.loadFreshness() },
 	)
 	c.gap("contact", messages.err, false)
 	c.gap("contact", calls.err, false)
@@ -322,18 +323,27 @@ func monthlyAt(at, now time.Time, loc *time.Location) [12]int {
 	}
 	return monthly
 }
-func mergeTime(dst **time.Time, src *time.Time, first bool) {
-	if src != nil && (*dst == nil || first && src.Before(**dst) || !first && src.After(**dst)) {
+func mergeContactTime(dst **time.Time, dstPrecision *string, src *time.Time, srcPrecision string, first bool, loc *time.Location) {
+	if src == nil {
+		return
+	}
+	order := 0
+	if *dst != nil {
+		order = activitydate.Compare(*src, activitydate.DatePrecision(srcPrecision), **dst, activitydate.DatePrecision(*dstPrecision), loc)
+	}
+	morePrecise := order == 0 && *dst != nil && *dstPrecision == "day" && srcPrecision != "day"
+	if *dst == nil || first && order < 0 || !first && order > 0 || morePrecise {
 		at := src.UTC()
 		*dst = &at
+		*dstPrecision = srcPrecision
 	}
 }
 func (c *composer) mergeContact(a store.ContactAggregate, call bool) {
 	h := c.t.Person
-	mergeTime(&h.FirstAt, a.FirstAt, true)
-	mergeTime(&h.LastAt, a.LastAt, false)
-	mergeTime(&h.LastInboundAt, a.LastInboundAt, false)
-	mergeTime(&h.LastOutboundAt, a.LastOutboundAt, false)
+	mergeContactTime(&h.FirstAt, &h.FirstAtPrecision, a.FirstAt, a.FirstAtPrecision, true, c.loc)
+	mergeContactTime(&h.LastAt, &h.LastAtPrecision, a.LastAt, a.LastAtPrecision, false, c.loc)
+	mergeContactTime(&h.LastInboundAt, &h.LastInboundAtPrecision, a.LastInboundAt, a.LastInboundAtPrecision, false, c.loc)
+	mergeContactTime(&h.LastOutboundAt, &h.LastOutboundAtPrecision, a.LastOutboundAt, a.LastOutboundAtPrecision, false, c.loc)
 	h.InteractionCount += a.Count
 	if call {
 		if a.Count > 0 {
@@ -357,7 +367,7 @@ func (c *composer) loadFreshness() {
 		c.unavailable("freshness")
 		return
 	}
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+	r := readWithin(c.ctx, inventoryTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 	if r.err != nil {
 		c.gap("freshness", r.err, false)
 	} else {

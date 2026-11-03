@@ -14,6 +14,54 @@ import (
 func relationshipRequest(ref string) Request {
 	return Request{With: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
 }
+
+type blockingTimelineCalendar struct {
+	CalendarSource
+
+	reads int
+}
+
+func (s *blockingTimelineCalendar) ListCalendarOccurrencesContext(ctx context.Context, _ store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
+	s.reads++
+	<-ctx.Done()
+	return store.CalendarOccurrencePage{}, ctx.Err()
+}
+
+type delayedTimelineCalendar struct {
+	CalendarSource
+
+	deadline time.Time
+	delay    time.Duration
+}
+
+func (s *delayedTimelineCalendar) ListCalendarOccurrencesContext(ctx context.Context, _ store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
+	s.deadline, _ = ctx.Deadline()
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return store.CalendarOccurrencePage{}, ctx.Err()
+	case <-timer.C:
+		return store.CalendarOccurrencePage{}, nil
+	}
+}
+
+type delayedTimelineInventory struct {
+	deadline time.Time
+	delay    time.Duration
+}
+
+func (s *delayedTimelineInventory) Build(ctx context.Context, _ time.Time) (Freshness, error) {
+	s.deadline, _ = ctx.Deadline()
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return Freshness{}, ctx.Err()
+	case <-timer.C:
+		return Freshness{}, nil
+	}
+}
 func TestRelationshipCallOnlyContact(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -31,6 +79,117 @@ func TestRelationshipCallOnlyContact(t *testing.T) {
 	assertions.Zero(got.Person.InitiatedByOwner)
 	requirements.Len(got.History, 1)
 	assertions.Equal("call", got.History[0].Kind)
+}
+
+func TestRelationshipDayPrecisionCallKeepsCalendarDate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	p := f.savePerson()
+	f.src.Location = time.FixedZone("America/Vancouver", -7*60*60)
+	date := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	f.dayCall(date)
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.NotNil(got.Person)
+	requirements.NotNil(got.Person.FirstAt)
+	requirements.NotNil(got.Person.LastAt)
+	assertions.Equal("day", got.Person.FirstAtPrecision)
+	assertions.Equal("day", got.Person.LastAtPrecision)
+	assertions.Equal(date, got.Person.FirstAt.UTC())
+	assertions.Equal(date, got.Person.LastAt.UTC())
+	assertions.Contains(Markdown(got), "first 2026-10-22 · last 2026-10-22 · ↓ 2026-10-22")
+	requirements.Len(got.History, 1)
+	assertions.Equal("2026-10-22", got.History[0].Call.Date)
+}
+
+func TestMergeContactOrdersMixedPrecisionByTimelineCivilDate(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	zone := time.FixedZone("west", -7*60*60)
+	day := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	message := time.Date(2026, 10, 22, 3, 0, 0, 0, time.UTC)
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
+			person := &PersonHeader{}
+			c := composer{loc: zone, t: &Timeline{Person: person}}
+			call := store.ContactAggregate{FirstAt: &day, LastAt: &day, FirstAtPrecision: "day", LastAtPrecision: "day"}
+			mail := store.ContactAggregate{FirstAt: &message, LastAt: &message}
+			if reverse {
+				c.mergeContact(mail, false)
+				c.mergeContact(call, true)
+			} else {
+				c.mergeContact(call, true)
+				c.mergeContact(mail, false)
+			}
+			requirements.NotNil(person.FirstAt)
+			requirements.NotNil(person.LastAt)
+			assertions.Equal(message, *person.FirstAt)
+			assertions.Equal(day, *person.LastAt)
+			assertions.Empty(person.FirstAtPrecision)
+			assertions.Equal("day", person.LastAtPrecision)
+		})
+	}
+}
+
+func TestRelationshipSlowFreshnessLeavesTimeForHistoryHydration(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	p := f.savePerson()
+	id := f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	f.src.Inventory = blockingInventory{}
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	requirements.NotNil(got.History[0].Burst)
+	assertions.NotEmpty(got.History[0].AnchorRef)
+	assertions.Contains(got.History[0].Burst.LatestMessageIDs, id)
+}
+
+func TestRelationshipSlowCalendarLeavesTimeForHistoryHydration(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	p := f.savePerson()
+	id := f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	calendar := &blockingTimelineCalendar{CalendarSource: f.src.Calendar}
+	f.src.Calendar = calendar
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	requirements.NotNil(got.History[0].Burst)
+	assertions.Contains(got.History[0].Burst.LatestMessageIDs, id)
+	assertions.Equal(1, calendar.reads)
+}
+
+func TestRelationshipSnapshotSharesCollectionDeadlineAcrossCalendarAndFreshness(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	p := f.savePerson()
+	id := f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	calendar := &delayedTimelineCalendar{CalendarSource: f.src.Calendar, delay: 25 * time.Millisecond}
+	inventory := &delayedTimelineInventory{delay: 25 * time.Millisecond}
+	f.src.Calendar = calendar
+	f.src.Inventory = inventory
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+
+	got, err := Build(ctx, f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	requirements.NotNil(got.History[0].Burst)
+	assertions.Contains(got.History[0].Burst.LatestMessageIDs, id)
+	requirements.False(calendar.deadline.IsZero())
+	requirements.False(inventory.deadline.IsZero())
+	assertions.WithinDuration(calendar.deadline, inventory.deadline, 5*time.Millisecond,
+		"freshness must use the remaining collection budget after the calendar read")
 }
 func TestRelationshipMeetingOnlyContactDeduplicatesNotes(t *testing.T) {
 	assertions := assert.New(t)

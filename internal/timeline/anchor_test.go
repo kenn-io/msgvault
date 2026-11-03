@@ -98,6 +98,29 @@ func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
 	}
 	assertions.True(got.History[3].Anchor)
 }
+func TestAnchorSlowFreshnessLeavesTimeForHistoryProbe(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	addInConversation := func(key string, at time.Time) int64 {
+		conversationID, err := f.Store.EnsureConversation(f.Source.ID, key, "Synthetic")
+		requirements.NoError(err)
+		return f.add(at, false, func(message *store.Message) { message.ConversationID = conversationID })
+	}
+	addInConversation("anchor-before", f.now.Add(-time.Hour))
+	anchorID := addInConversation("anchor-center", f.now)
+	addInConversation("anchor-after", f.now.Add(time.Hour))
+	f.project()
+	f.src.Inventory = blockingInventory{}
+	req := anchorRequest(messageRef(anchorID))
+	req.Before, req.After = 1, 1
+
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(got.History, 3)
+	assertions.True(got.History[1].Anchor)
+}
+
 func TestAnchorFilteredAnchorStillShown(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

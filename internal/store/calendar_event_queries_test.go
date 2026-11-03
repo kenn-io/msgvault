@@ -99,6 +99,36 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	}
 }
 
+func TestCalendarEventRowsExcludeDeletedUnrelatedSeriesButKeepExceptionParents(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, master := calendarFixture(t, st, "deleted-master", `{"id":"deleted-series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", maxCalendarSeries+1)
+	_, err := st.db.Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE source_id = ? AND source_message_id LIKE 'bulk-series-%'`), time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), data.Message.SourceID)
+	requirements.NoError(err)
+	_, err = st.db.Exec(st.Rebind(`UPDATE calendar_events SET recurrence_json = ? WHERE kind = 'series'`), `["RRULE:FREQ=DAILY"]`)
+	requirements.NoError(err)
+	_, err = st.db.Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), master)
+	requirements.NoError(err)
+	_, exception := calendarFixture(t, st, "deleted-override", `{"id":"deleted-override","recurringEventId":"deleted-series","status":"confirmed","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`)
+
+	rows, err := calendarWindow(t, st, "2027-03-14T00:00:00Z", "2027-03-16T00:00:00Z")
+	requirements.NoError(err)
+	requirements.Len(rows, 2, "only the selected exception and its deleted parent should remain")
+	var gotMaster, gotException bool
+	for _, row := range rows {
+		switch row.MessageID {
+		case master:
+			gotMaster = true
+			assertions.True(row.DeletedFromSource)
+		case exception:
+			gotException = true
+		}
+	}
+	assertions.True(gotMaster, "a deleted master remains available to resolve its selected archived exception")
+	assertions.True(gotException)
+}
+
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "one", calendarRaw)

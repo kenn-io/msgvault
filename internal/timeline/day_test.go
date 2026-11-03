@@ -42,6 +42,24 @@ func TestBuildDaySlowInventoryLeavesTimeForDisplayHydration(t *testing.T) {
 	assertions.NotNil(entries[0].Burst, "the activity loaded before the optional inventory timeout must still be hydrated")
 }
 
+func TestBuildDaySlowSnapshotReadersLeaveTimeForDisplayHydration(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	f.src.Loops = blockingLoops{}
+	f.src.Inventory = blockingInventory{}
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+
+	got, err := Build(ctx, f.src, dayRequest())
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.NotNil(entries[0].Burst, "slow optional snapshot readers must leave time to hydrate the loaded activity")
+}
+
 func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

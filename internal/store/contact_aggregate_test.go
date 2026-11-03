@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,21 +157,69 @@ func TestAttendedTranscriptIDsResolveCalDAVUIDDecision(t *testing.T) {
 	assertions.Equal([]int64{transcript}, got)
 }
 
-func TestAttendedTranscriptIDsApplyLimitAfterAttendanceMatching(t *testing.T) {
+func TestAttendedTranscriptIDsMatchICSUIDsAndGoogleInstanceIDs(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newTimelineActivityFixture(t)
+	q := timelineContactQuery(f)
+	const icsUID = "ics-meeting@example.test"
+	icsSource, err := f.Store.GetOrCreateSource("ics", "calendar@example.test")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpdateSourceSyncConfig(icsSource.ID, `{"time_zone":"UTC"}`))
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + icsUID + "\r\nDTSTART:20261021T170000Z\r\nDTEND:20261021T180000Z\r\nSUMMARY:Team meeting\r\nATTENDEE;CN=Alice:mailto:alice@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	_, err = f.Store.PersistICalendarContext(t.Context(), icsSource.ID, []byte(ics))
+	requirements.NoError(err)
+
+	googleSource, err := f.Store.GetOrCreateSource("gcal", "google-calendar@example.test")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpdateSourceSyncConfig(googleSource.ID, `{"calendar_id":"google-calendar@example.test","time_zone":"UTC"}`))
+	google := `{"id":"series","iCalUID":"series@example.test","status":"confirmed","summary":"Team meeting","start":{"dateTime":"2026-10-20T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2026-10-20T11:00:00Z","timeZone":"UTC"},"recurrence":["RRULE:FREQ=DAILY;COUNT=5"],"attendees":[{"email":"alice@example.com","responseStatus":"accepted"}]}`
+	metadata := `{"calendar_id":"google-calendar@example.test","ical_uid":"series@example.test"}`
+	_, err = f.Store.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: googleSource.ID, SourceMessageID: "weekly-series", MessageType: "calendar_event", Subject: sql.NullString{String: "Team meeting", Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "weekly-series", ConversationType: "calendar", Title: "Team meeting"},
+		RawMIME:      []byte(google), RawFormat: "gcal_json", Metadata: &sql.NullString{String: metadata, Valid: true},
+	})
+	requirements.NoError(err)
+
+	addTranscript := func(name, kind, value string, decision bool) int64 {
+		id := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(-time.Hour), false, "")
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), id)
+		requirements.NoError(err)
+		if decision {
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,occurrence_key,decision,created_at) VALUES (?,?,'','link',?)`), id, value, q.Now)
+		} else {
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_key(message_id,kind,value,calendar_id) VALUES (?,?,?,'')`), id, kind, value)
+		}
+		requirements.NoError(err, name)
+		return id
+	}
+	icsKey := addTranscript("ICS UID key", "ical_uid", icsUID, false)
+	icsDecision := addTranscript("ICS UID decision", "", icsUID, true)
+	googleInstance := addTranscript("Google instance", "google_event_id", "series_20261022T100000Z", false)
+	projectTimelineActivity(t, f, "UTC")
+
+	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+	requirements.NoError(err)
+	assertions.False(truncated)
+	assertions.ElementsMatch([]int64{icsKey, icsDecision, googleInstance}, got)
+}
+
+func TestAttendedTranscriptIDsCorrelateEventBeforeCandidateBudget(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	q := timelineContactQuery(f)
 	source, err := f.Store.GetOrCreateSource(calevent.CalDAVSourceType, "https://calendar.example.org/calendars/synthetic")
 	requirements.NoError(err)
-	persistCalendar := func(sourceMessageID, uid, start, end string) {
+	persistCalendar := func(sourceMessageID, uid, attendee, start, end string) int64 {
 		raw := fmt.Sprintf("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:%s\r\nDTSTART:%s\r\nDTEND:%s\r\nSUMMARY:Team meeting\r\nATTENDEE;CN=Alice:mailto:alice@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", uid, start, end)
+		raw = strings.Replace(raw, "alice@example.com", attendee, 1)
 		components, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
 		requirements.NoError(err)
 		requirements.Len(components, 1)
 		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: components[0].Event.ProviderEventID, TimeZone: "UTC"}, json.Deterministic(true))
 		requirements.NoError(err)
-		_, err = f.Store.PersistMessage(&store.MessagePersistData{
+		id, err := f.Store.PersistMessage(&store.MessagePersistData{
 			Message: &store.Message{
 				SourceID: source.ID, SourceMessageID: sourceMessageID, MessageType: "calendar_event",
 				Subject: sql.NullString{String: components[0].Summary, Valid: true},
@@ -182,29 +231,46 @@ func TestAttendedTranscriptIDsApplyLimitAfterAttendanceMatching(t *testing.T) {
 			Metadata: &sql.NullString{String: string(metadata), Valid: true},
 		})
 		requirements.NoError(err)
+		return id
 	}
-	persistCalendar("past-meeting", "past@example.org", "20261021T170000Z", "20261021T180000Z")
-	persistCalendar("future-meeting", "future@example.org", "20261023T170000Z", "20261023T180000Z")
-	addTranscript := func(uid string, at time.Time) int64 {
+	persistCalendar("past-meeting", "past@example.org", "alice@example.com", "20261021T170000Z", "20261021T180000Z")
+	linkedCopy := persistCalendar("past-copy", "past@example.org", "bob@example.test", "20261021T170000Z", "20261021T180000Z")
+	persistCalendar("unrelated-meeting", "unrelated@example.org", "bob@example.test", "20261021T170000Z", "20261021T180000Z")
+	addTranscript := func(uid string, targetMessageID int64, at time.Time) int64 {
 		id := f.add(t, f.ConvID, f.Source.ID, at, false, "")
 		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript',sender_id=?,is_from_me=TRUE WHERE id=?`), f.owner, id)
 		requirements.NoError(err)
 		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner}, []string{"Owner"}))
 		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner}, []string{"Owner"}))
-		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,occurrence_key,decision,created_at) VALUES (?,?,?,?,?)`), id, uid, "", "link", q.Now)
+		if targetMessageID > 0 {
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,target_message_id,occurrence_key,decision,created_at) VALUES (?,'',?,'','link',?)`), id, targetMessageID, q.Now)
+		} else {
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,occurrence_key,decision,created_at) VALUES (?,?,'','link',?)`), id, uid, q.Now)
+		}
 		requirements.NoError(err)
 		return id
 	}
-	wanted := addTranscript("past@example.org", q.Now.Add(-24*time.Hour))
-	for range 100 {
-		addTranscript("future@example.org", q.Now.Add(-time.Hour))
-	}
+	wanted := addTranscript("past@example.org", 0, q.Now.Add(-24*time.Hour))
+	aliased := addTranscript("", linkedCopy, q.Now.Add(-23*time.Hour))
 	projectTimelineActivity(t, f, "UTC")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9))
+INSERT INTO messages(conversation_id,source_id,source_message_id,message_type,sent_at,is_from_me)
+SELECT ?,?, 'budget-decoy-' || (ones.n + 10*tens.n + 100*hundreds.n + 1000*thousands.n + 1), 'meeting_transcript', ?, TRUE
+FROM digits ones CROSS JOIN digits tens CROSS JOIN digits hundreds CROSS JOIN digits thousands`), f.ConvID, f.Source.ID, q.Now.Add(-time.Hour))
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,occurrence_key,decision,created_at)
+SELECT id,'unrelated@example.org','','link',? FROM messages WHERE source_id=? AND source_message_id LIKE 'budget-decoy-%'
+AND CAST(substr(source_message_id,14) AS INTEGER) <= 5000`), q.Now, f.Source.ID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_key(message_id,kind,value,calendar_id)
+SELECT id,'ical_uid','unrelated@example.org','' FROM messages WHERE source_id=? AND source_message_id LIKE 'budget-decoy-%'
+AND CAST(substr(source_message_id,14) AS INTEGER) > 5000`), f.Source.ID)
+	requirements.NoError(err)
 
-	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 1)
+	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
 	requirements.NoError(err)
 	assertions.False(truncated, "returned transcript IDs: %v", got)
-	assertions.Equal([]int64{wanted}, got)
+	assertions.Equal([]int64{wanted, aliased}, got)
 }
 
 func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {

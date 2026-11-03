@@ -89,31 +89,37 @@ type dayRead struct {
 func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
 	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, MergeCopies: c.req.IncludeCold}
+	// Keep the initial snapshot reads inside half the request budget so the
+	// subsequent display hydration still has time to use the same snapshot.
+	collectionCtx, cancel := context.WithTimeout(c.ctx, requestTimeout/2)
+	defer cancel()
+	cc := *c
+	cc.ctx = collectionCtx
 	var r dayRead
-	parallel(c.ctx,
+	parallel(collectionCtx,
 		func() {
 			if c.src.Activity != nil {
-				r.activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
-					cc := *c
-					cc.ctx = ctx
-					return cc.readActivity(query)
+				r.activity = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+					reader := cc
+					reader.ctx = ctx
+					return reader.readActivity(query)
 				})
 			}
 		},
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
-						return c.readColdActivity(ctx, query)
+					r.cold = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+						return cc.readColdActivity(ctx, query)
 					})
 				} else {
-					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
+					r.coldCount = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
 				}
 			}
 		},
 		func() {
 			if c.src.Calendar != nil {
-				r.calendar = c.readCalendar(from, to)
+				r.calendar = cc.readCalendar(from, to)
 			}
 		},
 		func() {
@@ -122,17 +128,17 @@ func (c *composer) collectDay() dayRead {
 				if c.req.Brief {
 					hours = 24
 				}
-				r.upcoming = c.readCalendar(c.t.Now, c.t.Now.Add(time.Duration(hours)*time.Hour))
+				r.upcoming = cc.readCalendar(c.t.Now, c.t.Now.Add(time.Duration(hours)*time.Hour))
 			}
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil {
-				r.calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+				r.calls = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
 					dateBefore, err := addCivilDate(c.t.Window.To, 1)
 					if err != nil {
 						return nil, err
 					}
-					return c.readCalls(ctx, store.LogicalCallQuery{
+					return cc.readCalls(ctx, store.LogicalCallQuery{
 						After: from, Before: to, DateAfter: c.t.Window.From, DateBefore: dateBefore, Limit: 500,
 					})
 				})
@@ -140,17 +146,17 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Loops != nil {
-				r.loops = c.collectLoops(c.subject)
+				r.loops = cc.collectLoops(c.subject)
 			}
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Notes != nil {
-				r.notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return c.readNotes(ctx, from, to) })
+				r.notes = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return cc.readNotes(ctx, from, to) })
 			}
 		},
 		func() {
 			if c.src.Inventory != nil {
-				r.inventory = readWithin(c.ctx, inventoryTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+				r.inventory = readWithin(collectionCtx, inventoryTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 			}
 		},
 	)

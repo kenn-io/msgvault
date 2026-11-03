@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/callhistory"
 )
 
@@ -282,19 +283,43 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
 			return ContactAggregate{}, fmt.Errorf("decode call contact evidence: %w", err)
 		}
 		at := timestamp.Time.UTC()
-		if result.FirstAt == nil {
+		precision := ""
+		if evidence.Precision == activityDatePrecisionDay {
+			precision = activityDatePrecisionDay
+		}
+		datePrecision := activitydate.DatePrecision(precision)
+		if result.FirstAt == nil || activitydate.Compare(at, datePrecision, *result.FirstAt, activitydate.DatePrecision(result.FirstAtPrecision), loc) < 0 ||
+			activitydate.Compare(at, datePrecision, *result.FirstAt, activitydate.DatePrecision(result.FirstAtPrecision), loc) == 0 && result.FirstAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay {
 			result.FirstAt = &at
+			result.FirstAtPrecision = precision
 		}
-		result.LastAt = &at
-		if incoming != 0 {
+		lastOrder := 0
+		if result.LastAt != nil {
+			lastOrder = activitydate.Compare(at, datePrecision, *result.LastAt, activitydate.DatePrecision(result.LastAtPrecision), loc)
+		}
+		if result.LastAt == nil || lastOrder > 0 || lastOrder == 0 && result.LastAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay {
+			result.LastAt = &at
+			result.LastAtPrecision = precision
+		}
+		inboundOrder := 0
+		if result.LastInboundAt != nil {
+			inboundOrder = activitydate.Compare(at, datePrecision, *result.LastInboundAt, activitydate.DatePrecision(result.LastInboundAtPrecision), loc)
+		}
+		if incoming != 0 && (result.LastInboundAt == nil || inboundOrder > 0 || inboundOrder == 0 && result.LastInboundAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay) {
 			result.LastInboundAt = &at
+			result.LastInboundAtPrecision = precision
 		}
-		if outgoing != 0 {
+		outboundOrder := 0
+		if result.LastOutboundAt != nil {
+			outboundOrder = activitydate.Compare(at, datePrecision, *result.LastOutboundAt, activitydate.DatePrecision(result.LastOutboundAtPrecision), loc)
+		}
+		if outgoing != 0 && (result.LastOutboundAt == nil || outboundOrder > 0 || outboundOrder == 0 && result.LastOutboundAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay) {
 			result.LastOutboundAt = &at
+			result.LastOutboundAtPrecision = precision
 		}
 		result.Count++
 		local := at.In(loc)
-		if evidence.Precision == "day" {
+		if evidence.Precision == activityDatePrecisionDay {
 			local = at
 		}
 		monthsAgo := (now.Year()-local.Year())*12 + int(now.Month()-local.Month())
