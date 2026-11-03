@@ -211,9 +211,7 @@ func newGmailAuditSnapshotPostgresStore(
 	})
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
-	old := base.db.DB
-	base.db = newLoggedDB(db, base.dialect.Rebind)
-	require.NoError(old.Close())
+	replaceTestStoreDB(t, base, db)
 	return base
 }
 

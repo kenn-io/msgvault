@@ -36,6 +36,13 @@ func newPGStoreInternal(t *testing.T, _ string) *Store {
 	return pgTestStore(t)
 }
 
+func replaceTestStoreDB(t *testing.T, st *Store, db *sql.DB) {
+	t.Helper()
+	old := st.db.DB
+	st.db = newLoggedDB(db, st.dialect.Rebind)
+	require.NoError(t, old.Close())
+}
+
 // newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL
 // store without running InitSchema. Tests that need to observe a specific
 // schema-initialization boundary use this; ordinary tests use

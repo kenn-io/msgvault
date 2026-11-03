@@ -174,9 +174,7 @@ func newGatedPostgresStore(
 	db := sql.OpenDB(&dailyNoteGateConnector{Connector: baseConnector, gate: gate})
 	db.SetMaxOpenConns(8)
 
-	old := base.db.DB
-	base.db = newLoggedDB(db, base.dialect.Rebind)
-	require.NoError(t, old.Close())
+	replaceTestStoreDB(t, base, db)
 	return base
 }
 

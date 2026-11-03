@@ -113,9 +113,7 @@ func filenameObservedStore(t *testing.T) (*Store, *filenamePostingObserver) {
 	}
 	db := sql.OpenDB(&filenamePostingConnector{driver: st.db.Driver(), dsn: dsn, observer: observer})
 	db.SetMaxOpenConns(1)
-	old := st.db.DB
-	st.db = newLoggedDB(db, st.dialect.Rebind)
-	require.NoError(t, old.Close())
+	replaceTestStoreDB(t, st, db)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	return st, observer
 }
