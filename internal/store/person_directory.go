@@ -425,7 +425,7 @@ func (s *Store) verifyDirectoryCandidatesTx(ctx context.Context, tx *loggedTx, c
 }
 
 // Address matching uses the same Go lowercase rules on both backends. Values
-// are streamed for one bounded candidate chunk under the serving snapshot.
+// are streamed for each growing candidate chunk under the serving snapshot.
 func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *loggedTx, candidates []directoryPersonCandidate, address string) ([]directoryPersonCandidate, error) {
 	ids := make([]int64, len(candidates))
 	for index, candidate := range candidates {
@@ -439,11 +439,9 @@ func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *log
 		AND cp.active_until IS NULL AND cp.superseded_at IS NULL AND cp.address_kind <> 'language'`
 	members := ` FROM person_participants pp JOIN participants p ON p.id = pp.participant_id WHERE ` + membership
 	parts := []string{
-		`SELECT cp.person_id, cp.original_value` + points,
-		`SELECT cp.person_id, cp.normalized_value` + points,
-		`SELECT pp.person_id, COALESCE(p.email_address, '')` + members,
-		`SELECT pp.person_id, COALESCE(p.phone_number, '')` + members,
-		`SELECT pp.person_id, identifier.identifier_value FROM person_participants pp
+		`SELECT cp.person_id, cp.original_value, cp.normalized_value` + points,
+		`SELECT pp.person_id, COALESCE(p.email_address, ''), COALESCE(p.phone_number, '')` + members,
+		`SELECT pp.person_id, identifier.identifier_value, '' FROM person_participants pp
 			JOIN participant_identifiers identifier ON identifier.participant_id = pp.participant_id WHERE ` + membership,
 	}
 	args := make([]any, 0, len(idArgs)*len(parts))
@@ -461,11 +459,11 @@ func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *log
 			return nil, err
 		}
 		var id int64
-		var value string
-		if err := rows.Scan(&id, &value); err != nil {
+		var value, alternate string
+		if err := rows.Scan(&id, &value, &alternate); err != nil {
 			return nil, fmt.Errorf("scan directory candidate address: %w", err)
 		}
-		if !matched[id] && strings.Contains(strings.ToLower(value), address) {
+		if !matched[id] && (strings.Contains(strings.ToLower(value), address) || strings.Contains(strings.ToLower(alternate), address)) {
 			matched[id] = true
 		}
 	}
