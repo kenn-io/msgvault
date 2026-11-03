@@ -7,12 +7,12 @@ import (
 )
 
 func TestIsKnownMessageType(t *testing.T) {
-	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix"}
+	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix", "telegram"}
 	for _, mt := range known {
 		assert.True(t, IsKnownMessageType(mt), "%q should be known", mt)
 	}
 
-	unknown := []string{"carrier_pigeon", "", "EMAIL", "telegram"}
+	unknown := []string{"carrier_pigeon", "", "EMAIL"}
 	for _, mt := range unknown {
 		assert.False(t, IsKnownMessageType(mt), "%q should be unknown", mt)
 	}

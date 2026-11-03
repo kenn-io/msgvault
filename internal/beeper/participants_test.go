@@ -13,6 +13,7 @@ import (
 )
 
 func TestResolveUserPhoneRungDedupesAcrossSources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -32,6 +33,7 @@ func TestResolveUserPhoneRungDedupesAcrossSources(t *testing.T) {
 }
 
 func TestResolveUserEmailRung(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -50,6 +52,7 @@ func TestResolveUserEmailRung(t *testing.T) {
 }
 
 func TestResolveUserIdentifierFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -68,6 +71,7 @@ func TestResolveUserIdentifierFallback(t *testing.T) {
 }
 
 func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -109,6 +113,7 @@ func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
 }
 
 func TestResolveIDRejectsAmbiguousLegacyIdentifier(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -133,6 +138,7 @@ func TestResolveIDRejectsAmbiguousLegacyIdentifier(t *testing.T) {
 }
 
 func TestResolveUserLadderIsExclusive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -171,6 +177,7 @@ func TestResolveUserLadderIsExclusive(t *testing.T) {
 }
 
 func TestResolveUserCache(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -185,6 +192,7 @@ func TestResolveUserCache(t *testing.T) {
 }
 
 func TestResolveIDHitsSeededCache(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -205,6 +213,7 @@ func TestResolveIDHitsSeededCache(t *testing.T) {
 }
 
 func TestResolveUserUpgradesBareIDFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -237,6 +246,7 @@ func TestResolveUserUpgradesBareIDFallback(t *testing.T) {
 }
 
 func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -280,6 +290,7 @@ func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
 }
 
 func TestRichUpgradeMergesWeakHistory(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -342,6 +353,7 @@ func TestRichUpgradeMergesWeakHistory(t *testing.T) {
 }
 
 func TestPhoneUpgradesEmailResolution(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -389,6 +401,7 @@ func TestPhoneUpgradesEmailResolution(t *testing.T) {
 }
 
 func TestPhoneUpgradeSkipsMergeAcrossDurablePersons(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -425,6 +438,7 @@ func TestPhoneUpgradeSkipsMergeAcrossDurablePersons(t *testing.T) {
 }
 
 func TestResolveIDEmpty(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -435,6 +449,7 @@ func TestResolveIDEmpty(t *testing.T) {
 }
 
 func TestPhoneUpgradesEmailResolutionAcrossRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -483,6 +498,7 @@ func TestPhoneUpgradesEmailResolutionAcrossRuns(t *testing.T) {
 }
 
 func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

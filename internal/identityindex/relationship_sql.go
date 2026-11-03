@@ -61,6 +61,17 @@ WITH filtered_facts AS (
 	SELECT * FROM nonchat_units
 	UNION ALL
 	SELECT * FROM chat_units
+), chat_unit_fragments AS (
+	-- Apply the anchor inequality only after the conversation join. Written
+	-- beside the activity join, DuckDB planned it as a nested loop over every
+	-- unit and activity row, which grew with archive size and spilled gigabytes.
+	SELECT u.entry_key, selected.message_id
+	FROM chat_units u
+	JOIN filtered_facts selected
+	  ON selected.source_id = u.source_id
+	 AND selected.conversation_id = u.conversation_id
+	 AND selected.is_chat
+	WHERE selected.message_id <> u.anchor_message_id
 ), logical_people_candidates AS (
 	SELECT u.entry_key, f.canonical_id, f.is_author, f.is_owner
 	FROM nonchat_units u
@@ -79,18 +90,11 @@ WITH filtered_facts AS (
 
 	UNION ALL
 
-	SELECT u.entry_key, f.canonical_id,
-	       (f.message_id = u.anchor_message_id AND f.is_author) AS is_author,
-	       f.is_owner
-	FROM chat_units u
-	JOIN filtered_facts selected
-	  ON selected.source_id = u.source_id
-	 AND selected.conversation_id = u.conversation_id
-	 AND selected.is_chat
-	JOIN %[1]s f ON f.message_id = selected.message_id
+	SELECT c.entry_key, f.canonical_id, false AS is_author, f.is_owner
+	FROM chat_unit_fragments c
+	JOIN %[1]s f ON f.message_id = c.message_id
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
-	  AND f.message_id <> u.anchor_message_id
 ), logical_people_grouped AS (
 	SELECT entry_key, canonical_id,
 	       bool_or(is_author) AS is_author,
@@ -123,16 +127,11 @@ WITH filtered_facts AS (
 
 	UNION ALL
 
-	SELECT u.entry_key, f.canonical_id, f.participant_domain AS domain
-	FROM chat_units u
-	JOIN filtered_facts selected
-	  ON selected.source_id = u.source_id
-	 AND selected.conversation_id = u.conversation_id
-	 AND selected.is_chat
-	JOIN %[1]s f ON f.message_id = selected.message_id
+	SELECT c.entry_key, f.canonical_id, f.participant_domain AS domain
+	FROM chat_unit_fragments c
+	JOIN %[1]s f ON f.message_id = c.message_id
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
-	  AND f.message_id <> u.anchor_message_id
 ), logical_person_domains AS (
 	SELECT DISTINCT entry_key, canonical_id, domain
 	FROM logical_person_domain_candidates
@@ -151,16 +150,11 @@ WITH filtered_facts AS (
 
 	UNION ALL
 
-	SELECT u.entry_key, f.participant_domain AS domain
-	FROM chat_units u
-	JOIN filtered_facts selected
-	  ON selected.source_id = u.source_id
-	 AND selected.conversation_id = u.conversation_id
-	 AND selected.is_chat
-	JOIN %[1]s f ON f.message_id = selected.message_id
+	SELECT c.entry_key, f.participant_domain AS domain
+	FROM chat_unit_fragments c
+	JOIN %[1]s f ON f.message_id = c.message_id
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
-	  AND f.message_id <> u.anchor_message_id
 ), logical_domain_keys AS (
 	SELECT DISTINCT entry_key, domain
 	FROM logical_domain_candidates

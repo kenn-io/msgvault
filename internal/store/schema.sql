@@ -2051,6 +2051,7 @@ CREATE INDEX IF NOT EXISTS idx_person_sweep_sync_publications_source
 -- status='error' is actionable and contributes to sync_runs.errors_count.
 -- status='skipped' records expected item churn, such as Gmail messages that
 -- were deleted between a history/list response and raw-message fetch.
+-- status='resolved' records successful acquisition after an earlier failure.
 CREATE TABLE IF NOT EXISTS sync_run_items (
     id INTEGER PRIMARY KEY,
     sync_run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
@@ -3649,6 +3650,7 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     lease_until           DATETIME,
     attempt_count         INTEGER NOT NULL DEFAULT 0,
     request_count         INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    upload_count          INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0),
     retry_count           INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count),
     provider_latency_ms   INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0),
     next_retry_at         DATETIME,
@@ -4682,4 +4684,51 @@ CREATE TABLE IF NOT EXISTS conversation_policy (
  effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),
  override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
  last_activity_at DATETIME
+);
+
+-- Typed calendar evidence rebuilt from raw provider snapshots.
+CREATE TABLE IF NOT EXISTS calendar_events (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    provider_event_id TEXT NOT NULL DEFAULT '',
+    series_provider_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    original_start_at DATETIME,
+    original_start_date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    all_day BOOLEAN NOT NULL DEFAULT FALSE,
+    start_at DATETIME,
+    end_at DATETIME,
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    event_time_zone TEXT NOT NULL DEFAULT '',
+    calendar_time_zone TEXT NOT NULL DEFAULT '',
+    recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_end_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
+CREATE TABLE IF NOT EXISTS calendar_event_attendees (
+    message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    rsvp TEXT NOT NULL,
+    is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (message_id, ordinal)
+);
+
+-- Successful PDF selections remain unpublished until the complete extraction commits.
+CREATE TABLE IF NOT EXISTS document_extraction_ranges (
+    extraction_id TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    first_page INTEGER NOT NULL CHECK (first_page >= 1),
+    last_page INTEGER NOT NULL CHECK (last_page >= first_page),
+    total_pages INTEGER NOT NULL CHECK (total_pages >= last_page),
+    evidence TEXT NOT NULL,
+    evidence_checksum TEXT NOT NULL,
+    char_count BIGINT NOT NULL CHECK (char_count >= 0),
+    PRIMARY KEY (extraction_id, first_page)
 );

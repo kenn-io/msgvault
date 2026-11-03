@@ -1,14 +1,24 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, type ReporterDescription } from '@playwright/test';
 
 const previewPort = process.env.MSGVAULT_PLAYWRIGHT_PORT ?? '4173';
 const previewURL = `http://127.0.0.1:${previewPort}`;
+// In CI, a JSON report records every result for upload; a test that passed on
+// retry is marked flaky. CI names each run's report so runs sharing this config
+// stay distinct.
+const suite = process.env.MSGVAULT_PLAYWRIGHT_SUITE ?? 'browser';
+const ciReporters: ReporterDescription[] = process.env.CI
+  ? [['json', { outputFile: `test-results/playwright/${suite}.json` }]]
+  : [];
 
 export default defineConfig({
   testDir: './tests',
   reporter: [
     ['list'],
+    ...ciReporters,
     ['html', { open: 'never', outputFolder: 'playwright-report' }]
   ],
+  // In CI, retry a failed test twice.
+  retries: process.env.CI ? 2 : 0,
   // Deep virtualizer fixtures intentionally exercise tens of thousands of rows.
   // Serial execution keeps their timing and visual rasterization deterministic
   // across developer laptops and the Linux CI runner.

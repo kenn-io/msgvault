@@ -510,8 +510,8 @@ uses a configured endpoint without a manifest.
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
-| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
+| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB); exceeding this limit fails the extraction |
+| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters; Docling ranges exceeding the aggregate checkpoint limit stay in memory and are resent on retry, and the completed document is truncated at publication |
 | `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
 | `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
 | `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |
@@ -529,6 +529,12 @@ HTML bytes. It verifies sources in bounded memory and does not use the Mistral
 disk spool. Its `max_pages_per_document` bounds returned evidence units before
 any whole-document Markdown fallback. It cannot enforce a pre-upload page
 count for every native format.
+
+For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job gets
+its own `total_timeout` and `max_poll_attempts`, while `max_pages_per_document`
+still limits the whole file. See
+[Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for range checkpoints and retry behavior.
 
 Docling’s operator-controlled postures assign responsibility for deployment,
 credentials, model downloads, egress, resource limits, retention, and training
@@ -556,9 +562,10 @@ enabled.
 Provider uploads are manual-only: `msgvault serve` does not schedule document
 extraction. Each `documents build` or `documents resume` displays its upload
 and cost preflight before requiring `--yes`. Mistral receives its capability
-manifest explicitly; Docling uses its configured endpoint and policy. When
-document indexing is enabled, the daemon’s weekly reconciliation and local
-derivative cleanup remain automatic and make no provider requests.
+manifest explicitly; Docling uses its configured endpoint and policy. The
+daemon reconciles attachments weekly when document indexing is enabled.
+While `msgvault serve` runs, it also cleans stale local derivatives weekly,
+even when indexing is disabled. Neither job contacts a provider.
 
 `[attachments.documents.scope]` accepts these fields:
 
@@ -1040,13 +1047,13 @@ configuration cannot turn a Drafts folder into the account's Sent folder.
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. On unreleased `main`, the owner key also authenticates [native MCP endpoints](usage/chat.md#native-daemon-endpoints). The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address, or `iface:NAME` to bind an address on a named interface |
-| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http` |
+| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http`; also authenticates native `/mcp` |
 | `api_key_file` | — | Owner-only file holding the API key |
 | `api_key_env` | — | Name of an environment variable holding the API key |
 | `agent_access` | `false` | Enable restricted agent grants; requires an effective API key. Read at daemon startup only; a `config.toml` edit takes effect only after a restart. |
@@ -1127,7 +1134,7 @@ the CLI does not inherit the daemon's environment.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
-`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start`, `msgvault daemon restart`, and the restart after `msgvault update` still start a daemon when you run them. Commands routed to `[remote].url` are unaffected.
+`daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
 
 Browser sessions are additive to API-key authentication. Existing CLI and
 programmatic clients continue to send the configured key. For remote browser

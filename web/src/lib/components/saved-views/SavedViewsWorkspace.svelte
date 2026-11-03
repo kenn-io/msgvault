@@ -4,9 +4,8 @@
     listSavedViews as generatedListSavedViews,
     patchSavedView as generatedPatchSavedView,
   } from '../../api/generated/api/api';
-  import { Button, Chip, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, EmptyState, Modal, PageHeader, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import type { APIClient } from '../../api/client';
   import type { SavedView } from '../../api/generated/models';
   import type { ExploreURLState } from '../../explore/models';

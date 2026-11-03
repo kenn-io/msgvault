@@ -19,7 +19,9 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/ocr"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -41,7 +43,7 @@ type DoclingWorkerConfig struct {
 type DoclingWorker struct {
 	catalog       DocumentExtractionCatalog
 	opener        DocumentAttachmentOpener
-	provider      document.RenditionProvider
+	provider      *docling.Client
 	config        DoclingWorkerConfig
 	descriptor    document.RenditionDescriptor
 	input         ResolvedInputPolicy
@@ -55,6 +57,7 @@ type doclingRequestAccountingKey struct{}
 type doclingRequestAccounting struct {
 	requests  atomic.Int64
 	retries   atomic.Int64
+	uploads   atomic.Int64
 	submitted atomic.Bool
 
 	mu                 sync.Mutex
@@ -63,7 +66,8 @@ type doclingRequestAccounting struct {
 
 // Count a retry only when the same route is called again after a transient
 // response or transport error. Repeated status polls after a successful
-// response are normal async job progress, not retries.
+// response are normal async job progress, not retries. Each first submission
+// uploads the source once.
 func (a *doclingRequestAccounting) before(request *http.Request) {
 	a.requests.Add(1)
 	key := request.Method + "\x00" + request.URL.EscapedPath()
@@ -71,6 +75,8 @@ func (a *doclingRequestAccounting) before(request *http.Request) {
 	if a.retryableResponses[key] {
 		a.retries.Add(1)
 		delete(a.retryableResponses, key)
+	} else if request.Method == http.MethodPost {
+		a.uploads.Add(1)
 	}
 	a.mu.Unlock()
 }
@@ -125,7 +131,7 @@ func (doclingEnvironmentSecrets) ResolveSecret(_ context.Context, binding string
 
 // NewDoclingClient sends only to the configured origin. Ambient proxy settings
 // must not route private attachment bytes through a second recipient.
-func NewDoclingClient(c *DocumentsConfig) (document.RenditionProvider, error) {
+func NewDoclingClient(c *DocumentsConfig) (*docling.Client, error) {
 	if c == nil || c.Provider != ProviderDocling {
 		return nil, errors.New("docling client requires provider=docling")
 	}
@@ -159,7 +165,7 @@ func NewDoclingClient(c *DocumentsConfig) (document.RenditionProvider, error) {
 }
 
 func NewDoclingWorker(catalog DocumentExtractionCatalog, opener DocumentAttachmentOpener,
-	provider document.RenditionProvider, config DoclingWorkerConfig) (*DoclingWorker, error) {
+	provider *docling.Client, config DoclingWorkerConfig) (*DoclingWorker, error) {
 	if catalog == nil || opener == nil || provider == nil {
 		return nil, errors.New("docling worker requires catalog, attachment opener and provider")
 	}
@@ -234,9 +240,12 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		if renewErr := readRenewalError(renewalErr); renewErr != nil {
 			cause = errors.Join(cause, renewErr)
 		}
+		if errors.Is(cause, store.ErrDocumentRangeBytes) {
+			cause = fmt.Errorf("%w: %w", errDocumentPreparation, ocr.NewPreparationError(fmt.Sprintf("Docling range checkpoints exceed max_response_bytes (%d bytes)", w.config.Documents.MaxResponseBytes), cause))
+		}
 		terminal, reason := classifyDoclingFailure(cause)
 		failure := store.DocumentExtractionFailure{Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
-			RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
+			UploadCount: int(requests.uploads.Load()), RequestCount: accounting.Requests, RetryCount: accounting.Retries, ProviderLatencyMS: requestLatencyMillis(accounting.Latency)}
 		if !terminal {
 			failure.RetryAt = time.Now().UTC().Add(w.config.RetryDelay)
 		}
@@ -248,16 +257,40 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	if err != nil {
 		return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, err))
 	}
-	upload, authorization, err := w.authorizeUpload(content, candidate, route.Format, claim)
-	if err != nil {
-		return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, err))
+	var source document.SourceDocument
+	ranged := false
+	if route.Format.ID == "pdf" {
+		pages, inspectErr := media.CountPDFPages(content)
+		if inspectErr == nil && pages > int64(w.config.Documents.MaxPagesPerDocument) {
+			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, ocr.NewPreparationError(fmt.Sprintf("Docling PDF has %d pages; max_pages_per_document is %d", pages, w.config.Documents.MaxPagesPerDocument), nil)))
+		}
+		if inspectErr == nil && pages > doclingPDFRangePages {
+			ranged = true
+			source, err = w.renderPageRanges(workCtx, content, candidate, route.Format, claim, int(pages), &accounting)
+		}
 	}
-	if err := workCtx.Err(); err != nil {
-		return result, fail(err)
+	if !ranged {
+		upload, authorization, authErr := w.authorizeUpload(content, candidate, route.Format, claim)
+		if authErr != nil {
+			return result, fail(fmt.Errorf("%w: %w", errDocumentPreparation, authErr))
+		}
+		started := time.Now()
+		var rendered document.RenditionResult
+		rendered, err = document.RenderRendition(workCtx, w.provider, upload, authorization)
+		accounting.Latency = time.Since(started)
+		if err == nil {
+			accounting.Requests = int(rendered.Receipt.Usage.Requests)
+			accounting.Retries = int(rendered.Receipt.Usage.Retries)
+			accounting.UnitsProcessed = max(len(rendered.Evidence.Units), int(rendered.Receipt.Usage.Units))
+			if accounting.UnitsProcessed > w.config.Documents.MaxPagesPerDocument {
+				err = errors.New("docling output exceeds the configured unit bound")
+			} else if slices.Contains(rendered.Receipt.Warnings, "partial_success") {
+				err = errors.New("docling returned a partial result")
+			} else {
+				source, err = doclingSourceDocument(rendered)
+			}
+		}
 	}
-	started := time.Now()
-	rendered, err := document.RenderRendition(workCtx, w.provider, upload, authorization)
-	accounting.Latency = time.Since(started)
 	if err != nil {
 		if requests.submitted.Load() && doclingJobOutlastedLimits(err) {
 			err = fmt.Errorf("%w: %w", errDoclingJobTimeout, err)
@@ -265,20 +298,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		return result, fail(err)
 	}
 	accounting.ReturnedModel = w.descriptor.ID
-	accounting.Requests = int(rendered.Receipt.Usage.Requests)
-	accounting.Retries = int(rendered.Receipt.Usage.Retries)
-	// The receipt counts returned evidence before any whole-document fallback.
-	accounting.UnitsProcessed = max(len(rendered.Evidence.Units), int(rendered.Receipt.Usage.Units))
-	if accounting.UnitsProcessed > w.config.Documents.MaxPagesPerDocument {
-		return result, fail(errors.New("docling output exceeds the configured unit bound"))
-	}
-	if slices.Contains(rendered.Receipt.Warnings, "partial_success") {
-		return result, fail(errors.New("docling returned a partial result"))
-	}
-	source, err := doclingSourceDocument(rendered)
-	if err != nil {
-		return result, fail(err)
-	}
+	accounting.Uploads = int(requests.uploads.Load())
 	normalized, err := document.NormalizeDocument(source, w.normalization)
 	if err != nil {
 		return result, fail(err)
@@ -450,6 +470,12 @@ func doclingJobOutlastedLimits(err error) bool {
 }
 
 func classifyDoclingFailure(err error) (bool, string) {
+	if errors.Is(err, store.ErrDocumentRangeBytes) {
+		return true, "response_too_large"
+	}
+	if errors.Is(err, errDocumentRangeCheckpoint) {
+		return false, "range_checkpoint_failed"
+	}
 	if errors.Is(err, errDoclingJobTimeout) {
 		return true, "provider_timeout"
 	}

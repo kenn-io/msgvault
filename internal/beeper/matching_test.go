@@ -56,6 +56,7 @@ func linked(t *testing.T, st *store.Store, a, b int64) bool {
 }
 
 func TestRepeatedStableProviderIDResolvesToTheSameParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -105,6 +106,7 @@ func TestRepeatedStableProviderIDResolvesToTheSameParticipant(t *testing.T) {
 }
 
 func TestStableMatchRetainsEverySupportingObservationSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -172,6 +174,7 @@ func TestStableMatchRetainsEverySupportingObservationSource(t *testing.T) {
 }
 
 func TestStableMatchRecordsIndependentAssertionsForTheSamePair(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -222,6 +225,7 @@ func TestStableMatchRecordsIndependentAssertionsForTheSamePair(t *testing.T) {
 }
 
 func TestStableMatchRetainsAlternateCompleteObservationPair(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -273,6 +277,7 @@ func TestStableMatchRetainsAlternateCompleteObservationPair(t *testing.T) {
 }
 
 func TestIDOnlyUsersProduceNonExportableStableEvidenceAndMatch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -335,6 +340,7 @@ func TestIDOnlyUsersProduceNonExportableStableEvidenceAndMatch(t *testing.T) {
 }
 
 func TestProviderIdentityIsScopedByAccountForScopedServices(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -381,6 +387,7 @@ func TestProviderIdentityIsScopedByAccountForScopedServices(t *testing.T) {
 }
 
 func TestProviderIdentityIsScopedByAccountForUnscopedServices(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -425,6 +432,7 @@ func TestProviderIdentityIsScopedByAccountForUnscopedServices(t *testing.T) {
 }
 
 func TestUndocumentedProviderFieldsCannotCreateAutomaticLink(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -464,6 +472,7 @@ func TestUndocumentedProviderFieldsCannotCreateAutomaticLink(t *testing.T) {
 }
 
 func TestBeeperFallbackIdentityIsScopedByAccount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -505,6 +514,7 @@ func TestBeeperFallbackIdentityIsScopedByAccount(t *testing.T) {
 }
 
 func TestManyObservationsSharingOneAnchorProduceOneCandidatePerPair(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -543,6 +553,7 @@ func TestManyObservationsSharingOneAnchorProduceOneCandidatePerPair(t *testing.T
 }
 
 func TestStableProviderMatchRetriesMissingLinkAfterSameRunFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -608,6 +619,7 @@ func TestStableProviderMatchRetriesMissingLinkAfterSameRunFailure(t *testing.T) 
 }
 
 func TestStableProviderMatchContinuesAfterStaleReviewedAcceptance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -670,6 +682,7 @@ func TestStableProviderMatchContinuesAfterStaleReviewedAcceptance(t *testing.T) 
 }
 
 func TestStaleAcceptedMatchUsesCurrentReviewOutcome(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		deleteMatch   bool
@@ -774,6 +787,7 @@ func installParticipantLinkFailure(t *testing.T, st *store.Store) func() {
 }
 
 func TestRejectedStableProviderIDCandidateIsNotRevived(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -826,6 +840,7 @@ func TestRejectedStableProviderIDCandidateIsNotRevived(t *testing.T) {
 }
 
 func TestAutoResolveAcrossDurablePersonsIsRecordedAsAConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -866,6 +881,7 @@ func TestAutoResolveAcrossDurablePersonsIsRecordedAsAConflict(t *testing.T) {
 }
 
 func TestImportReappliesAnAcceptedMatchWhoseLinkIsMissing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -906,6 +922,7 @@ func TestImportReappliesAnAcceptedMatchWhoseLinkIsMissing(t *testing.T) {
 }
 
 func TestFirstImportIdentityCandidateIncludesCurrentConversationEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -944,6 +961,7 @@ func TestFirstImportIdentityCandidateIncludesCurrentConversationEvidence(t *test
 }
 
 func TestImportReportsAcceptedMatchReplayFailureWithoutAborting(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -988,6 +1006,7 @@ func TestImportReportsAcceptedMatchReplayFailureWithoutAborting(t *testing.T) {
 }
 
 func TestImportDoesNotReportContestedAcceptedMatchAsReplayFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1035,6 +1054,7 @@ func TestImportDoesNotReportContestedAcceptedMatchAsReplayFailure(t *testing.T) 
 }
 
 func TestCrossScopeUsernameBecomesAReviewCandidateNotALink(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1087,6 +1107,7 @@ func TestCrossScopeUsernameBecomesAReviewCandidateNotALink(t *testing.T) {
 }
 
 func TestSameScopeValueWithDifferentScopeKindsBecomesACandidate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1129,6 +1150,7 @@ func TestSameScopeValueWithDifferentScopeKindsBecomesACandidate(t *testing.T) {
 }
 
 func TestCrossScopeUsernameWithOneUnscopedObservationSurvivesUnrelatedCleanup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
@@ -1175,6 +1197,7 @@ func TestCrossScopeUsernameWithOneUnscopedObservationSurvivesUnrelatedCleanup(t 
 }
 
 func TestCrossScopeUsernameMatchesWhenUnscopedObservationArrivesSecond(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
@@ -1217,6 +1240,7 @@ func TestCrossScopeUsernameMatchesWhenUnscopedObservationArrivesSecond(t *testin
 }
 
 func TestCrossScopeUsernameChecksEveryObservationForParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1252,6 +1276,7 @@ func TestCrossScopeUsernameChecksEveryObservationForParticipant(t *testing.T) {
 }
 
 func TestCrossScopeEvidenceTracksItsExactObservationPair(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1320,6 +1345,7 @@ func TestCrossScopeEvidenceTracksItsExactObservationPair(t *testing.T) {
 }
 
 func TestSameUsernameOnDifferentServicesIsNeverMatched(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1354,6 +1380,7 @@ func TestSameUsernameOnDifferentServicesIsNeverMatched(t *testing.T) {
 	assert.Empty(candidates)
 }
 
+// serial: changes the process environment.
 func TestPhoneEmailNameAndMembershipOnlyAddEvidence(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1440,6 +1467,7 @@ func TestPhoneEmailNameAndMembershipOnlyAddEvidence(t *testing.T) {
 }
 
 func TestEvidenceIsNotDuplicatedAcrossRuns(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1483,6 +1511,7 @@ func TestEvidenceIsNotDuplicatedAcrossRuns(t *testing.T) {
 }
 
 func TestConversationMembershipEvidenceTracksConversationSources(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1580,6 +1609,7 @@ func TestConversationMembershipEvidenceTracksConversationSources(t *testing.T) {
 }
 
 func TestConflictCandidateGainsEvidenceButNeverAccepts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1616,6 +1646,7 @@ func TestConflictCandidateGainsEvidenceButNeverAccepts(t *testing.T) {
 }
 
 func TestThreeParticipantCollisionExplainsAndReportsEveryConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1671,6 +1702,7 @@ func TestThreeParticipantCollisionExplainsAndReportsEveryConflict(t *testing.T) 
 	}
 }
 
+// serial: changes the process environment.
 func TestScoringBlocksOversizedBeeperServiceSlugs(t *testing.T) {
 	for _, size := range []int{128, 129, 64 * 1024} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {

@@ -124,11 +124,6 @@ type fakeBeeper struct {
 
 func newFakeBeeper(t *testing.T) *fakeBeeper {
 	t.Helper()
-	// Retries are exercised without real waits.
-	oldBackoff := fetchRetryBackoff
-	fetchRetryBackoff = []time.Duration{0, 0}
-	t.Cleanup(func() { fetchRetryBackoff = oldBackoff })
-	t.Helper()
 	return &fakeBeeper{t: t, pageSize: 20, assets: map[string][]byte{}, failMessageGets: map[string]bool{},
 		failMessageLists: map[string]bool{}, failMessageListsTimes: map[string]int{}, failChatGets: map[string]bool{}}
 }

@@ -121,10 +121,11 @@ Import local exports:
   import-pst          Import a PST (Outlook) archive into msgvault
   import-slackdump    Import a Slackdump export
   import-synctech-sms Import SMS Backup & Restore exports
+  import-telegram     Import a Telegram export
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
 
 Drafts, calendar, and Kata (write to providers):
-  calendar      Control live calendar events and query availability
+  calendar      Read archived events and control live calendars
   draft-compose Create an email, native Beeper, or local chat draft
   draft-delete  Delete a managed draft
   draft-edit    Replace the body of a managed draft

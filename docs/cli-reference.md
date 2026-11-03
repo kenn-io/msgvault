@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -850,7 +850,7 @@ and retries. Plan for additional API use and storage on large accounts.
 
 ## sync
 
-Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync.
+Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync. Each Gmail incremental sync first retries messages an earlier sync couldn't download or save, until they're archived or Gmail reports them gone.
 
 ```bash
 msgvault sync [account] [flags]
@@ -1960,8 +1960,16 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.35.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1987,9 +1995,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |
@@ -2252,6 +2260,10 @@ msgvault import-imessage
 
 Reads from `~/Library/Messages/chat.db` by default. This is a read-only operation.
 
+Eligible attachments referenced by `chat.db` are copied into the archive. See
+[Text Messages](/docs/usage/text-messages/#import-imessage) for limits,
+copied trees, and voice notes.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--db-path` | `~/Library/Messages/chat.db` | Path to chat.db |
@@ -2260,6 +2272,8 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
+| `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
+| `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
@@ -2316,6 +2330,25 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 | `--no-default-identity` | `false` | Do not auto-confirm the phone number as this source's "me" identity |
 
 See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail audio behavior and usage examples.
+
+---
+
+## import-telegram
+
+Import a Telegram Desktop Machine-readable JSON export, including available media.
+
+```bash
+msgvault import-telegram <export-dir>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | Export owner | Numeric Telegram user ID; required for single-chat exports |
+| `--limit` | `0` | Maximum messages added; `0` imports all messages |
+| `--no-resume` | `false` | Scan every chat, ignoring the resume checkpoint |
+| `--no-default-identity` | `false` | Skip automatic account identity creation |
+
+Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
 
 ---
 
@@ -4580,6 +4613,25 @@ for environment-only deployment and persisted API keys.
 msgvault serve --bind 0.0.0.0 --port 8080
 ```
 
+On unreleased `main`, `/mcp` serves the read-only MCP catalog on this listener
+with the configured owner bearer key. Native MCP never permits keyless access.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
+| `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
+| `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
+| `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
+| `--mcp-allow-person-merges` | `false` | Enable confirmed local person merges. |
+| `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
+| `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
+| `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
+| `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
+
+Every family flag also requires `--mcp-allow-writes`. These are process flags;
+auto-started local daemons default to read-only. See the
+[MCP guide](usage/chat.md#native-daemon-endpoints) for client setup and confirmation.
+
 ---
 
 ## setup
@@ -5247,11 +5299,14 @@ Update msgvault to the latest version.
 msgvault update [flags]
 ```
 
+Update restarts only a daemon msgvault started in the background. A daemon run as `msgvault serve` is left to its supervisor or the person who started it. Use `--no-restart` to leave even a background daemon stopped.
+
 A Homebrew install reports whether a newer release exists but does not replace
 itself. Run `brew upgrade msgvault` instead.
 
 | Flag | Description |
 |---|---|
+| `--no-restart` | Leave the daemon stopped after the update |
 | `--check` | Check for updates without installing |
 | `-y`, `--yes` | Skip confirmation prompt |
 | `-f`, `--force` | Force update even if already on the latest version |

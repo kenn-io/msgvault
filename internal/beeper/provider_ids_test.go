@@ -13,6 +13,7 @@ import (
 // Participant and would decode only the User fields, silently dropping
 // isAdmin. Participant must declare its own decoder.
 func TestParticipantDecodeKeepsIsAdminAndCapturesRawUser(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -31,6 +32,7 @@ func TestParticipantDecodeKeepsIsAdminAndCapturesRawUser(t *testing.T) {
 }
 
 func TestUserDecodeCapturesRawAndAccountUserStillDecodes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -46,6 +48,7 @@ func TestUserDecodeCapturesRawAndAccountUserStillDecodes(t *testing.T) {
 }
 
 func TestProviderUserIDNamespacesEveryForm(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		serviceSlug string
@@ -115,6 +118,7 @@ func TestProviderUserIDNamespacesEveryForm(t *testing.T) {
 }
 
 func TestProviderUserIDUsesOnlyDocumentedProviderID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	user := &User{
 		ID:  "@slack_alice:beeper.local",
@@ -126,6 +130,7 @@ func TestProviderUserIDUsesOnlyDocumentedProviderID(t *testing.T) {
 }
 
 func TestProviderUserIDNamespacesNativeIDByObservedScope(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	user := &User{
 		ID:  "@slack_alice:beeper.local",
@@ -138,6 +143,7 @@ func TestProviderUserIDNamespacesNativeIDByObservedScope(t *testing.T) {
 }
 
 func TestBridgePrefixAndMatrixServerFromUserID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		userID     string
 		wantBridge string
@@ -158,6 +164,29 @@ func TestBridgePrefixAndMatrixServerFromUserID(t *testing.T) {
 			assert := assert.New(t)
 			assert.Equal(test.wantBridge, bridgePrefixFromUserID(test.userID), "bridge prefix")
 			assert.Equal(test.wantServer, matrixServerFromUserID(test.userID), "matrix server")
+		})
+	}
+}
+
+func TestTelegramSharedKey(t *testing.T) {
+	for _, test := range []struct {
+		name, service, id, raw, want string
+	}{
+		{"native", "telegram", "@alice:beeper.local", `{"providerID":"482111"}`, "provider:8:telegram:7:service:0::6:482111"},
+		{"localpart", "telegram", "@telegram_482111:beeper.local", "", "provider:8:telegram:7:service:0::6:482111"},
+		{"invalid native falls back", "telegram", "@telegram_482111:beeper.local", `{"providerID":"invalid"}`, "provider:8:telegram:7:service:0::6:482111"},
+		{"non numeric", "telegram", "@telegram_alice:beeper.local", `{"providerID":"channel-482111"}`, ""},
+		{"channel ghost", "telegram", "@telegram_channel-482111:beeper.local", "", ""},
+		{"bare localpart", "telegram", "@482111:beeper.local", "", ""},
+		{"other service", "discord", "@telegram_482111:beeper.local", `{"providerID":"482111"}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, telegramSharedKey(test.service, &User{ID: test.id, Raw: []byte(test.raw)}))
+		})
+	}
+	for _, localpart := range []string{"-2", "2:server", "２"} {
+		t.Run("localpart="+localpart, func(t *testing.T) {
+			assert.Empty(t, telegramUserKey(localpart))
 		})
 	}
 }

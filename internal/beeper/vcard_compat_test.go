@@ -12,6 +12,7 @@ import (
 )
 
 func TestVCardContactUpgradesBeeperParticipantByPhone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -51,6 +52,7 @@ func TestVCardContactUpgradesBeeperParticipantByPhone(t *testing.T) {
 }
 
 func TestVCardEmailReusesExistingBeeperParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	existingID, err := st.EnsureParticipant(
