@@ -30,6 +30,10 @@ const (
 	contendedWriteBackoffMax  = 256 * time.Millisecond
 )
 
+// errRetryContendedWrite asks retryContendedWrite to restart a transaction
+// after its read set changes between discovery and lock acquisition.
+var errRetryContendedWrite = errors.New("retry write transaction")
+
 // retryContendedWrite retries read-then-write transactions that can fail
 // snapshot upgrade (SQLITE_BUSY), deadlock, or race a unique index. Every
 // store writer that can lose one of those races uses this one bounded policy.
@@ -58,7 +62,8 @@ func retryContendedWrite[T any](
 	policy.RandomizationFactor = 1
 	write, err := backoff.Retry(ctx, func() (*T, error) {
 		write, err := attempt()
-		if err != nil && (!s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err)) {
+		if err != nil && !errors.Is(err, errRetryContendedWrite) &&
+			!s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err) {
 			return nil, backoff.Permanent(err)
 		}
 		return write, err

@@ -32,7 +32,7 @@ func (s *Store) lockPersonMutationTx(ctx context.Context, tx *loggedTx, personID
 	return s.lockProfileIdentityKeyTxContext(ctx, tx, "person-observations", personID)
 }
 
-func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) ([]int64, error) {
+func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedTx, batch PreparedObservationBatch) ([]int64, []int64, []int64, error) {
 	messageIDs := make([]int64, 0)
 	documentRefs := make([]peoplesweep.EvidenceRef, 0)
 	for _, item := range batch.Items {
@@ -49,10 +49,15 @@ func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedT
 				documentRefs = append(documentRefs, ref)
 			}
 		}
+		for _, citation := range item.Citations {
+			if citation.Leaf.MessageID > 0 {
+				messageIDs = append(messageIDs, citation.Leaf.MessageID)
+			}
+		}
 	}
 	premiseIDs, premiseMessageIDs, premiseDocumentRefs, err := s.observationBatchPremiseSourcesTx(ctx, tx, batch)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	messageIDs = append(messageIDs, premiseMessageIDs...)
 	documentRefs = append(documentRefs, premiseDocumentRefs...)
@@ -64,7 +69,7 @@ func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedT
 	attachmentIDs = slices.Compact(attachmentIDs)
 	for _, attachmentID := range attachmentIDs {
 		if err := s.lockDocumentOccurrenceAttachmentTx(ctx, tx, attachmentID); err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 	}
 	documentHashes := make([]string, 0, len(documentRefs))
@@ -78,7 +83,7 @@ func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedT
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read observation document support hash: %w", err)
+			return nil, nil, nil, fmt.Errorf("read observation document support hash: %w", err)
 		}
 		if canonicalBlobHash != "" {
 			documentHashes = append(documentHashes, canonicalBlobHash)
@@ -88,21 +93,34 @@ func (s *Store) lockObservationSupportSourcesTx(ctx context.Context, tx *loggedT
 	documentHashes = slices.Compact(documentHashes)
 	for _, canonicalBlobHash := range documentHashes {
 		if err := s.lockDocumentPublicationHashTx(ctx, tx, canonicalBlobHash); err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 	}
 	slices.Sort(messageIDs)
 	messageIDs = slices.Compact(messageIDs)
+	lockedMessageIDs := make([]int64, 0, len(messageIDs))
 	for _, messageID := range messageIDs {
 		var lockedID int64
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("lock observation support message %d: %w", messageID, err)
+		locked := false
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, nil, nil, fmt.Errorf("lock observation support message %d: %w", messageID, err)
+			}
+		} else {
+			locked = true
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT message_id FROM message_bodies WHERE message_id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("lock observation support body %d: %w", messageID, err)
+		if err := tx.QueryRowContext(ctx, `SELECT message_id FROM message_bodies WHERE message_id=?`+s.dialect.SelectForUpdate(), messageID).Scan(&lockedID); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, nil, nil, fmt.Errorf("lock observation support body %d: %w", messageID, err)
+			}
+		} else {
+			locked = true
+		}
+		if locked {
+			lockedMessageIDs = append(lockedMessageIDs, messageID)
 		}
 	}
-	return premiseIDs, nil
+	return premiseIDs, messageIDs, lockedMessageIDs, nil
 }
 
 func (s *Store) observationBatchPremiseSourcesTx(
@@ -510,25 +528,17 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 	}
 	// Lock direct and transitive premise sources before the person row so
 	// apply-time alignment remains stable through the write transaction.
-	premiseIDs, err := s.lockObservationSupportSourcesTx(ctx, tx, b)
+	premiseIDs, discoveredMessageIDs, lockedMessageIDs, err := s.lockObservationSupportSourcesTx(ctx, tx, b)
 	if err != nil {
 		return result, err
 	}
-	premiseSourceIDs, err := s.observationCitationMessageIDsTx(ctx, tx, premiseIDs)
-	if err != nil {
-		return result, err
+	discoveredPremiseSourceIDs := make(map[int64]struct{}, len(discoveredMessageIDs))
+	for _, messageID := range discoveredMessageIDs {
+		discoveredPremiseSourceIDs[messageID] = struct{}{}
 	}
-	lockedPremiseSourceIDs := make(map[int64]struct{}, len(premiseSourceIDs))
-	for _, messageID := range premiseSourceIDs {
+	lockedPremiseSourceIDs := make(map[int64]struct{}, len(lockedMessageIDs))
+	for _, messageID := range lockedMessageIDs {
 		lockedPremiseSourceIDs[messageID] = struct{}{}
-	}
-	for _, item := range b.Items {
-		if item.Failure != nil {
-			continue
-		}
-		for _, citation := range item.Citations {
-			lockedPremiseSourceIDs[citation.Leaf.MessageID] = struct{}{}
-		}
 	}
 	if err := s.lockPersonMutationTx(ctx, tx, b.PersonID); err != nil {
 		return result, err
@@ -619,10 +629,16 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		}
 		if out.Failure == nil {
 			for _, messageID := range premiseMessageIDs {
-				if _, locked := lockedPremiseSourceIDs[messageID]; !locked {
-					out.Failure = &personobs.ValidationError{Field: "support", Reason: "citation-source-changed"}
-					break
+				if _, locked := lockedPremiseSourceIDs[messageID]; locked {
+					continue
 				}
+				if _, discovered := discoveredPremiseSourceIDs[messageID]; !discovered {
+					return result, fmt.Errorf("%w: observation support source closure changed", errRetryContendedWrite)
+				}
+				// This source was discovered before locking, but its message and
+				// body rows were already absent. Keep it out of the retry condition;
+				// support validation below treats its citation as unavailable and
+				// still evaluates the remaining evidence.
 			}
 		}
 		if out.Failure != nil {
@@ -1451,7 +1467,7 @@ func (s *Store) observationHasFreshSupportedCitationTx(ctx context.Context, tx *
 func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx *loggedTx, personID, observationID int64) (*time.Time, error) {
 	pending := []int64{observationID}
 	seenObservations := make(map[int64]struct{})
-	citationsByEvidenceID := make(map[int64]personobs.Citation)
+	premisesByObservation := make(map[int64][]int64)
 	for len(pending) > 0 {
 		currentID := pending[0]
 		pending = pending[1:]
@@ -1476,20 +1492,9 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 		if err != nil {
 			return nil, err
 		}
-		if observation.PersonID != personID || !personobs.PremiseSupported(observation) {
+		if observation.PersonID != personID {
 			continue
 		}
-		alignedCitations, err := s.observationAlignedSupportedCitationsTx(ctx, tx, personID, currentID)
-		if err != nil {
-			return nil, err
-		}
-		for _, citation := range alignedCitations {
-			current, exists := citationsByEvidenceID[citation.EvidenceID]
-			if !exists || citation.Leaf.EventTime.After(current.Leaf.EventTime) {
-				citationsByEvidenceID[citation.EvidenceID] = citation
-			}
-		}
-
 		rolePredicate := `e.role=?`
 		args := []any{currentID, personID, personobs.PremiseRoleSupport}
 		if observation.Level == personobs.LevelContradiction {
@@ -1503,13 +1508,14 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 		if err != nil {
 			return nil, fmt.Errorf("read supported observation premises: %w", err)
 		}
+		premiseIDs := make([]int64, 0)
 		for rows.Next() {
 			var premiseID int64
 			if err := rows.Scan(&premiseID); err != nil {
 				_ = rows.Close()
 				return nil, fmt.Errorf("scan supported observation premise: %w", err)
 			}
-			pending = append(pending, premiseID)
+			premiseIDs = append(premiseIDs, premiseID)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -1518,6 +1524,54 @@ func (s *Store) observationLatestSupportedEvidenceTimeTx(ctx context.Context, tx
 		if err := rows.Close(); err != nil {
 			return nil, fmt.Errorf("close supported observation premises: %w", err)
 		}
+		premisesByObservation[currentID] = premiseIDs
+		pending = append(pending, premiseIDs...)
+	}
+
+	currentlySupported := make(map[int64]bool)
+	evaluated := make(map[int64]bool)
+	_, err := s.observationCurrentlySupportedTx(
+		ctx, tx, personID, observationID, currentlySupported, evaluated, make(map[int64]bool),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("check current observation support for evidence time: %w", err)
+	}
+
+	pending = []int64{observationID}
+	seenObservations = make(map[int64]struct{})
+	citationsByEvidenceID := make(map[int64]personobs.Citation)
+	for len(pending) > 0 {
+		currentID := pending[0]
+		pending = pending[1:]
+		if _, seen := seenObservations[currentID]; seen {
+			continue
+		}
+		seenObservations[currentID] = struct{}{}
+		if !currentlySupported[currentID] {
+			continue
+		}
+
+		observation, err := s.loadObservationTx(ctx, tx, currentID)
+		if errors.Is(err, sql.ErrNoRows) && currentID != observationID {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if observation.PersonID != personID {
+			continue
+		}
+		alignedCitations, err := s.observationAlignedSupportedCitationsTx(ctx, tx, personID, currentID)
+		if err != nil {
+			return nil, err
+		}
+		for _, citation := range alignedCitations {
+			current, exists := citationsByEvidenceID[citation.EvidenceID]
+			if !exists || citation.Leaf.EventTime.After(current.Leaf.EventTime) {
+				citationsByEvidenceID[citation.EvidenceID] = citation
+			}
+		}
+		pending = append(pending, premisesByObservation[currentID]...)
 	}
 
 	var latest *time.Time

@@ -55,6 +55,145 @@ func TestObservationConcurrentDuplicateOnPostgres(t *testing.T) {
 	assert.Len(detail.Events, 2)
 }
 
+func TestObservationBatchRetriesAfterConcurrentOwnerReinforcementAddsPremiseSourceOnPostgres(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+	if !f.store.IsPostgreSQL() {
+		t.Skip("PostgreSQL row-lock contract")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	rootResult := applyObservationInput(t, f.store, in, generation)
+	require.Len(rootResult.Items, 1)
+	rootID := rootResult.Items[0].ObservationID
+	root, err := f.store.GetPersonObservation(ctx, rootID)
+	require.NoError(err)
+	require.Len(root.Evidence, 1)
+	rootMessageID := root.Evidence[0].Leaf.MessageID
+
+	ownerRootInput := personobs.BatchInput{
+		PersonID: in.PersonID,
+		Proposals: []personobs.ProposedObservation{{
+			PersonID: in.PersonID, Level: personobs.LevelExplicit, Origin: personobs.OriginOwner,
+			Kind: personobs.KindState, Content: "[PERSON] drinks tea every morning", ConfidenceBP: 1000,
+		}},
+	}
+	ownerRootBatch, err := f.store.PreparePersonObservationBatch(ctx, ownerRootInput)
+	require.NoError(err)
+	ownerRootResult, err := f.store.ApplyPersonObservationBatch(ctx, ownerRootBatch, 0, "owner")
+	require.NoError(err)
+	require.Len(ownerRootResult.Items, 1)
+	require.Equal("created", ownerRootResult.Items[0].Outcome)
+	ownerRootID := ownerRootResult.Items[0].ObservationID
+
+	newSupport, newMessageID := observationSupportForMessage(
+		t, f, "owner-reinforcement-new-premise-source", "I drink tea every morning", "I drink tea",
+		time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC),
+	)
+	ownerReinforcementInput := personobs.BatchInput{
+		PersonID: in.PersonID,
+		Proposals: []personobs.ProposedObservation{{
+			PersonID: in.PersonID, Level: personobs.LevelExplicit, Origin: personobs.OriginOwner,
+			Kind: personobs.KindState, Content: "[PERSON] drinks tea every morning", ConfidenceBP: 1000,
+			Support: []personobs.SupportInput{newSupport}, ReinforcesID: &ownerRootID,
+		}},
+	}
+	ownerReinforcementBatch, err := f.store.PreparePersonObservationBatch(ctx, ownerReinforcementInput)
+	require.NoError(err)
+	require.Len(ownerReinforcementBatch.Items, 1)
+	require.Nil(ownerReinforcementBatch.Items[0].Failure)
+
+	derivedInput := in
+	derivedInput.Proposals = []personobs.ProposedObservation{{
+		PersonID: in.PersonID, Level: personobs.LevelDeductive, Origin: personobs.OriginReasoning,
+		Kind: personobs.KindOther, Content: "[PERSON] runs and drinks tea", ConfidenceBP: 800,
+		Premises: []personobs.PremiseInput{
+			{ID: rootID, Role: personobs.PremiseRoleSupport},
+			{ID: ownerRootID, Role: personobs.PremiseRoleSupport},
+		},
+	}}
+	derivedBatch, err := f.store.PreparePersonObservationBatch(ctx, derivedInput)
+	require.NoError(err)
+	require.Len(derivedBatch.Items, 1)
+	require.Nil(derivedBatch.Items[0].Failure)
+
+	// Pause source discovery on root's existing message. The owner update uses
+	// a different source, so it can add a citation to ownerRoot while the
+	// derived batch still has its original source closure.
+	rootSourceLock, err := f.store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	defer func() { _ = rootSourceLock.Rollback() }()
+	var lockedMessageID int64
+	require.NoError(rootSourceLock.QueryRowContext(ctx, f.store.Rebind(
+		`SELECT id FROM messages WHERE id=? FOR UPDATE`), rootMessageID).Scan(&lockedMessageID))
+
+	type batchOutcome struct {
+		result personobs.BatchResult
+		err    error
+	}
+	applyResults := make(chan batchOutcome, 1)
+	go func() {
+		result, err := f.store.ApplyPersonObservationBatch(ctx, derivedBatch, generation, "reasoner")
+		applyResults <- batchOutcome{result: result, err: err}
+	}()
+
+	waitingOnMessageRow := func() bool {
+		var waiting bool
+		err := f.store.DB().QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE pid <> pg_backend_pid() AND wait_event_type='Lock'
+			  AND query ILIKE '%SELECT id FROM messages WHERE id%'
+		)`).Scan(&waiting)
+		return err == nil && waiting
+	}
+	initialWaitObserved := assert.Eventually(waitingOnMessageRow, 15*time.Second, 100*time.Millisecond,
+		"derived batch should wait on the root's source row")
+	require.True(initialWaitObserved)
+
+	ownerResult, err := f.store.ApplyPersonObservationBatch(ctx, ownerReinforcementBatch, 0, "owner")
+	require.NoError(err)
+	require.Len(ownerResult.Items, 1)
+	require.Equal("reinforced", ownerResult.Items[0].Outcome)
+	require.Nil(ownerResult.Items[0].Failure)
+
+	newSourceLock, err := f.store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	defer func() { _ = newSourceLock.Rollback() }()
+	require.NoError(newSourceLock.QueryRowContext(ctx, f.store.Rebind(
+		`SELECT id FROM messages WHERE id=? FOR UPDATE`), newMessageID).Scan(&lockedMessageID))
+	require.NoError(rootSourceLock.Commit())
+
+	var earlyOutcome *batchOutcome
+	retryWaitObserved := assert.Eventually(func() bool {
+		select {
+		case outcome := <-applyResults:
+			earlyOutcome = &outcome
+			return true
+		default:
+		}
+		return waitingOnMessageRow()
+	}, 15*time.Second, 100*time.Millisecond,
+		"restarted batch should lock the owner's new citation before validation")
+	require.True(retryWaitObserved)
+	assert.Nil(earlyOutcome, "the batch should not validate an unlocked premise source")
+	require.NoError(newSourceLock.Commit())
+
+	var applied batchOutcome
+	select {
+	case applied = <-applyResults:
+	case <-ctx.Done():
+		require.NoError(ctx.Err())
+	}
+	require.NoError(applied.err)
+	require.Len(applied.result.Items, 1)
+	assert.Equal("created", applied.result.Items[0].Outcome)
+	updatedOwnerRoot, err := f.store.GetPersonObservation(ctx, ownerRootID)
+	require.NoError(err)
+	assert.Len(updatedOwnerRoot.Evidence, 1)
+}
+
 func TestObservationBatchSerializesWithUntrackingOnPostgres(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
