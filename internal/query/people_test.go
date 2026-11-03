@@ -155,6 +155,7 @@ func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 }
 
 func TestGetPersonDraftOnlyLinkedAlias(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
