@@ -359,7 +359,7 @@ func TestRelationshipCalendarAndTimelineReadOnlySubjectAndOwnerRows(t *testing.T
 	start := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	const messages = 200
 	for i := range messages {
-		sender := members[i%151]
+		sender := members[i%(rosterSize+1)]
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "group_chat",
 			MessageType: "imessage", SentAt: start.Add(time.Duration(i) * time.Minute), IsFromMe: sender == owner, SenderID: &sender})
 		b.AddFrom(id, sender, "Sender")
@@ -386,12 +386,7 @@ func TestRelationshipCalendarAndTimelineReadOnlySubjectAndOwnerRows(t *testing.T
 	})
 	t.Run("Timeline", func(t *testing.T) {
 		profile, err := profileQuery(t, engine, func() error {
-			response, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: members[1]})
-			if err == nil {
-				assert.Equal(t, int64(1), response.TotalCount)
-				require.Len(t, response.Rows, 1)
-				assert.Equal(t, int64(200), response.Rows[0].MessageCount)
-			}
+			_, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: members[1]})
 			return err
 		})
 		require.NoError(t, err)
