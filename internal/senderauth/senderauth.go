@@ -4,11 +4,12 @@ package senderauth
 import (
 	"bufio"
 	"bytes"
-	"net/mail"
 	"net/textproto"
 	"strings"
 
 	"github.com/emersion/go-msgauth/authres"
+	"github.com/jhillyerd/enmime/v2"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 // Verdict describes the pinned receiver's results. Verified covers the From domain only.
@@ -68,43 +69,27 @@ func Evaluate(block []byte, trusted []string, displayedFrom string) *Verdict {
 			}
 		}
 	}
-	from, err := mail.ParseAddressList(headers.Get("From"))
+	from, err := enmime.ParseAddressList(headers.Get("From"))
 	if err == nil && len(from) == 1 && len(headers.Values("From")) == 1 {
-		domain := addressDomain(from[0].Address)
-		verdict.Verified = verdict.DMARC == "pass" && domain != "" && strings.EqualFold(verdict.Domain, domain) && strings.EqualFold(domain, addressDomain(displayedFrom))
+		domain := mime.ExtractDomain(from[0].Address)
+		verdict.Verified = verdict.DMARC == "pass" && domain != "" && strings.EqualFold(verdict.Domain, domain) && strings.EqualFold(domain, mime.ExtractDomain(displayedFrom))
 	}
 	return verdict
 }
 
-func addressDomain(address string) string {
-	if i := strings.LastIndexByte(address, '@'); i >= 0 {
-		return address[i+1:]
-	}
-	return ""
-}
-
-// authres splits on semicolons without recognizing comments or quotes.
-// Remove nested comments and refuse quoted semicolons before handing it a header.
+// authres splits on semicolons and whitespace without recognizing quoted values.
+// Strip comments and blank quoted contents so diagnostic text stays inert.
 func cleanResults(value string) (string, bool) {
 	var out strings.Builder
 	depth := 0
 	quoted, escaped := false, false
 	for _, c := range value {
 		if escaped {
-			if depth == 0 {
-				if c == ';' {
-					return "", false
-				}
-				out.WriteRune(c)
-			}
 			escaped = false
 			continue
 		}
 		if c == '\\' && (depth > 0 || quoted) {
 			escaped = true
-			if depth == 0 {
-				out.WriteRune(c)
-			}
 			continue
 		}
 		if depth > 0 {
@@ -118,14 +103,16 @@ func cleanResults(value string) (string, bool) {
 		}
 		if c == '"' {
 			quoted = !quoted
+			out.WriteRune(c)
+			continue
 		}
-		if !quoted && c == '(' {
+		if quoted {
+			continue
+		}
+		if c == '(' {
 			depth++
 			out.WriteByte(' ')
 			continue
-		}
-		if quoted && c == ';' {
-			return "", false
 		}
 		out.WriteRune(c)
 	}

@@ -1346,6 +1346,9 @@ func (c *Config) validateDraftSources(content []byte) error {
 	}
 	return validateDraftSelectors("sender_auth.sources", c.SenderAuth.Sources, raw.SenderAuth.Sources,
 		func(s SenderAuthSource) int64 { return s.SourceID }, func(s SenderAuthSource) error {
+			if len(s.TrustedAuthservIDs) == 0 {
+				return errors.New("trusted_authserv_ids must contain at least one ID")
+			}
 			for _, id := range s.TrustedAuthservIDs {
 				if id == "" || strings.ContainsFunc(id, unicode.IsSpace) {
 					return errors.New("trusted_authserv_ids must be nonblank and contain no whitespace")

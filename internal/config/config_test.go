@@ -228,7 +228,10 @@ func TestSenderAuthConfig(t *testing.T) {
 	for _, tc := range []struct{ name, body, want string }{
 		{"missing source", "trusted_authserv_ids = [\"mx.google.com\"]", "source_id is required"},
 		{"zero source", "source_id = 0", "source_id must be positive"},
-		{"duplicate source", "source_id = 42\n[[sender_auth.sources]]\nsource_id = 42", "duplicate source_id"},
+		{"duplicate source", "source_id = 42\ntrusted_authserv_ids = [\"mx.google.com\"]\n[[sender_auth.sources]]\nsource_id = 42\ntrusted_authserv_ids = [\"mx.google.com\"]", "duplicate source_id"},
+		{"missing pins", "source_id = 42", "trusted_authserv_ids must contain at least one ID"},
+		{"empty pins", "source_id = 42\ntrusted_authserv_ids = []", "trusted_authserv_ids must contain at least one ID"},
+		{"misspelled pins", "source_id = 42\ntrusted_authserv_id = [\"mx.google.com\"]", "trusted_authserv_ids must contain at least one ID"},
 		{"blank pin", "source_id = 42\ntrusted_authserv_ids = [\"\"]", "trusted_authserv_ids must be nonblank"},
 		{"whitespace pin", "source_id = 42\ntrusted_authserv_ids = [\"mx.google.com other\"]", "contain no whitespace"},
 	} {

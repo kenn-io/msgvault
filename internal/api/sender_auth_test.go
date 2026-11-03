@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -22,9 +25,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
 	root := t.TempDir()
-	for _, dir := range []string{"cur", "new", "tmp"} {
-		requirements.NoError(os.Mkdir(filepath.Join(root, dir), 0o700))
-	}
+	email.Maildir(t, root)
 	raw := []byte("From: Sender <\"a@b c\"@example.test>\r\nTo: reader@example.test\r\nSubject: Authentication\r\nDate: Tue, 03 Nov 2026 12:00:00 +0000\r\nMessage-ID: <auth@example.test>\r\nAuthentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass header.from=example.test\r\n\r\nArchived body.\r\n")
 	requirements.NoError(os.WriteFile(filepath.Join(root, "new", "message"), raw, 0o600))
 	summary, err := importer.ImportMaildir(t.Context(), f.Store, root, importer.MaildirImportOptions{Identifier: "reader@example.test", AttachmentsDir: t.TempDir()})
@@ -51,20 +52,24 @@ func TestSenderAuthMessageReads(t *testing.T) {
 					if pinned {
 						cfg.SenderAuth.Sources[0].TrustedAuthservIDs[0] = "changed.example.test"
 					}
-					paths := []string{fmt.Sprintf("/api/v1/messages/%d", id)}
-					if withEngine {
-						paths = append(paths, fmt.Sprintf("/api/v1/cli/message?id=%d", id))
-					}
-					for _, path := range paths {
-						w := httptest.NewRecorder()
-						srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-						require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-						var got map[string]json.RawMessage
-						require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-						if pinned {
-							assert.JSONEq(t, want, string(got["sender_auth"]))
-						} else {
-							assert.NotContains(t, got, "sender_auth")
+					for _, messageType := range []string{"email", ""} {
+						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, id)
+						require.NoError(t, err)
+						paths := []string{fmt.Sprintf("/api/v1/messages/%d", id)}
+						if withEngine {
+							paths = append(paths, fmt.Sprintf("/api/v1/cli/message?id=%d", id))
+						}
+						for _, path := range paths {
+							w := httptest.NewRecorder()
+							srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+							require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+							var got map[string]json.RawMessage
+							require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+							if pinned {
+								assert.JSONEq(t, want, string(got["sender_auth"]))
+							} else {
+								assert.NotContains(t, got, "sender_auth")
+							}
 						}
 					}
 					if pinned {
@@ -81,4 +86,21 @@ func TestSenderAuthMessageReads(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSenderAuthReadFailureLogs(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("corrupt-raw")
+	require.NoError(f.Store.UpsertMessageRaw(id, []byte("From: sender@example.test\r\n\r\n")))
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("corrupt zlib"), id)
+	require.NoError(err)
+	var logs bytes.Buffer
+	cfg := &config.Config{SenderAuth: config.SenderAuthConfig{Sources: []config.SenderAuthSource{{SourceID: f.Source.ID, TrustedAuthservIDs: []string{"mx.google.com"}}}}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	got := srv.senderAuth(t.Context(), id, f.Source.ID, "email", "sender@example.test")
+	assert.Equal(&senderauth.Verdict{}, got)
+	assert.Contains(logs.String(), "failed to read sender authentication headers")
+	assert.Contains(logs.String(), fmt.Sprintf("message_id=%d source_id=%d", id, f.Source.ID))
+	assert.Contains(logs.String(), "zlib")
 }
