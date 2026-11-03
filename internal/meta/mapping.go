@@ -18,6 +18,9 @@ const objectMetadataVersion = 1
 type objectMetadata struct {
 	BodyReadRequest    int    `json:"body_read_request,omitempty"`
 	BodySyncID         int64  `json:"body_sync_id,omitempty"`
+	Hidden             *bool  `json:"hidden,omitempty"`
+	BodyTime           int64  `json:"body_time,omitempty"`
+	StateTime          int64  `json:"state_time,omitempty"`
 	Version            int    `json:"version"`
 	AppID              string `json:"app_id"`
 	PageID             string `json:"page_id"`
@@ -48,6 +51,10 @@ func (r *importRun) objectFormat() string {
 }
 
 func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge) error {
+	deleted, err := r.deletedByAction(ctx, obj.ID)
+	if err != nil || deleted {
+		return err
+	}
 	if r.imp.instagram != "" && obj.InstagramMedia != nil && obj.InstagramMedia.Owner != nil {
 		if owner := obj.InstagramMedia.Owner.ID; owner != "" && owner != r.imp.instagram {
 			return errors.New("instagram media owner mismatch")

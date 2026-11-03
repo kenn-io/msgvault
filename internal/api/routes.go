@@ -15,6 +15,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -175,6 +176,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 		reflect.TypeFor[query.MessageSummary](),
 		reflect.TypeFor[CLIQueryMessageSummary](),
 	)
+	config.Components.Schemas.RegisterTypeAlias(reflect.TypeFor[meta.Disclosure](), reflect.TypeFor[MetaCommentDisclosure]())
 	if s.daemonVersion != "" {
 		if config.Info.Extensions == nil {
 			config.Info.Extensions = map[string]any{}
@@ -207,6 +209,10 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
+	if op := ctx.Operation(); op != nil && commentActionOwnerOnly(op.OperationID) && !s.apiRequestAuthorized(req) {
+		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Owner authorization is required")
+		return
+	}
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
@@ -323,6 +329,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonTierRoutes(apiV1)
 	s.registerEmailTagRoutes(apiV1)
+	s.registerCommentActionRoutes(apiV1)
 	s.registerPersonAgendaRoutes(apiV1)
 	s.registerKataIssueRoutes(apiV1)
 	s.registerPersonBriefRoutes(apiV1)
