@@ -172,7 +172,7 @@ func (a *Actions) dispatchMentionReply(ctx context.Context, t Target, req Action
 	return a.finish(ctx, t, result, row, err, true, store.MetaCommentActionOutcome{RemoteID: id})
 }
 
-func (a *Actions) archiveMentionReceipt(ctx context.Context, t Target, result *ActionResult) error {
+func (a *Actions) archiveMentionReceipt(ctx context.Context, t Target, result *ActionResult, row store.MetaCommentAction) error {
 	if result.Receipt.RemoteID == "" || result.Receipt.ArchiveComplete {
 		return nil
 	}
@@ -180,7 +180,11 @@ func (a *Actions) archiveMentionReceipt(ctx context.Context, t Target, result *A
 	if !ok {
 		return actionFailure("stale_identity", result, nil)
 	}
-	id, err := persistMentionReply(ctx, a.st, mentionScope{SourceID: t.SourceID, App: tuple.AppID, Page: tuple.PageID, IG: tuple.AccountID}, mentionTarget(t), result.Receipt.RemoteID, result.Disclosure.Body, result.Receipt.CreatedAt)
+	sentAt := row.CreatedAt
+	if row.DispatchedAt != nil {
+		sentAt = *row.DispatchedAt
+	}
+	id, err := persistMentionReply(ctx, a.st, mentionScope{SourceID: t.SourceID, App: tuple.AppID, Page: tuple.PageID, IG: tuple.AccountID}, mentionTarget(t), result.Receipt.RemoteID, result.Disclosure.Body, sentAt)
 	if err == nil {
 		result.Receipt.ReplyMessageID, result.Receipt.ArchiveComplete = id, true
 	}

@@ -468,7 +468,7 @@ func (a *Actions) localEffect(ctx context.Context, t Target, result *ActionResul
 	switch result.Action {
 	case ActionPublicReply:
 		if t.MessageType == MentionsSourceType {
-			err = a.archiveMentionReceipt(local, t, result)
+			err = a.archiveMentionReceipt(local, t, result, row)
 		}
 	case ActionDelete:
 		err = a.st.MarkMessageDeletedContext(local, t.SourceID, t.CommentID)

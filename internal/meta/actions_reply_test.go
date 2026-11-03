@@ -306,6 +306,44 @@ func TestPrivateReplyUnknownResolvedAfterWindow(t *testing.T) {
 	}
 }
 
+func TestPrivateReplyUnknownResolvesAfterAuthorEnrichment(t *testing.T) {
+	for _, resolution := range []string{"sent", "not-sent"} {
+		t.Run(resolution, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, _, id, a, g := actionFixture(t)
+			privateClock(t, a, id)
+			g.status = 500
+
+			preview, err := a.Run(t.Context(), ActionRequest{MessageID: id, Action: ActionPrivateReply, Body: "private", DryRun: true})
+			require.NoError(err)
+			request := ActionRequest{MessageID: id, Action: ActionPrivateReply, Body: "private", Confirm: preview.Confirm}
+			unknown, err := a.Run(t.Context(), request)
+			_ = actionCode(t, err, "outcome_unknown")
+			require.NotNil(unknown.Receipt)
+			assert.Equal("unknown", unknown.Receipt.State)
+
+			// Later sender enrichment can identify the original comment as ours.
+			_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET is_from_me=1 WHERE id=?", id)
+			require.NoError(err)
+			preview, err = a.Run(t.Context(), ActionRequest{MessageID: id, Action: ActionPrivateReply, Body: "private", DryRun: true})
+			require.NoError(err)
+			require.NotNil(preview.Receipt)
+			assert.Equal(unknown.Receipt.ID, preview.Receipt.ID)
+			assert.Equal("unknown", preview.Receipt.State)
+
+			resolved, err := a.Run(t.Context(), ActionRequest{MessageID: id, Action: ActionPrivateReply, Body: "private", Confirm: preview.Confirm, ResolveUnknown: resolution})
+			require.NoError(err)
+			want := "succeeded"
+			if resolution == "not-sent" {
+				want = "failed"
+			}
+			assert.Equal(want, resolved.Receipt.State)
+			assert.Equal(1, g.count())
+		})
+	}
+}
+
 func TestPrivateReplyResolveSentRetainsPartialEvidence(t *testing.T) {
 	for _, tc := range []struct{ response, remoteID, recipientID string }{
 		{`{"recipient_id":"opaque-300"}`, "", "opaque-300"},

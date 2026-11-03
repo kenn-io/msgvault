@@ -129,6 +129,52 @@ func TestMentionReplyArchivedOnce(t *testing.T) {
 	}
 }
 
+func TestMentionReplyRetryArchivesSuccessfulDispatchTime(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, scope, id := mentionReplyFixture(t, false)
+	var calls atomic.Int32
+	client := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"code":100}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"id":"500"}`)
+	})
+	actions := NewActions(st, ActionsOptions{Allowed: func(int64, ActionKind) (bool, error) { return true, nil }, OpenAPI: func(context.Context, *store.Source) (ActionAPI, error) { return client, nil }})
+	preview, err := actions.Run(t.Context(), ActionRequest{MessageID: id, Action: ActionPublicReply, Body: "Example reply", DryRun: true})
+	require.NoError(err)
+	req := ActionRequest{MessageID: id, Action: ActionPublicReply, Body: "Example reply", Confirm: preview.Confirm}
+	first, err := actions.Run(t.Context(), req)
+	require.Error(err)
+	require.NotNil(first.Receipt)
+	assert.Equal("failed", first.Receipt.State)
+
+	rows, err := st.ListMessageMetaCommentActionsContext(t.Context(), id)
+	require.NoError(err)
+	require.Len(rows, 1)
+	oldCreatedAt := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE meta_comment_actions SET created_at=? WHERE id=?`), oldCreatedAt, rows[0].ID)
+	require.NoError(err)
+
+	retried, err := actions.Run(t.Context(), req)
+	require.NoError(err)
+	require.NotNil(retried.Receipt)
+	assert.Equal("succeeded", retried.Receipt.State)
+	rows, err = st.ListMessageMetaCommentActionsContext(t.Context(), id)
+	require.NoError(err)
+	require.Len(rows, 1)
+	require.NotNil(rows[0].DispatchedAt)
+	archivedID := message(t, st, scope.SourceID, "500").ID
+	archived, err := st.GetMessageContext(t.Context(), archivedID)
+	require.NoError(err)
+	require.False(archived.SentAt.IsZero())
+	assert.Equal(rows[0].DispatchedAt.Unix(), archived.SentAt.Unix())
+	assert.True(archived.SentAt.After(oldCreatedAt))
+	assert.Equal(int32(2), calls.Load())
+}
+
 func TestMentionReplyCommentRequiresMediaID(t *testing.T) {
 	requirements := require.New(t)
 	st, _, id := mentionReplyFixture(t, true)
@@ -233,12 +279,24 @@ func TestMentionReplyRepairsArchiveWithoutResend(t *testing.T) {
 	requirements.NotNil(got.Receipt)
 	assertions.Equal("succeeded", got.Receipt.State)
 	assertions.False(got.Receipt.ArchiveComplete)
+	rows, err := st.ListMessageMetaCommentActionsContext(t.Context(), id)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	requirements.NotNil(rows[0].DispatchedAt)
+	oldCreatedAt := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE meta_comment_actions SET created_at=? WHERE id=?`), oldCreatedAt, rows[0].ID)
+	requirements.NoError(err)
 	requirements.NoError(st.SetMessageMetadata(id, saved))
 	again, err := actions.Run(t.Context(), req)
 	requirements.NoError(err)
 	assertions.Equal(got.Receipt.ID, again.Receipt.ID)
 	assertions.True(again.Receipt.ArchiveComplete)
 	assertions.Equal(message(t, st, scope.SourceID, "500").ID, again.Receipt.ReplyMessageID)
+	archived, err := st.GetMessageContext(t.Context(), again.Receipt.ReplyMessageID)
+	requirements.NoError(err)
+	requirements.False(archived.SentAt.IsZero())
+	assertions.Equal(rows[0].DispatchedAt.Unix(), archived.SentAt.Unix())
+	assertions.True(archived.SentAt.After(oldCreatedAt))
 	assertions.Equal(int32(1), calls.Load())
 }
 

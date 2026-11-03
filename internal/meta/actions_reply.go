@@ -9,9 +9,6 @@ import (
 
 func isReply(kind ActionKind) bool { return kind == ActionPublicReply || kind == ActionPrivateReply }
 func (a *Actions) privateReplyChecks(ctx context.Context, t Target, req ActionRequest, result *ActionResult) error {
-	if t.IsFromMe {
-		return actionFailure("private_reply_not_allowed", result, nil)
-	}
 	if req.DryRun {
 		rows, err := a.st.ListMetaCommentActionsContext(ctx, t.SourceID, t.CommentID)
 		if err != nil {
@@ -28,6 +25,12 @@ func (a *Actions) privateReplyChecks(ctx context.Context, t Target, req ActionRe
 			// A local preview still supplies the exact binding for explicit resolution.
 			result.Warnings = append(result.Warnings, "prior_private_reply_outcome_unknown")
 		}
+	}
+	// Author enrichment can mark the original comment as ours after a private
+	// reply's outcome became unknown. Keep local receipt previews available and
+	// let explicit receipt resolution run before refusing a fresh self-reply.
+	if t.IsFromMe && result.Receipt == nil && req.ResolveUnknown == "" {
+		return actionFailure("private_reply_not_allowed", result, nil)
 	}
 	if req.DryRun && result.Receipt == nil && !a.privateReplyWindowOpen(t) {
 		return actionFailure("private_reply_window_closed", result, nil)
