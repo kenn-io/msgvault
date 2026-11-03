@@ -150,7 +150,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
-          extra-path: ~/.cache/golangci-lint
+          extra-path: .git/golangci-lint-cache
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
@@ -175,10 +175,19 @@ jobs:
         run: make openapi-check
 
       - name: Lint
-        run: make lint-ci
+        run: |
+          cache=$(git rev-parse --git-path golangci-lint-cache)
+          cmp -s .custom-gcl.yml "$cache/.custom-gcl.yml" || rm -rf "$cache"
+          mkdir -p "$cache"
+          cp .custom-gcl.yml "$cache/.custom-gcl.yml"
+          make lint-ci
 
       - name: Vulnerability check
         run: make vulncheck
+
+      - name: Log cache sizes
+        if: github.event_name != 'pull_request'
+        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -900,15 +909,28 @@ jobs:
       - name: Test (pgvector-tagged)
         run: >-
           go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/pgvector.json --rerun-fails=2 --rerun-fails-report gotestsum/pgvector-reruns.txt
-          --packages "./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/..." --
+          --packages "./internal/vector/... ./internal/scheduler/..." --
           -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/pgvector-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pgvector-attempt-${{ github.run_attempt }}
-          path: gotestsum/*.json
+          path: gotestsum/pgvector.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Test package in isolated shards (pgvector-tagged)
+        if: ${{ !cancelled() }}
+        run: scripts/test-package-shards.sh ./cmd/msgvault/cmd 4 "fts5 sqlite_vec pgvector" 18m pgvector-cli
+
+      - name: Upload test events
+        if: failure() || github.run_attempt > 1
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pgvector-cli-attempt-${{ github.run_attempt }}
+          path: gotestsum/pgvector-cli.json
           retention-days: 14
           if-no-files-found: ignore
 
