@@ -5,6 +5,8 @@ import type { MeetingMetricsRequest } from '../../api/generated/models';
 import { meetingActions, meetingMetrics, meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { RELATIONSHIP_READER_HISTORY_KEY } from '../../relationships/reader-history';
 import PersonMessages from './PersonMessages.svelte';
+import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
+import { emptyCalendar } from './fixtures.test-support';
 
 const at = '2026-07-18T10:00:00Z';
 const saved = { key: 'message:2', kind: 'email', title: 'Saved message', occurred_at: at, first_at: at, message_type: 'email', conversation_type: 'email', source_id: 1, source_type: 'gmail', source_identifier: 'owner@example.com', participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, conversation_id: 2, anchor_message_id: 2, match: {} };
@@ -98,6 +100,32 @@ it('Escape dismisses the message filter before closing the reader', async () => 
     expect(screen.queryByText('Restored body')).not.toBeNull();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull());
   } finally { view.unmount(); }
+});
+
+it.each(['hover', 'focus'])('Escape dismisses a calendar tooltip opened by %s before closing the reader', async interaction => {
+  const { props } = setup(false);
+  const view = render(PersonMessages, { props });
+  const calendar = render(RelationshipCalendar, {
+    calendar: { ...emptyCalendar(2026), days: [{ date: '2026-07-18', total: 1, email: 1, chat: 0, meetings: 0, sent: 1, received: 0, modality_mask: 1, level: 'FIRST_QUARTILE' }] },
+    loading: false, error: null, firstYear: 2026, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn(),
+  });
+  try {
+    const grid = await screen.findByRole('grid', { name: 'Messages results' });
+    await fireEvent.click(await within(grid).findByText('Saved message'));
+    await screen.findByText('Restored body');
+    const day = screen.getAllByRole('button', { name: '1 message on Jul 18, 2026' })[0];
+    if (interaction === 'hover') { grid.focus(); await fireEvent.pointerOver(day); }
+    else day.focus();
+    await screen.findByRole('tooltip');
+    const focused = document.activeElement as HTMLElement;
+    await fireEvent.keyDown(focused, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(screen.getByText('Restored body')).toBeTruthy();
+    expect(document.activeElement).toBe(focused);
+    await fireEvent.keyDown(focused, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByText('Restored body')).toBeNull());
+    expect(document.activeElement).toBe(grid);
+  } finally { calendar.unmount(); view.unmount(); }
 });
 
 it('opens Tasks setup from a person message reader', async () => {
