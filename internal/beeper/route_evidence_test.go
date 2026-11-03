@@ -690,7 +690,7 @@ func testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t *te
 		imp.client.http.Transport = handlerTransport(handler)
 		source, err := st.GetOrCreateSource("beeper", "account-a")
 		requirements.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`), source.ID)
+		_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
 		requirements.NoError(err)
 		participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
 		requirements.NoError(err)
@@ -841,7 +841,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 				imp.client.http.Transport = handlerTransport(handler)
 				source, err := st.GetOrCreateSource("beeper", "account-a")
 				requirements.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`), source.ID)
+				_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
 				requirements.NoError(err)
 				opts := ImportOptions{
 					AccountID:    "account-a",

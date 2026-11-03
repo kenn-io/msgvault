@@ -256,7 +256,7 @@ func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
 		require.NoError(err)
 		source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
 		require.NoError(err)
-		staleSourceSync := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+		staleSourceSync := time.Date(1990, time.January, 1, 0, 0, 0, 0, time.UTC)
 		_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), staleSourceSync, source.ID)
 		require.NoError(err)
 		var conversationID int64
