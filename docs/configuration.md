@@ -2785,3 +2785,5 @@ Use the source ID from `msgvault list-accounts`. IDs must be positive and unique
 Single-message HTTP, CLI JSON, and MCP reads return `sender_auth` for pinned email sources. The verdict uses only the topmost `Authentication-Results` header. `verified` means the pinned receiver reported `dmarc=pass` for the domain in both the archived From header and the displayed sender address. It covers the sender domain only. Empty results mean the pinned receiver reported nothing usable, or the archived headers could not be read. Sources without pins and non-email messages omit the field.
 
 A pin trusts the topmost header, so a copy that never passed through the pinned receiver can carry a forged one.
+
+Receivers that omit the authserv-id, such as Exchange Online and Outlook.com headers starting with `spf=...`, can't verify. Quoted or spaced property values report no result.

@@ -26,7 +26,16 @@ func TestSenderAuthMessageReads(t *testing.T) {
 	f := storetest.New(t)
 	root := t.TempDir()
 	email.Maildir(t, root)
-	raw := []byte("From: Sender <\"a@b c\"@example.test>\r\nTo: reader@example.test\r\nSubject: Authentication\r\nDate: Tue, 03 Nov 2026 12:00:00 +0000\r\nMessage-ID: <auth@example.test>\r\nAuthentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass header.from=example.test\r\n\r\nArchived body.\r\n")
+	raw := email.NewMessage().
+		From(`Sender <"a@b c"@example.test>`).
+		To("reader@example.test").
+		Subject("Authentication").
+		Date("Tue, 03 Nov 2026 12:00:00 +0000").
+		Header("Message-ID", "<auth@example.test>").
+		Header("Authentication-Results", "mx.google.com; spf=pass; dkim=pass; dmarc=pass header.from=example.test").
+		Body("Archived body.").
+		CRLF().
+		Bytes()
 	requirements.NoError(os.WriteFile(filepath.Join(root, "new", "message"), raw, 0o600))
 	summary, err := importer.ImportMaildir(t.Context(), f.Store, root, importer.MaildirImportOptions{Identifier: "reader@example.test", AttachmentsDir: t.TempDir()})
 	requirements.NoError(err)
@@ -92,7 +101,7 @@ func TestSenderAuthReadFailureLogs(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("corrupt-raw")
-	require.NoError(f.Store.UpsertMessageRaw(id, []byte("From: sender@example.test\r\n\r\n")))
+	require.NoError(f.Store.UpsertMessageRaw(id, email.NewMessage().From("sender@example.test").Bytes()))
 	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("corrupt zlib"), id)
 	require.NoError(err)
 	var logs bytes.Buffer
