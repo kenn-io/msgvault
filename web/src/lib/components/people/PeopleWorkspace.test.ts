@@ -49,7 +49,7 @@ it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the 
       await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
       if (kind === 'draft') expect(await screen.findByText('No sent or received messages with this contact yet.')).toBeDefined();
       else {
-        expect(await screen.findByRole('heading', { name: 'Identities' })).toBeDefined();
+        expect(await screen.findByRole('button', { name: 'Same person…' })).toBeDefined();
         expect(screen.queryByText('No sent or received messages with this contact yet.')).toBeNull();
       }
     }

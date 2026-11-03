@@ -1,6 +1,5 @@
 <script lang="ts">
   import { historyProvenance } from './history-format';
-  import { formatDateTime as historyTime } from '../../util/format';
   import { Button } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { AttributeDefinition } from '../../api/generated/models';
@@ -45,7 +44,7 @@
         {#each field.history as value (value.id)}
           <li>
             <span class={shown ? '' : 'concealed'}>{shown ? displayAttributeValue(field.definition, value.value) : 'Hidden'}</span>
-            <span class="meta">{#if value.superseded_at ?? value.active_until}Removed {historyTime(value.superseded_at ?? value.active_until)} · {/if}{historyProvenance(value)}</span>
+            <span class="meta">{historyProvenance(value)}</span>
           </li>
         {/each}
       </ul>

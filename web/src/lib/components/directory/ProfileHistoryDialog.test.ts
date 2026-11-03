@@ -107,7 +107,6 @@ describe('ProfileHistoryDialog', () => {
     }
     expect.soft(screen.getByText('Scheduled end category').closest('details')).not.toBeNull();
     expect.soft(screen.getByText('Current Name').closest('li')?.textContent).toContain('Valid from:');
-    expect.soft(screen.getByText('observed@example.test').closest('li')?.textContent).toContain('Source 12');
     const dateText = '(Jul|Aug) \\d{1,2}, 2026';
     for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current photo']) {
       const row = screen.getByText(value).closest('li')!;
@@ -120,7 +119,7 @@ describe('ProfileHistoryDialog', () => {
     for (const value of ['Previous Name', 'Past category']) {
       const row = screen.getByText(value).closest('li')!;
       expect(row.closest('details')).not.toBeNull();
-      expect(row.textContent).toMatch(new RegExp(`Removed ${dateText}`));
+      expect(row.textContent).toMatch(new RegExp(`Valid until: ${dateText}`));
     }
     const observed = screen.getByText('observed@example.test').closest('li')!;
     expect(observed.textContent).toMatch(/Archive observation · Updated: .*· Jul 31, 2026/);
@@ -129,6 +128,51 @@ describe('ProfileHistoryDialog', () => {
     expect(screen.getByText('email')).toBeDefined();
     expect(document.body.textContent).not.toMatch(/Service:|Scope:|Observed:/);
     expect(requests.map((request) => new URL(request.url).pathname)).toContain('/api/v1/people/7/profile/history');
+  });
+
+  it('shows readable observation provenance without the numeric source ID', async () => {
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [] });
+      return Response.json({ ...emptyProfile(person()), observations: [{
+        participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
+        normalized_value: 'observed@example.test', normalization: 'email', normalization_version: 1,
+        service_slug: 'email', source_id: 987654321, observed_at: '2026-07-31T12:00:00Z',
+        envelope: { ...currentEnvelope, id: 9, source: 'archive_observation', source_ref: 'synthetic-archive' },
+      }] });
+    });
+    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
+
+    const row = (await screen.findByText('observed@example.test')).closest('li')!;
+    expect(row.querySelector('small')?.textContent).toBe('email');
+    const metadata = row.querySelector('.meta')!.textContent!.trim();
+    expect(metadata).toMatch(/^Archive observation · Reference: synthetic-archive · Valid from: .+ · Updated: .+\s*· Jul 31, 2026, .+$/);
+    expect(metadata).not.toContain('987654321');
+  });
+
+  it.each([
+    { active_until: '2026-08-02T00:00:00Z' },
+    { superseded_at: '2026-08-03T00:00:00Z' },
+    { active_until: '2026-08-02T00:00:00Z', superseded_at: '2026-08-03T00:00:00Z' },
+  ])('shows each closed profile interval once in provenance: %j', async interval => {
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [] });
+      return Response.json({ ...emptyProfile(person()), observations: [], names: [{
+        person_id: 7, name_kind: 'formatted', original_value: 'Earlier name', is_derived: false,
+        envelope: { id: 1, ordinal: 0, source: 'user', created_at: when, vcard: {}, ...interval },
+      }] });
+    });
+    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
+
+    const row = (await screen.findByText('Earlier name')).closest('li')!;
+    expect(row.closest('details')).not.toBeNull();
+    const metadata = row.querySelector('.meta')!.textContent!.trim();
+    expect(metadata.split(' · ').map(part => part.split(': ')[0])).toEqual([
+      'You', ...(interval.active_until ? ['Valid until'] : []), ...(interval.superseded_at ? ['Superseded'] : []), 'Created',
+    ]);
+    if (interval.active_until) expect(metadata).toMatch(/Valid until: (Aug 1|Aug 2), 2026/);
+    if (interval.superseded_at) expect(metadata).toMatch(/Superseded: (Aug 2|Aug 3), 2026/);
   });
 
   it.each([false, true])('loads history before offering splits and refreshes after reconciliation (initial read fails=%s)', async initialFailure => {

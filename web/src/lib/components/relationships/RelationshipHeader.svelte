@@ -18,8 +18,7 @@
   interface Props {
     detail: PersonSummary | DomainSummary | null;
     loading?: boolean;
-    /** Heading for the identities block when the page header already shows the person. */
-    title?: string;
+    showCounts?: boolean;
     headerState?: 'missing' | 'no-mail' | 'normal';
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
@@ -33,7 +32,7 @@
   let {
     detail,
     loading = false,
-    title = undefined,
+    showCounts = true,
     headerState = 'normal',
     client,
     onLinkParticipants,
@@ -276,14 +275,13 @@
   }
 </script>
 
-<header class="relationship-header" class:has-detail={Boolean(detail) && !title} aria-label="Relationship detail">
+<header class="relationship-header" class:has-detail={Boolean(detail) && showCounts} aria-label="Relationship detail">
   {#if !detail}
     <p class="header-empty" role="status">
       {loading ? 'Loading relationship…' : headerState === 'missing' ? 'Person not found.' : headerState === 'no-mail' ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
     </p>
   {:else}
     <div class="title-row">
-      {#if title}<h3>{title}</h3>{/if}
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
           <Button
@@ -301,7 +299,7 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    {#if !title || headerState === 'no-mail'}<p class="counts">
+    {#if showCounts || headerState === 'no-mail'}<p class="counts">
       {#if headerState === 'no-mail'}
         No sent or received messages with this contact yet.
       {:else}
@@ -476,12 +474,6 @@
     display: flex;
     flex: none;
     gap: var(--space-2);
-  }
-
-  .title-row h3 {
-    flex: 1;
-    margin: 0;
-    font-size: var(--font-size-md);
   }
 
   .counts {

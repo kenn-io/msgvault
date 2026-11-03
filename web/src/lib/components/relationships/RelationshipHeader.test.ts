@@ -115,10 +115,14 @@ describe('RelationshipHeader', () => {
     expect(screen.getByRole('status').textContent?.trim()).toBe('No sent or received messages with this contact yet.');
   });
 
-  it('shows a title heading in place of the counts line when the page header already names the person', () => {
-    render(RelationshipHeader, baseProps({ title: 'Identities' }));
-    expect(screen.getByRole('heading', { level: 3, name: 'Identities' })).toBeDefined();
+  it('labels linked identities once when the page header already shows the counts', async () => {
+    render(RelationshipHeader, baseProps({ showCounts: false }));
+    const summary = screen.getByText('Identities (2)');
+    expect(screen.getAllByText(/Identities/)).toEqual([summary]);
     expect(screen.queryByText(/items/)).toBeNull();
+    await fireEvent.click(summary);
+    expect(summary.closest('details')?.open).toBe(true);
+    expect(screen.getByLabelText('Identity Alice')).toBeDefined();
   });
 
   it('shows a missing person and hides the Files control', () => {
@@ -139,7 +143,7 @@ describe('RelationshipHeader', () => {
   });
 
   it('collapses linked identities, opens them on request, and describes identity chips in tooltips', async () => {
-    render(RelationshipHeader, baseProps({ title: 'Identities' }));
+    render(RelationshipHeader, baseProps({ showCounts: false }));
 
     const summary = screen.getByText('Identities (2)');
     const disclosure = summary.closest('details');
@@ -217,7 +221,7 @@ describe('RelationshipHeader', () => {
   });
 
   it('groups person actions together', () => {
-    render(RelationshipHeader, baseProps({ title: 'Identities' }));
+    render(RelationshipHeader, baseProps({ showCounts: false }));
 
     const actions = screen.getByRole('group', { name: 'Person actions' });
     expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
