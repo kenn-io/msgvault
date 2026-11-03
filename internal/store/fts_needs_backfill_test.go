@@ -48,8 +48,9 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
 	}
-	ids := f.CreateMessages(5001)
-	first, second := ids[0], ids[5000]
+	first := f.CreateMessage("msg-0")
+	// Keep the second message in the next 5,000-ID backfill batch.
+	second := seedMessageAtID(t, f.Store, 5000, first+5000)
 	for _, id := range []int64{first, second} {
 		require.NoError(f.Store.UpsertMessageBody(id,
 			sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
