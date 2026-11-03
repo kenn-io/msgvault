@@ -7,6 +7,7 @@
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
+  import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
   import MeetingContextExport from '../meetings/MeetingContextExport.svelte';
   import AddToTaskDialog from '../tasks/AddToTaskDialog.svelte';
@@ -58,7 +59,7 @@
 
 {#if hasItems}
   <Menu align="end" onopenchange={(open) => { if (open) onError?.(''); }}>
-    <MenuTrigger ariaLabel={`More actions for message ${message.id}`} title="More actions">
+    <MenuTrigger ariaLabel={`More actions for ${message.sender || 'Unknown sender'} on ${formatDateTime(message.sentAt)}`} title="More actions">
       <Ellipsis size={16} aria-hidden="true" />
     </MenuTrigger>
     <MenuContent ariaLabel="Message actions">

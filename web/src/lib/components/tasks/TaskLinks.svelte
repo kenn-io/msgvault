@@ -60,6 +60,7 @@
   let mutating = $state(false);
   let error = $state('');
   let outboundMetadata = $state<OutboundMetadata | null>(null);
+  let creationInitialized = $state(false);
   let generation = 0;
   let activeController: AbortController | null = null;
   let existingLinkRetry:
@@ -90,6 +91,7 @@
     mutating = false;
     error = '';
     outboundMetadata = null;
+    creationInitialized = false;
     existingLinkRetry = undefined;
   }
   async function loadFor(selectedMessageID: number): Promise<void> {
@@ -229,6 +231,9 @@
   // Mutations go through the live task service, so a partial reverse index
   // only limits lookup completeness — it does not block create/link/unlink.
   const mutationReady = $derived(integrationState === 'ready' && (indexState === 'ready' || indexState === 'partial'));
+  $effect(() => {
+    if (mode === 'add' && mutationReady && outboundMetadata) creationInitialized = true;
+  });
   const degraded = $derived(!mutationReady);
   const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
@@ -324,10 +329,11 @@
 </section>
 {/if}
 
-{#if mode === 'add' && mutationReady && outboundMetadata}
+{#if mode === 'add' && creationInitialized && outboundMetadata}
   <div hidden={action !== 'create'}>
     <CreateTaskDialog
       bind:pending={busy}
+      disabled={!mutationReady}
       {client}
       {messageId}
       {project}

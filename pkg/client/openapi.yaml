@@ -5468,6 +5468,7 @@ components:
             - participant
             - domain
             - message_type
+            - kind
             - mailing_list
             - after
             - before
@@ -5480,6 +5481,7 @@ components:
             - ExploreFilterDimensionParticipant
             - ExploreFilterDimensionDomain
             - ExploreFilterDimensionMessageType
+            - ExploreFilterDimensionKind
             - ExploreFilterDimensionMailingList
             - ExploreFilterDimensionAfter
             - ExploreFilterDimensionBefore
@@ -14493,6 +14495,7 @@ components:
             - mailing_list
             - account
             - message_type
+            - kind
             - after
             - before
             - deletion
@@ -14507,6 +14510,7 @@ components:
             - SavedViewFilterFieldMailingList
             - SavedViewFilterFieldAccount
             - SavedViewFilterFieldMessageType
+            - SavedViewFilterFieldKind
             - SavedViewFilterFieldAfter
             - SavedViewFilterFieldBefore
             - SavedViewFilterFieldDeletion
@@ -16817,7 +16821,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.38.0
+  version: 3.39.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
