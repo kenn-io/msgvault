@@ -404,10 +404,8 @@ web-browser-install: web-install
 		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
 	fi
 
-# test:browser runs everything under web/tests, including tests/e2e specs
-# whose fixtures spawn the repo-root msgvault daemon, so the binary must
-# exist before Playwright starts. Same invariant as web-e2e below.
-web-test-browser: build web-browser-install
+# These specs don't start the repo-root msgvault daemon, so no build prerequisite is needed; Playwright's webServer builds the app.
+web-test-browser: web-browser-install
 	cd web && bun run test:browser
 
 # Browser gates use local Chromium or the remote Playwright server in CI.
@@ -631,7 +629,7 @@ help:
 	@echo "  web-generate   - Regenerate browser API types from the OpenAPI schema"
 	@echo "  web-check      - Check browser types and generated API artifacts"
 	@echo "  web-test       - Run browser application unit tests"
-	@echo "  web-test-browser - Run browser application Playwright tests"
+	@echo "  web-test-browser - Run browser and virtualizer Playwright tests"
 	@echo "  web-build      - Build the browser application"
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"

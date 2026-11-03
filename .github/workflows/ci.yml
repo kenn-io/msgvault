@@ -401,8 +401,8 @@ jobs:
           echo 'Browser server did not become ready within 30 attempts.' >&2
           exit 1
 
-      - name: Check, test, and build frontend
-        run: make web-check web-test web-build
+      - name: Check and test frontend
+        run: make web-check web-test
 
       - name: Upload Vitest report
         if: always()
