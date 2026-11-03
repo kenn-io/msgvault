@@ -25,10 +25,8 @@ type Verdict struct {
 // Evaluate reads only the topmost Authentication-Results header.
 func Evaluate(block []byte, trusted []string, displayedFrom string) *Verdict {
 	verdict := &Verdict{}
-	headers, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(block))).ReadMIMEHeader()
-	if err != nil {
-		return verdict
-	}
+	// Keep headers parsed before a malformed line in an archived message.
+	headers, _ := textproto.NewReader(bufio.NewReader(bytes.NewReader(block))).ReadMIMEHeader()
 	cleaned, ok := cleanResults(headers.Get("Authentication-Results"))
 	if !ok || cleaned == "" {
 		return verdict
@@ -65,7 +63,9 @@ func Evaluate(block []byte, trusted []string, displayedFrom string) *Verdict {
 			if !seenDMARC {
 				seenDMARC = true
 				verdict.DMARC = string(r.Value)
-				verdict.Domain = strings.ToLower(r.From)
+				if r.From != `""` {
+					verdict.Domain = strings.ToLower(r.From)
+				}
 			}
 		}
 	}
