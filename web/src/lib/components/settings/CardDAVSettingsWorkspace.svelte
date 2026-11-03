@@ -17,13 +17,15 @@
     settings,
     onSettingsRefresh = () => undefined,
     cardDAVRequest = undefined,
-    onCardDAVRequestConsumed = () => undefined
+    onCardDAVRequestConsumed = () => undefined,
+    onStatusChange = () => undefined
   }: {
     client: APIClient;
     settings: SettingState[];
     onSettingsRefresh?: () => void | Promise<void>;
     cardDAVRequest?: CardDAVSettingsRequest;
     onCardDAVRequestConsumed?: (key: number) => void;
+    onStatusChange?: () => void;
   } = $props();
   const conflictsController = new CardDAVConflictsController(untrack(() => client));
 
@@ -173,6 +175,7 @@
   {/if}
   {#key selected}
     <CardDAVConnectionSettings
+      {onStatusChange}
       {client}
       values={selectedValues}
       connection={selected}

@@ -395,7 +395,7 @@ web-check: web-install
 	cd web && bun run check:kit-ui
 
 web-test:
-	cd web && bun run test
+	cd web && bun run test $(WEB_TEST_ARGS)
 
 # Use the remote browser server in CI, or install the locked Chromium locally.
 # Keep other projects' cached browsers.
@@ -404,9 +404,9 @@ web-browser-install: web-install
 		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
 	fi
 
-# These specs don't start the repo-root msgvault daemon, so no build prerequisite is needed; Playwright's webServer builds the app.
+# These specs do not start the repo-root daemon; Playwright builds the app.
 web-test-browser: web-browser-install
-	cd web && bun run test:browser
+	cd web && bun run test:browser $(WEB_BROWSER_TEST_ARGS)
 
 # Browser gates use local Chromium or the remote Playwright server in CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.

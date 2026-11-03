@@ -63,7 +63,7 @@
   class="global-search"
   class:global-search--compact={compact}
   role="search"
-  aria-label="Search Everything"
+  aria-label="Search Messages"
   onsubmit={submit}
 >
   <div class="global-search__query">
@@ -71,7 +71,7 @@
       id="everything-search"
       bind:inputEl
       value={draft}
-      ariaLabel="Search everything"
+      ariaLabel="Search messages"
       placeholder={compact ? 'Search' : 'Search people, conversations, events, and files…'}
       block
       oninput={changeQuery}

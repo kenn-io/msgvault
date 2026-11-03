@@ -11,7 +11,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
   import { scheduleSummary } from '../../settings/cron';
-  import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
+  import { sourceTypeLabel, syncRunning, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import type {
     SourceStatus as GeneratedSourceStatus,
@@ -32,6 +32,7 @@
     maxLockHoldPolls = 8,
     now = () => new Date(),
     onOpenOperations = () => undefined,
+    onStatusChange = () => undefined,
   }: {
     client: APIClient;
     requestTimeoutMs?: number;
@@ -39,6 +40,7 @@
     maxLockHoldPolls?: number;
     now?: () => Date;
     onOpenOperations?: () => void;
+    onStatusChange?: () => void;
   } = $props();
   let sources = $state<Source[]>([]);
   const expanded = new SvelteSet<number>();
@@ -108,7 +110,7 @@
     if (disposed || document.hidden) return;
     if (
       !allowIdle &&
-      !sources.some((source) => source.active_sync || source.scheduler_queued || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
+      !sources.some((source) => syncRunning(source) || source.scheduler_queued || (schedulerHoldsSyncLock(source) && lockHoldPolls < maxLockHoldPolls)) &&
       awaitingSourceID === undefined
     )
       return;
@@ -172,7 +174,7 @@
           pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         }
       }
-      const hasActiveSync = next.some((source) => source.active_sync);
+      const hasActiveSync = next.some(syncRunning);
       const hasLockHold = next.some(schedulerHoldsSyncLock);
       if (hasActiveSync || next.some((source) => source.scheduler_queued)) {
         lockHoldPolls = 0;
@@ -207,7 +209,7 @@
       }
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
-        !sources.some((source) => source.active_sync || source.scheduler_queued) && awaitingSourceID === undefined) {
+        !sources.some((source) => syncRunning(source) || source.scheduler_queued) && awaitingSourceID === undefined) {
         lockStatusStale = true;
         return;
       }
@@ -226,7 +228,7 @@
         const nextDelay = pollDelay;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         schedulePoll(nextDelay, true, sources.some(schedulerHoldsSyncLock) &&
-          !sources.some((source) => source.active_sync || source.scheduler_queued));
+          !sources.some((source) => syncRunning(source) || source.scheduler_queued));
       }
     } finally {
       if (requestGeneration === generation) {
@@ -267,6 +269,7 @@
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;
+      onStatusChange();
     }
   }
   function label(source: Source): string {
@@ -295,7 +298,7 @@
       ? value.message
       : fallback;
   }
-  function refresh(): void {
+  export function refresh(): void {
     stopPolling(false);
     lockHoldPolls = 0;
     lockStatusStale = false;
