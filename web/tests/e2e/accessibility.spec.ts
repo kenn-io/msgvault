@@ -110,7 +110,7 @@ for (const theme of ['light', 'dark'] as const) {
     const manifests = page.getByRole('table', { name: 'Staged deletions' });
     await expect(manifests.getByText('Deleted', { exact: true })).toBeVisible();
     await assertNoViolations(page, `Deletions manifests table ${theme}`);
-    await manifests.getByRole('row').filter({ hasText: '12 messages' }).getByRole('button', { name: /^Open batch from / }).click();
+    await manifests.getByRole('row').filter({ has: page.getByRole('cell', { name: '12', exact: true }) }).getByRole('button', { name: /^Open batch from / }).click();
     await expect(page.getByRole('dialog', { name: /^Staged / }).getByText('archive@example.com')).toBeVisible();
     await assertNoViolations(page, `Deletions manifest detail ${theme}`);
 
