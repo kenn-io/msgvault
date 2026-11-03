@@ -783,6 +783,43 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
+  it('withholds context export when all canonical meetings include a transcript and a note', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json({
+        count: 2, deletable_count: 2, estimated_bytes: 40, cache_revision: 'cache-1',
+        search_provenance: {}, unavailable_actions: [], action_targets: [],
+        operation_token: 'operation-1', expires_at: '2026-09-12T17:00:00Z',
+      });
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
+      return Response.json(exploreResponse({
+        rows: [
+          { ...entry(7), message_type: 'meeting_transcript', anchor_message_id: 107 },
+          { ...entry(8), message_type: 'meeting_note', anchor_message_id: 108 },
+        ],
+        total_count: 2,
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ filters: [{ dimension: 'kind', values: ['meeting'] }] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await screen.findByText('Synthetic subject 8');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: ' ' });
+      expect(screen.getByRole('button', { name: 'Meeting context…' })).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching items' }));
+      await waitFor(() => expect(selectionStatus().textContent).toBe('All 2 matching items selected'));
+      expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it('passes all-matching exclusions and full search authority to meeting context unchanged', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const preflightSelections: unknown[] = [];
