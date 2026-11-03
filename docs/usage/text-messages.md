@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -452,3 +453,25 @@ msgvault tui
 # View updated archive stats
 msgvault stats
 ```
+
+## import-telegram
+
+In Telegram Desktop, export your data as **Machine-readable JSON**. Choose the media you want to keep, then import the directory containing `result.json`:
+
+```bash
+msgvault import-telegram /path/to/TelegramExport
+```
+
+Full exports identify your account. For a single-chat export, supply your numeric Telegram user ID:
+
+```bash
+msgvault import-telegram --me 482111 /path/to/chat-export
+```
+
+Messages include senders, replies, edit markers, and available media. Service messages, unsupported entries, and polls, locations, or contacts without text or media are skipped. Missing media is counted in the import summary.
+
+A later or overlapping export adds new messages and fills media slots that still lack bytes. Archived messages keep their original text, sender, timestamp, and edit flag. Media already stored stays unchanged. Replies link when their parent arrives in a later export. Telegram export users link to Beeper users with the same numeric Telegram user ID; for Beeper users already archived, the link appears when a sync revisits their chat (`sync-beeper --full` covers quiet chats).
+
+Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
+
+An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.

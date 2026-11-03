@@ -89,9 +89,10 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		},
 		Progress: func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) },
 	})
-	postImportErr := runSlackdumpPostImportMigrations(
-		cmd.OutOrStdout(), st, summary, opts.NoDefaultIdentity, state,
-	)
+	var postImportErr error
+	if summary != nil {
+		postImportErr = runExportPostImportMigrations(cmd.OutOrStdout(), st, summary.SourceID, opts.NoDefaultIdentity, state)
+	}
 	if importErr != nil {
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run the command to import the export again.")
@@ -119,14 +120,8 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	return rebuildCacheAfterWrite(dbPath, state)
 }
 
-func runSlackdumpPostImportMigrations(
-	out io.Writer,
-	st *store.Store,
-	summary *slack.SlackdumpImportSummary,
-	noDefaultIdentity bool,
-	state *invocation,
-) error {
-	if summary == nil || summary.SourceID == 0 {
+func runExportPostImportMigrations(out io.Writer, st *store.Store, sourceID int64, noDefaultIdentity bool, state *invocation) error {
+	if sourceID == 0 {
 		return nil
 	}
 	if state == nil || state.logger == nil {
@@ -134,9 +129,9 @@ func runSlackdumpPostImportMigrations(
 	}
 	var identityErr error
 	if !noDefaultIdentity {
-		source, err := st.GetSourceByID(summary.SourceID)
+		source, err := st.GetSourceByID(sourceID)
 		if err != nil {
-			identityErr = fmt.Errorf("read Slackdump source: %w", err)
+			identityErr = fmt.Errorf("read import source: %w", err)
 		} else {
 			confirmDefaultIdentity(
 				out, st, source.ID,

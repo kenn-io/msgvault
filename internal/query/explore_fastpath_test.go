@@ -149,6 +149,12 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 			Context: Context{Domains: []string{"example.com"}, AdditionalDomainGroups: [][]string{{"corp.example"}}},
 			Page:    PageSpec{Limit: 50},
 		}},
+		{name: "participant sender recipient and roster membership", request: ExploreRequest{
+			Context: Context{ParticipantIDs: []int64{ids.alice}}, Page: PageSpec{Limit: 50},
+		}},
+		{name: "participant small page", request: ExploreRequest{
+			Context: Context{ParticipantIDs: []int64{ids.alice}}, Page: PageSpec{Limit: 2, Offset: 1},
+		}},
 		{name: "domain page beyond end", request: ExploreRequest{
 			Context: Context{Domains: []string{"example.com"}}, Page: PageSpec{Limit: 3, Offset: 500},
 		}},
@@ -283,6 +289,10 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 			Explore: ExploreRequest{Context: Context{Before: &before}},
 			Page:    PageSpec{Limit: 50},
 		}},
+		{name: "explore participant filter", request: FileSearchRequest{
+			Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{ids.alice}}},
+			Page:    PageSpec{Limit: 50},
+		}},
 		{name: "explore deletion filter", request: FileSearchRequest{
 			Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
 			Page:    PageSpec{Limit: 50},
@@ -324,42 +334,25 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 	}
 }
 
-// TestExploreParticipantContextKeepsLegacyPath pins the fork rule: participant
-// and domain context filters render list_contains predicates whose evaluation
-// already assembles participant lists archive-wide, so the two-phase rescan
-// would pay that twice.
-func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
+// A participant filter matches the participant as sender, as recipient, and
+// as a conversation roster member, and nothing else.
+func TestExploreParticipantFilterMatchesSenderRecipientAndRoster(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{}))
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{SourceIDs: []int64{1}, MessageTypes: []string{"email"}},
-	}))
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{Identity: &IdentityPredicate{
-			SourceID: 1, ParticipantIDs: []int64{7}, Direction: IdentityDirectionAny,
-		}},
-	}), "identity predicates use bounded header-row existence checks, not participant lists")
-	assert.True(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{ParticipantIDs: []int64{7}},
-	}))
-	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
-		Context: Context{Domains: []string{"example.com"}},
-	}))
-}
-
-// TestExploreParticipantFilterListingStillCorrect exercises the legacy path
-// the fork preserves for participant-scoped listings.
-func TestExploreParticipantFilterListingStillCorrect(t *testing.T) {
-	t.Parallel()
 	engine, ids := buildFastPathEquivalenceEngine(t)
 	response, err := engine.Explore(context.Background(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{ids.alice}},
 		Page:    PageSpec{Limit: 50},
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, response.Rows)
+	titles := make([]string, 0, len(response.Rows))
 	for _, row := range response.Rows {
-		assert.Contains(t, row.ParticipantIDs, ids.alice, "row %s must include the filtered participant", row.Key)
+		assert.Contains(row.ParticipantIDs, ids.alice, "row %s must include the filtered participant", row.Key)
+		titles = append(titles, row.Title)
 	}
+	// Sender of the report, the deleted thread, and the event; cc on "hello
+	// there"; roster member of the Family group chat. The direct chat and
+	// the participant-less draft and meeting do not involve Alice.
+	assert.ElementsMatch([]string{"Quarterly report", "hello there", "Old thread", "Standup", "Family"}, titles)
+	assert.Equal(int64(5), response.TotalCount)
 }

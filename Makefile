@@ -34,6 +34,13 @@ LDFLAGS_RELEASE = $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
+# Run go test through gotestsum. It records the test2json events in
+# gotestsum/<suite>.json, which CI uploads as an artifact, and reruns each
+# failed test up to twice, listing those tests in gotestsum/<suite>-reruns.txt.
+# Usage: $(call gotestsum,<suite>,<packages>,<go test flags>)
+gotestsum = go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+	--jsonfile gotestsum/$(1).json --rerun-fails=2 --rerun-fails-report gotestsum/$(1)-reruns.txt \
+	--packages "$(2)" -- $(3)
 
 # Cap on test binaries the PostgreSQL lanes run at once. go test defaults -p
 # to the host CPU count, and every PostgreSQL-backed test binary opens its own
@@ -212,7 +219,7 @@ test:
 .PHONY: test-cli-e2e
 test-cli-e2e:
 	@if [ -z "$(MSGVAULT_E2E_BINARY)" ]; then $(MAKE) build; fi
-	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./cmd/msgvault/cmd -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1
+	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" $(call gotestsum,cli-e2e,./cmd/msgvault/cmd,-timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1)
 
 .PHONY: test-standard $(SQLITE_SHARD_TARGETS)
 test-standard:
@@ -228,7 +235,7 @@ $(SQLITE_SHARD_TARGETS): test-sqlite-shard/%:
 # sharded jobs; together they cover exactly what `make test` covers.
 test-unsharded:
 	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
-	go test -timeout $(TEST_TIMEOUT) $(if $(TEST_REMAINDER_PARALLEL),-p $(TEST_REMAINDER_PARALLEL),) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
+	$(call gotestsum,unsharded,$$(go list ./... | grep -vxF $$excluded),-timeout $(TEST_TIMEOUT) $(if $(TEST_REMAINDER_PARALLEL),-p $(TEST_REMAINDER_PARALLEL),) -tags "$(BUILD_TAGS)")
 
 # SHARDED_TEST_PKGS, each as TEST_SHARDS concurrent processes. Same binary,
 # same tests, same per-package timeout; only the process boundary is new.
@@ -256,7 +263,7 @@ test-pg: require-test-db
 .PHONY: test-pg-nocgo
 test-pg-nocgo: require-test-db
 	CGO_ENABLED=0 go build ./internal/store ./internal/query ./internal/slack ./internal/discord ./internal/api
-	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive ./pkg/mcp
+	CGO_ENABLED=0 $(call gotestsum,pg-nocgo,./internal/postgresprofile ./pkg/archive ./pkg/mcp,-timeout $(TEST_TIMEOUT))
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -274,7 +281,7 @@ test-pg-shipped: require-test-db
 # test-postgres-sharded jobs cover the rest against their own servers.
 test-pg-shipped-unsharded: require-test-db
 	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
-	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
+	$(call gotestsum,pg-shipped-unsharded,$$(go list ./... | grep -vxF $$excluded),-timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)")
 
 # Both PostgreSQL lanes' coverage in one pass.
 #
@@ -397,10 +404,8 @@ web-browser-install: web-install
 		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
 	fi
 
-# test:browser runs everything under web/tests, including tests/e2e specs
-# whose fixtures spawn the repo-root msgvault daemon, so the binary must
-# exist before Playwright starts. Same invariant as web-e2e below.
-web-test-browser: build web-browser-install
+# These specs don't start the repo-root msgvault daemon, so no build prerequisite is needed; Playwright's webServer builds the app.
+web-test-browser: web-browser-install
 	cd web && bun run test:browser
 
 # Browser gates use local Chromium or the remote Playwright server in CI.
@@ -624,7 +629,7 @@ help:
 	@echo "  web-generate   - Regenerate browser API types from the OpenAPI schema"
 	@echo "  web-check      - Check browser types and generated API artifacts"
 	@echo "  web-test       - Run browser application unit tests"
-	@echo "  web-test-browser - Run browser application Playwright tests"
+	@echo "  web-test-browser - Run browser and virtualizer Playwright tests"
 	@echo "  web-build      - Build the browser application"
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
