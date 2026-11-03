@@ -366,18 +366,22 @@ func TestMergeSourcesPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id=? WHERE id IN (?, ?)`),
 		"<shared-sent-envelope@example.test>", survivor, duplicate)
 	require.NoError(err)
-	draftFolders, err := st.EnsureMicrosoftMailFoldersContext(ctx, into.ID, map[string]store.LabelInfo{
-		"drafts": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
-	})
-	require.NoError(err)
-	draftLabel := draftFolders["drafts"]
-	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, survivor, &draftLabel, nil)
-	require.NoError(err)
 	bccID, err := st.EnsureParticipant("private@example.test", "Private Recipient", "example.test")
 	require.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients(
 		message_id, participant_id, recipient_type, email_address
 	) VALUES (?, ?, 'bcc', ?)`), duplicate, bccID, "private@example.test")
+	require.NoError(err)
+	intoFolders, err := st.EnsureMicrosoftMailFoldersContext(ctx, into.ID, map[string]store.LabelInfo{
+		"sent":   {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"drafts": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+	})
+	require.NoError(err)
+	survivorSentLabel := intoFolders["sent"]
+	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, survivor, &survivorSentLabel, nil)
+	require.NoError(err)
+	draftLabel := intoFolders["drafts"]
+	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, survivor, &draftLabel, nil)
 	require.NoError(err)
 	folders, err := st.EnsureMicrosoftMailFoldersContext(ctx, from.ID, map[string]store.LabelInfo{
 		"sent":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
