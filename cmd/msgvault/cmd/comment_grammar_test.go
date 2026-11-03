@@ -122,6 +122,7 @@ func TestCommentExitClasses(t *testing.T) {
 		exit int
 	}{
 		{"message_not_found", 4}, {"action_not_enabled", 5},
+		{"ig_target_not_top_level", 3}, {"not_hideable", 3}, {"target_hidden", 6},
 		{"private_reply_window_closed", 6}, {"already_sent", 6},
 		{"token_invalid", 7}, {"permission_missing", 7}, {"app_access_insufficient", 7},
 	} {

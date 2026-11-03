@@ -49,7 +49,7 @@ func commentToolDefinition(name string) toolDefinition {
 	case ToolModerateComment:
 		properties["action"] = stringSchema("Moderation action", "hide", "unhide", "delete")
 		properties["dry_run"] = booleanSchema("Preview locally without changing the provider")
-		definition = destructiveWriteDefinition(name, "Hide, unhide or delete an archived Facebook comment. Delete requires client confirmation and keeps archive history. Inspect receipts and the provider after an unknown outcome; resolve through the CLI before retrying.", closedObject(properties, "message_id", "action"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall)
+		definition = destructiveWriteDefinition(name, "Hide, unhide or delete an archived Facebook or Instagram comment. Delete requires client confirmation and keeps archive history. Inspect receipts and the provider after an unknown outcome; resolve through the CLI before retrying.", closedObject(properties, "message_id", "action"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall)
 	case ToolUpdateCommentTriage:
 		properties["state"] = stringSchema("New local triage state", "open", "handled", "skipped")
 		properties["expect"] = stringSchema("Require this current state", "open", "handled", "skipped")

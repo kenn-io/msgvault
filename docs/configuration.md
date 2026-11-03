@@ -1751,6 +1751,11 @@ and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
 an empty `schedule` means manual sync only.
 
+`actions` defaults to `[]` and permits no provider writes. An enabled profile
+can opt into `public_reply`, `private_reply`, `hide` (also unhide), and `delete`.
+Previews and local triage need no write opt-in. See [Instagram actions](usage/instagram-comments.md#reply-and-moderate)
+for target limits, permissions, confirmation, and receipts.
+
 The label is trimmed, nonempty, and unique ignoring case. All three IDs must
 be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
 tuples, unknown keys, invalid environment variable names, and invalid five-field

@@ -79,13 +79,14 @@ func (c *Config) validateFacebookCommentsSources() error {
 // InstagramCommentsSource selects one linked professional account. Tokens exist only in the named
 // daemon environment variable; the profile label is not an archive identity.
 type InstagramCommentsSource struct {
-	Identifier         string `toml:"identifier"`
-	AppID              string `toml:"app_id"`
-	PageID             string `toml:"page_id"`
-	InstagramAccountID string `toml:"instagram_account_id"`
-	TokenEnv           string `toml:"token_env"`
-	Enabled            bool   `toml:"enabled"`
-	Schedule           string `toml:"schedule"`
+	Actions            []string `toml:"actions"`
+	Identifier         string   `toml:"identifier"`
+	AppID              string   `toml:"app_id"`
+	PageID             string   `toml:"page_id"`
+	InstagramAccountID string   `toml:"instagram_account_id"`
+	TokenEnv           string   `toml:"token_env"`
+	Enabled            bool     `toml:"enabled"`
+	Schedule           string   `toml:"schedule"`
 }
 
 func (c *Config) GetInstagramCommentsSource(identifier string) *InstagramCommentsSource {
@@ -131,6 +132,9 @@ func (c *Config) validateInstagramCommentsSources() error {
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("instagram_comments[%d].token_env must name an explicit environment variable", i)
 		}
+		if err := ValidateMetaActions("instagram_comments", i, source.Actions, "public_reply", "private_reply", "hide", "delete"); err != nil {
+			return err
+		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
 				return fmt.Errorf("instagram_comments[%d].schedule: %w", i, err)
@@ -154,6 +158,22 @@ func (c *Config) FacebookCommentsSourceFor(app, page string) *FacebookCommentsSo
 	for i := range c.FacebookComments {
 		p := &c.FacebookComments[i]
 		if p.AppID == app && p.PageID == page {
+			return p
+		}
+	}
+	return nil
+}
+
+func (s InstagramCommentsSource) ActionAllowed(action string) bool {
+	if action == "unhide" {
+		action = "hide"
+	}
+	return s.Enabled && ActionsAllow(s.Actions, action)
+}
+func (c *Config) InstagramCommentsSourceFor(app, page, account string) *InstagramCommentsSource {
+	for i := range c.InstagramComments {
+		p := &c.InstagramComments[i]
+		if p.AppID == app && p.PageID == page && p.InstagramAccountID == account {
 			return p
 		}
 	}

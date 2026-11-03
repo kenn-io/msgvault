@@ -171,7 +171,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	if exists && prior.SenderID.Valid {
 		if sender == 0 {
 			sender = prior.SenderID.Int64
-			self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
+			self = self || (prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool)
 		}
 		// Missing author fields do not retract evidence for the same sender.
 		if sender == prior.SenderID.Int64 && fromName == "" {

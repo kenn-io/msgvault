@@ -172,10 +172,12 @@ func (s *Store) ListCommentQueueContext(ctx context.Context, f CommentQueueFilte
 		args = append(args, typ)
 	}
 	query := `WITH queue AS (SELECT m.id AS message_id,m.source_id,m.conversation_id,s.identifier,m.message_type,m.source_message_id,m.reply_to_message_id,COALESCE(m.sender_id,0),COALESCE(p.display_name,''),COALESCE(m.snippet,''),m.sent_at,COALESCE(CAST(m.metadata AS TEXT),''),` + commentTriageSQL + ` AS triage,m.deleted_from_source_at IS NOT NULL,
- EXISTS (SELECT 1 FROM messages child WHERE child.reply_to_message_id=m.id AND child.source_id=m.source_id AND child.is_from_me=TRUE AND child.deleted_at IS NULL),
+ (EXISTS (SELECT 1 FROM messages child WHERE child.reply_to_message_id=m.id AND child.source_id=m.source_id AND child.is_from_me=TRUE AND child.deleted_at IS NULL) OR EXISTS (SELECT 1 FROM meta_comment_actions a WHERE (a.message_id=m.id OR (a.source_id=m.source_id AND a.source_identifier=s.identifier AND a.target_comment_id=m.source_message_id)) AND a.action='public_reply' AND a.state='succeeded')),
  EXISTS (SELECT 1 FROM meta_comment_actions a WHERE (a.message_id=m.id OR (a.source_id=m.source_id AND a.source_identifier=s.identifier AND a.target_comment_id=m.source_message_id)) AND a.action='private_reply' AND a.state<>'failed')
  FROM messages m JOIN sources s ON s.id=m.source_id LEFT JOIN participants p ON p.id=m.sender_id
- WHERE m.deleted_at IS NULL AND m.reply_to_message_id IS NOT NULL AND m.is_from_me=FALSE AND m.message_type IN (` + strings.Join(placeholders, ",") + `)`
+ WHERE m.deleted_at IS NULL AND m.reply_to_message_id IS NOT NULL AND m.is_from_me=FALSE
+ AND NOT EXISTS (SELECT 1 FROM meta_comment_actions sent WHERE (sent.reply_message_id=m.id OR (sent.source_id=m.source_id AND sent.source_identifier=s.identifier AND sent.remote_id=m.source_message_id)) AND sent.action='public_reply' AND sent.state='succeeded')
+ AND m.message_type IN (` + strings.Join(placeholders, ",") + `)`
 	if f.SourceID != 0 {
 		query += ` AND m.source_id=?`
 		args = append(args, f.SourceID)

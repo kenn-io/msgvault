@@ -28,7 +28,7 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 	var filter api.CommentQueueRequest
 	var hide, unhide, remove, asJSON bool
 	var state, expect, visibility string
-	descriptions := map[string]string{"reply": "Reply publicly or privately to an archived Facebook comment", "moderate": "Hide, unhide or delete an archived Facebook comment", "triage": "Set a comment's local triage state", "queue": "List archived comments by triage state", "actions": "Read action receipts for an archived comment"}
+	descriptions := map[string]string{"reply": "Reply publicly or privately to an archived Facebook or Instagram comment", "moderate": "Hide, unhide or delete an archived Facebook or Instagram comment", "triage": "Set a comment's local triage state", "queue": "List archived comments by triage state", "actions": "Read action receipts for an archived comment"}
 	cmd := &cobra.Command{Use: name + " <message-id>", Short: descriptions[name], Args: func(cmd *cobra.Command, args []string) error {
 		return commentUsageError(cmd, cobra.ExactArgs(1)(cmd, args))
 	}, SilenceErrors: true, SilenceUsage: true}

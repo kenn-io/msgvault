@@ -112,3 +112,26 @@ func TestFacebookCommentsSourceForPair(t *testing.T) {
 	assert.Nil(t, cfg.FacebookCommentsSourceFor("99", "100"))
 	assert.Nil(t, cfg.FacebookCommentsSourceFor("9", "101"))
 }
+
+func TestInstagramCommentsActions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	profile := `[[instagram_comments]]
+identifier="example-account"
+app_id="9"
+page_id="100"
+instagram_account_id="200"
+token_env="EXAMPLE_INSTAGRAM_TOKEN"
+enabled=true
+`
+	cfg := loadConfigText(t, profile+"actions=[\"hide\",\"public_reply\",\"private_reply\",\"delete\"]\n")
+	selected := cfg.InstagramCommentsSourceFor("9", "100", "200")
+	require.NotNil(selected)
+	assert.True(selected.ActionAllowed("unhide"))
+	selected.Enabled = false
+	assert.False(selected.ActionAllowed("public_reply"))
+	assert.Nil(cfg.InstagramCommentsSourceFor("9", "101", "200"))
+	for _, actions := range []string{`["send"]`, `["hide","hide"]`, `["Hide"]`} {
+		require.Error(loadConfigTextError(t, profile+"actions="+actions+"\n"))
+	}
+}

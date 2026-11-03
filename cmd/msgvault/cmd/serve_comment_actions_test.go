@@ -268,3 +268,100 @@ func TestServeCommentActionVerifiesPageBeforeDispatch(t *testing.T) {
 	assertions.Equal(2, reads)
 	assertions.Equal(1, writes)
 }
+
+func TestCommentQueueIncludesInstagram(t *testing.T) { //nolint:paralleltest // intercepts the fixture Graph transport
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	a, _ := commentAdapterFixture(t)
+	src, err := a.store.GetOrCreateSource(meta.InstagramSourceType, "app:9:page:100:instagram:200")
+	requirements.NoError(err)
+	conv, err := a.store.EnsureConversation(src.ID, "300", "Example media")
+	requirements.NoError(err)
+	root, err := a.store.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "300", MessageType: meta.InstagramSourceType})
+	requirements.NoError(err)
+	id, err := a.store.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "400", MessageType: meta.InstagramSourceType, ReplyToMessageID: sql.NullInt64{Int64: root, Valid: true}})
+	requirements.NoError(err)
+	requirements.NoError(a.store.SetMessageMetadataContext(t.Context(), id, sql.NullString{String: `{"version":1,"app_id":"9","page_id":"100","instagram_account_id":"200","media_id":"300","parent_id":"300","organic":true}`, Valid: true}))
+	requirements.NoError(a.store.UpsertMessageRawWithFormat(id, []byte(`{"id":"400","from":{"id":"600","username":"example_author"}}`), "instagram-comment-json"))
+	a.config.InstagramComments = []config.InstagramCommentsSource{{Identifier: "example-account", AppID: "9", PageID: "100", InstagramAccountID: "200", TokenEnv: "EXAMPLE_INSTAGRAM_TOKEN", Enabled: true, Actions: []string{"public_reply"}}}
+	page, err := a.ListCommentQueue(t.Context(), api.CommentQueueRequest{})
+	requirements.NoError(err)
+	requirements.Len(page.Items, 2)
+	selected, err := a.ListCommentQueue(t.Context(), api.CommentQueueRequest{Source: src.Identifier})
+	requirements.NoError(err)
+	requirements.Len(selected.Items, 1)
+	assertions.Equal("instagram", selected.Items[0].Provider)
+	t.Setenv("EXAMPLE_INSTAGRAM_TOKEN", "synthetic-instagram-token")
+	calls := 0
+	wrongPage, wrongAccount := true, false
+	f := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assertions.Equal("Bearer synthetic-instagram-token", r.Header.Get("Authorization"))
+		if r.URL.Path == "/v26.0/me" {
+			pageID := "100"
+			if wrongPage {
+				pageID = "101"
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"name":"Example Page","category":"Community"}`, pageID)
+			return
+		}
+		if r.URL.Path == "/v26.0/100" {
+			accountID := "200"
+			if wrongAccount {
+				accountID = "201"
+			}
+			_, _ = fmt.Fprintf(w, `{"id":"100","instagram_business_account":{"id":%q,"username":"example_account"}}`, accountID)
+			return
+		}
+		assertions.Equal("/v26.0/400/replies", r.URL.Path)
+		_, _ = fmt.Fprint(w, `{"id":"501"}`)
+	}))
+	defer f.Close()
+	destination, err := url.Parse(f.URL)
+	requirements.NoError(err)
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "graph.facebook.com" {
+			return nil, errors.New("unexpected fixture host")
+		}
+		clone := r.Clone(r.Context())
+		uri := *r.URL
+		uri.Host, uri.Scheme = destination.Host, destination.Scheme
+		clone.URL = &uri
+		return original.RoundTrip(clone)
+	})
+	preview, err := a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "reply", DryRun: true}, nil)
+	requirements.NoError(err)
+	assertions.Zero(calls)
+	var failure *meta.ActionError
+	_, err = a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "reply", Confirm: preview.Confirm}, nil)
+	requirements.ErrorAs(err, &failure)
+	assertions.Equal("credential_unavailable", failure.Code)
+	assertions.Equal(1, calls)
+	wrongPage, wrongAccount = false, true
+	_, err = a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "reply", Confirm: preview.Confirm}, nil)
+	requirements.ErrorAs(err, &failure)
+	assertions.Equal("credential_unavailable", failure.Code)
+	assertions.Equal(3, calls)
+	wrongAccount = false
+	got, err := a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "reply", Confirm: preview.Confirm}, nil)
+	requirements.NoError(err)
+	assertions.Equal("501", got.Receipt.RemoteID)
+	assertions.Equal(6, calls)
+	rows, err := a.ListCommentActions(t.Context(), id)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	a.config.InstagramComments[0].InstagramAccountID = "201"
+	recovered, err := a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "reply", Confirm: preview.Confirm}, nil)
+	requirements.NoError(err, "an existing receipt remains available after the profile changes")
+	requirements.NotNil(recovered.Receipt)
+	assertions.Equal(got.Receipt.ID, recovered.Receipt.ID)
+	assertions.Equal("succeeded", recovered.Receipt.State)
+	fresh, err := a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "another reply", DryRun: true}, nil)
+	requirements.NoError(err)
+	_, err = a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionPublicReply, Body: "another reply", Confirm: fresh.Confirm}, nil)
+	requirements.ErrorAs(err, &failure)
+	assertions.Equal("action_not_enabled", failure.Code)
+	assertions.Equal(6, calls, "neither local recovery nor a disabled fresh write contacts the provider")
+}
