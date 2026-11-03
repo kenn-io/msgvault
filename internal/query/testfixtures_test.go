@@ -2,15 +2,19 @@ package query
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -845,6 +849,32 @@ type parquetBuilder struct {
 	unsentMessages string
 }
 
+// Like dbtest.schemaTemplates and testutil.sqliteTemplate, retain templates in
+// memory and give each test a copy. A mutex lets a later test retry if require
+// calls Goexit during a build; sync.Once would leave the entry empty forever.
+var parquetTemplates sync.Map
+
+type parquetTemplate struct {
+	mu      sync.Mutex
+	files   fstest.MapFS
+	derived identityindex.BuildResult
+}
+
+func (b *parquetBuilder) contentKey() [sha256.Size]byte {
+	tables := slices.Clone(b.tables)
+	slices.SortStableFunc(tables, func(a, b parquetTable) int {
+		return strings.Compare(a.subdir+"/"+a.file, b.subdir+"/"+b.file)
+	})
+	h := sha256.New()
+	for _, table := range tables {
+		for _, field := range []string{table.name, table.subdir, table.file, table.columns, table.values, strconv.FormatBool(table.empty)} {
+			_, _ = fmt.Fprintf(h, "%d:%s", len(field), field)
+		}
+	}
+	_, _ = fmt.Fprintf(h, "%d:%s", len(b.unsentMessages), b.unsentMessages)
+	return [sha256.Size]byte(h.Sum(nil))
+}
+
 // newParquetBuilder creates a new builder for Parquet test fixtures.
 func newParquetBuilder(tb testing.TB) *parquetBuilder {
 	tb.Helper()
@@ -887,23 +917,23 @@ func (b *parquetBuilder) build() (string, func()) {
 	b.ensureParticipantClustersTable()
 	b.ensurePersonDisplayNamesTable()
 
-	tmpDir := b.createTempDirs()
+	value, _ := parquetTemplates.LoadOrStore(b.contentKey(), &parquetTemplate{})
+	template, ok := value.(*parquetTemplate)
+	require.True(b.t, ok, "parquet template cache entry type")
+	func() {
+		template.mu.Lock()
+		defer template.mu.Unlock()
+		if template.files == nil {
+			template.files, template.derived = b.buildTemplate()
+		}
+	}()
 
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		_ = os.RemoveAll(tmpDir)
-		require.NoError(b.t, err, "open duckdb")
-	}
-	defer func() { _ = db.Close() }()
-
-	b.writeParquetFiles(db, tmpDir)
-	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
-		Mode:           identityindex.ModeFull,
-		StagedBaseRoot: tmpDir,
-		OutputRoot:     tmpDir,
-		UnsentMessages: b.unsentMessages,
-	})
-	require.NoError(b.t, err, "derive identity fixture datasets")
+	tmpDir, err := os.MkdirTemp("", "msgvault-test-parquet-*")
+	require.NoError(b.t, err, "create fixture copy directory")
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+	b.t.Cleanup(cleanup)
+	require.NoError(b.t, os.CopyFS(tmpDir, template.files), "copy parquet template")
+	derived := template.derived
 	fingerprint, err := CacheDatasetFingerprint(tmpDir)
 	require.NoError(b.t, err, "fingerprint cache fixture")
 	stateData, err := json.Marshal(CacheSyncState{
@@ -918,7 +948,46 @@ func (b *parquetBuilder) build() (string, func()) {
 	require.NoError(b.t, os.WriteFile(CacheStatePath(tmpDir), stateData, 0o600),
 		"write cache state")
 
-	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }
+	return tmpDir, cleanup
+}
+
+func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResult) {
+	b.t.Helper()
+	tmpDir := b.createTempDirs()
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	db, err := sql.Open("duckdb", "")
+	require.NoError(b.t, err, "open duckdb")
+	defer func() { _ = db.Close() }()
+	b.writeParquetFiles(db, tmpDir)
+	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+		Mode:           identityindex.ModeFull,
+		StagedBaseRoot: tmpDir,
+		OutputRoot:     tmpDir,
+		UnsentMessages: b.unsentMessages,
+	})
+	require.NoError(b.t, err, "derive identity fixture datasets")
+	files := fstest.MapFS{}
+	err = fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == "." {
+			return nil
+		}
+		if entry.IsDir() {
+			files[path] = &fstest.MapFile{Mode: fs.ModeDir | 0o755}
+			return nil
+		}
+		data, err := os.ReadFile(filepath.Join(tmpDir, filepath.FromSlash(path)))
+		if err != nil {
+			return err
+		}
+		files[path] = &fstest.MapFile{Data: data, Mode: 0o600}
+		return nil
+	})
+	require.NoError(b.t, err, "read parquet template")
+	return files, derived
 }
 
 func (b *parquetBuilder) ensureParticipantIdentifiersTable() {
