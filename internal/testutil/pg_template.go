@@ -155,11 +155,8 @@ func (p *pgTemplate) ensure() error {
 
 	p.scope, p.token, p.owner, p.err = buildTemplate(p.dbURL)
 	if p.err == nil {
-		p.err = p.owner.QueryRowContext(context.Background(),
+		_ = p.owner.QueryRowContext(context.Background(),
 			"SELECT current_setting('server_version_num')::int >= 150000 AND current_setting('fsync') = 'off'").Scan(&p.fileCopy)
-		if p.err != nil {
-			p.err = fmt.Errorf("template server settings: %w", p.err)
-		}
 	}
 
 	return p.err
