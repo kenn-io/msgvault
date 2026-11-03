@@ -139,6 +139,59 @@ components:
         - unsupported
         - unavailable
       type: object
+    ActionError:
+      additionalProperties: true
+      properties:
+        abuse_warning:
+          type: boolean
+        code:
+          type: string
+        message:
+          type: string
+        required_permissions:
+          items:
+            type: string
+          type: array
+        result:
+          $ref: "#/components/schemas/ActionResult"
+      required:
+        - code
+        - message
+      type: object
+    ActionResult:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        confirm:
+          type: string
+        disclosure:
+          $ref: "#/components/schemas/MetaCommentDisclosure"
+        dry_run:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        receipt:
+          $ref: "#/components/schemas/Receipt"
+        source_id:
+          format: int64
+          type: integer
+        visibility:
+          type: string
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - message_id
+        - source_id
+        - action
+        - visibility
+        - dry_run
+        - disclosure
+        - confirm
+      type: object
     ActionRow:
       additionalProperties: true
       properties:
@@ -2986,6 +3039,150 @@ components:
         - display_name
         - default_reasoning_effort
         - supported_efforts
+      type: object
+    CommentActionBody:
+      additionalProperties: false
+      properties:
+        action:
+          enum:
+            - hide
+            - unhide
+            - delete
+            - public_reply
+            - private_reply
+          type: string
+        body:
+          type: string
+        confirm:
+          type: string
+        dry_run:
+          type: boolean
+        resolve_unknown:
+          enum:
+            - sent
+            - not-sent
+          type: string
+      required:
+        - action
+      type: object
+    CommentQueueAuthor:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display_name
+      type: object
+    CommentQueueItem:
+      additionalProperties: true
+      properties:
+        actions:
+          items:
+            $ref: "#/components/schemas/Receipt"
+          type: array
+        ad:
+          type: boolean
+        author:
+          $ref: "#/components/schemas/CommentQueueAuthor"
+        comment_id:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_from_source:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        moderation:
+          type: string
+        page_replied:
+          type: boolean
+        parent_message_id:
+          format: int64
+          type: integer
+        private_reply_open_until:
+          format: date-time
+          type:
+            - string
+            - "null"
+        provider:
+          type: string
+        sent_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        snippet:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        triage:
+          type: string
+      required:
+        - message_id
+        - source_id
+        - source_identifier
+        - provider
+        - conversation_id
+        - comment_id
+        - parent_message_id
+        - author
+        - snippet
+        - sent_at
+        - ad
+        - triage
+        - moderation
+        - deleted_from_source
+        - page_replied
+        - private_reply_open_until
+        - actions
+      type: object
+    CommentQueueResponse:
+      additionalProperties: true
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/CommentQueueItem"
+          type: array
+        next_before_id:
+          format: int64
+          type: integer
+      required:
+        - items
+      type: object
+    CommentTriageBody:
+      additionalProperties: false
+      properties:
+        expect:
+          enum:
+            - open
+            - handled
+            - skipped
+          type: string
+        state:
+          enum:
+            - open
+            - handled
+            - skipped
+          type: string
+      required:
+        - state
+      type: object
+    CommentTriageResponse:
+      additionalProperties: true
+      properties:
+        state:
+          type: string
+      required:
+        - state
       type: object
     CommunicationService:
       additionalProperties: true
@@ -8658,6 +8855,32 @@ components:
         - has_more
         - next_after_id
       type: object
+    MetaCommentDisclosure:
+      additionalProperties: true
+      properties:
+        asset_id:
+          type: string
+        author_display_name:
+          type: string
+        body:
+          type: string
+        comment_id:
+          type: string
+        page_or_account_name:
+          type: string
+        provider:
+          type: string
+        public:
+          type: boolean
+      required:
+        - provider
+        - asset_id
+        - page_or_account_name
+        - comment_id
+        - author_display_name
+        - body
+        - public
+      type: object
     Metrics:
       additionalProperties: true
       properties:
@@ -14027,6 +14250,41 @@ components:
         - rows
         - row_count
       type: object
+    Receipt:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        archive_complete:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        error_code:
+          type: string
+        id:
+          format: int64
+          type: integer
+        recipient_id:
+          type: string
+        remote_id:
+          type: string
+        reply_message_id:
+          format: int64
+          type: integer
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - action
+        - created_at
+        - updated_at
+        - id
+        - state
+        - archive_complete
+      type: object
     Reference:
       additionalProperties: false
       properties:
@@ -17032,7 +17290,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.37.0
+  version: 3.39.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -20899,6 +21157,104 @@ paths:
       security:
         - apiKey: []
       summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/comment-queue:
+    get:
+      operationId: listCommentQueue
+      parameters:
+        - description: Exact archive source identifier
+          in: query
+          name: source
+          schema:
+            type: string
+        - description: open (default), handled, skipped or all
+          in: query
+          name: state
+          schema:
+            type: string
+        - description: Rows per page, 1–200 (default 50)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Last-seen message ID in ascending sent_at/id order
+          in: query
+          name: before_id
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentQueueResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List archived comments by triage state
       tags:
         - API
   /api/v1/communication-services:
@@ -25128,6 +25484,265 @@ paths:
       security:
         - apiKey: []
       summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/comment-actions:
+    get:
+      operationId: listCommentActions
+      parameters:
+        - description: Archived comment message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Receipt"
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read comment action receipts
+      tags:
+        - API
+    post:
+      operationId: runCommentAction
+      parameters:
+        - description: Archived comment message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentActionBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview or perform a comment action
+      tags:
+        - API
+  /api/v1/messages/{id}/comment-triage:
+    put:
+      operationId: updateCommentTriage
+      parameters:
+        - description: Archived comment message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentTriageBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentTriageResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set local comment triage state
       tags:
         - API
   /api/v1/messages/{id}/inline:

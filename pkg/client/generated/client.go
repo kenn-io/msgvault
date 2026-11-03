@@ -363,6 +363,10 @@ type ClientInterface interface {
 	VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResponse, error)
 	VerifyCLIWithResponse(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResp, error)
 
+	// ListCommentQueue List archived comments by triage state
+	ListCommentQueue(ctx context.Context, options *ListCommentQueueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentQueueResponse, error)
+	ListCommentQueueWithResponse(ctx context.Context, options *ListCommentQueueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentQueueResp, error)
+
 	// ListCommunicationServices List communication services
 	ListCommunicationServices(ctx context.Context, options *ListCommunicationServicesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommunicationServicesResponse, error)
 	ListCommunicationServicesWithResponse(ctx context.Context, options *ListCommunicationServicesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommunicationServicesResp, error)
@@ -674,6 +678,18 @@ type ClientInterface interface {
 	// GetMessage Get one message
 	GetMessage(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResponse, error)
 	GetMessageWithResponse(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResp, error)
+
+	// ListCommentActions Read comment action receipts
+	ListCommentActions(ctx context.Context, options *ListCommentActionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentActionsResponse, error)
+	ListCommentActionsWithResponse(ctx context.Context, options *ListCommentActionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentActionsResp, error)
+
+	// RunCommentAction Preview or perform a comment action
+	RunCommentAction(ctx context.Context, options *RunCommentActionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunCommentActionResponse, error)
+	RunCommentActionWithResponse(ctx context.Context, options *RunCommentActionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunCommentActionResp, error)
+
+	// UpdateCommentTriage Set local comment triage state
+	UpdateCommentTriage(ctx context.Context, options *UpdateCommentTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateCommentTriageResponse, error)
+	UpdateCommentTriageWithResponse(ctx context.Context, options *UpdateCommentTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateCommentTriageResp, error)
 
 	// GetMessageInlinePart Get an inline MIME part
 	GetMessageInlinePart(ctx context.Context, options *GetMessageInlinePartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageInlinePartResponse, error)
@@ -6268,6 +6284,69 @@ func (c *Client) VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// ListCommentQueue List archived comments by triage state
+func (c *Client) ListCommentQueue(ctx context.Context, options *ListCommentQueueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentQueueResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/comment-queue",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCommentQueueResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListCommentQueueErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListCommentQueueErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListCommentQueueResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListCommentQueueResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/comment-queue")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListCommunicationServices List communication services
 func (c *Client) ListCommunicationServices(ctx context.Context, options *ListCommunicationServicesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommunicationServicesResponse, error) {
 	var err error
@@ -11144,6 +11223,197 @@ func (c *Client) GetMessage(ctx context.Context, options *GetMessageRequestOptio
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListCommentActions Read comment action receipts
+func (c *Client) ListCommentActions(ctx context.Context, options *ListCommentActionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentActionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/messages/{id}/comment-actions",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCommentActionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListCommentActionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListCommentActionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListCommentActionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListCommentActionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}/comment-actions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RunCommentAction Preview or perform a comment action
+func (c *Client) RunCommentAction(ctx context.Context, options *RunCommentActionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunCommentActionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/messages/{id}/comment-actions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunCommentActionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RunCommentActionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RunCommentActionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RunCommentActionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RunCommentActionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}/comment-actions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateCommentTriage Set local comment triage state
+func (c *Client) UpdateCommentTriage(ctx context.Context, options *UpdateCommentTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateCommentTriageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/messages/{id}/comment-triage",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*UpdateCommentTriageResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(UpdateCommentTriageErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "UpdateCommentTriageErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(UpdateCommentTriageResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "UpdateCommentTriageResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}/comment-triage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

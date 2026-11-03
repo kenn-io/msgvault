@@ -163,6 +163,14 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 				return invalidSourceMerge("sources with active drafts or unresolved provider operations cannot be merged")
 			}
 		}
+		var unresolvedActions bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meta_comment_actions
+			WHERE source_id IN (?, ?) AND state IN ('claimed','dispatched','unknown'))`, req.FromSourceID, req.IntoSourceID).Scan(&unresolvedActions); err != nil {
+			return fmt.Errorf("check comment actions before merge: %w", err)
+		}
+		if unresolvedActions {
+			return invalidSourceMerge("sources with unresolved comment actions cannot be merged")
+		}
 		plan, err := buildSourceMergePlan(ctx, tx, req.FromSourceID, req.IntoSourceID, &result)
 		if err != nil {
 			return fmt.Errorf("plan source merge: %w", err)

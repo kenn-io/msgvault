@@ -360,6 +360,21 @@ type GetMessagePath struct {
 	ID int64 `json:"id"`
 }
 
+type ListCommentActionsPath struct {
+	// ID Archived comment message ID
+	ID int `json:"id"`
+}
+
+type RunCommentActionPath struct {
+	// ID Archived comment message ID
+	ID int `json:"id"`
+}
+
+type UpdateCommentTriagePath struct {
+	// ID Archived comment message ID
+	ID int `json:"id"`
+}
+
 type GetMessageInlinePartPath struct {
 	// ID Message ID
 	ID int64 `json:"id"`

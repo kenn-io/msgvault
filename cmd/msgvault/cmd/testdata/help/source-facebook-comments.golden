@@ -1,0 +1,15 @@
+Archive comments from a configured Facebook Page
+
+Usage:
+  msgvault source facebook-comments [command]
+
+Available Commands:
+  add         Register a configured Facebook Page
+  sync        Archive Facebook Page comments and nested replies
+
+Flags:
+  -h, --help   help for facebook-comments
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+
+Use "msgvault source facebook-comments [command] --help" for more information about a command.

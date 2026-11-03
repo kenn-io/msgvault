@@ -2373,6 +2373,7 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
+	"meta_comment_actions",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",

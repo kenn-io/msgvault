@@ -144,6 +144,10 @@ type GetMeetingContextBody = MeetingContextRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
 
+type RunCommentActionBody = CommentActionBody
+
+type UpdateCommentTriageBody = CommentTriageBody
+
 type UpdateMessageTagsBody = MessageTagChange
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest

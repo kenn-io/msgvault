@@ -62,6 +62,7 @@ type catalogCapabilities struct {
 	identityReview  bool
 	personCardDAV   bool
 	messageTags     bool
+	commentActions  bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -153,6 +154,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 		messageTags:     opts.MessageTags != nil,
+		commentActions:  opts.CommentActions != nil && !opts.DelegatedOnly,
 	}
 }
 
@@ -226,6 +228,11 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		commentToolDefinition(ToolModerateComment),
+		commentToolDefinition(ToolReplyToComment),
+		commentToolDefinition(ToolUpdateCommentTriage),
+		commentToolDefinition(ToolListCommentQueue),
+		commentToolDefinition(ToolListCommentActions),
 		messageTagDefinition(false),
 		messageTagDefinition(true),
 		getIdentityMatchDefinition(),

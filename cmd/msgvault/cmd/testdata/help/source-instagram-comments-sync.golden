@@ -1,0 +1,13 @@
+Sync registered Instagram professional accounts.
+
+Usage:
+  msgvault source instagram-comments sync [identifier] [flags]
+
+Flags:
+      --build-cache        refresh analytics cache after this sync
+      --full               Rescan selected sources; preserve archived history
+  -h, --help               help for sync
+      --max-requests int   maximum API reads per account, including Page and linkage checks (default 1000)
+      --no-build-cache     skip analytics cache refresh after this sync
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
