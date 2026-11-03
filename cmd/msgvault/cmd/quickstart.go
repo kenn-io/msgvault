@@ -3,8 +3,10 @@ package cmd
 import (
 	_ "embed"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/docs"
 )
 
 //go:embed quickstart.md
@@ -15,17 +17,35 @@ var quickstartCmd = &cobra.Command{
 	Short: "Print a quickstart guide for AI agents",
 	Long: `Print a markdown quickstart guide explaining how to use the msgvault CLI.
 
-This is designed for AI agents that do not have MCP access. Pipe the output
-into your agent's context to give it full knowledge of available commands.
+Use --mcp to print the MCP connection and safety guide instead.
+Both guides work offline, before any config or archive exists.
 
 Example:
-  msgvault quickstart | pbcopy`,
+  msgvault quickstart | pbcopy
+  msgvault quickstart --mcp`,
 	Args: cobra.NoArgs,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print(quickstartText)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mcp, _ := cmd.Flags().GetBool("mcp")
+		text := quickstartText
+		if mcp {
+			text = mcpQuickstart(docs.AgentQuickstart)
+		}
+		_, err := fmt.Fprint(cmd.OutOrStdout(), text)
+		return err
 	},
 }
 
 func init() {
+	quickstartCmd.Flags().Bool("mcp", false, "Print the MCP connection and safety guide")
 	rootCmd.AddCommand(quickstartCmd)
+}
+
+func mcpQuickstart(markdown string) string {
+	markdown = strings.ReplaceAll(markdown, "\r\n", "\n")
+	if strings.HasPrefix(markdown, "---\n") {
+		_, markdown, _ = strings.Cut(markdown[4:], "\n---\n")
+	}
+	markdown = strings.TrimLeft(markdown, "\n")
+	markdown = strings.ReplaceAll(markdown, "](../", "](https://msgvault.io/docs/")
+	return "# msgvault MCP quickstart\n\n" + markdown
 }

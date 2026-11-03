@@ -5408,7 +5408,10 @@ Print a quickstart guide for AI agents.
 
 ```bash
 msgvault quickstart
+msgvault quickstart --mcp
 ```
+
+The `--mcp` flag prints the [MCP guide](guides/agent-quickstart.md) offline.
 
 ---
 
