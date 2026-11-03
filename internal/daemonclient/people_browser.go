@@ -430,7 +430,7 @@ func (b *PeopleBrowser) ListConversationMessages(
 		return nil, err
 	}
 	page := &peoplebrowser.ConversationMessagePage{
-		Rows:          b.engine.store.queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages),
+		Rows:          b.engine.store.queryMessageSummariesFromCLIGenerated(ctx, resp.JSON200.Messages),
 		Complete:      !resp.JSON200.HasMore,
 		CacheRevision: resp.JSON200.CacheRevision,
 	}
@@ -460,7 +460,7 @@ func (b *PeopleBrowser) ListMeetings(
 			return nil, fmt.Errorf("meeting timeline row %q has no anchor message", row.Key)
 		}
 		page.Rows[i] = meetingSummaryFromGenerated(row)
-		page.Rows[i].WebURL = b.engine.store.messageWebURL(page.Rows[i].ID)
+		page.Rows[i].WebURL = b.engine.store.messageWebURL(ctx, page.Rows[i].ID)
 	}
 	return page, nil
 }
@@ -580,7 +580,13 @@ func personSummaryFromGenerated(person generated.PersonSummary) query.PersonSumm
 		PeakRelationshipTemperature:    int(person.PeakRelationshipTemperature),
 		PeakRelationshipYear:           int(person.PeakRelationshipYear),
 		SourceCounts:                   counts,
-		FirstAt:                        person.FirstAt, LastAt: person.LastAt, CacheRevision: person.CacheRevision,
+		CacheRevision:                  person.CacheRevision,
+	}
+	if person.FirstAt != nil {
+		out.FirstAt = *person.FirstAt
+	}
+	if person.LastAt != nil {
+		out.LastAt = *person.LastAt
 	}
 	if person.Cluster != nil {
 		edges := make([]query.PersonClusterEdge, len(person.Cluster.Edges))

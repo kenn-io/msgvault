@@ -850,7 +850,7 @@ and retries. Plan for additional API use and storage on large accounts.
 
 ## sync
 
-Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync.
+Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync. Each Gmail incremental sync first retries messages an earlier sync couldn't download or save, until they're archived or Gmail reports them gone.
 
 ```bash
 msgvault sync [account] [flags]
@@ -2260,6 +2260,10 @@ msgvault import-imessage
 
 Reads from `~/Library/Messages/chat.db` by default. This is a read-only operation.
 
+Eligible attachments referenced by `chat.db` are copied into the archive. See
+[Text Messages](/docs/usage/text-messages/#import-imessage) for limits,
+copied trees, and voice notes.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--db-path` | `~/Library/Messages/chat.db` | Path to chat.db |
@@ -2268,6 +2272,8 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
+| `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
+| `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
@@ -4587,6 +4593,25 @@ for environment-only deployment and persisted API keys.
 ```sh
 msgvault serve --bind 0.0.0.0 --port 8080
 ```
+
+On unreleased `main`, `/mcp` serves the read-only MCP catalog on this listener
+with the configured owner bearer key. Native MCP never permits keyless access.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
+| `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
+| `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
+| `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
+| `--mcp-allow-person-merges` | `false` | Enable confirmed local person merges. |
+| `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
+| `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
+| `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
+| `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
+
+Every family flag also requires `--mcp-allow-writes`. These are process flags;
+auto-started local daemons default to read-only. See the
+[MCP guide](usage/chat.md#native-daemon-endpoints) for client setup and confirmation.
 
 ---
 

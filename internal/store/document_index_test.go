@@ -803,8 +803,8 @@ func TestDocumentIndexStatusCountsCompletedAttemptOutcomes(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
 		Claim: failedClaim, ReasonCode: "provider_transient",
-		RetryAt:      time.Now().UTC().Add(time.Minute),
-		RequestCount: 2, RetryCount: 1, ProviderLatencyMS: 50,
+		RetryAt:     time.Now().UTC().Add(time.Minute),
+		UploadCount: 1, RequestCount: 2, RetryCount: 1, ProviderLatencyMS: 50,
 	}))
 	publishSearchDocument(t, f, profile, hash, "successful retry", "status-successful-retry")
 
@@ -869,7 +869,7 @@ func TestDocumentIndexStatusCountsBytesOnlyAfterProviderRequest(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
 		Claim: providerClaim, ReasonCode: "provider_rejected", Terminal: true,
-		RequestCount: 1,
+		UploadCount: 1, RequestCount: 1,
 	}))
 
 	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)

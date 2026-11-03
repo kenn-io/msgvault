@@ -2,6 +2,7 @@
   import {
     Button,
     DateRangePicker,
+    PageHeader,
     RefreshControl,
     SelectDropdown,
     resolveRange,
@@ -29,7 +30,6 @@
   import OperationRunDetail from './OperationRunDetail.svelte';
   import OperationRunTable from './OperationRunTable.svelte';
   import OperationStatusList from './OperationStatusList.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
 
   type Controller = Pick<
     OperationsController, 'snapshot' | 'refresh' | 'refreshStatus' | 'loadMore' | 'restart' | 'runAction'

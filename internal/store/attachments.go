@@ -56,6 +56,11 @@ func (s *Store) messageProviderAttachmentsContext(ctx context.Context, messageID
 	return out, nil
 }
 
+// MessageIMessageAttachmentsContext returns a message's Messages occurrences by source attachment ID.
+func (s *Store) MessageIMessageAttachmentsContext(ctx context.Context, messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachmentsContext(ctx, messageID, "imessage:")
+}
+
 // MessageMIMEAttachmentsContext returns a message's MIME attachment rows in
 // row order, including pending and skipped occurrences.
 func (s *Store) MessageMIMEAttachmentsContext(ctx context.Context, messageID int64) ([]AttachmentRef, error) {
@@ -404,11 +409,12 @@ func (s *Store) MessageConversation(messageID int64) (MessageConversationRef, er
 // Provider identities used to select membership semantics. Callers pass
 // either a source type or the provider's attachment-ID prefix.
 const (
-	sourceTypeDiscord   = "discord"
-	sourceTypeTeams     = "teams"
-	sourceTypeSlack     = "slack"
-	sourceTypeSlackdump = "slackdump"
-	sourceTypeBeeper    = "beeper"
+	sourceTypeDiscord       = "discord"
+	sourceTypeTeams         = "teams"
+	sourceTypeSlack         = "slack"
+	sourceTypeSlackdump     = "slackdump"
+	sourceTypeBeeper        = "beeper"
+	sourceTypeAppleMessages = "apple_messages"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
@@ -449,13 +455,13 @@ func decodeMembershipRecord(metadata string) membershipRecord {
 // attachmentPolicyParticipantCount resolves the participant count media policy
 // evaluates for an archived conversation. Discord stages an authoritative
 // catalog count that may only raise the observed one, so recomputed
-// conversation stats cannot silently relax an exclusion. Teams, Slack, and
-// Beeper archive the exact roster they read (Beeper: the participant total it
-// reports, which a truncated listing's rows undercount), which is
-// authoritative in both directions: participant rows only ever accumulate, so
-// membership that shrank below the threshold would otherwise keep excluding
-// the conversation's media forever. Conversation stats keep the observed count
-// for UI and search.
+// conversation stats cannot silently relax an exclusion. Teams, Slack,
+// Beeper, Inline, and Messages archive the exact roster they read
+// (Beeper: the participant total it reports, which a truncated listing's
+// rows undercount), which is authoritative in both directions: participant
+// rows only ever accumulate, so membership that shrank below the threshold
+// would otherwise keep excluding the conversation's media forever.
+// Conversation stats keep the observed count for UI and search.
 func attachmentPolicyParticipantCount(sourceType string, observed int, metadata string) int {
 	record := decodeMembershipRecord(metadata)
 	if !record.counted {
@@ -464,7 +470,7 @@ func attachmentPolicyParticipantCount(sourceType string, observed int, metadata 
 	switch strings.TrimSuffix(sourceType, ":") {
 	case sourceTypeDiscord:
 		return max(record.memberCount, observed)
-	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline":
+	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline", sourceTypeAppleMessages:
 		return record.memberCount
 	default:
 		return observed

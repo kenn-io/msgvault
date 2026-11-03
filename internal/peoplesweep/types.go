@@ -116,14 +116,16 @@ type GapResult struct {
 	NextPersonID int64
 }
 
-// ClaimRequest identifies a worker and its requested lease duration.
+// ClaimRequest identifies a worker, lease duration, and optional run-local
+// people that should not be reclaimed after a benign deferral.
 // AvailableAt is retained for orchestration metadata; retry eligibility is
 // always evaluated against the database clock.
 type ClaimRequest struct {
-	WorkerID      string
-	LeaseDuration time.Duration
-	AvailableAt   time.Time
-	PersonID      int64
+	WorkerID         string
+	LeaseDuration    time.Duration
+	AvailableAt      time.Time
+	PersonID         int64
+	ExcludePersonIDs []int64
 }
 
 // Lease is the fenced ownership token required by sweep mutations.

@@ -20,18 +20,8 @@ import (
 func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	tmp := t.TempDir()
-	chatPath := filepath.Join(tmp, "chat.db")
-	chat, err := sql.Open("sqlite3", chatPath+"?_journal_mode=WAL")
-	require.NoError(err)
-	t.Cleanup(func() { _ = chat.Close() })
-	_, err = chat.Exec(`
- CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB, date INTEGER,
-  is_from_me INTEGER, service TEXT, cache_has_attachments INTEGER, handle_id INTEGER);
- CREATE TABLE handle (id TEXT);
- CREATE TABLE chat (guid TEXT, display_name TEXT, chat_identifier TEXT);
- CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
- CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
- INSERT INTO handle VALUES ('peer@example.test');
+	chatPath, chat := testutil.NewIMessageChatDB(t)
+	_, err := chat.Exec(`
  INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
  INSERT INTO chat_handle_join VALUES (1,1);
  `)
@@ -82,18 +72,8 @@ func TestBuildCacheAfterIMessageSentinelDates(t *testing.T) {
 func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	tmp := t.TempDir()
-	chatPath := filepath.Join(tmp, "chat.db")
-	chat, err := sql.Open("sqlite3", chatPath+"?_journal_mode=WAL")
-	require.NoError(err)
-	t.Cleanup(func() { _ = chat.Close() })
-	_, err = chat.Exec(`
- CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB, date INTEGER,
-  is_from_me INTEGER, service TEXT, cache_has_attachments INTEGER, handle_id INTEGER);
- CREATE TABLE handle (id TEXT);
- CREATE TABLE chat (guid TEXT, display_name TEXT, chat_identifier TEXT);
- CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
- CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
- INSERT INTO handle VALUES ('peer@example.test');
+	chatPath, chat := testutil.NewIMessageChatDB(t)
+	_, err := chat.Exec(`
  INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
  INSERT INTO message VALUES ('synthetic-1', NULL, NULL, 725760000000000000, 0, 'SMS', 0, NULL);
  INSERT INTO message VALUES ('synthetic-2', NULL, NULL, 725846400000000000, 0, 'SMS', 0, NULL);
@@ -185,4 +165,32 @@ func TestPrintImessageSummaryReportsClearedDates(t *testing.T) {
 	done = captureStdout(t)
 	printImessageSummary(&imessage.ImportSummary{}, time.Now())
 	assert.NotContains(done(), "Dates cleared")
+}
+
+func TestPrintImessageSummaryPointsAtMessagesRootForCustomDatabase(t *testing.T) {
+	assert := assert.New(t)
+	previousDB, previousRoot := importImessageDBPath, importImessageMessagesRoot
+	t.Cleanup(func() { importImessageDBPath, importImessageMessagesRoot = previousDB, previousRoot })
+	summary := &imessage.ImportSummary{AttachmentsUnavailable: 1}
+
+	importImessageDBPath, importImessageMessagesRoot = "/copy/chat.db", ""
+	done := captureStdout(t)
+	printImessageSummary(summary, time.Now())
+	assert.Contains(done(), "--messages-root")
+
+	importImessageDBPath, importImessageMessagesRoot = "", ""
+	done = captureStdout(t)
+	printImessageSummary(summary, time.Now())
+	assert.NotContains(done(), "--messages-root")
+
+	skipped := &imessage.ImportSummary{AttachmentsSkipped: 1}
+	importImessageDBPath, importImessageMessagesRoot = "/copy/chat.db", ""
+	done = captureStdout(t)
+	printImessageSummary(skipped, time.Now())
+	assert.Contains(done(), "--messages-root")
+
+	importImessageDBPath, importImessageMessagesRoot = "/copy/chat.db", "/copy"
+	done = captureStdout(t)
+	printImessageSummary(skipped, time.Now())
+	assert.NotContains(done(), "--messages-root")
 }

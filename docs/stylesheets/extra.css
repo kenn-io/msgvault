@@ -91,6 +91,14 @@
   border-bottom: 1px solid var(--msgvault-border);
 }
 
+/* A table, code block, diagram or screenshot directly under a section
+   heading draws its own top edge, so the heading rule would stack a second
+   line above it. */
+.md-typeset h2:has(+ .md-typeset__scrollwrap, + .highlight, + .mermaid, + figure) {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 .md-typeset .md-button {
   border-radius: 0;
 }
