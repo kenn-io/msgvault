@@ -81,7 +81,7 @@
         <h3>Open loops</h3>
         {#if !loading && !failed && items.length > 0}<span>{items.length}{truncated ? '+' : ''} open</span>{/if}
       </header>
-      {#if loading}<p role="status">Loading open loops…</p>
+      {#if loading}<p role="status">Loading…</p>
       {:else if failed}<p role="alert">Couldn't load open loops.</p>
       {:else if items.length === 0 && coverageIncomplete}<p>No loops found in the messages checked.</p>
       {:else if items.length === 0}<p>Nothing open with this person.</p>

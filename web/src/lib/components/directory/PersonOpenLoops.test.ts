@@ -47,9 +47,7 @@ describe("PersonOpenLoops", () => {
     ]);
     render(PersonOpenLoops, { client, personID: 7 });
     expect(screen.getByRole("heading", { name: "Open loops" })).toBeDefined();
-    expect(screen.getByRole("status").textContent).toContain(
-      "Loading open loops",
-    );
+    expect(screen.getByRole("status").textContent).toContain("Loading");
     const link = await screen.findByRole("link", { name: "Review the draft?" });
     expect(link.getAttribute("href")).toBe("/messages/42");
     expect(
