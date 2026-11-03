@@ -26,8 +26,11 @@ var mcpDraftCommandConstructors = map[string]func() *cobra.Command{
 	api.CLIRunDraftSendAsCommand:   newDraftSendAsCommand,
 }
 
-func mcpDraftCommands(delegated bool) []string {
+func mcpDraftCommands(delegated bool, schemaVersion string) []string {
 	commands := slices.Sorted(maps.Keys(mcpDraftCommandConstructors))
+	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, sendLineReplyMinAPISchemaVersion) {
+		commands = slices.DeleteFunc(commands, func(command string) bool { return command == api.CLIRunSendLineReplyCommand })
+	}
 	if delegated {
 		commands = slices.DeleteFunc(commands, func(command string) bool { return !agentDelegatedCommand(command) })
 	}

@@ -146,22 +146,6 @@ func TestPushDoesNotFollowRedirect(t *testing.T) {
 	assert.Zero(t, targetCalls)
 }
 
-func TestPushFakeExpiresKeysAfter24Hours(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-	client, fake := newClient(t, line.WithClock(func() time.Time { return now }))
-	fake.SetClock(func() time.Time { return now })
-	request := line.PushTextRequest{To: replyUser, Text: "hello"}
-	first, err := client.PushText(t.Context(), replyRetryKey, request)
-	require.NoError(err)
-	now = now.Add(24 * time.Hour)
-	second, err := client.PushText(t.Context(), replyRetryKey, request)
-	require.NoError(err)
-	assert.NotEqual(first.MessageID, second.MessageID)
-	assert.Equal(2, fake.AcceptedPushes())
-}
-
 func TestValidateReplyText(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string

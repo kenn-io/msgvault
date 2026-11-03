@@ -104,6 +104,9 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if err := s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = ?", a.ConversationID); err != nil {
 			return err
 		}
+		if err := s.resolveLineQuotesForMessages(tx, a.SourceID, a.SourceConversationID, []string{a.RemoteMessageID}); err != nil {
+			return fmt.Errorf("resolve LINE replies quoting archived send: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_drafts WHERE draft_id=? AND revision=?`, a.DraftID, a.Revision); err != nil {
 			return err
 		}

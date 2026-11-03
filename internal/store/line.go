@@ -481,29 +481,36 @@ func (s *Store) ResolveLineQuotesForMessagesContext(ctx context.Context, sourceI
 	if sourceConversationID == "" {
 		return errors.New("LINE quote resolution requires a conversation ID")
 	}
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		return s.resolveLineQuotesForMessages(q, sourceID, sourceConversationID, messageIDs)
+	})
+}
+
+// resolveLineQuotesForMessages runs inside the caller's source-locked write
+// transaction. It links both new replies and older messages that quoted a
+// parent that has only just been archived.
+func (s *Store) resolveLineQuotesForMessages(q querier, sourceID int64, sourceConversationID string, messageIDs []string) error {
 	quoted := `json_extract(messages.metadata,'$.quotedMessageId')`
 	if s.IsPostgreSQL() {
 		quoted = `messages.metadata->>'quotedMessageId'`
 	}
 	target := `SELECT parent.id FROM messages parent WHERE parent.source_id=? AND parent.source_message_id=` + quoted + ` AND parent.conversation_id=messages.conversation_id AND parent.id<>messages.id`
-	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
-		update := `UPDATE messages SET reply_to_message_id=(` + target + `)
+	update := `UPDATE messages SET reply_to_message_id=(` + target + `)
  WHERE source_id=? AND message_type='line' AND reply_to_message_id IS NULL
  AND EXISTS (` + target + `)
  AND messages.conversation_id=(SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?)`
-		for batch := range slices.Chunk(messageIDs, 500) {
-			args := []any{sourceID, sourceID, sourceID, sourceID, sourceConversationID}
-			for _, id := range batch {
-				args = append(args, id)
-			}
-			for _, field := range []string{"source_message_id", quoted} {
-				if _, err := q.Exec(update+` AND `+field+` IN (`+placeholders(len(batch))+`)`, args...); err != nil {
-					return err
-				}
+	for batch := range slices.Chunk(messageIDs, 500) {
+		args := []any{sourceID, sourceID, sourceID, sourceID, sourceConversationID}
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		for _, field := range []string{"source_message_id", quoted} {
+			if _, err := q.Exec(update+` AND `+field+` IN (`+placeholders(len(batch))+`)`, args...); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // migrateLineServiceScope widens only the untouched original system seed.

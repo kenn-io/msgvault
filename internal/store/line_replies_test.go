@@ -194,6 +194,29 @@ func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
 	assert.Equal(int64(2), count)
 }
 
+func TestLineReplyCompletionResolvesEarlierIncomingQuote(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	quoteMetadata := sql.NullString{String: `{"quotedMessageId":"900000000000000001"}`, Valid: true}
+	quotedMessageID, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message:  &store.Message{SourceID: draft.SourceID, ConversationID: draft.ConversationID, SourceMessageID: "200", MessageType: "line"},
+		BodyText: sql.NullString{String: "Reply received before local recovery", Valid: true}, Metadata: &quoteMetadata,
+		FTS: &store.FTSDoc{Body: "Reply received before local recovery"},
+	})
+	require.NoError(err)
+	var parent sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
+	assert.False(parent.Valid)
+
+	acceptedReply(t, st, draft)
+	sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
+	require.True(parent.Valid)
+	assert.Equal(sent.MessageID, parent.Int64)
+}
+
 func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

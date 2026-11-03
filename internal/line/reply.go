@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -238,7 +239,7 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	defer cleanup()
 	beforeOutcome := a
 	a, err = s.Store.RecordLineReplyOutcomeContext(evidenceCtx, id, store.LineReplyOutcome{
-		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != 409,
+		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != http.StatusConflict && status != http.StatusTooManyRequests,
 		StatusCode: status, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID, NextRetryAt: deadline})
 	if err != nil {
 		// Preserve the admitted identity even if the Store could not read at all.

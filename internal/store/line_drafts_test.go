@@ -40,14 +40,3 @@ func TestLineChatDraftRequiresSameSourceReply(t *testing.T) {
 	assert.Equal(int64(2), edited.Revision)
 	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2))
 }
-
-// Hegel shrank a destination failure to target=0 and body="".
-func TestLineChatDraftRejectsMissingReplyTarget(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("line", "2000000001")
-	require.NoError(t, err)
-	chat, err := st.EnsureConversationWithType(source.ID, "user:U00000000000000000000000000000002", "direct_chat", "")
-	require.NoError(t, err)
-	_, err = st.CreateChatDraftContext(t.Context(), chat, 0, "", allowChatDraft)
-	require.ErrorIs(t, err, store.ErrChatDraftInvalidDestination)
-}

@@ -310,6 +310,46 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 	assert.Zero(f.fake.AcceptedPushes())
 }
 
+func TestReplyInitialRateLimitWaitsAndRetriesSameKey(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newReplyFixture(t, "user", nil)
+	retryAt := f.now.Add(3 * time.Minute)
+	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
+
+	pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
+	assert.False(pending.Accepted)
+	require.NotNil(pending.RetryAfter)
+	assert.Equal(retryAt, *pending.RetryAfter)
+	durable, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, durable.State)
+	assert.Equal(http.StatusTooManyRequests, durable.StatusCode)
+	assert.Equal(retryAt, durable.NextRetryAt)
+
+	f.now = retryAt.Add(-time.Second)
+	stillWaiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	require.NoError(err)
+	assert.Equal(pending, stillWaiting)
+	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+
+	f.now = retryAt
+	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	require.NoError(err)
+	assert.Equal(store.LineReplySent, sent.Status)
+	assert.Equal(1, f.fake.AcceptedPushes())
+	var retryKeys []string
+	for _, request := range f.fake.Requests() {
+		if request.Path == "/v2/bot/message/push" {
+			retryKeys = append(retryKeys, request.Header.Get("X-Line-Retry-Key"))
+		}
+	}
+	require.Len(retryKeys, 2)
+	assert.Equal(retryKeys[0], retryKeys[1])
+}
+
 func TestReplyConcurrentCallsAcceptOnce(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
