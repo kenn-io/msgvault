@@ -221,6 +221,11 @@ server releases when the binary exits, so the next binary reclaims whatever an
 earlier one left behind; a role without `CREATEDB` falls back to a private
 schema in the configured database.
 
+`dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
+SQLite's backup API.
+Query tests call `t.Parallel()`; a test that replaces a package global stays
+serial and explains why in a `// serial:` comment.
+
 
 ### Local test scheduling
 

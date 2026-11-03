@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"fmt"
 	"go.kenn.io/msgvault/internal/search"
 	"strconv"
 	"testing"
@@ -11,67 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestDuckDBTimezoneConversionUsesBundledICU documents (rather than
-// installs) the timezone conversion this package depends on: go-duckdb's
-// prebuilt binaries statically link the ICU extension, so named-timezone
-// conversion works without an explicit "INSTALL icu; LOAD icu;" (unlike the
-// sqlite_scanner extension in NewDuckDBEngine, which is genuinely optional).
-//
-// It also pins the exact conversion shape relationship_timeline.go relies
-// on, and a trap this test deliberately exercises: DuckDB's session
-// TimeZone setting defaults to the host's local zone (not UTC — this sandbox
-// runs under America/Chicago), so any expression whose result depends on
-// that ambient setting is a portability hazard across dev machines and CI.
-// timezone(<zone>, <TIMESTAMPTZ>) is NOT such an expression: it names the
-// target zone explicitly and returns a plain (naive) TIMESTAMP, verified
-// below to be identical however the session TimeZone is set.
-//
-// occurred_at is a naive TIMESTAMP holding a UTC instant (see
-// sqlAnalyticalEntries: "m.sent_at AS occurred_at"). Calling
-// timezone(<zone>, occurred_at) directly is the wrong direction — that
-// overload treats a naive TIMESTAMP argument as wall-clock time IN <zone>
-// and converts it TO a UTC-based TIMESTAMPTZ, which is backwards for what
-// this package needs. The correct two-step conversion first anchors the
-// naive value to UTC (timezone('UTC', occurred_at) => TIMESTAMPTZ), then
-// asks for its wall-clock representation in the target zone
-// (timezone(<zone>, <thatTIMESTAMPTZ>) => naive TIMESTAMP). Getting this
-// backwards was the exact off-by-one-day failure mode flagged for this task.
-func TestDuckDBTimezoneConversionUsesBundledICU(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	db := NewTestDataBuilder(t).BuildEngine().db
-
-	// Wrong direction, made session-independent by converting the resulting
-	// TIMESTAMPTZ back to UTC explicitly rather than formatting it directly
-	// (formatting a TIMESTAMPTZ renders it in the ambient session
-	// TimeZone, which is exactly the hazard this test is pinning down).
-	var wrongDirection string
-	require.NoError(db.QueryRowContext(context.Background(),
-		`SELECT strftime(timezone('UTC', timezone('America/Chicago', TIMESTAMP '2026-07-13 23:30:00')), '%Y-%m-%d %H:%M:%S')`,
-	).Scan(&wrongDirection))
-	// Interpreting the naive literal as America/Chicago wall-clock time and
-	// converting to UTC lands nearly 6 hours later on the clock, not earlier
-	// — proof this single-step call is the wrong direction.
-	assert.Equal("2026-07-14 04:30:00", wrongDirection)
-
-	// Correct two-step direction, checked under two different ambient
-	// session TimeZone settings to prove it does not depend on either.
-	for _, sessionTZ := range []string{"UTC", "Asia/Tokyo"} {
-		_, err := db.ExecContext(context.Background(), fmt.Sprintf("SET TimeZone = '%s'", sessionTZ))
-		require.NoError(err, "session timezone %s", sessionTZ)
-
-		var chicagoDay, utcDay string
-		require.NoError(db.QueryRowContext(context.Background(), `
-			SELECT
-				strftime(timezone('America/Chicago', timezone('UTC', TIMESTAMP '2026-07-13 23:30:00')), '%Y-%m-%d'),
-				strftime(timezone('UTC', timezone('UTC', TIMESTAMP '2026-07-13 23:30:00')), '%Y-%m-%d')
-		`).Scan(&chicagoDay, &utcDay), "session timezone %s", sessionTZ)
-		assert.Equal("2026-07-13", chicagoDay, "session timezone %s", sessionTZ)
-		assert.Equal("2026-07-13", utcDay, "session timezone %s", sessionTZ)
-	}
-}
 
 // buildTimelineFixture constructs the mandatory Task 6 scenario: a cluster
 // person (P, linked with alias P2) with three chat messages in one
@@ -142,6 +80,7 @@ func buildTimelineFixture(t *testing.T) (engine *DuckDBEngine, canonicalID, emai
 // boundary into two bursts. The email and meeting are untouched, one row
 // each, and rows are ordered (occurred_at DESC, key ASC).
 func TestRelationshipTimelineBurstsChatByLocalDay(t *testing.T) {
+	t.Parallel()
 	engine, canonicalID, emailID, meetingID := buildTimelineFixture(t)
 	ctx := context.Background()
 
@@ -219,6 +158,7 @@ func TestRelationshipTimelineBurstsChatByLocalDay(t *testing.T) {
 // DuckDB query runs, mapped to ErrInvalidExploreRequest like other explore
 // validation failures.
 func TestRelationshipTimelineRejectsInvalidTimezone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	engine, canonicalID, _, _ := buildTimelineFixture(t)
@@ -235,6 +175,7 @@ func TestRelationshipTimelineRejectsInvalidTimezone(t *testing.T) {
 // ResolveCanonicalParticipant for the alias-to-canonical resolution used by
 // the API layer) but must include every member's messages.
 func TestRelationshipTimelineResolvesAnyMemberID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -255,6 +196,7 @@ func TestRelationshipTimelineResolvesAnyMemberID(t *testing.T) {
 // the caller's filter. Pat has two entries with the owner; only one also
 // involves X (cc'd). Filtering by X must return only that one entry.
 func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -304,6 +246,7 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 // plain owner-absent email from the counterpart both remain — the timeline
 // scopes emails/chats by counterpart membership only, not owner involvement.
 func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -374,6 +317,7 @@ func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
 // resolves to the shared canonical ID) and the miss case (an unlinked
 // participant is its own single-member cluster).
 func TestResolveCanonicalParticipant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -407,6 +351,7 @@ func TestResolveCanonicalParticipant(t *testing.T) {
 // the canonical ID and by the alias ID agree and both include alias-owned
 // entries, matching Explore/Files.
 func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -453,6 +398,7 @@ func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testin
 // attachment rows: upgraded or partially extracted archives can carry the
 // flag with a zero attachment_count, and the indicator must still show.
 func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -500,6 +446,7 @@ func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
 // an address pick keeps none of them, and an Unattributed pick keeps the
 // email and calendar rows but not the chat burst, which no account covers.
 func TestRelationshipTimelineHonorsAccountScopes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

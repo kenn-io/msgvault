@@ -9,6 +9,7 @@ import (
 )
 
 func TestDuckDBSearchFallbackPipeOR(t *testing.T) {
+	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
 	require.Nil(t, engine.sqliteEngine)
 	_, err := engine.Search(t.Context(), search.ParseOR("alpha | gamma"), 10, 0)
@@ -16,6 +17,7 @@ func TestDuckDBSearchFallbackPipeOR(t *testing.T) {
 }
 
 func TestDuckDBSearchFallbackHiddenTextPresent(t *testing.T) {
+	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	dbPath, db := seedMessageDetailSenderFixture(t)
 	_, err := db.Exec(`UPDATE messages SET hidden_text_present = 1 WHERE id = 1`)
