@@ -431,7 +431,7 @@ it('keeps Files on the survivor when a bulk link absorbs the open saved profile'
   const directory = new DirectoryController(client);
   const controller = new RelationshipsController(client, () => 'UTC');
   await controller.openTarget('cluster:2', {});
-  const props = { client, controller, directory, urlState: state.current, target: 'cluster:2', filesOpen: false, predicate: {},
+  const props = { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:2', filesOpen: false, predicate: {},
     onNavigate: (patch: Parameters<ExploreState['commitNavigation']>[0]) => state.commitNavigation(patch),
     onReplaceNavigation: (patch: Parameters<ExploreState['replaceCommittedNavigation']>[0]) => { state.replaceCommittedNavigation(patch); void Promise.resolve().then(() => view.rerender({ urlState: state.current })); },
     onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() };
